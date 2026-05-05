@@ -1,0 +1,80 @@
+#!/bin/bash
+# postinst for verification-portal-client.
+#
+# Runs after the meta-package's Depends are satisfied (so MorFin daemon
+# + iris service are already installed and started by their own .debs).
+# This script's job is the lightweight wrap-up:
+#
+#   1. Read /etc/verification-portal/portal.conf for the portal URL
+#      (file is created by install.sh; falls back to a placeholder).
+#   2. Write a Chrome managed-policy JSON pinning the homepage.
+#   3. Write a Firefox autoconfig file with the same homepage.
+#   4. Refresh the desktop database so the launcher icon shows up.
+#   5. Restart the two daemon services (no-op if just installed).
+#
+# Idempotent: every step is safe to re-run after `dpkg-reconfigure`.
+set -e
+
+CONF=/etc/verification-portal/portal.conf
+PORTAL_URL="https://portal.example.com"
+if [ -r "$CONF" ]; then
+  # shellcheck disable=SC1090
+  . "$CONF"
+fi
+
+# 1. Chrome / Chromium managed policy ---------------------------------------
+# Apply to every channel (Google Chrome, Chromium, and the open-source
+# build packaged by Ubuntu) by writing into all known policy dirs.
+for dir in \
+  /etc/opt/chrome/policies/managed \
+  /etc/chromium/policies/managed \
+  /etc/chromium-browser/policies/managed
+do
+  mkdir -p "$dir"
+  cat > "$dir/verification-portal.json" <<EOF
+{
+  "HomepageLocation": "$PORTAL_URL",
+  "HomepageIsNewTabPage": false,
+  "RestoreOnStartup": 4,
+  "RestoreOnStartupURLs": ["$PORTAL_URL"],
+  "ShowHomeButton": true
+}
+EOF
+done
+
+# 2. Firefox autoconfig -----------------------------------------------------
+# Firefox doesn't read JSON policy from /etc the way Chrome does; instead
+# its "autoconfig" mechanism points at a JS file from a tiny .cfg shim.
+FF_PREFS=/usr/lib/firefox/defaults/pref/autoconfig.js
+FF_CFG=/usr/lib/firefox/verification-portal.cfg
+if [ -d /usr/lib/firefox ]; then
+  cat > "$FF_PREFS" <<EOF
+pref("general.config.filename", "verification-portal.cfg");
+pref("general.config.obscure_value", 0);
+EOF
+  cat > "$FF_CFG" <<EOF
+// IMPORTANT: first line is ignored by Firefox autoconfig.
+lockPref("browser.startup.homepage", "$PORTAL_URL");
+lockPref("browser.startup.page", 1);
+EOF
+fi
+
+# 3. Desktop launcher (already installed by data.tar.xz, just refresh) ------
+if command -v update-desktop-database >/dev/null 2>&1; then
+  update-desktop-database -q || true
+fi
+
+# 4. Restart services so they pick up any cert / policy changes -------------
+if command -v systemctl >/dev/null 2>&1; then
+  systemctl daemon-reload || true
+  systemctl restart morfinauth-client-service.service || true
+  systemctl restart mantra-iris-service.service || true
+fi
+
+echo "✓ verification-portal-client configured."
+echo "  Portal URL : $PORTAL_URL"
+echo "  Edit       : $CONF, then run 'sudo dpkg-reconfigure verification-portal-client'"
+echo "  MorFin     : http://localhost:8030/  (systemctl status morfinauth-client-service)"
+echo "  Iris       : http://localhost:8031/  (systemctl status mantra-iris-service)"
+
+exit 0

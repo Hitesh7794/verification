@@ -1,0 +1,53 @@
+# --- existing project-specific entries -------------------------------------
+gndu27_enrollments_data_2026-04-08*/
+rhl.ppk copy 2
+TECH_LEAD_QUESTIONS.md
+
+# Vendor JARs are not redistributable; staged locally for builds only.
+iris-service/lib/*.jar
+
+# --- backend (Go) ----------------------------------------------------------
+# SQLite database with auth hashes + verification audit rows. Never commit.
+backend/verification.db
+backend/verification.db-*
+backend/artifacts/
+
+# Go binaries — should be built, not committed.
+backend/cmd/server/server
+backend/cmd/morfin-mock/morfin-mock
+backend/cmd/iris-mock/iris-mock
+
+# --- frontend (Vite / npm) -------------------------------------------------
+frontend/node_modules/
+frontend/dist/
+frontend/.vite/
+npm-debug.log*
+
+# --- iris-service (Maven) --------------------------------------------------
+iris-service/target/
+iris-service/dist/
+
+# --- client-bootstrap build outputs ---------------------------------------
+client-bootstrap/linux/dist/
+client-bootstrap/windows/dist/
+# nssm.exe is downloaded from nssm.cc and shipped in bundles; not source.
+client-bootstrap/windows/tools/nssm.exe
+
+# --- secrets / local-only --------------------------------------------------
+.env
+.env.*
+*.pem
+*.ppk
+*.key
+
+# --- editor / OS junk ------------------------------------------------------
+.DS_Store
+Thumbs.db
+.idea/
+*.iml
+.vscode/
+*.swp
+*.swo
+
+# --- Claude Code local config (per-user permissions, not shared) ---------
+.claude/settings.local.json

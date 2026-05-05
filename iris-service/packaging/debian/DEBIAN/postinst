@@ -1,0 +1,13 @@
+#!/bin/sh
+# postinst: enable + start the systemd unit so the service is up
+# immediately after install. Mirrors the convention of Mantra's own
+# morfinauth-client-service .deb.
+set -e
+
+systemctl daemon-reload || true
+systemctl enable mantra-iris-service.service || true
+systemctl restart mantra-iris-service.service || true
+
+echo "✓ mantra-iris-service installed. Running on localhost:8031."
+
+exit 0

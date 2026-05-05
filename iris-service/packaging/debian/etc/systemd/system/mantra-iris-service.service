@@ -1,0 +1,21 @@
+[Unit]
+Description=mantra-iris-service (Marvis SDK wrapper, localhost:8031)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/usr/local/mantra-iris-service
+# IRIS_PROVIDER=marvis-strict requires the real Marvis SDK at runtime.
+# If the JAR can't be loaded the process exits non-zero and systemd's
+# Restart=on-failure surfaces the failure. The alternative ("marvis")
+# falls back to a mock and would silently emit fake scores from a
+# healthy-looking service — a far worse outcome than a failing unit.
+Environment=IRIS_PROVIDER=marvis-strict
+Environment=IRIS_PORT=8031
+ExecStart=/usr/bin/java -jar /usr/local/mantra-iris-service/mantra-iris-service.jar
+Restart=on-failure
+RestartSec=3
+User=root
+
+[Install]
+WantedBy=multi-user.target

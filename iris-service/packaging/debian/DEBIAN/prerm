@@ -1,0 +1,8 @@
+#!/bin/sh
+# prerm: stop and disable the service before files are removed.
+set -e
+
+systemctl stop mantra-iris-service.service    || true
+systemctl disable mantra-iris-service.service || true
+
+exit 0

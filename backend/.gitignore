@@ -1,0 +1,4 @@
+verification.db
+verification.db-*
+*.exe
+/bin/

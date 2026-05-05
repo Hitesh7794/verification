@@ -1,0 +1,15 @@
+[Desktop Entry]
+Version=1.0
+Type=Application
+Name=Verification Portal
+Comment=Biometric verification workstation for examination centers
+# xdg-open follows the user's default-browser preference, so this works
+# whether the operator's machine has Chrome, Chromium, Firefox, or
+# something else as the default. Reading the URL from a flat conf file
+# (rather than baking it into the .desktop) means a re-run of dpkg-
+# reconfigure can update the link without rebuilding the package.
+Exec=sh -c 'URL=$(. /etc/verification-portal/portal.conf 2>/dev/null && echo "$PORTAL_URL"); xdg-open "${URL:-https://portal.example.com}"'
+Icon=verification-portal
+Terminal=false
+Categories=Network;Office;
+StartupNotify=true

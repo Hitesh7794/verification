@@ -1,0 +1,13 @@
+Package: mantra-iris-service
+Version: 1.0.0
+Section: misc
+Priority: optional
+Architecture: all
+Depends: default-jre | openjdk-11-jre | openjdk-17-jre
+Maintainer: Verification Portal <ops@example.com>
+Description: Localhost iris SDK service for the Verification Portal
+ Wraps Mantra's Marvis_Auth.jar (MIS100V2 iris scanner) behind a JSON
+ HTTP API on localhost:8031, parallel to morfinauth-client-service on
+ :8030. Runs as a systemd unit started at boot. Used by the operator's
+ browser to capture and 1:1-match iris images during candidate
+ verification.
