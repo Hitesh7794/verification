@@ -74,8 +74,26 @@ if [ -n "$USBIP_BIN" ] && [ ! -e /usr/local/bin/usbip ]; then
 fi
 
 # 3. Install the iris service .deb ------------------------------------------
-echo "→ installing $(basename "$DEB_FILE")"
-apt-get install -y "$DEB_FILE"
+# Stop the service first if it's running — `apt-get install --reinstall`
+# does this for us in theory, but some old states (failed unit, stale
+# pidfile) make the postinst flaky if a process is still bound to :8031.
+echo "→ stopping any running mantra-iris-service before (re)install"
+systemctl stop mantra-iris-service 2>/dev/null || true
+
+# `--reinstall` forces apt to re-extract the .deb's payload even when
+# the version on disk matches. Without this flag, an iteration cycle
+# (build new .deb, run install.ps1 again) silently no-ops because apt
+# considers the version "already newest" — exactly what bit us when
+# fixing the systemd ExecStart classpath issue. `dpkg -i` on the file
+# bypasses apt's version compare entirely; we use both for robustness.
+echo "→ installing $(basename "$DEB_FILE") (force reinstall)"
+dpkg -i "$DEB_FILE" 2>&1 | grep -v "^Reading\|^Building\|^Selecting\|^Preparing\|^Unpacking" || true
+
+# Reload systemd so any changes to the unit file (ExecStart, env vars)
+# take effect, then bring the service up.
+systemctl daemon-reload
+systemctl enable mantra-iris-service 2>/dev/null || true
+systemctl restart mantra-iris-service 2>/dev/null || true
 
 # 4. Verify --------------------------------------------------------------
 # If systemd was JUST enabled, the daemon won't be running yet inside this
@@ -89,19 +107,42 @@ if [ "$NEED_RESTART" -eq 1 ]; then
     exit 0
 fi
 
-# Give systemd a moment to bring the unit up after install.
-sleep 2
+# Give systemd a moment to bring the unit up after install. systemd's
+# default Restart=on-failure backoff means a unit that crashes on launch
+# can take up to 3-5 seconds (RestartSec * a few attempts) to settle.
+sleep 5
 if systemctl is-active --quiet mantra-iris-service; then
     echo "✓ mantra-iris-service is running"
     systemctl status mantra-iris-service --no-pager --lines=5 || true
 else
-    echo "⚠ mantra-iris-service did not auto-start; recent log:"
-    journalctl -u mantra-iris-service --no-pager --lines=20 || true
     echo ""
-    echo "Common causes:"
-    echo "  - IRIS_PROVIDER=marvis-strict and JAR isn't loadable (check /usr/local/mantra-iris-service/)"
-    echo "  - USB device not yet attached via usbipd (run 'usbipd attach --hardware-id 2c0f:2100 --wsl' on Windows)"
-    echo "  - Java not on PATH — run: which java"
+    echo "✗ mantra-iris-service did not start. Diagnostics:"
+    echo ""
+    echo "--- systemctl status ---"
+    systemctl status mantra-iris-service --no-pager --lines=10 || true
+    echo ""
+    echo "--- journalctl (last 40 lines, full message text) ---"
+    journalctl -u mantra-iris-service --no-pager --lines=40 -o cat || true
+    echo ""
+    echo "--- /usr/local/mantra-iris-service/ contents ---"
+    ls -la /usr/local/mantra-iris-service/ 2>/dev/null || echo "  (directory missing)"
+    echo ""
+    echo "--- effective ExecStart (from unit file) ---"
+    grep ExecStart /etc/systemd/system/mantra-iris-service.service \
+        || grep ExecStart /lib/systemd/system/mantra-iris-service.service \
+        || echo "  (unit file not found in expected paths)"
+    echo ""
+    echo "--- java + classpath sanity ---"
+    echo "java: $(which java 2>/dev/null || echo 'NOT ON PATH')"
+    java -version 2>&1 | head -3 || true
+    echo ""
+    echo "Common root causes:"
+    echo "  1. Marvis_Auth.jar missing from /usr/local/mantra-iris-service/"
+    echo "     (vendor JAR must be staged in iris-service/lib/ before .deb build)"
+    echo "  2. systemd ExecStart still using 'java -jar' instead of 'java -cp <jar>:<jar> Main'"
+    echo "     (pre-2026-05-06 unit files have this bug — rebuild the .deb)"
+    echo "  3. Java not on PATH inside WSL (check 'which java' above)"
+    echo "  4. Marvis SDK class names changed — check journalctl for ClassNotFoundException"
     exit 1
 fi
 

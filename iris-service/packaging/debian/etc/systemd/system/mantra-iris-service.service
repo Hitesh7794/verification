@@ -12,7 +12,15 @@ WorkingDirectory=/usr/local/mantra-iris-service
 # healthy-looking service — a far worse outcome than a failing unit.
 Environment=IRIS_PROVIDER=marvis-strict
 Environment=IRIS_PORT=8031
-ExecStart=/usr/bin/java -jar /usr/local/mantra-iris-service/mantra-iris-service.jar
+# `java -cp` rather than `java -jar`: the iris service jar's manifest
+# Main-Class is fine, but `java -jar` ignores anything outside that one
+# jar's own classpath. Marvis_Auth.jar lives next to our jar (the .deb
+# drops both into /usr/local/mantra-iris-service/) and is loaded
+# reflectively by MarvisIrisProvider, so it MUST be on the classpath at
+# launch — otherwise Class.forName("com.mantra.marvisauth.MarvisAuth")
+# throws ClassNotFoundException, marvis-strict mode exits non-zero, and
+# systemd flags the unit as failed.
+ExecStart=/usr/bin/java -cp /usr/local/mantra-iris-service/mantra-iris-service.jar:/usr/local/mantra-iris-service/Marvis_Auth.jar com.veni.irisservice.Main
 Restart=on-failure
 RestartSec=3
 User=root
