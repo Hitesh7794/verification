@@ -241,20 +241,63 @@ Phase 1 — Fingerprint integration            [DONE]
   #8 Frontend zero-config flow
   #9 morfin-mock dev server with fault injection
 
-Phase 2 — Iris fallback                      [PENDING]
-  #10 mantra-iris-service .deb (Java/Javalin wrapper around
-      Marvis JAR; localhost:8031; /iris/match using MatchImage)
+Phase 2 — Iris fallback                      [DONE]
+  #10 mantra-iris-service (Java/Javalin wrapper around Marvis JAR;
+      localhost:8031; /iris/match using MatchImage). Reflective
+      loader so the SDK isn't a build-time dep; falls back to mock
+      when JAR is absent. Packaging script lives in iris-service/.
+      Frontend iris fallback wired in components/IrisCapture.jsx.
+      Go-based iris-mock under backend/cmd/iris-mock for dev parity
+      with morfin-mock.
 
-Phase 3 — Production rollout                 [PENDING]
-  #11a verification-portal-client.deb — Linux meta-package whose
-       Depends pulls in morfinauth-client-service + mantra-iris-service
-       + a JRE; postinst pins the portal URL as the browser homepage.
-  #11b verification-portal-client.msi — Windows installer that bundles
-       the same MorFin + Marvis JARs (already cross-platform), registers
-       both as Windows services via nssm, imports the vendor TLS certs
-       into Cert:\LocalMachine\Root, and adds a Start Menu shortcut.
-  #12  EC2 deploy: Postgres, nginx + TLS, systemd, deploy.sh
+Phase 3 — Production rollout                 [PARTIAL]
+  #11 client-bootstrap/{linux,windows} — DONE.
+      • linux/install.sh + meta-deb + 3 vendor .debs
+      • windows/install.ps1 + same JARs + nssm.exe + cert imports
+      Same JARs run on both OSes (verified by reading the JAR
+      contents — bundles linux/x86_64/*.so AND win/x64/*.dll, dispatches
+      on os.name). Only the install glue differs between OSes.
+      See client-bootstrap/README.md.
+  #12 EC2 deploy: Postgres, nginx + TLS, systemd, deploy.sh — PENDING.
+      Needs a DNS name pointed at the EIP for Let's Encrypt + webcam.
 ```
+
+### What's still genuinely open
+
+- **Luxand face 1:1** — third score channel; schema slot exists,
+  webcam capture works, awaiting the Luxand SDK.
+- **Server deploy (#12)** — see ISSUES.md §3.
+- **Install model decision** — the bundle exists but who runs it
+  (IT pre-image / per-laptop pre-flight / operator self-service) is
+  still a tech-lead decision. See ISSUES.md §2.
+- **Mantra vendor email** — six questions consolidated, not yet sent.
+  See §4 of this document.
+
+### Hardware-test learnings (recorded 2026-05-06)
+
+**Marvis Auth SDK does NOT actually run on Windows from the Linux
+package**, despite the JAR bundling `win/x64/*.dll` natives. This was
+verified on a Windows 11 laptop with the MIS100V2 device + Mantra's
+official MYUSB driver installed; both our wrapper AND Mantra's own
+`Marvis_Auth_Sample.jar` crash identically:
+
+```
+java.lang.NoSuchMethodError: CompleteCallback
+    at com.mantra.marvisauth.NativeUtils.ExtractLibraryFromJar(NativeUtils.java:169)
+    at com.mantra.marvisauth.MarvisAuthNative.<clinit>(MarvisAuthNative.java:570)
+    at com.mantra.marvisauth.MarvisAuth.<init>(MarvisAuth.java:46)
+```
+
+Tested across Java 11 and Java 17, same failure. The native DLLs
+inside the JAR fail JNI registration — almost certainly because Mantra
+shipped Windows binaries that don't match the Java classes in the same
+JAR.
+
+**Resolution path:** vendor email sent to `servico@mantratec.com` for
+a Windows-specific SDK. Until then, **iris hardware testing on Windows
+is blocked on Mantra**. Linux operator laptops should work fine
+(unchanged code). The iris flow against the Go-based `iris-mock` is
+fully functional for development.
 
 ---
 

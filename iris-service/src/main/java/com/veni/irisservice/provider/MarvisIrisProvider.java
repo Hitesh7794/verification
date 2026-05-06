@@ -71,11 +71,36 @@ public final class MarvisIrisProvider implements IrisProvider {
                 callbackIface.getClassLoader(),
                 new Class<?>[]{callbackIface},
                 (proxy, method, args) -> defaultFor(method.getReturnType()));
-            this.marvisAuth = marvisAuthCls
-                .getConstructor(callbackIface)
-                .newInstance(noopCallback);
+            try {
+                this.marvisAuth = marvisAuthCls
+                    .getConstructor(callbackIface)
+                    .newInstance(noopCallback);
+            } catch (java.lang.reflect.InvocationTargetException ite) {
+                // Reflection wraps the constructor's real exception in an
+                // InvocationTargetException whose getMessage() is often null.
+                // The genuine cause sits in getTargetException(). Print the
+                // full stack trace so a Windows native-lib failure
+                // (UnsatisfiedLinkError, missing MSVC runtime, TEMP-dir
+                // extraction failure, etc.) shows up in plain English instead
+                // of an unhelpful "null".
+                Throwable cause = ite.getTargetException();
+                if (cause == null) cause = ite;
+                System.err.println("=== MarvisAuth ctor threw " + cause.getClass().getName() + " ===");
+                cause.printStackTrace(System.err);
+                throw new IrisException("-1",
+                    "MarvisAuth ctor failed: " + cause.getClass().getSimpleName()
+                        + (cause.getMessage() != null ? ": " + cause.getMessage() : ""),
+                    cause);
+            }
+        } catch (IrisException e) {
+            throw e;
         } catch (Throwable t) {
-            throw new IrisException("-1", "Marvis SDK unavailable: " + t.getMessage(), t);
+            System.err.println("=== Marvis SDK load failed: " + t.getClass().getName() + " ===");
+            t.printStackTrace(System.err);
+            throw new IrisException("-1",
+                "Marvis SDK load failed: " + t.getClass().getSimpleName()
+                    + (t.getMessage() != null ? ": " + t.getMessage() : ""),
+                t);
         }
     }
 

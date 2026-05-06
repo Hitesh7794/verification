@@ -1,0 +1,42 @@
+# docker-compose for local face-matching dev on macOS or Linux dev boxes.
+#
+# Usage:
+#   1. Copy .env.example → .env, paste the FSDK_LICENSE_KEY.
+#   2. From this directory:  docker compose up --build
+#   3. Mac-native backend reaches the service on http://localhost:8040.
+#
+# Compose reads .env automatically (it's gitignored).
+
+services:
+  luxand-service:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    # Pin the platform: libfsdk.so is x86_64-only. Apple Silicon hosts
+    # run this through Rosetta 2 / qemu emulation, slower than native
+    # but functionally identical to production.
+    platform: linux/amd64
+    image: luxand-service:1.0.0
+    container_name: luxand-service
+    restart: unless-stopped
+    ports:
+      # Bind to 127.0.0.1 on the host so the service is only reachable
+      # from the host machine — never the local network. Backend on the
+      # host hits http://localhost:8040 (its default LUXAND_BASE).
+      - "127.0.0.1:8040:8040"
+    environment:
+      # Forwarded from .env. Compose interpolates ${VAR} at parse time.
+      FSDK_LICENSE_KEY: ${FSDK_LICENSE_KEY}
+      FACE_MATCH_FAR: ${FACE_MATCH_FAR:-0.0001}
+      FACE_PORT: 8040
+      FACE_BIND: 0.0.0.0
+    healthcheck:
+      # /face/health returns ErrorCode "0" + Activated:true when the JNI
+      # is loaded and the license key was accepted. Until then the
+      # container shows "starting" / "unhealthy" so `compose up` doesn't
+      # report ready before face matching actually works.
+      test: ["CMD", "curl", "-fs", "-X", "POST", "http://127.0.0.1:8040/face/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+      start_period: 20s

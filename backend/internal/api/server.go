@@ -12,6 +12,7 @@ import (
 	"github.com/veni/neet-verification/internal/auth"
 	"github.com/veni/neet-verification/internal/config"
 	"github.com/veni/neet-verification/internal/data"
+	"github.com/veni/neet-verification/internal/luxand"
 )
 
 type Deps struct {
@@ -22,10 +23,21 @@ type Deps struct {
 }
 
 type Server struct {
-	deps Deps
+	deps   Deps
+	luxand *luxand.Client // optional; nil disables /api/face-match cleanly
 }
 
-func NewServer(d Deps) *Server { return &Server{deps: d} }
+// NewServer wires the API. The luxand client is constructed lazily here
+// so the server can boot before the luxand-service is reachable —
+// face-match calls fail with 503 until the service is up, but the rest
+// of the API stays available.
+func NewServer(d Deps) *Server {
+	s := &Server{deps: d}
+	if d.Cfg.LuxandBase != "" {
+		s.luxand = luxand.New(d.Cfg.LuxandBase)
+	}
+	return s
+}
 
 func (s *Server) Router() http.Handler {
 	r := chi.NewRouter()
@@ -54,6 +66,8 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/candidates/{roll}", s.requireRole("client", "admin", "superadmin")(s.getCandidate))
 		r.Get("/api/candidates/{roll}/photo", s.requireRole("client", "admin", "superadmin")(s.getCandidatePhoto))
 		r.Get("/api/candidates/{roll}/fp-template", s.requireRole("client")(s.getCandidateFPTemplate))
+		r.Get("/api/candidates/{roll}/face-template", s.requireRole("client", "admin", "superadmin")(s.getCandidateFaceTemplate))
+		r.Post("/api/face-match", s.requireRole("client")(s.faceMatch))
 		r.Post("/api/verifications", s.requireRole("client")(s.createVerification))
 		r.Post("/api/verifications/{id}/artifacts", s.requireRole("client")(s.uploadArtifact))
 

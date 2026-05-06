@@ -1,0 +1,13 @@
+Package: luxand-service
+Version: 1.0.0
+Section: misc
+Priority: optional
+Architecture: amd64
+Depends: default-jre (>= 2:1.25) | openjdk-25-jre | temurin-25-jre
+Maintainer: Verification Portal <ops@example.com>
+Description: Server-side face matching daemon for the Verification Portal
+ Wraps Luxand FaceSDK 8.3 behind a localhost JSON API on port 8040.
+ Runs as a systemd unit on the central EC2 server. The portal backend
+ forwards captured webcam JPEGs through this service and stores the
+ 1:1 similarity score on the verification audit row. Operator laptops
+ do not run this service — face matching is centralized.

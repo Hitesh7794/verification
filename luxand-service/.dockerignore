@@ -1,0 +1,18 @@
+# Don't ship build outputs or local secrets into the image.
+target/
+dist/
+.env
+.env.local
+*.iml
+.idea/
+*.log
+
+# README / packaging-only files don't belong in the container.
+README.md
+build-deb.sh
+packaging/
+
+# Ignore the test tree — Maven will compile it but we skip tests in the
+# Dockerfile (mvn -DskipTests). Keeping it out of the build context
+# also makes the image build a few seconds faster.
+src/test/

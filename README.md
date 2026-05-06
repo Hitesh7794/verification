@@ -1,20 +1,33 @@
 # NEET Verification Portal
 
 A biometric verification portal for high-stakes examinations. Center
-operators verify candidate identity by capturing a live face photo and a
-live fingerprint, comparing both against pre-enrolled records on file.
+operators verify candidate identity by capturing a live face photo, a
+live fingerprint (and optionally iris as fallback), comparing each
+against pre-enrolled records on file.
 
-> **Status.** Fingerprint verification (1:1) is wired end-to-end against
-> the **MorFin Auth Linux Web SDK** (devices: MELO041 / MFS500 / MARC10).
-> A faithful **mock daemon** stands in for the real SDK during local dev,
-> so you can run and test the whole flow without USB hardware. Iris
-> capture (Marvis MIS100V2) and face matching (Luxand) layer on later —
-> their slots in the schema and frontend are already in place.
+> **Status (2026-05-05).**
+> - **Fingerprint 1:1 verification** — wired end-to-end against the
+>   **MorFin Auth Web SDK** (devices: MELO041 / MFS500 / MARC10).
+> - **Iris 1:1 verification** — wired end-to-end against the
+>   **Marvis Auth SDK** (device: MIS100V2). Used as automatic
+>   fallback when fingerprint match fails.
+> - **Cross-platform daemons** — the same vendor JARs run on
+>   **both Linux and Windows** (verified by reading the JAR contents:
+>   they bundle `linux/x86_64/*.so` and `win/x64/*.dll` and dispatch
+>   on `os.name` at runtime). No separate Windows SDK to chase.
+> - **Operator-laptop install bundles** — `client-bootstrap/{linux,
+>   windows}` ship a one-command installer per OS.
+> - **Mock daemons** stand in for the real SDKs during local dev, so
+>   the entire flow can be tested on macOS without USB hardware.
+> - **Pending:** Luxand face matching, EC2 server deploy.
 
-> **Architectural decisions, hardware-blocked unknowns, vendor questions
-> still open, and the OS-of-choice rationale all live in
-> [`CONTEXT.md`](./CONTEXT.md). Read it before making non-trivial
-> changes.**
+> **Read this first if you're new to the project:**
+> - [`CONTEXT.md`](./CONTEXT.md) — architectural decisions, vendor-blocked unknowns, the "why" behind every non-obvious choice.
+> - [`ISSUES.md`](./ISSUES.md) — the 5 open decisions for the tech lead.
+> - [`TECH_LEAD_QUESTIONS.md`](./TECH_LEAD_QUESTIONS.md) — longer Q&A version of the above.
+> - [`client-bootstrap/README.md`](./client-bootstrap/README.md) — operator-laptop install bundle internals.
+> - [`iris-service/README.md`](./iris-service/README.md) — Java service wrapping the Marvis SDK.
+> - [`IRIS_TEST_WINDOWS.md`](./IRIS_TEST_WINDOWS.md) — step-by-step guide for testing the MIS100V2 iris device on a Windows laptop.
 
 ---
 
@@ -23,18 +36,27 @@ live fingerprint, comparing both against pre-enrolled records on file.
 - **Three role-based portals** — client (center operator), admin
   (organization controller), superadmin (platform owner). Each has its own
   login page and scoped data view.
-- **Real candidate data** — on startup the backend walks the
-  `gndu27_enrollments_data_*` (or just `gndu27/`) directory, indexes every
-  enrolled candidate (roll → photo / fingerprint image / ISO template),
-  and **sniffs the template wire format** (FMR_V2005 / FMR_V2011 /
-  ANSI_V378) per record so the matcher always uses the right `TmpFormat`.
-- **Zero-config operator UX** — no device dropdown, no "init" button. The
-  daemon is polled silently; when a USB scanner is plugged in, a green dot
-  appears, the device is initialised in the background, and the operator
-  just clicks "Capture & match". Mid-shift unplug auto-recovers.
-- **Idempotent verification submit** — every attempt carries a UUID; a
-  network blip + retry returns the original row instead of double-recording.
+- **Real candidate data** — on startup the backend walks the bundled
+  candidate tree (`gndu27_enrollments_data_*` or `gndu27/`), indexes
+  every enrolled candidate (roll → photo / fingerprint image / ISO
+  template), and **sniffs the template wire format** (FMR_V2005 /
+  FMR_V2011 / ANSI_V378) per record so the matcher always sends the
+  right `TmpFormat`.
+- **Zero-config operator UX** — no device dropdown, no "init" button.
+  Both daemons are polled silently; when a USB scanner is plugged in,
+  a green dot appears, the device is initialised in the background,
+  and the operator just clicks **Capture & match**. Mid-shift unplug
+  auto-recovers.
+- **Iris fallback** — if fingerprint match fails, an inline card
+  offers iris-based verification using the Marvis MIS100V2 device
+  via the undocumented but bytecode-verified `MatchImage` API.
+- **Idempotent verification submit** — every attempt carries a UUID;
+  a network blip + retry returns the original row instead of
+  double-recording.
 - **Live dashboards** — admin and superadmin dashboards poll every 4 s.
+- **Cross-OS by construction** — frontend is browser-based, backend
+  is Go (cross-compiles), vendor daemon JARs are multi-platform
+  in a single artifact.
 - **Built for scale** — stateless JWT auth, indexed queries, in-memory
   candidate index, connection pooling. Schema is portable from SQLite
   (dev) to PostgreSQL (prod) with no code change.
@@ -44,42 +66,54 @@ live fingerprint, comparing both against pre-enrolled records on file.
 ## Project layout
 
 ```
-Verification_portal/
-├── backend/                       Go API (chi + SQLite + JWT)
+Portal-main/
+├── backend/                       Go API + dev mocks
 │   ├── cmd/
-│   │   ├── server/                Main API server
-│   │   └── morfin-mock/           Local stand-in for the MorFin daemon
+│   │   ├── server/                Main API server (:8080)
+│   │   ├── morfin-mock/           Fingerprint daemon stand-in (:8030)
+│   │   └── iris-mock/             Iris service stand-in (:8031)
 │   └── internal/
-│       ├── api/                   HTTP handlers, candidate + verification + admin
+│       ├── api/                   HTTP handlers
 │       ├── auth/                  JWT issue / parse
 │       ├── config/                Env-based config + threshold defaults
 │       ├── data/                  Filesystem index + template-format detection
 │       └── db/                    SQLite open + versioned migrations + seed
 │
 ├── frontend/                      React 18 + Vite + Tailwind v4 + recharts
-│   ├── index.html
-│   ├── vite.config.js             Proxies /api → :8080
 │   └── src/
 │       ├── components/
 │       │   ├── AppShell.jsx
 │       │   ├── LoginShell.jsx
 │       │   ├── FingerprintCapture.jsx   ← drives the MorFin daemon
+│       │   ├── IrisCapture.jsx          ← drives the iris service
 │       │   └── ui.jsx
 │       ├── lib/
 │       │   ├── api.js                   ← portal API client
 │       │   ├── auth.jsx
 │       │   ├── morfin.js                ← MorFin daemon client
+│       │   ├── iris.js                  ← iris service client
 │       │   └── useDeviceStatus.js       ← polling state machine
-│       └── pages/
-│           ├── Landing.jsx
-│           ├── client/                  Center operator portal
-│           ├── admin/                   Organization admin portal
-│           └── superadmin/              Platform-wide portal
+│       └── pages/                       Landing / client / admin / superadmin
 │
-└── README.md
+├── iris-service/                  Java + Javalin wrapper around Marvis SDK
+│   ├── src/main/java/.../         IrisProvider interface, Mock + Marvis impls
+│   ├── packaging/debian/          .deb files (control, postinst, systemd unit)
+│   ├── pom.xml                    Maven build
+│   └── build-deb.sh               Linux-only .deb packager
+│
+├── client-bootstrap/              Operator-laptop install bundles
+│   ├── linux/                     verification-portal-client_*_linux.tar.gz
+│   │                              (install.sh + 3 .debs + meta-deb)
+│   └── windows/                   VerificationPortalClient-*-windows.zip
+│                                  (install.ps1 + JARs + nssm.exe + certs)
+│
+├── CONTEXT.md                     Architectural decisions + open issues
+├── ISSUES.md                      5 short blockers for tech lead
+├── TECH_LEAD_QUESTIONS.md         Longer Q&A for tech lead
+└── README.md                      (this file)
 ```
 
-The bundled candidate data sits alongside `Verification_portal/`, e.g. at
+The bundled candidate data sits alongside `Portal-main/`, e.g. at
 `<parent>/gndu27/22 Mar'26/<center>/{photo,fps,iso}/<roll>.{jpg,iso}`.
 The backend probes a few common locations and picks the first one that
 actually contains the photo/fps/iso layout.
@@ -105,63 +139,68 @@ organization; the superadmin sees everything.
 
 - **Go 1.22+** — https://go.dev/dl/
 - **Node.js 18+** and npm — https://nodejs.org/
+- (Production / operator laptops only) **Java 11+** — to run the
+  vendor daemons. Not needed for local dev on macOS.
 
 > No C compiler required. The backend uses `modernc.org/sqlite`, a pure-Go
 > SQLite driver, so there is no CGO / gcc dependency.
 
 ---
 
-## How to run (local dev — three terminals)
+## How to run (local dev — four terminals + optional Docker for face)
 
-You need three processes:
+You need four processes:
 
-1. **MorFin mock daemon** (impersonates the operator-side SDK)
-2. **Backend API** (the central server)
-3. **Frontend dev server** (Vite)
+1. **MorFin mock daemon** — fingerprint daemon stand-in
+2. **Iris mock daemon** — iris service stand-in
+3. **Backend API** — central server
+4. **Frontend dev server** — Vite
 
-### Terminal 1 — MorFin mock daemon
-
-```bash
-cd backend
-go run ./cmd/morfin-mock
-```
-
-Listens on `:8030` (the same port the real MorFin daemon binds to). The
-frontend's MorFin client points at this by default. When real hardware is
-available, install the vendor `.deb` instead and the frontend code stays
-unchanged.
-
-The mock has a `/control` endpoint to flip failure modes mid-session:
+For the **face-match flow** (Luxand), there's a fifth piece: the Java
+`luxand-service`. On macOS this runs in a Linux Docker container because
+the vendor `libfsdk.so` is x86_64-only. The backend reaches it on
+`localhost:8040`. See [`luxand-service/README.md`](./luxand-service/README.md)
+for the full Docker setup; quick path:
 
 ```bash
-# pretend the device just got unplugged
-curl -X POST http://localhost:8030/control \
-  -H 'Content-Type: application/json' \
-  -d '{"deviceConnected":false}'
-
-# inject a non-match score for the next match call
-curl -X POST http://localhost:8030/control \
-  -H 'Content-Type: application/json' \
-  -d '{"matchSucceeds":false,"matchScore":22}'
-
-# fail the next 3 calls with a generic error
-curl -X POST http://localhost:8030/control \
-  -H 'Content-Type: application/json' \
-  -d '{"failNextN":3}'
-
-# inspect current state
-curl http://localhost:8030/control
+cd luxand-service
+cp .env.example .env       # edit, paste FSDK_LICENSE_KEY
+./dev-up.sh                # builds image + starts container, ~3 min first time
 ```
 
-### Terminal 2 — Backend API
+If you don't run the luxand container, the four terminals below still
+work — face matching simply returns a 503 in the UI, but every other
+flow (fingerprint, iris fallback, dashboards, idempotency, etc.)
+operates normally.
+
+All commands below assume you're at the repo root.
 
 ```bash
-cd backend
-go mod tidy        # one-time, downloads dependencies
-go run ./cmd/server
+# Terminal 1 — fingerprint mock (replaces vendor daemon on :8030)
+cd backend && go run ./cmd/morfin-mock
 ```
 
-You should see:
+```bash
+# Terminal 2 — iris mock (replaces our Java service on :8031)
+cd backend && go run ./cmd/iris-mock
+```
+
+```bash
+# Terminal 3 — backend API (:8080)
+cd backend && go mod tidy   # one-time, downloads dependencies
+cd backend && go run ./cmd/server
+```
+
+```bash
+# Terminal 4 — frontend (:5173)
+cd frontend && npm install   # one-time, ~10 s
+cd frontend && npm run dev
+```
+
+Open **http://localhost:5173/** — pick a portal, sign in with one of
+the demo accounts above.
+
+### What you'll see in the backend log
 
 ```
 loading candidate index from /Users/.../gndu27 ...
@@ -169,18 +208,10 @@ indexed 2847 candidates across 11 centers
 listening on :8080
 ```
 
-On first launch the backend:
-
-1. Creates `verification.db` (SQLite, WAL mode).
-2. Runs the **versioned migration set** (`schema_migrations` table tracks
-   what's applied, so re-running is a no-op).
-3. Walks the candidate data tree and builds the in-memory index, sniffing
-   the wire format of every `.iso` file.
-4. Syncs orgs / centers / demo users.
-5. Starts serving on `:8080`.
-
-The seed and migrations are idempotent — re-running the server is safe.
-To start completely fresh, delete `backend/verification.db*` before launch.
+On first launch the backend creates `verification.db` (SQLite, WAL),
+runs the versioned migrations, syncs orgs/centers/users, and starts
+serving. Re-running is a no-op (migrations + seeds are idempotent).
+To start completely fresh, delete `backend/verification.db*` first.
 
 #### Environment overrides
 
@@ -190,75 +221,87 @@ To start completely fresh, delete `backend/verification.db*` before launch.
 | `DB_PATH`               | `verification.db`                      | SQLite file path                           |
 | `DATA_DIR`              | auto-detected sample data folder       | Candidate data root                        |
 | `JWT_SECRET`            | `dev-only-secret-change-me`            | Token signing secret                       |
-| `FP_MATCH_THRESHOLD`    | `140`                                  | Default fingerprint match score threshold (matches vendor default) |
-| `IRIS_MATCH_THRESHOLD`  | `0.6`                                  | Default iris score threshold (per eye)     |
-| `FACE_MATCH_THRESHOLD`  | `0.7`                                  | Default Luxand face score threshold        |
+| `FP_MATCH_THRESHOLD`    | `140`                                  | Fingerprint match score threshold (matches the vendor's own `DEFAULT_MATCH_THRESHOLD = 140` constant verified in the daemon JAR's bytecode) |
+| `IRIS_MATCH_THRESHOLD`  | `0.6`                                  | Iris score threshold (per eye)             |
+| `FACE_MATCH_THRESHOLD`  | `0.7`                                  | Luxand face score threshold (placeholder)  |
 | `ARTIFACT_RETENTION`    | `none`                                 | `none` / `metadata` / `full`               |
 | `ARTIFACT_DIR`          | `artifacts`                            | Where captured bytes go when retention=full |
 
-### Terminal 3 — Frontend
-
-```bash
-cd frontend
-npm install        # one-time, ~10s
-npm run dev
-```
-
-```
-VITE v5.x  ready in xxx ms
-➜  Local:   http://localhost:5173/
-```
-
-Vite proxies `/api/*` to the backend on `:8080`. The MorFin client talks
-directly to `localhost:8030` (i.e. the mock daemon, or the real one once
-it's installed on the operator's PC).
-
-### Open the app
-
-http://localhost:5173/ — pick a portal, sign in with one of the demo
-accounts above.
-
 ---
 
-## End-to-end verification flow (with the mock)
+## End-to-end verification flow (with the mocks)
 
 1. **Sign in as `client`** at `http://localhost:5173/client/login`.
-2. **Enter a roll number** — try `10001`. The candidate's photo, center,
-   and on-file template flags load instantly. The fingerprint gallery
-   template is fetched in the background.
-3. **Capture face** — click **Capture photo**. (Luxand integration will
-   replace the snapshot with a template extraction later; the layout
-   already accommodates it.)
-4. **Fingerprint** — the green status banner says **Device ready** because
-   the mock claims a `MFS500` is plugged in. Click **Capture & match**.
-   The mock returns a successful 1:1 match against the real FMR_V2005
-   gallery template, plus quality, NFIQ and liveness fields. Score and
-   threshold are shown inline.
-5. **Decide** — click **Verified** or **Not verified**. The submit body
-   carries the full audit trail (device serial/model, scores, threshold,
-   `via=fingerprint|manual`, `decision_ms`, an idempotency key).
-6. **Open the admin tab** in another window → `/admin/login` as `admin`.
-   Within ~4 s the dashboard ticks up.
+2. **Enter a roll number** — try `10001`. The candidate's photo,
+   center, on-file template flags load instantly. The fingerprint
+   gallery template is fetched in the background.
+3. **Capture face** — click **Capture photo**. (Luxand integration
+   will replace the snapshot with a template extraction later.)
+4. **Fingerprint** — green status banner says **Device ready** because
+   the mock claims an `MFS500` is plugged in. Click **Capture & match**.
+   ~900 ms later: "Match · score 74 / threshold 140" plus quality, NFIQ
+   and liveness shown inline.
+5. **Decide** — click **Verified** or **Not verified**. The submit
+   carries the full audit trail (device serial/model, scores,
+   threshold, `via=fingerprint|iris|manual`, `decision_ms`,
+   idempotency key).
+6. **Open the admin tab** in another window → `/admin/login` as
+   `admin/admin123`. Within ~4 s the dashboard ticks up.
 
-### Test failure modes
+### Iris fallback path (when fingerprint fails)
 
-While the verification is on the fingerprint step, in another terminal:
+Force the fingerprint mock to fail before clicking **Capture & match**:
 
 ```bash
-# pretend the device got unplugged
+curl -X POST http://localhost:8030/control \
+  -H 'Content-Type: application/json' \
+  -d '{"matchSucceeds":false,"matchScore":18}'
+```
+
+In the browser:
+1. Click **Capture & match** → red "No match · score 18 / threshold 140".
+2. New card appears: "Fingerprint did not match. You can try iris as a fallback." → click **Try iris instead**.
+3. Iris card auto-detects the (mock) iris device → click **Capture iris** → ~1.5 s → both eyes captured. Sample data has no enrolled iris template, so it's audit-only with quality scores.
+4. Decide. Submit body now carries `via=iris` (if scored) or `via=manual`, plus iris quality scores.
+
+### Test failure modes mid-session (no restart)
+
+```bash
+# Pretend the FP device just got unplugged
 curl -X POST http://localhost:8030/control -d '{"deviceConnected":false}' -H 'Content-Type: application/json'
+
+# Plug it back in
+curl -X POST http://localhost:8030/control -d '{"deviceConnected":true}' -H 'Content-Type: application/json'
+
+# Iris device unplugged
+curl -X POST http://localhost:8031/control -d '{"deviceConnected":false}' -H 'Content-Type: application/json'
+
+# Spoof detected on next capture
+curl -X POST http://localhost:8030/control -d '{"liveness":0}' -H 'Content-Type: application/json'
+
+# Fail the next 3 calls with a generic error
+curl -X POST http://localhost:8030/control -d '{"failNextN":3}' -H 'Content-Type: application/json'
+
+# Reset to defaults
+curl -X POST http://localhost:8030/control -d '{"deviceConnected":true,"matchSucceeds":true,"matchScore":140,"liveness":1}' -H 'Content-Type: application/json'
+curl -X POST http://localhost:8031/control -d '{"deviceConnected":true,"matchSucceeds":true}' -H 'Content-Type: application/json'
 ```
 
-The status banner flips amber to "Plug in the fingerprint device". Plug
-back in (`{"deviceConnected":true}`) — it auto-recovers without a reload.
+Status banner reflects each change within ~2 s (next poll tick) — no
+reload required.
 
-```bash
-# force a non-match
-curl -X POST http://localhost:8030/control -d '{"matchSucceeds":false,"matchScore":22}' -H 'Content-Type: application/json'
+#### Alternative: DevTools console (no extra terminal)
+
+If you don't want a 5th terminal open, do the same from the browser's
+DevTools console (F12):
+
+```javascript
+fetch('http://localhost:8030/control', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({ deviceConnected: false })
+})
 ```
-
-Click "Capture & match" — the result panel shows "No match · score 22 /
-threshold 140" in red.
 
 ---
 
@@ -266,38 +309,91 @@ threshold 140" in red.
 
 ```
 ┌──────────────────────────────┐  HTTPS    ┌──────────────────────────────┐
-│  Operator laptop (Linux)     │──────────▶│  Backend API (Go)            │
-│                              │           │  - candidate index           │
-│  ┌────────────────────────┐  │           │  - JWT auth                  │
-│  │ Browser (React portal) │──┼─ HTTP ─▶  │  - verifications + audit log │
-│  └─────────┬──────────────┘  │           │  - SQLite (dev) / Postgres   │
-│            │                 │           └──────────────────────────────┘
-│            │ POST /morfinauth/*  (localhost:8030)
-│            ▼
-│  ┌────────────────────────┐  │
-│  │ MorFin daemon (.deb)   │  │
-│  │   - real on hardware   │  │
-│  │   - mock on dev box    │  │
-│  └────────────────────────┘  │
-│            │ USB             │
-│            ▼                 │
-│  Fingerprint reader          │
+│  Operator laptop             │──────────▶│  Backend API (Go)            │
+│  (Linux 18+ or Windows 10/11)│           │  - candidate index           │
+│                              │           │  - JWT auth                  │
+│  ┌────────────────────────┐  │           │  - verifications + audit log │
+│  │ Browser (React portal) │──┼─ HTTP ─▶  │  - SQLite (dev) / Postgres   │
+│  └────┬──────────────┬────┘  │           └──────────────────────────────┘
+│       │              │       │
+│  POST /morfinauth/   POST /iris/    (both on localhost)
+│       │ :8030        │ :8031
+│       ▼              ▼
+│  ┌────────────┐  ┌────────────┐
+│  │ MorFin     │  │ Mantra iris│  ← Both ship as cross-platform JARs.
+│  │ daemon     │  │ service    │  ← Linux .so + Windows .dll bundled
+│  └─────┬──────┘  └─────┬──────┘     inside, dispatched at runtime.
+│        │ USB           │ USB
+│        ▼               ▼
+│   FP reader        Iris device
 └──────────────────────────────┘
 ```
 
-- **Capture and 1:1 match happen on the operator's laptop**, not on the
-  central server. The portal backend never touches the device.
-- **The central server's job** is candidate enrollment lookup, gallery
-  template service, and decision recording.
-- **Stateless** — JWTs let any number of API instances sit behind a load
-  balancer.
+- **Capture and 1:1 match happen on the operator's laptop**, not on
+  the central server. The portal backend never touches a device.
+- **The central server's job** is candidate enrollment lookup,
+  gallery template service, and decision recording.
+- **Stateless** — JWTs let any number of API instances sit behind a
+  load balancer.
+
+### Cross-OS support — same code, different installer
+
+The web app, backend, and dev mocks are OS-agnostic. The vendor
+daemons are also OS-agnostic at the JAR level: a single
+`morfinauth-client-service-1.0.0.0.jar` bundles
+`linux/{x86,x86_64}/libMorfin_Auth.so` AND `win/{x86,x64}/Morfin_Auth.dll`
+inside, dispatching on `os.name` at runtime. `Marvis_Auth.jar` has the
+same shape.
+
+The only OS-specific work is the **install glue**:
+
+| Concern             | Linux                                             | Windows                                                |
+|---------------------|---------------------------------------------------|--------------------------------------------------------|
+| Service registration | `systemd` unit                                    | `nssm.exe` wraps `java -jar` as a Windows service       |
+| Cert trust          | `update-ca-certificates` + Firefox/Chrome NSS DBs | `Import-Certificate -CertStoreLocation Cert:\LocalMachine\Root` |
+| Browser homepage    | Per-browser Policies JSON                         | `HKLM:\SOFTWARE\Policies\<Vendor>\<Browser>` registry  |
+| Launcher            | `.desktop` file in `/usr/share/applications/`     | `.url` shortcut on Desktop + Start Menu                |
+
+Both lanes ship as a single-command bundle in `client-bootstrap/`.
+
+---
+
+## Operator-laptop install (production)
+
+Once a real fingerprint / iris device is in hand and the EC2 server
+is deployed, IT runs **one command per laptop**:
+
+### Linux (Ubuntu 18.04+)
+
+```bash
+tar xzf verification-portal-client_*_linux.tar.gz
+cd verification-portal-client_*_linux/
+sudo ./install.sh https://portal.example.com
+```
+
+### Windows 10/11
+
+```powershell
+# Elevated PowerShell
+Expand-Archive VerificationPortalClient-*-windows.zip .
+cd VerificationPortalClient-*-windows
+.\install.ps1 -PortalUrl https://portal.example.com
+```
+
+Both lanes leave the laptop with: vendor daemons running on `:8030`
+and `:8031` as auto-start services, vendor TLS certs trusted, browser
+homepage pinned, desktop launcher created. The operator double-clicks
+the launcher and is on the login page.
+
+Build the bundles on a Linux box (the EC2 will do):
+[`client-bootstrap/README.md`](./client-bootstrap/README.md).
 
 ---
 
 ## Schema
 
-`backend/internal/db/migrate.go` is a versioned migration runner. Three
-migrations to date:
+`backend/internal/db/migrate.go` is a versioned migration runner.
+Three migrations to date:
 
 1. `initial_schema` — orgs / centers / users / verifications + indexes
 2. `biometric_score_fields` — adds device identity, fingerprint scores
@@ -336,37 +432,28 @@ GET    /api/super/stats         /organizations  /top-centers
 ## Tests
 
 ```bash
-cd backend
-go test ./...
+cd backend && go test ./...           # 23+ Go tests
+cd iris-service && mvn test           # 7 JUnit tests for the iris service
 ```
 
-Currently 18 tests across the migration runner, format detector, the
-mock daemon, and the candidate / verification / artifact handlers.
+Coverage: migration runner, format detector, both mock daemons,
+candidate / verification / artifact handlers, iris HTTP layer, mock
+provider behaviour. Real-SDK integration is out of scope for unit
+tests — covered by a separate hardware run on the operator laptop.
 
 ---
 
 ## What's pending
 
-1. **Iris capture & 1:1 match** — wrap the Marvis SDK in a `.deb` mirroring
-   the MorFin pattern, expose `/iris/match`, wire as a fallback when
-   fingerprint match fails.
-2. **Luxand face 1:1** — adds a third score channel; schema slot already
-   exists (`face_match_score`).
-3. **Operator-laptop bootstrap** — `client-bootstrap/{linux,windows}`
-   builds platform-specific install bundles. Linux ships
-   `verification-portal-client_*_linux.tar.gz` (an `install.sh` that
-   `apt-get install`s the vendor MorFin .deb + our iris .deb + a
-   meta-package that pins the browser homepage and adds a desktop
-   launcher); Windows ships `VerificationPortalClient-*-windows.zip`
-   (an `install.ps1` that registers both JARs as Windows Services via
-   `nssm`, imports the vendor TLS certs into `Cert:\LocalMachine\Root`,
-   pins Chrome/Edge homepage in `HKLM` policy, and drops Start Menu +
-   Desktop shortcuts). Same JARs run on both OSes; the bundle is what
-   differs. See `client-bootstrap/README.md`.
-4. **Server deploy** — Postgres + nginx + TLS on the EC2 box. Needs a DNS
-   name pointed at the EIP.
+1. **Luxand face 1:1** — adds a third score channel; schema slot
+   already exists (`face_match_score`), frontend webcam capture
+   already runs. Just needs the Luxand SDK plugged in server-side.
+2. **EC2 server deploy** — Postgres + nginx + TLS + systemd unit.
+   Needs a DNS name pointed at the EIP for Let's Encrypt and webcam
+   HTTPS.
 
-See the in-repo task tracker for the full plan.
+See [`ISSUES.md`](./ISSUES.md) for the 5 specific blockers needing
+tech-lead decisions, and the in-repo task tracker for the full plan.
 
 ---
 
@@ -376,8 +463,8 @@ See the in-repo task tracker for the full plan.
 |------------------------------------------|------------------------------------------------------------------------------------------------------------------------------|
 | `go: command not found`                  | Install Go from https://go.dev/dl/ and open a fresh terminal.                                                                |
 | Login fails / 401                        | Delete `backend/verification.db*` and restart the backend to re-seed users.                                                  |
-| Status banner says "Device service not running" | Make sure the mock daemon is running (`go run ./cmd/morfin-mock`) — or the real MorFin daemon if you're on operator hardware. |
-| Status stays "No device plugged in"      | The mock starts with `deviceConnected=true`. If you toggled it off via `/control`, toggle it back on.                        |
+| Status banner says "Device service not running" | The relevant mock daemon isn't running. `cd backend && go run ./cmd/morfin-mock` (or `./cmd/iris-mock`).                     |
+| Status stays "No device plugged in"      | The mocks start with `deviceConnected=true`. If you toggled it off via `/control`, toggle it back on.                        |
 | `Unable to access webcam` in client UI   | Make sure you're on `http://localhost:5173` (not an IP); browsers block `getUserMedia` on plain HTTP from non-localhost hosts. |
 | Port 8080 already in use                 | Either `lsof -i :8080 -t \| xargs kill -9` to free the port, or change the listen address with **`HTTP_ADDR=:8081 go run ./cmd/server`** (the env var is `HTTP_ADDR`, not `PORT`). If you change the port, also update `frontend/vite.config.js` proxy. |
 | Stale `go run` server keeps reappearing  | Use `lsof -i :8030 -i :8031 -i :8080 -i :5173 -t \| xargs kill -9` to flush all four dev ports at once. |

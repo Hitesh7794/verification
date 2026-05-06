@@ -14,6 +14,7 @@ import {
 } from '../../components/ui.jsx'
 import FingerprintCapture from '../../components/FingerprintCapture.jsx'
 import IrisCapture from '../../components/IrisCapture.jsx'
+import FaceMatchPanel from '../../components/FaceMatchPanel.jsx'
 import { api, fetchFPTemplate, fetchPhotoBlob } from '../../lib/api.js'
 
 // Generate an idempotency key per verification attempt so a network retry
@@ -138,6 +139,7 @@ export default function ClientDashboard() {
   const [gallery, setGallery] = useState(null) // {template_b64, format}
   const [lookupErr, setLookupErr] = useState('')
   const [snap, setSnap] = useState(null)
+  const [faceResult, setFaceResult] = useState(null) // result from FaceMatchPanel
   const [fpResult, setFpResult] = useState(null) // result from FingerprintCapture
   const [irisResult, setIrisResult] = useState(null) // result from IrisCapture (fallback)
   const [showIris, setShowIris] = useState(false) // operator opted in to iris fallback
@@ -185,23 +187,29 @@ export default function ClientDashboard() {
         ? Date.now() - verificationStartedAt
         : null
 
-      // Decide which channel to attribute the decision to. Priority:
-      //   1. iris matched → via=iris   (fallback succeeded)
-      //   2. fp matched   → via=fingerprint
-      //   3. fp failed but operator clicked Verified → via=manual
-      //   4. no biometric ran           → via=manual
-      const irisMatched = !!(irisResult && irisResult.ok === true)
+      // Decide which channel to attribute the decision to. Priority order
+      // is "the strongest biometric that actually passed":
+      //   1. fingerprint matched   → via=fingerprint  (highest assurance)
+      //   2. iris matched          → via=iris         (fallback succeeded)
+      //   3. face matched          → via=face         (lower assurance, but better than nothing)
+      //   4. nothing matched but operator clicked Verified → via=manual
+      // Face match alone isn't enough for "verified" without an additional
+      // biometric in the operator workflow, but it lands on the audit row
+      // either way so an investigator can reconstruct what happened.
       const fpMatched = !!(fpResult && fpResult.ok === true)
+      const irisMatched = !!(irisResult && irisResult.ok === true)
+      const faceMatched = !!(faceResult && faceResult.ok === true)
       let via = 'manual'
       if (status === 'verified') {
-        if (irisMatched) via = 'iris'
-        else if (fpMatched) via = 'fingerprint'
+        if (fpMatched) via = 'fingerprint'
+        else if (irisMatched) via = 'iris'
+        else if (faceMatched) via = 'face'
       }
 
       const body = {
         roll_no: candidate.roll_no,
         status,
-        face_match: status === 'verified',
+        face_match: faceMatched,
         fp_match: fpMatched,
         via,
         match_threshold: fpResult?.threshold ?? null,
@@ -228,6 +236,9 @@ export default function ClientDashboard() {
           iris_right_quality: irisResult.rightQuality,
         })
       }
+      if (faceResult) {
+        body.face_match_score = faceResult.score
+      }
 
       await api('/verifications', { method: 'POST', body })
       setResult(status)
@@ -246,6 +257,7 @@ export default function ClientDashboard() {
     setPhotoBlob(null)
     setGallery(null)
     setSnap(null)
+    setFaceResult(null)
     setFpResult(null)
     setIrisResult(null)
     setShowIris(false)
@@ -357,13 +369,15 @@ export default function ClientDashboard() {
           <div className="lg:col-span-2 space-y-6">
             <Card>
               <CardHeader>
-                <CardTitle>Step 2 — Live face capture</CardTitle>
+                <CardTitle>Step 2 — Live face capture &amp; match</CardTitle>
               </CardHeader>
               <CardBody>
-                <WebcamCapture
-                  onCapture={(d) => {
-                    setSnap(d)
-                    if (d && step < 2) setStep(2)
+                <FaceMatchPanel
+                  rollNo={candidate.roll_no}
+                  onResult={(r) => {
+                    setFaceResult(r)
+                    setSnap(r?.snapshot ?? null)
+                    if (step < 2) setStep(2)
                   }}
                 />
               </CardBody>

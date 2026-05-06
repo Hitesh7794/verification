@@ -1,0 +1,24 @@
+[Unit]
+Description=luxand-service (Luxand FaceSDK 8.3 wrapper, 127.0.0.1:8040)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/usr/local/luxand-service
+# License key is loaded from /etc/luxand-service/luxand.env which is
+# created by the postinst from a bundled file. The unit reads it via
+# EnvironmentFile so the secret never lives on the systemd command line.
+EnvironmentFile=/etc/luxand-service/luxand.env
+Environment=FACE_PORT=8040
+Environment=FACE_MATCH_FAR=0.0001
+# JNA looks here for libfsdk.so. We ship the .so to a pinned location.
+Environment=jna.library.path=/usr/local/luxand-service/native
+ExecStart=/usr/bin/java -Djna.library.path=/usr/local/luxand-service/native \
+                       -cp /usr/local/luxand-service/luxand-service.jar:/usr/local/luxand-service/FaceSDK.jar:/usr/local/luxand-service/jna-5.18.1.jar \
+                       com.veni.luxandservice.Main
+Restart=on-failure
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target

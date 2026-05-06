@@ -1,0 +1,24 @@
+#!/bin/sh
+# postinst: drop a placeholder license env file (operator must edit) and
+# enable + start the service.
+set -e
+
+ENV_DIR=/etc/luxand-service
+ENV_FILE=$ENV_DIR/luxand.env
+
+if [ ! -f "$ENV_FILE" ]; then
+    mkdir -p "$ENV_DIR"
+    cat > "$ENV_FILE" <<'EOF'
+# Edit FSDK_LICENSE_KEY then: systemctl restart luxand-service
+FSDK_LICENSE_KEY=
+EOF
+    chmod 600 "$ENV_FILE"
+    echo "→ Created $ENV_FILE — populate FSDK_LICENSE_KEY then restart the service."
+fi
+
+systemctl daemon-reload                 || true
+systemctl enable  luxand-service.service || true
+systemctl restart luxand-service.service || true
+
+echo "✓ luxand-service installed. Listening on 127.0.0.1:8040."
+exit 0

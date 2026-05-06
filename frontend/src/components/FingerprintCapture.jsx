@@ -119,9 +119,43 @@ export default function FingerprintCapture({
             Recapture
           </Button>
         ) : (
-          <Button onClick={onCapture} disabled={!ready || busy}>
-            {busy ? 'Capturing…' : 'Capture & match'}
-          </Button>
+          <>
+            <Button onClick={onCapture} disabled={!ready || busy}>
+              {busy ? 'Capturing…' : 'Capture & match'}
+            </Button>
+            {/* Skip path: when the FP service is down, no device is plugged
+                in, or the SDK errors at startup, the operator otherwise
+                gets stuck at this step. The skip emits a "no biometric
+                attempted" result so the dashboard advances and the iris
+                fallback / manual decision flow becomes reachable. */}
+            {(status === Status.ServiceDown
+                || status === Status.NoDevice
+                || status === Status.Error) && (
+              <Button
+                variant="secondary"
+                onClick={() => {
+                  const out = {
+                    ok: false,
+                    rawSdkResponse: null,
+                    deviceSerial: '',
+                    deviceModel: '',
+                    templateFormat: galleryFormat,
+                    quality: null,
+                    nfiq: null,
+                    liveness: null,
+                    score: 0,
+                    threshold: matchThreshold,
+                    bitmapBase64: null,
+                    skipped: true,
+                  }
+                  setResult(out)
+                  onResult?.(out)
+                }}
+              >
+                Skip fingerprint step
+              </Button>
+            )}
+          </>
         )}
       </div>
     </div>

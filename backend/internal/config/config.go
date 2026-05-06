@@ -33,6 +33,12 @@ type Config struct {
 	//   "full"     — store bytes under ArtifactDir
 	ArtifactRetention string
 	ArtifactDir       string
+
+	// Luxand face-matching service. The portal backend forwards captured
+	// webcam JPEGs to this service. Loopback-only by default; the service
+	// only accepts traffic from the backend itself.
+	LuxandBase      string // base URL, e.g. http://127.0.0.1:8040/face/
+	FaceTemplateDir string // disk cache for extracted gallery face templates
 }
 
 func Load() Config {
@@ -46,6 +52,8 @@ func Load() Config {
 		FaceMatchThresholdDefault: envFloat("FACE_MATCH_THRESHOLD", 0.7),
 		ArtifactRetention:         envOr("ARTIFACT_RETENTION", "none"),
 		ArtifactDir:               envOr("ARTIFACT_DIR", "artifacts"),
+		LuxandBase:                envOr("LUXAND_BASE", "http://127.0.0.1:8040/face/"),
+		FaceTemplateDir:           envOr("FACE_TEMPLATE_DIR", "face_templates"),
 	}
 }
 

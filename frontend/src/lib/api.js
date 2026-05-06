@@ -48,3 +48,16 @@ export async function fetchPhotoBlob(roll) {
 export async function fetchFPTemplate(roll) {
   return api(`/candidates/${encodeURIComponent(roll)}/fp-template`)
 }
+
+// Posts a captured webcam JPEG (data URL or raw base64) to the backend's
+// face-match orchestrator. Backend looks up the gallery template,
+// forwards both to luxand-service, returns the score.
+//
+// Returns {face_found, score, threshold, status, roll_no} or throws on
+// transport / SDK error. The caller surfaces the error in the UI.
+export async function postFaceMatch(roll, dataURLOrBase64) {
+  return api('/face-match', {
+    method: 'POST',
+    body: { roll_no: roll, image_b64: dataURLOrBase64 },
+  })
+}
