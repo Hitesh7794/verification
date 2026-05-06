@@ -68,10 +68,26 @@ chat history. Their support typically responds within a business day.
 ## What this does NOT block
 
 - **Linux operator laptops** — same JAR works there (already tested).
+- **Windows operator laptops via WSL2 + usbipd** — see workaround below.
 - **Face matching** (Luxand) — completely independent, works server-side.
 - **Fingerprint** (MorFin) — uses a different vendor SDK, unaffected.
 - **All the rest of the portal** — backend, frontend, schema, install
   bundles, dashboards. All complete and tested.
+
+## Windows workaround — WSL2 + usbipd-win
+
+Implemented in [`client-bootstrap/windows/`](./client-bootstrap/windows/).
+The Windows installer (`install.ps1`) provisions WSL2 Ubuntu, installs
+`mantra-iris-service.deb` inside it (which uses the working Linux `.so`),
+and uses Microsoft's [`usbipd-win`](https://github.com/dorssel/usbipd-win)
+to pass the MIS100V2 USB device through to WSL. The browser still talks
+to `localhost:8031` — WSL2's localhost forwarding makes the routing
+transparent.
+
+When Mantra ships a corrected Windows DLL, switching back to a
+native-Windows iris service is a one-flag change in `install.ps1`:
+re-register the iris JAR via `nssm` like the MorFin daemon, and the
+WSL2 path can be retired.
 
 ## Status
 

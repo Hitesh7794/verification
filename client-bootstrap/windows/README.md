@@ -1,55 +1,92 @@
 # `client-bootstrap/windows/`
 
-Builds the operator-laptop install bundle for Windows 10 / 11.
+Builds the operator-laptop install bundle for **Windows 10 (build 19041+) / Windows 11**.
 
-## How the Windows side works
+## Why this is more involved than the Linux bundle
 
-The vendor's `MorfinAuthClientService` and our `mantra-iris-service` are
-both **plain Java JARs**. The Linux `.deb` ships them with a systemd
-unit; on Windows we register the same JARs as Windows Services using
-[`nssm`](https://nssm.cc/) (the Non-Sucking Service Manager). Same JAR
-on both OSes — the JVM loads `linux/x86_64/*.so` or `win/x64/*.dll`
-from inside the JAR depending on `os.name`.
+The vendor MorFin daemon JAR ships native Windows DLLs that work fine —
+its fingerprint scanner integration runs natively on Windows. But the
+Marvis (iris) JAR in the same package ships a **broken Windows DLL**:
+its JNI callback signatures don't match the Java classes in the same
+JAR (verified by bytecode inspection, see [`IRIS_VENDOR_ISSUE.md`](../../IRIS_VENDOR_ISSUE.md)).
+The Linux `.so` files in the same JAR work correctly.
 
-| Concern        | Linux                                    | Windows |
-|----------------|------------------------------------------|---------|
-| Runtime        | systemd unit                             | Windows Service via `nssm` |
-| Cert trust     | `update-ca-certificates` + per-browser NSS DB | `Cert:\LocalMachine\Root` (single store, all browsers honour it) |
-| Homepage pin   | `/etc/opt/chrome/policies/managed/*.json` | `HKLM:\SOFTWARE\Policies\{Google\Chrome,Microsoft\Edge}` |
-| Launcher       | `.desktop` + `xdg-open`                  | `.url` shortcut on Desktop + Start Menu |
+Rather than wait on a vendor fix, we **run the iris service inside WSL2
+Ubuntu** on the operator's Windows laptop, with the iris USB device
+passed through via Microsoft's `usbipd-win`. The browser still talks to
+`localhost:8031` — WSL2's localhost forwarding makes the routing
+transparent.
+
+```
+┌─ Windows host ────────────────────────────────────────────────────┐
+│                                                                    │
+│  Browser ─→ localhost:8030  (MorFin daemon, native Win service)   │
+│         ─→ localhost:8031  (iris service inside WSL2)             │
+│                                  │                                │
+│  ┌── WSL2 (Ubuntu-22.04) ────────▼──────────────────────────────┐ │
+│  │  systemd → mantra-iris-service.service → :8031              │ │
+│  │  Marvis_Auth.jar uses linux/x86_64/*.so (working bytes)     │ │
+│  │       ↑                                                      │ │
+│  │       │ /dev/bus/usb/...    (USB passthrough)               │ │
+│  └───────│──────────────────────────────────────────────────────┘ │
+│          │                                                         │
+│  ┌── usbipd-win ─┴──────────────────────┐                         │
+│  │  Routes vendor 2c0f:2100 to WSL2    │                         │
+│  │  (auto-reattaches at boot via       │                         │
+│  │   scheduled task)                   │                         │
+│  └─────────────────┬───────────────────┘                         │
+│                    │                                              │
+└────────────────────┼──────────────────────────────────────────────┘
+                     │ USB
+              ┌──────▼──────┐
+              │  MIS100V2   │
+              └─────────────┘
+```
+
+If/when Mantra ships a fixed Windows DLL: drop the iris service back
+into a `nssm`-registered native Windows service in `install.ps1` and
+remove the WSL2 path. The frontend doesn't change.
 
 ## Bundle contents
 
 ```
 VerificationPortalClient-<ver>-windows.zip
-├── install.ps1                     ← entry point, run as Admin
+├── install.ps1                                      ← entry point (admin)
+├── wsl-iris-setup.sh                                ← runs INSIDE WSL during phase 3
 ├── morfin/
-│   ├── morfinauth-client-service-1.0.0.0.jar  (vendor)
-│   └── certs/                                   (vendor TLS certs)
-├── iris/
-│   ├── mantra-iris-service-<ver>.jar           (ours)
-│   └── Marvis_Auth.jar                          (vendor)
+│   ├── morfinauth-client-service-1.0.0.0.jar       (vendor; runs Win-native)
+│   └── certs/                                        (vendor TLS certs)
+├── iris-wsl/
+│   └── mantra-iris-service_<ver>_all.deb           (installed inside WSL)
 ├── tools/
-│   └── nssm.exe                                 (Windows service registrar)
-└── README.txt                                   (operator-laptop instructions)
+│   └── nssm.exe                                      (Windows service registrar for MorFin)
+└── README.txt
 ```
 
-## Building
+## Prerequisites — operator laptop
 
-Prerequisites on the build host (any OS that has `bash`, `mvn`, `tar`,
-`ar`, `zip`):
+| Requirement | Why |
+|------|-----|
+| Windows 10 build 19041+ (May 2020 update / 22H2) **or** Windows 11 | WSL2 needs build 19041+ |
+| 64-bit Windows | WSL2 is 64-bit only |
+| Hardware virtualization enabled in BIOS/UEFI | WSL2 runs in a lightweight Hyper-V VM |
+| ~4 GB free disk | WSL2 + Ubuntu + JRE + iris .deb |
+| Adoptium Temurin JRE 17 on PATH | MorFin daemon needs Java |
+| Internet for first install | Downloads WSL kernel + Ubuntu image (~1 GB once) |
 
-- `mvn` (used by `iris-service/build-deb.sh` chain)
+The installer fails fast with a clear message if any of these aren't met.
+
+## Building (build host)
+
+Prerequisites:
+
+- `mvn` (Maven)
+- `dpkg-deb` (`brew install dpkg` on macOS, `apt install dpkg` on Linux)
 - `Marvis_Auth.jar` staged at `Portal-main/iris-service/lib/`
-- The vendor `MorfinAuthClientService.deb` accessible — defaults to
-  `verification-portal/MorfinAuth_Linux_Web_SDK_1.0.0.0/Setup/`,
-  override via `MORFIN_DEB=/path/to.deb`
-- `nssm.exe` (64-bit) staged at
-  `Portal-main/client-bootstrap/windows/tools/nssm.exe`. Download from
-  [nssm.cc/download](https://nssm.cc/download) (BSD-style licence; safe
-  to ship). It's a single ~250 KB executable.
-
-Then:
+- Vendor `MorfinAuthClientService.deb` accessible (auto-detected at the
+  project's typical layout, override via `MORFIN_DEB=`)
+- `nssm.exe` (64-bit) at `client-bootstrap/windows/tools/nssm.exe`
+  ([nssm.cc/download](https://nssm.cc/download), BSD-licensed)
 
 ```bash
 cd Portal-main/client-bootstrap/windows
@@ -57,19 +94,9 @@ cd Portal-main/client-bootstrap/windows
 # → dist/VerificationPortalClient-1.0.0-windows.zip
 ```
 
-The script:
-
-1. Builds `mantra-iris-service-<ver>.jar` via `mvn package`.
-2. Extracts the vendor MorFin `.deb` to lift the daemon JAR + the three
-   `.crt` files from its NSS bundle.
-3. Copies `Marvis_Auth.jar` from the staged location.
-4. Stages `nssm.exe` if present (warns and continues otherwise — the
-   bundle won't install on Windows without it).
-5. Zips everything into `dist/`.
-
 ## Field install (operator laptop)
 
-1. **Install Java** — Adoptium Temurin JRE 17 from
+1. **Install Java 17** — Adoptium Temurin from
    [adoptium.net](https://adoptium.net/), tick "Add to PATH".
 2. Unzip the bundle anywhere.
 3. Open PowerShell **as Administrator** in the unzipped folder.
@@ -80,38 +107,88 @@ The script:
    .\install.ps1 -PortalUrl https://portal.example.com
    ```
 
-What `install.ps1` does, in order:
+### Two-phase install (handles WSL2 reboot)
 
-| Step | Action | Why |
-|------|--------|-----|
-| 1    | Verifies Admin + `java` on PATH | Services + `Cert:\LocalMachine\Root` need elevation; JAR needs JVM. |
-| 2    | Copies bundle to `C:\Program Files\VerificationPortal\` | Stable install root, survives user logout. |
-| 3    | Imports vendor `.crt` files into `Cert:\LocalMachine\Root` | Lets browsers trust the daemon's HTTPS cert. |
-| 4    | Registers `MorfinAuthClientService` (port 8030) via `nssm` | Auto-start on boot, restart on crash. |
-| 5    | Registers `MantraIrisService` (port 8031) with `IRIS_PROVIDER=marvis-strict` | Fail-closed if the SDK can't load — better than fake scores. |
-| 6    | Writes Chrome + Edge `HomepageLocation` policy in `HKLM` | Locks the homepage for every user on the machine. |
-| 7    | Drops `.url` shortcuts on Desktop + Start Menu | Visible launcher. |
+If WSL2 isn't already enabled on the machine, `install.ps1` enables the
+required Windows features and exits with a reboot prompt. After
+rebooting, re-run **the same command** — the script detects WSL2 is now
+ready and continues with provisioning. No state is lost.
 
-Idempotent: re-running `install.ps1` updates everything in place
-(services are stopped + re-registered, certs re-imported, policy
-overwritten).
+### What `install.ps1` does, in order
 
-## Why we don't ship an `.msi`
+| # | Step | Reversible? |
+|---|------|-------------|
+| 1 | Pre-flight: admin, OS build, Java | yes |
+| 2 | Enable WSL feature + Virtual Machine Platform | yes (`Disable-WindowsOptionalFeature`) |
+| 3 | Install Ubuntu-22.04 distro | yes (`wsl --unregister Ubuntu-22.04`) |
+| 4 | Install `usbipd-win` via winget | yes (`winget uninstall`) |
+| 5 | Bind iris USB hardware ID + create scheduled task | yes (`usbipd unbind`, `Unregister-ScheduledTask`) |
+| 6 | Run `wsl-iris-setup.sh` inside WSL — apt deps + iris .deb + systemd | yes (`apt purge`) |
+| 7 | Import vendor TLS certs into `Cert:\LocalMachine\Root` | yes (`Get-ChildItem Cert:\LocalMachine\Root \| Remove-Item`) |
+| 8 | Register MorFin daemon as Windows Service via `nssm` | yes (`nssm remove`) |
+| 9 | Pin Chrome + Edge homepage in `HKLM` policy | yes (`Remove-Item`) |
+| 10 | Drop Desktop + Start Menu `.url` shortcuts | yes (`Remove-Item`) |
 
-`.msi` is the conventional Windows enterprise format and tools like
-`jpackage` can produce one from the same JAR. The reason we ship a zip
-+ PowerShell installer instead:
+Idempotent: re-running updates everything in place (services stopped +
+re-registered, certs re-imported, policies overwritten).
 
-- Two services with their own env / logging configuration are awkward
-  to express in WiX/MSI without a lot of custom-action XML; a script is
-  simpler to read and audit.
-- Field IT can edit `install.ps1` if a center has unusual paths or
-  policy needs — much harder to patch a signed `.msi`.
-- The bundle is portable from a USB stick to an offline machine; an
-  `.msi` would still need PowerShell post-actions for the cert + policy
-  steps anyway.
+### CLI flags
 
-If a future deployment target requires `.msi` (Intune, SCCM), wrap
-`install.ps1` in a `jpackage --type msi` shell or author a small WiX
-project that calls into the same script. The pieces in this bundle are
-the inputs either way.
+```powershell
+.\install.ps1 -PortalUrl https://portal.example.com `
+              -InstallRoot "C:\Program Files\VerificationPortal" `
+              -WslDistro "Ubuntu-22.04" `
+              -IrisHwId "2c0f:2100"
+
+.\install.ps1 -PortalUrl ... -SkipIris    # fingerprint-only centers
+```
+
+## Verifying the install
+
+```powershell
+# Native Windows service
+Get-Service MorfinAuthClientService
+curl http://localhost:8030/
+
+# Iris service inside WSL
+wsl -d Ubuntu-22.04 -- systemctl status mantra-iris-service
+curl -Method POST http://localhost:8031/iris/supporteddevicelist
+
+# USB passthrough
+usbipd list                 # iris device should show "Shared" or "Attached"
+Get-ScheduledTask VerificationPortal-IrisUsbAttach
+```
+
+If the iris endpoint times out: usually means the device isn't currently
+attached to WSL. Plug + replug the iris reader, or run on the host:
+
+```powershell
+usbipd attach --hardware-id 2c0f:2100 --wsl
+```
+
+## Uninstall
+
+```powershell
+# Windows-side
+Stop-Service MorfinAuthClientService -Force
+& "C:\Program Files\VerificationPortal\tools\nssm.exe" remove MorfinAuthClientService confirm
+Unregister-ScheduledTask -TaskName VerificationPortal-IrisUsbAttach -Confirm:$false
+Remove-Item -Recurse "C:\Program Files\VerificationPortal"
+Remove-Item HKLM:\SOFTWARE\Policies\Google\Chrome\HomepageLocation
+Remove-Item HKLM:\SOFTWARE\Policies\Microsoft\Edge\HomepageLocation
+
+# WSL-side iris service
+wsl -d Ubuntu-22.04 -- sudo apt-get purge -y mantra-iris-service
+
+# Optional — completely remove the WSL distro
+wsl --unregister Ubuntu-22.04
+```
+
+## Why we don't ship a `.msi`
+
+The two-phase install (with a reboot in the middle), Windows feature
+enablement, and WSL provisioning steps don't translate well to MSI's
+declarative model. A PowerShell installer that IT can read, audit, and
+patch in the field is the better fit for this stack. If a future
+deployment target requires `.msi` (Intune / SCCM), wrap `install.ps1`
+in a custom-action MSI — the script itself is the source of truth.
