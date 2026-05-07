@@ -36,6 +36,14 @@ public final class Main {
     public static void main(String[] args) {
         int port = parsePort(System.getenv("IRIS_PORT"), 8031);
         String wanted = orDefault(System.getenv("IRIS_PROVIDER"), "marvis");
+        // Bind address defaults to loopback for native Linux operator
+        // laptops (defence-in-depth — only the local browser should reach
+        // the daemon). The WSL2-on-Windows path overrides via a systemd
+        // drop-in to "0.0.0.0" because WSL2's NAT-mode localhost forwarder
+        // doesn't reliably bridge to 127.0.0.1-bound services inside WSL,
+        // and binding to a non-loopback inside the WSL VM is still
+        // effectively private (the VM has no LAN-reachable interface).
+        String bind = orDefault(System.getenv("IRIS_BIND"), "127.0.0.1");
 
         IrisProvider provider = pickProvider(wanted);
         IrisHandlers handlers = new IrisHandlers(provider);
@@ -43,7 +51,7 @@ public final class Main {
         Javalin app = Javalin.create(cfg -> {
             cfg.showJavalinBanner = false;
             cfg.plugins.enableCors(cors -> cors.add(it -> it.anyHost()));
-        }).start("127.0.0.1", port);
+        }).start(bind, port);
 
         handlers.register(app);
 
@@ -53,7 +61,7 @@ public final class Main {
             app.close();
         }));
 
-        LOG.info("mantra-iris-service listening on 127.0.0.1:{}", port);
+        LOG.info("mantra-iris-service listening on {}:{}", bind, port);
     }
 
     private static IrisProvider pickProvider(String wanted) {

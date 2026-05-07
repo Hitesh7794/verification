@@ -273,12 +273,12 @@ Phase 3 — Production rollout                 [PARTIAL]
 - **Mantra vendor email** — six questions consolidated, not yet sent.
   See §4 of this document.
 
-### Hardware-test learnings (recorded 2026-05-06)
+### Hardware-test learnings (recorded 2026-05-06, updated 2026-05-07)
 
-**Marvis Auth SDK does NOT actually run on Windows from the Linux
-package**, despite the JAR bundling `win/x64/*.dll` natives. This was
-verified on a Windows 11 laptop with the MIS100V2 device + Mantra's
-official MYUSB driver installed; both our wrapper AND Mantra's own
+**Marvis Auth SDK does NOT run natively on Windows from the Linux
+package**, despite the JAR bundling `win/x64/*.dll` natives. Verified
+on a Windows 11 laptop with the MIS100V2 device + Mantra's official
+MYUSB driver installed; both our wrapper AND Mantra's own
 `Marvis_Auth_Sample.jar` crash identically:
 
 ```
@@ -289,15 +289,57 @@ java.lang.NoSuchMethodError: CompleteCallback
 ```
 
 Tested across Java 11 and Java 17, same failure. The native DLLs
-inside the JAR fail JNI registration — almost certainly because Mantra
-shipped Windows binaries that don't match the Java classes in the same
-JAR.
+inside the JAR fail JNI registration — Mantra shipped Windows binaries
+whose JNI signatures don't match the Java classes in the same JAR.
 
-**Resolution path:** vendor email sent to `servico@mantratec.com` for
-a Windows-specific SDK. Until then, **iris hardware testing on Windows
-is blocked on Mantra**. Linux operator laptops should work fine
-(unchanged code). The iris flow against the Go-based `iris-mock` is
-fully functional for development.
+**Resolution path (2026-05-07): WSL2 + usbipd-win workaround verified
+working end-to-end.** Rather than wait on Mantra, `install.ps1`
+provisions WSL2 Ubuntu on the Windows laptop, installs the iris `.deb`
+inside it (which uses the working `linux/x86_64/*.so` natives in the
+same JAR), and uses Microsoft's [`usbipd-win`](https://github.com/dorssel/usbipd-win)
+to pass the MIS100V2 USB device through to WSL. The browser still
+talks to `localhost:8031` because WSL2's NAT-mode forwarder bridges
+Windows → WSL transparently — provided the JVM inside WSL binds to a
+non-loopback address (we use `IRIS_BIND=0.0.0.0` via a systemd drop-in;
+the WSL VM has no LAN-routed interface, so the security cost is zero).
+
+End-to-end verified on Win10 19045 with real MIS100V2:
+
+```
+PS> curl.exe -X POST http://localhost:8031/iris/connecteddevicelist
+{"ErrorCode":"0","ErrorDescription":"Found Devices: MIS100V2"}
+```
+
+This proves: Windows host curl → WSL2 NAT forwarder → Javalin →
+MarvisIrisProvider (real SDK in marvis-strict mode) → JNI → Linux
+`Marvis_Auth.so` → libusb → usbipd → physical iris device.
+
+**Vendor email** still goes out to `servico@mantratec.com` because a
+corrected Windows JAR would let us simplify the bundle (drop WSL2 +
+usbipd, register the iris JAR via `nssm` like the MorFin daemon).
+That's a future cleanup, not a blocker. Linux operator laptops are
+unchanged; Windows operator laptops use the WSL2 path.
+
+**Operational caveats discovered on first end-to-end test
+(2026-05-07):**
+
+- `vmIdleTimeout=-1` in `.wslconfig` isn't honored on Win10 19045 —
+  the VM idles out after ~60s, taking the iris service + USB
+  attachment with it. Need to investigate WSL version compatibility
+  or use a large int (`2147483647`) instead of `-1`.
+- `usbipd-win` scheduled task fires at Windows logon but doesn't
+  re-fire when the WSL VM cycles. After a VM idle-out + re-launch,
+  the device must be manually re-attached. Production fix: keep VM
+  alive (above), or add a startup script in WSL that calls back to
+  Windows via `wsl.exe`.
+- First-call latency from cold WSL VM is ~5-10s (VM boot + JVM
+  startup + Marvis SDK init); subsequent calls are <100ms forwarder
+  + ~1-3s actual capture.
+
+These are operational hardening items, not blockers — the
+fundamental "Windows operator laptops can run iris hardware via the
+WSL2 workaround" is proven. See `client-bootstrap/windows/README.md`
+for the full operator-laptop architecture and remediation options.
 
 ---
 

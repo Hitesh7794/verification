@@ -5,21 +5,34 @@ operators verify candidate identity by capturing a live face photo, a
 live fingerprint (and optionally iris as fallback), comparing each
 against pre-enrolled records on file.
 
-> **Status (2026-05-05).**
+> **Status (2026-05-07).**
 > - **Fingerprint 1:1 verification** — wired end-to-end against the
 >   **MorFin Auth Web SDK** (devices: MELO041 / MFS500 / MARC10).
+>   Native Windows + native Linux supported.
 > - **Iris 1:1 verification** — wired end-to-end against the
 >   **Marvis Auth SDK** (device: MIS100V2). Used as automatic
 >   fallback when fingerprint match fails.
-> - **Cross-platform daemons** — the same vendor JARs run on
->   **both Linux and Windows** (verified by reading the JAR contents:
->   they bundle `linux/x86_64/*.so` and `win/x64/*.dll` and dispatch
->   on `os.name` at runtime). No separate Windows SDK to chase.
+>   - On Linux operator laptops: native via the iris `.deb`.
+>   - On Windows operator laptops: via **WSL2 + usbipd-win**, since
+>     Mantra's Windows DLL is broken (vendor's own sample crashes
+>     identically — see [`IRIS_VENDOR_ISSUE.md`](./IRIS_VENDOR_ISSUE.md)).
+>     Verified end-to-end on Win10 19045 with real hardware:
+>     `curl http://localhost:8031/iris/connecteddevicelist` →
+>     `{"ErrorCode":"0","ErrorDescription":"Found Devices: MIS100V2"}`.
+> - **Face 1:1 verification** — Luxand FaceSDK 8.3, server-side via
+>   `luxand-service` on the central server (browser webcam capture,
+>   no per-laptop daemon). Working with real photos, FAR-tunable
+>   threshold.
 > - **Operator-laptop install bundles** — `client-bootstrap/{linux,
->   windows}` ship a one-command installer per OS.
+>   windows}` ship a one-command installer per OS. Windows bundle
+>   provisions WSL2 + Ubuntu + iris `.deb` + usbipd-win + scheduled
+>   task for USB auto-attach + MorFin native service via `nssm` +
+>   cert imports + browser pin.
 > - **Mock daemons** stand in for the real SDKs during local dev, so
 >   the entire flow can be tested on macOS without USB hardware.
-> - **Pending:** Luxand face matching, EC2 server deploy.
+> - **Pending:** EC2 server deploy (Postgres + nginx + TLS + systemd).
+>   Some operational hardening on the Windows operator-laptop bundle
+>   (see `client-bootstrap/windows/README.md`).
 
 > **Read this first if you're new to the project:**
 > - [`CONTEXT.md`](./CONTEXT.md) — architectural decisions, vendor-blocked unknowns, the "why" behind every non-obvious choice.
@@ -445,14 +458,28 @@ tests — covered by a separate hardware run on the operator laptop.
 
 ## What's pending
 
-1. **Luxand face 1:1** — adds a third score channel; schema slot
-   already exists (`face_match_score`), frontend webcam capture
-   already runs. Just needs the Luxand SDK plugged in server-side.
-2. **EC2 server deploy** — Postgres + nginx + TLS + systemd unit.
+1. **EC2 server deploy** — Postgres + nginx + TLS + systemd unit.
    Needs a DNS name pointed at the EIP for Let's Encrypt and webcam
    HTTPS.
+2. **Windows operator-laptop operational hardening** — the bundle
+   works end-to-end, but two operational items would benefit from
+   tightening before fleet rollout: (a) WSL2 `vmIdleTimeout` setting
+   isn't being honored on Win10 19045 — VM cycles take the iris
+   service + USB attachment with them; (b) usbipd auto-attach scheduled
+   task fires at Windows logon but not on WSL VM resume. See
+   [`client-bootstrap/windows/README.md`](./client-bootstrap/windows/README.md)
+   for the full caveat list.
 
-See [`ISSUES.md`](./ISSUES.md) for the 5 specific blockers needing
+What was previously pending and is now done:
+
+- ✅ **Luxand face 1:1** — `luxand-service` Java module, backend
+  endpoints, lazy gallery cache, frontend `FaceMatchPanel` all wired
+  and working with real candidate photos.
+- ✅ **Iris on Windows operator laptops** — vendor SDK is still
+  broken, but the WSL2+usbipd workaround is verified end-to-end with
+  real hardware.
+
+See [`ISSUES.md`](./ISSUES.md) for the open blockers needing
 tech-lead decisions, and the in-repo task tracker for the full plan.
 
 ---

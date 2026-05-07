@@ -1,11 +1,11 @@
-# install.ps1 — operator-laptop bootstrap (Windows 10 19041+ / Windows 11).
+﻿# install.ps1 — operator-laptop bootstrap (Windows 10 19041+ / Windows 11).
 #
 # Architecture:
 #
 #   ┌─ Windows host ───────────────────────────────────────────────────┐
-#   │  Browser ─→ localhost:5173    (portal frontend, served remote)   │
-#   │           ─→ localhost:8030   (MorFin fingerprint, native Win)   │
-#   │           ─→ localhost:8031   (mantra-iris-service in WSL2)      │
+#   │  Browser ─-> localhost:5173    (portal frontend, served remote)   │
+#   │           ─-> localhost:8030   (MorFin fingerprint, native Win)   │
+#   │           ─-> localhost:8031   (mantra-iris-service in WSL2)      │
 #   │                                                                   │
 #   │  WSL2 Ubuntu ─ runs mantra-iris-service.deb on :8031             │
 #   │       ↑                                                           │
@@ -60,7 +60,7 @@ function Require-Admin {
     $current = [Security.Principal.WindowsIdentity]::GetCurrent()
     $principal = [Security.Principal.WindowsPrincipal]$current
     if (-not $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)) {
-        throw "Run from an elevated PowerShell prompt (Right-click → 'Run as Administrator')."
+        throw "Run from an elevated PowerShell prompt (Right-click -> 'Run as Administrator')."
     }
 }
 
@@ -74,25 +74,30 @@ function Require-OsCompatible {
     if ($build -lt 19041) {
         throw @"
 Windows build $build is too old for WSL2 (requires 19041+).
-Run Windows Update until Settings → System → About shows
+Run Windows Update until Settings -> System -> About shows
 'Version 22H2' (or newer) and 'OS build 19045+' / Windows 11.
 Then re-run this installer.
 "@
     }
-    Write-Host "✓ Windows build $build (WSL2-capable)"
+    Write-Host "[OK] Windows build $build (WSL2-capable)"
 }
 
 function Require-Java {
-    try {
-        $null = & java -version 2>&1
-    } catch {
+    # Check whether 'java' resolves on PATH. We deliberately do NOT invoke
+    # `java -version` for the test, because Java writes its version banner
+    # to stderr — and on Windows PowerShell 5.1 with ErrorActionPreference=
+    # Stop, any native-command stderr output is treated as a fatal error.
+    # That made the previous test report "Java not found" even when Java
+    # was installed correctly. Get-Command checks PATH resolution without
+    # running the command.
+    if (-not (Get-Command java -ErrorAction SilentlyContinue)) {
         throw @"
 Java not found on PATH. Install Adoptium Temurin JRE 17 (free, OpenJDK):
   https://adoptium.net/temurin/releases/?version=17
 Tick 'Add to PATH' during install, open a new PowerShell, then re-run this script.
 "@
     }
-    Write-Host "✓ Java available on PATH"
+    Write-Host "[OK] Java available on PATH"
 }
 
 # ---------------------------------------------------------------------------
@@ -100,29 +105,33 @@ Tick 'Add to PATH' during install, open a new PowerShell, then re-run this scrip
 # ---------------------------------------------------------------------------
 
 function Test-Wsl2Ready {
-    # `wsl --status` returns non-zero if the optional features aren't
-    # enabled or kernel isn't installed. We treat any failure as "not ready".
-    try {
-        $null = & wsl.exe --status 2>&1
-        return $LASTEXITCODE -eq 0
-    } catch {
-        return $false
-    }
+    # Check the underlying Windows optional features directly — more robust
+    # than invoking `wsl --status`, which writes its banner to stderr (which
+    # PS5.1 turns into a terminating error under ErrorActionPreference=Stop).
+    $f1 = (Get-WindowsOptionalFeature -Online -FeatureName 'Microsoft-Windows-Subsystem-Linux' -ErrorAction SilentlyContinue).State
+    $f2 = (Get-WindowsOptionalFeature -Online -FeatureName 'VirtualMachinePlatform' -ErrorAction SilentlyContinue).State
+    return ($f1 -eq 'Enabled' -and $f2 -eq 'Enabled')
 }
 
 function Test-WslDistroPresent([string]$Name) {
+    # `wsl -l -q` lists installed distros (one per line, UTF-16-LE on
+    # older WSL — strip nulls before matching). EAP=Continue locally so
+    # any banner-on-stderr from older WSL builds doesn't terminate the
+    # script before we get to inspect the output.
+    $oldPref = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
     try {
-        # `wsl -l -q` lists installed distros (one per line, UTF-16-LE on
-        # older WSL — strip nulls before matching).
         $list = (& wsl.exe -l -q 2>$null) -replace "`0", "" -split "`r?`n" | Where-Object { $_ }
         return ($list -contains $Name)
     } catch {
         return $false
+    } finally {
+        $ErrorActionPreference = $oldPref
     }
 }
 
 function Enable-Wsl2 {
-    Write-Host "→ enabling WSL2 + Virtual Machine Platform (Windows features)"
+    Write-Host "-> enabling WSL2 + Virtual Machine Platform (Windows features)"
     # Enabling these features requires a reboot before they take effect.
     # `dism /online /norestart` keeps the script responsive; we tell the
     # user to reboot at the end and re-run.
@@ -134,14 +143,14 @@ function Enable-Wsl2 {
             Enable-WindowsOptionalFeature -Online -FeatureName $feature -NoRestart -All | Out-Null
             $needsReboot = $true
         } else {
-            Write-Host "  ✓ $feature already enabled"
+            Write-Host "  [OK] $feature already enabled"
         }
     }
 
-    Write-Host "→ setting WSL default version to 2"
+    Write-Host "-> setting WSL default version to 2"
     & wsl.exe --set-default-version 2 2>$null | Out-Null
 
-    Write-Host "→ updating WSL kernel"
+    Write-Host "-> updating WSL kernel"
     & wsl.exe --update 2>$null | Out-Null
 
     if ($needsReboot) {
@@ -161,23 +170,43 @@ Exiting now. No services have been registered yet.
 
 function Install-WslDistro([string]$Name) {
     if (Test-WslDistroPresent $Name) {
-        Write-Host "✓ WSL distro '$Name' already installed"
+        Write-Host "[OK] WSL distro '$Name' already installed"
         return
     }
-    Write-Host "→ installing WSL distro '$Name' (downloads ~500MB; first-run will prompt for a UNIX username)"
-    # `wsl --install -d <distro> --no-launch` installs without opening a
-    # terminal window. The first ACTUAL launch (we run it below) does
-    # the user-creation prompts. We bypass those by piping a UNIX user
-    # creation through the distro's setup.
-    & wsl.exe --install -d $Name --no-launch
-    if ($LASTEXITCODE -ne 0) {
-        throw "WSL distro install failed (exit $LASTEXITCODE). Run 'wsl --list --online' to see available distros and retry with -WslDistro <Name>."
+    Write-Host "-> installing WSL distro '$Name' (downloads ~500MB)"
+    # WSL CLI flags evolved across Windows builds. Older inbox WSL doesn't
+    # support `--no-launch`; newer Store WSL does. Try the modern form
+    # first, fall back to the legacy form, and use `wsl --shutdown` after
+    # the legacy install to close any setup window the distro may auto-open.
+    $oldPref = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $output = & wsl.exe --install -d $Name --no-launch 2>&1
+        $rc = $LASTEXITCODE
+        if ($rc -ne 0) {
+            Write-Host "  --no-launch not supported on this WSL build; retrying without it"
+            Write-Host "  (an Ubuntu setup window may open briefly — close it; the script will continue)"
+            $output = & wsl.exe --install -d $Name 2>&1
+            $rc = $LASTEXITCODE
+        }
+        $output | ForEach-Object { if ($_) { Write-Host "  $_" } }
+        if ($rc -ne 0) {
+            throw "WSL distro install failed (exit $rc). Run 'wsl --list --online' to see available distros and retry with -WslDistro <Name>."
+        }
+        # Force a clean shutdown of any auto-launched session before we re-enter.
+        Start-Sleep -Seconds 3
+        & wsl.exe --shutdown 2>&1 | Out-Null
+    } finally {
+        $ErrorActionPreference = $oldPref
     }
 
     # First boot to finalize. Pass `--user root` to skip the new-user prompt;
     # we'll create an unprivileged user via the setup script instead.
-    Write-Host "→ first-boot of '$Name' (creating root account, ~10s)"
+    Write-Host "-> first-boot of '$Name' as root (~15s)"
     & wsl.exe -d $Name --user root -- echo "ready" | Out-Null
+    if ($LASTEXITCODE -ne 0) {
+        throw "First-boot of '$Name' failed (exit $LASTEXITCODE). Try running 'wsl -d $Name --user root -- echo ready' manually to see what went wrong."
+    }
 }
 
 # ---------------------------------------------------------------------------
@@ -186,10 +215,10 @@ function Install-WslDistro([string]$Name) {
 
 function Install-Usbipd {
     if (Get-Command usbipd.exe -ErrorAction SilentlyContinue) {
-        Write-Host "✓ usbipd-win already installed"
+        Write-Host "[OK] usbipd-win already installed"
         return
     }
-    Write-Host "→ installing usbipd-win (USB passthrough for WSL)"
+    Write-Host "-> installing usbipd-win (USB passthrough for WSL)"
     if (Get-Command winget.exe -ErrorAction SilentlyContinue) {
         & winget install --exact --id dorssel.usbipd-win --silent --accept-source-agreements --accept-package-agreements
         if ($LASTEXITCODE -ne 0) {
@@ -211,14 +240,22 @@ winget not available; install usbipd-win manually:
 function Bind-IrisDevice([string]$HwId) {
     # usbipd 4.x: `bind` makes the device shareable (admin, persistent),
     # `attach --auto-attach` keeps it attached to WSL across replug events.
-    Write-Host "→ binding USB device $HwId for WSL passthrough"
-    $boundList = & usbipd.exe list --usbids 2>$null
-    # usbipd `bind` is idempotent; no harm in calling on an already-bound device.
-    & usbipd.exe bind --hardware-id $HwId 2>&1 | ForEach-Object { Write-Host "  $_" }
+    Write-Host "-> binding USB device $HwId for WSL passthrough"
+    # EAP=Continue locally so the `2>&1 |` patterns (which feed native-command
+    # stderr into the pipeline) don't terminate under PS5.1+EAP=Stop.
+    $oldPref = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        $null = & usbipd.exe list --usbids 2>$null
+        # usbipd `bind` is idempotent; no harm in calling on an already-bound device.
+        & usbipd.exe bind --hardware-id $HwId 2>&1 | ForEach-Object { Write-Host "  $_" }
 
-    # Attach immediately (does nothing if device not currently plugged in).
-    & usbipd.exe attach --hardware-id $HwId --wsl --auto-attach 2>&1 |
-        Select-Object -First 5 | ForEach-Object { Write-Host "  $_" }
+        # Attach immediately (does nothing if device not currently plugged in).
+        & usbipd.exe attach --hardware-id $HwId --wsl --auto-attach 2>&1 |
+            Select-Object -First 5 | ForEach-Object { Write-Host "  $_" }
+    } finally {
+        $ErrorActionPreference = $oldPref
+    }
 }
 
 function Register-IrisAttachTask([string]$HwId) {
@@ -239,7 +276,7 @@ function Register-IrisAttachTask([string]$HwId) {
     Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
     Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
         -Settings $settings -Principal $principal | Out-Null
-    Write-Host "  → scheduled task '$taskName' will reattach the iris device on every boot"
+    Write-Host "  -> scheduled task '$taskName' will reattach the iris device on every boot"
 }
 
 # ---------------------------------------------------------------------------
@@ -270,7 +307,7 @@ function Provision-Wsl([string]$Distro) {
     $drive = $debDirWsl.Substring(0, 1).ToLower()
     $debDirWsl = "/mnt/$drive" + ($debDirWsl.Substring(2) -replace '\\', '/')
 
-    Write-Host "→ running iris provisioning script inside WSL distro '$Distro'"
+    Write-Host "-> running iris provisioning script inside WSL distro '$Distro'"
     Write-Host "  (this installs JRE, the iris .deb, and enables systemd; ~2 min)"
 
     # `bash -c` runs the script with the .deb path passed as an argument.
@@ -298,20 +335,28 @@ function Install-MorfinService {
     }
 
     $svc = 'MorfinAuthClientService'
-    & $nssm stop $svc 2>$null | Out-Null
-    & $nssm remove $svc confirm 2>$null | Out-Null
+    # nssm prints status info to stderr in some versions; EAP=Continue locally
+    # prevents PS5.1+EAP=Stop from turning that into a fatal error.
+    $oldPref = $ErrorActionPreference
+    $ErrorActionPreference = 'Continue'
+    try {
+        & $nssm stop $svc 2>$null | Out-Null
+        & $nssm remove $svc confirm 2>$null | Out-Null
 
-    $java = (Get-Command java).Source
-    & $nssm install $svc $java "-jar `"$($morfinJar.FullName)`"" | Out-Null
-    & $nssm set $svc DisplayName 'MorFin Fingerprint Daemon (Verification Portal)' | Out-Null
-    & $nssm set $svc Description 'Vendor MorFin daemon listening on :8030 for fingerprint capture.' | Out-Null
-    & $nssm set $svc Start SERVICE_AUTO_START | Out-Null
-    & $nssm set $svc AppRestartDelay 3000 | Out-Null
-    & $nssm set $svc AppExit Default Restart | Out-Null
-    & $nssm set $svc AppStdout (Join-Path $InstallRoot 'logs\MorfinAuthClientService.log') | Out-Null
-    & $nssm set $svc AppStderr (Join-Path $InstallRoot 'logs\MorfinAuthClientService.log') | Out-Null
-    & $nssm start $svc | Out-Null
-    Write-Host "  → MorFin daemon registered and started"
+        $java = (Get-Command java).Source
+        & $nssm install $svc $java "-jar `"$($morfinJar.FullName)`"" 2>&1 | Out-Null
+        & $nssm set $svc DisplayName 'MorFin Fingerprint Daemon (Verification Portal)' 2>&1 | Out-Null
+        & $nssm set $svc Description 'Vendor MorFin daemon listening on :8030 for fingerprint capture.' 2>&1 | Out-Null
+        & $nssm set $svc Start SERVICE_AUTO_START 2>&1 | Out-Null
+        & $nssm set $svc AppRestartDelay 3000 2>&1 | Out-Null
+        & $nssm set $svc AppExit Default Restart 2>&1 | Out-Null
+        & $nssm set $svc AppStdout (Join-Path $InstallRoot 'logs\MorfinAuthClientService.log') 2>&1 | Out-Null
+        & $nssm set $svc AppStderr (Join-Path $InstallRoot 'logs\MorfinAuthClientService.log') 2>&1 | Out-Null
+        & $nssm start $svc 2>&1 | Out-Null
+    } finally {
+        $ErrorActionPreference = $oldPref
+    }
+    Write-Host "  -> MorFin daemon registered and started"
 }
 
 # ---------------------------------------------------------------------------
@@ -326,7 +371,7 @@ function Import-VendorCerts([string]$CertDir) {
     Get-ChildItem -Path $CertDir -Filter '*.crt' | ForEach-Object {
         $thumb = (Import-Certificate -FilePath $_.FullName `
                   -CertStoreLocation 'Cert:\LocalMachine\Root').Thumbprint
-        Write-Host "  → imported $($_.Name) (thumbprint $thumb)"
+        Write-Host "  -> imported $($_.Name) (thumbprint $thumb)"
     }
 }
 
@@ -344,7 +389,7 @@ function Set-BrowserHomepage([string]$Url) {
         $urlsKey = Join-Path $key 'RestoreOnStartupURLs'
         New-Item -Path $urlsKey -Force | Out-Null
         New-ItemProperty -Path $urlsKey -Name '1' -Value $Url -PropertyType String -Force | Out-Null
-        Write-Host "  → pinned homepage in $key"
+        Write-Host "  -> pinned homepage in $key"
     }
 }
 
@@ -352,7 +397,14 @@ function New-Shortcut([string]$LinkPath, [string]$Target, [string]$Description) 
     $sh = New-Object -ComObject WScript.Shell
     $shortcut = $sh.CreateShortcut($LinkPath)
     $shortcut.TargetPath = $Target
-    $shortcut.Description = $Description
+    # WScript.Shell.CreateShortcut returns a WshURLShortcut for .url files
+    # (Internet Shortcuts), which only exposes TargetPath + Save — no
+    # Description, no IconLocation. Setting .Description on it throws
+    # "The property 'Description' cannot be found on this object". Only
+    # .lnk shortcuts (WshShortcut) carry a Description.
+    if ($LinkPath -like '*.lnk') {
+        $shortcut.Description = $Description
+    }
     $shortcut.Save()
 }
 
@@ -364,11 +416,11 @@ Require-Admin
 Require-OsCompatible
 Require-Java
 
-Write-Host "→ creating install root: $InstallRoot"
+Write-Host "-> creating install root: $InstallRoot"
 New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $InstallRoot 'logs') | Out-Null
 
-Write-Host "→ staging bundle into $InstallRoot"
+Write-Host "-> staging bundle into $InstallRoot"
 Copy-Item -Recurse -Force (Join-Path $PSScriptRoot 'morfin') $InstallRoot
 Copy-Item -Recurse -Force (Join-Path $PSScriptRoot 'tools')  $InstallRoot
 
@@ -379,7 +431,7 @@ if (-not $SkipIris) {
     if (-not (Test-Wsl2Ready)) {
         Enable-Wsl2     # may exit here with a reboot prompt
     } else {
-        Write-Host "✓ WSL2 already enabled"
+        Write-Host "[OK] WSL2 already enabled"
     }
     Install-WslDistro $WslDistro
     Install-Usbipd
@@ -387,7 +439,7 @@ if (-not $SkipIris) {
     Register-IrisAttachTask $IrisHwId
     Provision-Wsl    $WslDistro
 } else {
-    Write-Host "→ -SkipIris set; iris service NOT installed"
+    Write-Host "-> -SkipIris set; iris service NOT installed"
 }
 
 # --- fingerprint (Windows native) ------------------------------------------
@@ -406,7 +458,7 @@ New-Shortcut (Join-Path $desktop   'Verification Portal.url') $PortalUrl 'Verifi
 New-Shortcut (Join-Path $startMenu 'Programs\Verification Portal.url') $PortalUrl 'Verification Portal — operator workstation'
 
 Write-Host ""
-Write-Host "✓ Operator laptop ready."
+Write-Host "[OK] Operator laptop ready."
 Write-Host "  Portal:      $PortalUrl"
 Write-Host "  Fingerprint: http://localhost:8030/  (Get-Service MorfinAuthClientService)"
 if (-not $SkipIris) {

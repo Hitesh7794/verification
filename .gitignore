@@ -23,6 +23,28 @@ license.key
 **/dist/
 backend/verification.db*
 node_modules/
+# Bundle ZIPs that escape dist/ — build-bundle.sh sometimes writes one
+# level up than expected (the windows zip lands at client-bootstrap/...
+# instead of client-bootstrap/windows/dist/). Gitignored at any path
+# defensively so a stray copy is never accidentally committed.
+*.zip
+
+# Third-party Windows service registrar. BSD-licensed, but treated like
+# a vendor binary: not committed, downloaded from nssm.cc per
+# client-bootstrap/windows/README.md. Mirrors the Marvis JAR pattern.
+client-bootstrap/windows/tools/nssm.exe
+
+# ACPL L1 RD Service vendor package (Startek FM220U / AST300 fingerprint
+# devices, UIDAI Aadhaar L1 authentication). Vendor-supplied, downloaded
+# from acpl.in.net; not redistributable as part of this repo. Re-download
+# the package locally when working on the Startek fingerprint integration.
+ACPL_L1_RD_Linux_Desktop_*/
+ACPL_L1_RD_Support_Tool/
+ACPL_L1_RD_Windows_*/
+L1_RD_Intrgration_Guide*.pdf
+L1_RD_Integration_Guide*.pdf
+*Linux_RD_User_Guide*.pdf
+*ACPL*.pdf
 
 # Defense-in-depth: never accidentally commit private keys
 *.pem

@@ -1,20 +1,31 @@
 # Iris hardware test on a Windows laptop
 
-End-to-end guide for testing the **MIS100V2 iris scanner** with the
-real Mantra Marvis SDK on a Windows machine. Takes ~20 minutes once
-you have all the files in place.
+This document describes **two paths** for running the iris service on
+Windows. The recommended path for any operator-laptop or production
+testing is the **WSL2 path** (verified working 2026-05-07). The
+native-Windows path remains broken at the vendor level.
 
-> **⚠️ Vendor-blocked as of 2026-05-06.** The bundled Windows DLLs in
-> `Marvis_Auth_Linux_Java_1.0.0.0/Libs/Marvis_Auth.jar` are broken —
-> Mantra's own `Marvis_Auth_Sample.jar` (from the same package) also
-> crashes on Windows with `NoSuchMethodError: CompleteCallback` during
-> JNI registration in `MarvisAuthNative.<clinit>`. The Windows SDK
-> request is open with `servico@mantratec.com`. Until Mantra ships
-> the corrected Windows package, this guide is **expected to fail at
-> Step 5** (the iris service falls back to MockIrisProvider). Every
-> step before that — file copy, Java setup, `mvn package`, USB driver
-> install, device detection by Windows — is verified working. See
-> `CONTEXT.md` §6 "Hardware-test learnings" for the full diagnostic.
+> **Recommended: WSL2 path** — `client-bootstrap/windows/install.ps1`
+> provisions WSL2 Ubuntu, installs the iris `.deb` inside it (which uses
+> the working Linux `.so` natives in `Marvis_Auth.jar`), and uses
+> `usbipd-win` to pass the MIS100V2 USB device through to WSL. Browser
+> still talks to `localhost:8031` because WSL2's NAT-mode forwarder
+> bridges Windows → WSL transparently. Verified end-to-end on Win10
+> 19045 with real hardware. See
+> [`client-bootstrap/windows/README.md`](./client-bootstrap/windows/README.md)
+> and [`IRIS_VENDOR_ISSUE.md`](./IRIS_VENDOR_ISSUE.md) for the operational
+> details. **The rest of this document is the legacy native-Windows path,
+> which still fails at Step 5.**
+
+> **⚠️ Native-Windows path — still vendor-blocked.** The bundled
+> Windows DLLs in `Marvis_Auth_Linux_Java_1.0.0.0/Libs/Marvis_Auth.jar`
+> are broken — Mantra's own `Marvis_Auth_Sample.jar` also crashes with
+> `NoSuchMethodError: CompleteCallback` during JNI registration. The
+> guide below is **expected to fail at Step 5** until Mantra ships a
+> corrected Windows JAR. Every step before that — file copy, Java
+> setup, `mvn package`, USB driver install, device detection by
+> Windows — is verified working. See `CONTEXT.md` §6 for the full
+> diagnostic. Use the WSL2 path above for any real testing.
 
 ## What this is, and what it isn't
 
