@@ -1,0 +1,11 @@
+#!/bin/sh
+# postinst: enable + start the service. No licence file needed —
+# SourceAFIS is Apache 2.0, no activation step.
+set -e
+
+systemctl daemon-reload                    || true
+systemctl enable  fp-match-service.service || true
+systemctl restart fp-match-service.service || true
+
+echo "✓ fp-match-service installed. Listening on 127.0.0.1:8050."
+exit 0

@@ -1,0 +1,73 @@
+// Shared types + constants for the multi-vendor fingerprint layer.
+//
+// The portal supports two fingerprint vendors today: Mantra MorFin
+// (cross-platform) and Startek/ACPL FM220U L1 (Windows-only for now).
+// Both daemons can coexist on the same operator laptop, each on its
+// own loopback port. The registry probes both in parallel; whichever
+// reports a connected device wins the session.
+//
+// The vendor enum lives here (not inside each vendor client) so the
+// registry, the React component, and the audit submit can agree on
+// the wire value going into verifications.fp_vendor. Adding a third
+// vendor later means adding one enum entry + one client module —
+// no protocol-level changes.
+
+export const Vendor = Object.freeze({
+  Mantra: 'mantra',   // MorFin Auth (MELO041 / MFS500 / MARC10), localhost:8030
+  Startek: 'startek', // ACPL Capture API (FM220U L1 / AST300), localhost:8090 or :4443
+})
+
+// Per-vendor default thresholds applied frontend-side. Vendors land into
+// the same verifications.match_threshold column on submit but use
+// incompatible score scales:
+//
+//   Mantra MatchScore  — int, MorFin daemon's internal scale; 140 is the
+//                        constant DEFAULT_MATCH_THRESHOLD in their JAR
+//                        (verified 2026-05-05 by reading bytecode).
+//                        Matching happens on the operator laptop.
+//   Startek score      — SourceAFIS similarity score, ~0..600+ range.
+//                        40 is SourceAFIS's documented threshold for
+//                        1-in-1000 FMR (false-match rate). On our actual
+//                        templates (2026-05-16 Phase A spike): self-match
+//                        scores 385-571, different-finger cross-match
+//                        scores 0.02-0.17 — enormous separation, 40 is
+//                        the safest default. Matching happens server-
+//                        side via /api/fp-match (the ACPL Capture API's
+//                        own matcher can't accept stored gallery templates;
+//                        see STARTEK_INTEGRATION.md and fp-match-service/).
+//
+// Tunable per-deployment: backend's FP_MATCH_THRESHOLD env (default 40)
+// is the source of truth for Startek; the registry's number here is the
+// frontend-side fallback when the backend's response doesn't carry a
+// threshold (e.g. dev-mode without fp-match-service running).
+export const DefaultThresholds = Object.freeze({
+  [Vendor.Mantra]: 140,
+  [Vendor.Startek]: 40,
+})
+
+// Friendly labels for the device-status banner.
+export const VendorLabel = Object.freeze({
+  [Vendor.Mantra]: 'Mantra',
+  [Vendor.Startek]: 'Startek',
+})
+
+// `Result` is the shape FingerprintCapture.jsx expects from any vendor's
+// match() call. Each vendor client adapts its raw envelope into this
+// shape so the React component is vendor-agnostic.
+//
+// Fields:
+//   ok              — match score crossed the threshold (vendor-side decision)
+//   score           — raw match score (vendor scale)
+//   threshold       — threshold applied at decision time (for audit)
+//   bitmapBase64    — captured fingerprint image preview, base64 BMP, or null
+//                     if vendor doesn't expose one
+//   quality         — capture quality 1..100, or null
+//   nfiq            — NIST quality 1..5, or null (MorFin only — Startek
+//                     doesn't expose this through the public API)
+//   liveness        — -1 unknown / 0 spoof / 1 live, or null
+//   deviceSerial    — device hardware serial
+//   deviceModel     — device model identifier
+//   templateFormat  — gallery template format used in the match
+//                     (FMR_V2005 / FMR_V2011 / ANSI_V378)
+//   vendor          — which vendor produced this result (Vendor enum)
+//   rawSdkResponse  — original SDK envelope for debugging / audit

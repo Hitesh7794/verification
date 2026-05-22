@@ -26,6 +26,14 @@ export default function FaceMatchPanel({
   onResult, // ({ ok, score, threshold, faceFound, captured, raw }) => void
 }) {
   const videoRef = useRef(null)
+  // streamRef holds the live MediaStream across renders. When the user
+  // clicks Capture, we conditionally render an <img> over the <video>,
+  // which UNMOUNTS the video element. The MediaStream itself is fine —
+  // its tracks keep running — but the new <video> element that mounts
+  // on Retake doesn't have srcObject pointing at the stream, so the
+  // preview goes blank. Keeping the stream in a ref + a separate
+  // effect that re-attaches on remount fixes this.
+  const streamRef = useRef(null)
   const [streaming, setStreaming] = useState(false)
   const [webcamErr, setWebcamErr] = useState('')
   const [snap, setSnap] = useState(null)
@@ -35,23 +43,58 @@ export default function FaceMatchPanel({
 
   // Boot webcam on mount, release on unmount.
   useEffect(() => {
-    let stream
     async function start() {
+      // Browsers only expose navigator.mediaDevices on a "secure context":
+      // https://... anything, http://localhost..., or file://. Plain HTTP
+      // from a LAN IP (e.g. http://192.168.x.y:5173) doesn't qualify —
+      // mediaDevices is literally undefined there, so we surface a
+      // specific message instead of the cryptic "undefined is not an
+      // object" the browser would otherwise throw.
+      if (typeof navigator === 'undefined' ||
+          !navigator.mediaDevices ||
+          typeof navigator.mediaDevices.getUserMedia !== 'function') {
+        setWebcamErr(
+          'Webcam access is blocked because this page is loaded over plain HTTP from a non-localhost address. ' +
+          'Open the portal via http://localhost:5173 (on this machine) or use HTTPS to enable the camera. ' +
+          'You can also click "Skip face step" below if you only need to test fingerprint.'
+        )
+        return
+      }
       try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+        const stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false })
+        streamRef.current = stream
         if (videoRef.current) {
           videoRef.current.srcObject = stream
-          setStreaming(true)
         }
+        setStreaming(true)
       } catch (e) {
-        setWebcamErr('Unable to access webcam. ' + e.message)
+        // Granted-but-failed: permission denied, no device, hardware
+        // error, etc. The browser gives a slightly more readable
+        // .name in these cases (NotAllowedError, NotFoundError, ...).
+        const reason = e.name || e.message || 'unknown error'
+        setWebcamErr(`Unable to access webcam (${reason}).`)
       }
     }
     start()
     return () => {
-      if (stream) stream.getTracks().forEach((t) => t.stop())
+      if (streamRef.current) {
+        streamRef.current.getTracks().forEach((t) => t.stop())
+        streamRef.current = null
+      }
     }
   }, [])
+
+  // Re-attach the live stream whenever the <video> element remounts.
+  // The element unmounts when `snap` becomes non-null (we render the
+  // captured snapshot <img> instead), and remounts when the operator
+  // clicks Retake (snap → null). Without this effect, the new <video>
+  // has no srcObject and the preview pane stays black even though the
+  // camera is still running.
+  useEffect(() => {
+    if (!snap && streamRef.current && videoRef.current) {
+      videoRef.current.srcObject = streamRef.current
+    }
+  }, [snap])
 
   function captureSnapshot() {
     const v = videoRef.current

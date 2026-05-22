@@ -1,0 +1,15 @@
+Package: fp-match-service
+Version: 1.0.0
+Section: misc
+Priority: optional
+Architecture: all
+Depends: default-jre (>= 2:1.11) | openjdk-17-jre | temurin-17-jre
+Maintainer: Verification Portal <ops@example.com>
+Description: Server-side fingerprint matching daemon for the Verification Portal
+ Wraps SourceAFIS (Apache 2.0, pure Java) behind a localhost JSON API on
+ port 8050. Runs as a systemd unit on the central EC2 server. The portal
+ backend forwards FMR templates (probe from any vendor's operator-laptop
+ daemon, gallery from the candidate index) through this service and stores
+ the 1:1 similarity score on the verification audit row. Vendor-neutral:
+ supports ISO/IEC 19794-2 FMR and ANSI INCITS 378 templates regardless of
+ which SDK extracted them.

@@ -1,0 +1,8 @@
+#!/bin/sh
+# prerm: stop the service before removing files.
+set -e
+
+systemctl stop    fp-match-service.service || true
+systemctl disable fp-match-service.service || true
+
+exit 0

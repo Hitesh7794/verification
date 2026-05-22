@@ -1,0 +1,110 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<project xmlns="http://maven.apache.org/POM/4.0.0">
+    <modelVersion>4.0.0</modelVersion>
+    <groupId>com.veni</groupId>
+    <artifactId>fp-match-service</artifactId>
+    <version>1.0.0</version>
+    <packaging>jar</packaging>
+
+    <name>fp-match-service</name>
+    <description>
+        HTTP wrapper around SourceAFIS 3.x, providing 1:1 fingerprint template
+        matching as a localhost JSON service. Runs server-side on Linux (EC2
+        in production, Docker on Mac for dev). Accepts probe + gallery FMR
+        (ISO/IEC 19794-2) templates over HTTP and returns a similarity score.
+        Vendor-neutral by design: any operator-laptop fingerprint daemon
+        (Mantra MorFin or Startek/ACPL) that emits FMR templates can match
+        against any pre-enrolled gallery, regardless of which SDK extracted
+        the gallery. Unblocks the Startek 1:1 verification path that ACPL's
+        own L1 Capture API can't support (it only does same-session matching).
+    </description>
+
+    <properties>
+        <maven.compiler.source>11</maven.compiler.source>
+        <maven.compiler.target>11</maven.compiler.target>
+        <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
+        <javalin.version>5.6.3</javalin.version>
+        <jackson.version>2.16.0</jackson.version>
+        <slf4j.version>2.0.9</slf4j.version>
+        <!-- SourceAFIS 3.18.1 — pure-Java fingerprint matcher, Apache 2.0.
+             Supports ISO/IEC 19794-2 FMR_V2005 and ANSI 378 import via
+             FingerprintCompatibility.importTemplate(byte[]). Verified
+             2026-05-16 with our gndu27 (Mantra-extracted) and Startek-
+             extracted templates — both import cleanly and produce expected
+             match scores (self ~400-500, different-finger ~0). No native
+             dependencies; runs on any OS / JVM 11+. -->
+        <sourceafis.version>3.18.1</sourceafis.version>
+    </properties>
+
+    <dependencies>
+        <dependency>
+            <groupId>io.javalin</groupId>
+            <artifactId>javalin</artifactId>
+            <version>${javalin.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>com.fasterxml.jackson.core</groupId>
+            <artifactId>jackson-databind</artifactId>
+            <version>${jackson.version}</version>
+        </dependency>
+        <dependency>
+            <groupId>org.slf4j</groupId>
+            <artifactId>slf4j-simple</artifactId>
+            <version>${slf4j.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>com.machinezoo.sourceafis</groupId>
+            <artifactId>sourceafis</artifactId>
+            <version>${sourceafis.version}</version>
+        </dependency>
+
+        <dependency>
+            <groupId>org.junit.jupiter</groupId>
+            <artifactId>junit-jupiter</artifactId>
+            <version>5.10.1</version>
+            <scope>test</scope>
+        </dependency>
+    </dependencies>
+
+    <build>
+        <finalName>fp-match-service-${project.version}</finalName>
+        <plugins>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-shade-plugin</artifactId>
+                <version>3.5.1</version>
+                <executions>
+                    <execution>
+                        <phase>package</phase>
+                        <goals><goal>shade</goal></goals>
+                        <configuration>
+                            <createDependencyReducedPom>false</createDependencyReducedPom>
+                            <transformers>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ManifestResourceTransformer">
+                                    <mainClass>com.veni.fpmatchservice.Main</mainClass>
+                                </transformer>
+                                <transformer implementation="org.apache.maven.plugins.shade.resource.ServicesResourceTransformer"/>
+                            </transformers>
+                            <filters>
+                                <filter>
+                                    <artifact>*:*</artifact>
+                                    <excludes>
+                                        <exclude>META-INF/*.SF</exclude>
+                                        <exclude>META-INF/*.DSA</exclude>
+                                        <exclude>META-INF/*.RSA</exclude>
+                                    </excludes>
+                                </filter>
+                            </filters>
+                        </configuration>
+                    </execution>
+                </executions>
+            </plugin>
+            <plugin>
+                <groupId>org.apache.maven.plugins</groupId>
+                <artifactId>maven-surefire-plugin</artifactId>
+                <version>3.2.2</version>
+            </plugin>
+        </plugins>
+    </build>
+</project>

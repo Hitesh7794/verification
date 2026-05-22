@@ -1,0 +1,21 @@
+[Unit]
+Description=fp-match-service (SourceAFIS wrapper, 127.0.0.1:8050)
+After=network.target
+
+[Service]
+Type=simple
+WorkingDirectory=/usr/local/fp-match-service
+Environment=FP_MATCH_PORT=8050
+Environment=FP_MATCH_THRESHOLD=40
+# Default loopback bind — only the local portal backend on the same
+# EC2 host reaches this service. Never exposed to a non-loopback
+# interface (nginx never proxies to it directly; the Go backend is
+# the sole intended client).
+Environment=FP_MATCH_BIND=127.0.0.1
+ExecStart=/usr/bin/java -jar /usr/local/fp-match-service/fp-match-service.jar
+Restart=on-failure
+RestartSec=5
+User=root
+
+[Install]
+WantedBy=multi-user.target

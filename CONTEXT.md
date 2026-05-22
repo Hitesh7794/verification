@@ -190,14 +190,67 @@ For the Marvis_Auth_Linux_Java_1.0.0.0 (MIS100V2):
   scores" — is a single indexed scan. Splitting into per-channel
   tables would require joins that the dashboards run every 4 s.
 
-### 5.3 1:1 matching, browser-driven, server is record-keeper
+### 5.3 1:1 matching — vendor-dependent (local vs server-side)
 
-- Frontend calls MorFin `match` with the gallery template fetched
-  from our backend. Score + decision come back; frontend posts the
-  decision + scores to backend.
-- Backend never talks to the device, never matches.
-- **Why:** keeps capture latency local (no round-trip to EC2 mid-
-  capture); makes the central server stateless and trivially scalable.
+Originally the design was "matching always on the operator laptop"
+(Mantra MorFin's daemon does capture+match in one call). That stayed
+the default for MorFin but doesn't generalise to all vendors:
+
+| Vendor | Capture | Matching | Why |
+|---|---|---|---|
+| Mantra MorFin | Operator laptop | Operator laptop | Vendor daemon does capture+match in one call. Local latency, no extra server hop. |
+| Startek/ACPL FM220U | Operator laptop | **Server (`fp-match-service` / SourceAFIS)** | ACPL's L1 Capture API can only match same-session templates — verified to reject stored gallery FMR templates with errorCode 104. Server-side SourceAFIS accepts any FMR template regardless of source SDK. |
+| Luxand face | Browser webcam | Server (`luxand-service`) | Browser does its own webcam capture (no daemon needed); central matching means no per-laptop install. |
+
+In all cases the **backend never talks to a device**, the operator
+laptop never stores gallery templates persistently, and the score lands
+on the same `verifications` audit row. Stateless central server stays
+trivially horizontally scalable; per-laptop daemons stay focused on USB
++ capture; templates flow probe→server (no PII on the laptop after the
+session ends).
+
+### 5.3b Server-side fingerprint matcher (SourceAFIS, added 2026-05-16)
+
+`fp-match-service` is the structural analogue of `luxand-service`:
+
+- Pure-Java Javalin service on `127.0.0.1:8050`
+- Wraps SourceAFIS 3.18.1 (Apache 2.0, no licence, no native libs)
+- Accepts FMR_V2005 / FMR_V2011 / ANSI 378 templates via
+  `FingerprintCompatibility.importTemplate(byte[])` — vendor-neutral
+- Returns a similarity score; threshold 40 = SourceAFIS's documented
+  1-in-1000 FMR
+- Runs as a Docker container on Mac for dev, a systemd unit on EC2 for
+  prod — same deploy pattern as luxand
+
+**Why SourceAFIS over the alternatives:**
+
+| Alternative | Why not |
+|---|---|
+| Use ACPL's Capture API GetMatchResult | Verified empirically (2026-05-15) to only match same-session templates. Stored gallery → errorCode 104, all device-info fields blanked out. Vendor confirmed the L1 RD package is for Aadhaar auth, not 1:1 verification. |
+| Wrap ACPL's `ISOminutiaMatchEx` via P/Invoke from a per-laptop Windows service | Vendor-locked to Startek; Windows-only; per-laptop service to install + maintain; same template-rejection risk as the WebApi. |
+| Wait for ACPL's non-L1 Bio-API SDK | Weeks of vendor turnaround. Costs licensing. Still vendor-locked. |
+| Pay for Innovatrics / Aware / Neurotechnology | Licence fees, vendor lock-in, no improvement in accuracy for the score gap we observe. |
+| NIST NBIS Bozorth3 | C/CLI shell-out, more integration friction than the pure-Java SourceAFIS, comparable accuracy. |
+
+SourceAFIS wins on every axis: free, open, pure Java (mirrors our
+existing Java services), vendor-neutral, mature (10+ years), accuracy
+verified on our actual data.
+
+**Threshold reference (FAR = false-accept rate):**
+
+| Threshold | FAR (1 in N) | When to use |
+|---|---|---|
+| 22 | 1 / 100 | Demo, casual unlock |
+| **40** ⭐ | **1 / 1,000** | **Default — our `FP_MATCH_THRESHOLD=40`** |
+| 52 | 1 / 10,000 | Higher-assurance |
+| 64 | 1 / 100,000 | Government / banking |
+| 84 | 1 / 1,000,000 | Forensic / very high security |
+
+For NEET exam impersonation prevention, 40 is the right default. On our
+observed data the gap between match (300-500) and non-match (0-5) is
+~50×, so anything between 30 and 80 separates cleanly. Don't go above
+~70 without calibration — operator-laptop sensor variance starts
+producing false rejects on legitimate candidates.
 
 ### 5.4 Idempotent verification submit
 
@@ -226,6 +279,39 @@ For the Marvis_Auth_Linux_Java_1.0.0.0 (MIS100V2):
 - `useDeviceStatus` polls `connecteddevicelist` every 2 s. First
   supported device becomes "the device". Init runs silently.
 - **Why:** the user explicitly asked for "plug in, log in, work" UX.
+
+### 5.8 Wallet — per-lookup billing via Razorpay test mode (added 2026-05-18)
+
+- Every `GET /api/candidates/{roll}` issued by a `client`-role user
+  passes through a charge middleware (`internal/api/wallet_middleware.go`)
+  that atomically debits `WALLET_FEE_PER_LOOKUP_PAISE` (default ₹5).
+  Admin and superadmin lookups skip the charge entirely.
+- Top-ups go through **Razorpay Checkout in test mode**. The backend
+  calls `POST api.razorpay.com/v1/orders` to register an intent, the
+  browser drives the hosted Checkout, then sends the resulting
+  `(order_id, payment_id, signature)` triple to
+  `POST /api/wallet/verify-payment`. The backend verifies the HMAC
+  signature server-side before crediting; a unique partial index on
+  `wallet_transactions.razorpay_payment_id` makes replays idempotent.
+- A 5-minute **same-roll cache** (`WALLET_SAME_ROLL_CACHE_MIN`) prevents
+  double-billing when the operator refreshes a page or quickly re-
+  searches the same candidate.
+- **Why Razorpay over a self-serve "fake deposit" button:** test mode
+  is identical to live mode at every layer except the keys (fake card
+  4111 1111 1111 1111 always succeeds, no real money). Switching to
+  production is one env-var change. The HMAC verification, replay
+  defence, idempotency, and atomic SQL transaction we wrote in test
+  mode are the same code that runs in production.
+- **Why store paise as integers:** floating-point money is a bug
+  category. `wallets.balance_paise` is `INTEGER CHECK (… >= 0)`; the
+  debit uses `UPDATE … WHERE balance_paise >= ?` so concurrent debits
+  can never oversell (verified via a 50-way concurrent-debit test in
+  `wallet/wallet_test.go`).
+- **Why only client gets a wallet:** the user explicitly chose this in
+  the planning conversation. Admin/superadmin are oversight roles; in
+  the current threat model they don't pay per lookup. The schema
+  doesn't prevent extending the feature to other roles later (the
+  `wallet_handlers.go` admin-credit path already uses the same store).
 
 ---
 
@@ -260,7 +346,125 @@ Phase 3 — Production rollout                 [PARTIAL]
       See client-bootstrap/README.md.
   #12 EC2 deploy: Postgres, nginx + TLS, systemd, deploy.sh — PENDING.
       Needs a DNS name pointed at the EIP for Let's Encrypt + webcam.
+
+Phase 5 — Multi-vendor fingerprint            [DONE 2026-05-15]
+  #17 Startek / ACPL Capture API added as a second fingerprint vendor
+      alongside Mantra MorFin. Both daemons run concurrently on Windows
+      operator laptops; frontend polls both via the registry in
+      frontend/src/lib/fingerprint/registry.js and binds to whichever
+      vendor has a device plugged in. Schema column fp_vendor records
+      which SDK matched (migration 4). Windows MSI added to install.ps1;
+      Go-based startek-mock under backend/cmd/startek-mock provides
+      dev-time parity with morfin-mock (port 8090, same /control surface).
+      Linux operator laptops continue to use MorFin only until ACPL
+      ships a Linux Capture API variant — vendor question outstanding.
+      See STARTEK_INTEGRATION.md.
+
+Phase 5b — Server-side fingerprint matcher   [DONE 2026-05-16]
+  #18 fp-match-service: a Java/Javalin service wrapping SourceAFIS
+      3.18.1 (Apache 2.0, pure Java). Runs server-side on EC2 (or in
+      Docker on Mac for dev), parallel to luxand-service. Backend
+      endpoint POST /api/fp-match accepts {roll_no, probe_b64,
+      fp_vendor}, looks up the gallery via the candidate index, forwards
+      probe+gallery to fp-match-service, returns the similarity score.
+      Why: ACPL's L1 Capture API can only match templates captured in
+      the same live session (verified empirically — gndu27 + stored
+      Startek galleries both rejected with errorCode 104; see §"Hardware
+      learnings" below). SourceAFIS accepts arbitrary FMR_V2005 / ANSI
+      378 templates regardless of which SDK extracted them. Vendor-
+      neutral by design: the same /api/fp-match could later route Mantra-
+      captured probes if a deployment wants unified scoring.
+      Verified end-to-end 2026-05-16 with real FM220U L1 hardware:
+        - same finger, same gallery → score 373-571 (threshold 40)
+        - different fingers (gndu27 candidate vs operator's finger)
+          → score 0.02-5 (well below threshold)
+      Default threshold 40 = SourceAFIS's documented 1-in-1000 FMR.
+
+Phase 6 — Wallet + Razorpay billing            [DONE 2026-05-18]
+  #19 Per-client wallet billing for candidate lookups.
+      • Schema: migration 5 adds `wallets` (balance_paise INTEGER NOT NULL
+        CHECK (balance_paise >= 0)) and `wallet_transactions` (signed
+        amount_paise ledger). Unique partial index on
+        razorpay_payment_id makes top-ups idempotent.
+      • Charge middleware (internal/api/wallet_middleware.go) gates
+        GET /api/candidates/{roll}: skips admin/superadmin, checks a
+        5-minute same-roll cache, atomically debits via
+        UPDATE … WHERE balance_paise >= ?, returns HTTP 402 if the
+        wallet is empty. Response includes X-Wallet-Balance-Paise /
+        X-Wallet-Charged-Paise headers on every successful charge.
+      • Top-up flow uses Razorpay Checkout in test mode:
+        POST /api/wallet/order creates a server-side Razorpay order,
+        the browser drives the hosted Checkout via window.Razorpay,
+        then POST /api/wallet/verify-payment HMAC-verifies the
+        signature server-side and credits the wallet.
+      • Admin manual credit: POST /api/admin/wallet/credit (admin or
+        superadmin only) for offline top-ups + corrections.
+      • Concurrent debit race-tested with 50 parallel goroutines:
+        exactly N succeed when budget = N × fee. File-backed SQLite +
+        WAL + busy_timeout makes the test deterministic.
+      • Frontend: WalletWidget (prominent balance pill + Deposit
+        button) in the navbar for client role only; LowBalanceModal
+        opens on 402 and retries the failed lookup after a successful
+        deposit. DepositModal offers presets (₹100/500/1000/5000) and
+        loads checkout.js from the CDN on demand.
+      • Default fee ₹5 / lookup (WALLET_FEE_PER_LOOKUP_PAISE=500).
+        Switching to production = swap the two RAZORPAY_KEY_* env vars;
+        same code path. KEY_SECRET stays server-side only.
+      See WALLET.md.
+
+Phase 6b — UI polish                             [DONE 2026-05-18]
+  • Stripped navbar to wallet widget + clickable avatar circle with
+    dropdown (Sign out). Removed NV logo + center name from the
+    top bar — operators don't need a marketing reminder of where
+    they work on every page.
+  • Login pages reworked into a clean centered card on slate-50,
+    per-role accent only on the role chip + primary button.
+    No gradients, no orbs, no marketing copy.
+  • Candidate-on-file card simplified to photo + roll number only;
+    other metadata moved out of the operator's primary scan path.
+  • Webcam unavailable → friendly message instead of "undefined is
+    not an object" (mediaDevices is gated behind a secure context;
+    LAN IPs over plain HTTP don't qualify).
+  • Retake button: video element unmounts when the snap renders,
+    so srcObject was lost on remount. streamRef + an effect that
+    re-attaches the stream on snap → null fixes the blank preview.
 ```
+
+### Multi-vendor fingerprint abstraction (added 2026-05-15)
+
+The frontend layer that talks to fingerprint daemons was split into a
+vendor-neutral registry so new vendors slot in cleanly:
+
+```
+frontend/src/lib/
+├── morfin.js                     unchanged — Mantra MorFin client
+└── fingerprint/
+    ├── types.js                  Vendor enum + DefaultThresholds map
+    ├── startek.js                ACPL Capture API client
+    └── registry.js               pollConnected() — parallel probe + winner
+```
+
+`useDeviceStatus.js` and `FingerprintCapture.jsx` are now
+vendor-agnostic: the hook returns `{vendor, name, info, threshold, client}`
+on the active device; the component dispatches `client.match()` to the
+right vendor. Output shape (`fpResult`) gains a `vendor` field that
+flows into the audit row via `verifications.fp_vendor`.
+
+**Probe order:** Mantra first (longer in production), Startek second.
+If both have devices connected, Mantra wins. To flip, edit
+`PROBE_ORDER` in `frontend/src/lib/fingerprint/registry.js`.
+
+**Threshold scales differ per vendor.** MorFin default is 140 (the
+constant `DEFAULT_MATCH_THRESHOLD` in the JAR's bytecode). Startek
+default is 60 — a placeholder; real-world calibration needs ~20 captures
+against known-match / known-non-match pairs once hardware is in hand.
+Tunables live in `frontend/src/lib/fingerprint/types.js`.
+
+**Linux operator laptops:** no Startek SDK from the vendor yet; the
+Linux bundle continues to ship only MorFin. The `STARTEK_DIR` build
+input in `client-bootstrap/windows/build-bundle.sh` is optional, so
+build hosts without the SDK still produce a working bundle (just
+without the Startek phase).
 
 ### What's still genuinely open
 

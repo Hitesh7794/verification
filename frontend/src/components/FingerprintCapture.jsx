@@ -1,6 +1,8 @@
 import { useState } from 'react'
 import { Button } from './ui.jsx'
-import { morfin, MorfinError, tmpFormatFromString } from '../lib/morfin.js'
+import { MorfinError, tmpFormatFromString } from '../lib/morfin.js'
+import { StartekError } from '../lib/fingerprint/startek.js'
+import { Vendor } from '../lib/fingerprint/types.js'
 import { Status, useDeviceStatus } from '../lib/useDeviceStatus.js'
 
 // FingerprintCapture orchestrates the full fingerprint stage of a
@@ -8,41 +10,74 @@ import { Status, useDeviceStatus } from '../lib/useDeviceStatus.js'
 //   1. Wait until device is Ready (status dot turns green).
 //   2. Operator clicks "Capture & match" — the daemon captures from the
 //      USB device and runs 1:1 against the supplied gallery template.
-//   3. We surface the BMP preview, score, NFIQ, liveness, and call the
-//      parent back with the full result so they can submit the final
-//      verification record.
+//   3. We surface the BMP preview (if vendor provides), score, NFIQ,
+//      liveness, and call the parent back with the full result so they
+//      can submit the final verification record.
 //
 // There is NO device dropdown and NO init button — both are handled by
 // the polling hook. If the device is not Ready, the operator sees a
 // human-readable message and the capture button is disabled.
+//
+// Multi-vendor (2026-05-15): the hook surfaces an `active` vendor on
+// the device object. We dispatch the match call to that vendor's
+// client and tag the result with vendor=mantra|startek so the audit
+// row records which SDK produced the score. Threshold defaults come
+// from the registry (vendor scales differ) but a caller-provided
+// matchThreshold overrides for explicit control.
 
 export default function FingerprintCapture({
+  rollNo, // candidate roll — required by Startek path (backend-side gallery lookup)
   galleryTemplate,
   galleryFormat, // "FMR_V2005" | "FMR_V2011" | "ANSI_V378"
-  matchThreshold = 140,
+  matchThreshold, // optional — when omitted, use the active vendor's default
   onResult, // (result) => void
 }) {
-  const { status, device, error, withCapturing } = useDeviceStatus()
+  const { status, device, error, withCapturing, getClient } = useDeviceStatus()
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState(null)
   const [callError, setCallError] = useState(null)
 
   const ready = status === Status.Ready && !!device
+  // Effective threshold: explicit prop wins over the vendor default
+  // surfaced by the registry. Both vendors land into the same
+  // match_threshold column on the audit row.
+  const effectiveThreshold =
+    typeof matchThreshold === 'number' ? matchThreshold : device?.threshold ?? 0
 
   const runMatch = withCapturing(async () => {
-    const fmt = tmpFormatFromString(galleryFormat)
-    if (fmt === null) {
-      throw new Error(
-        'unsupported gallery format: ' +
-          galleryFormat +
-          ' (expected FMR_V2005, FMR_V2011, or ANSI_V378)',
-      )
+    if (!device) throw new Error('no active fingerprint device')
+    const client = getClient(device.vendor)
+    if (!client) throw new Error('no client registered for vendor: ' + device.vendor)
+
+    // MorFin's match() expects a numeric TmpFormat enum (FMR_V2005 etc.)
+    // because the vendor daemon uses an array-index code on the wire.
+    // Startek's match() doesn't take a format argument — the FM220U L1
+    // emits ISO/IEC 19794-2 FMR templates and the matcher accepts the
+    // same family without any vendor-side enum.
+    if (device.vendor === Vendor.Mantra) {
+      const fmt = tmpFormatFromString(galleryFormat)
+      if (fmt === null) {
+        throw new Error(
+          'unsupported gallery format for MorFin: ' +
+            galleryFormat +
+            ' (expected FMR_V2005, FMR_V2011, or ANSI_V378)',
+        )
+      }
+      // MorFin matches locally on the operator laptop.
+      return client.match({
+        gallery: galleryTemplate,
+        format: fmt,
+        quality: 60,
+        timeoutSec: 10,
+      })
     }
-    return morfin.match({
+    // Startek — local capture, server-side match via /api/fp-match.
+    // The client needs rollNo to drive the backend's gallery lookup;
+    // gallery is passed for API symmetry but currently unused by the
+    // Startek client (see frontend/src/lib/fingerprint/startek.js).
+    return client.match({
+      rollNo,
       gallery: galleryTemplate,
-      format: fmt,
-      quality: 60,
-      timeoutSec: 10,
     })
   })
 
@@ -53,18 +88,19 @@ export default function FingerprintCapture({
     try {
       const r = await runMatch()
       const score = typeof r.MatchScore === 'number' ? r.MatchScore : Number(r.MatchScore || 0)
-      const passed = !!r.Status && score >= matchThreshold
+      const passed = !!r.Status && score >= effectiveThreshold
       const out = {
         ok: passed,
         rawSdkResponse: r,
-        deviceSerial: device?.info?.SerialNo || '',
-        deviceModel: device?.info?.Model || '',
+        vendor: device?.vendor || null,
+        deviceSerial: device?.info?.SerialNo || r.DeviceSerial || '',
+        deviceModel: device?.info?.Model || r.DeviceModel || '',
         templateFormat: galleryFormat,
         quality: r.Quality ?? null,
         nfiq: r.Nfiq ?? null,
         liveness: typeof r.LiveNess_Result === 'number' ? r.LiveNess_Result : null,
         score,
-        threshold: matchThreshold,
+        threshold: effectiveThreshold,
         bitmapBase64: r.BitmapData || null,
       }
       setResult(out)
@@ -95,7 +131,10 @@ export default function FingerprintCapture({
         ) : ready ? (
           <>
             <p className="text-sm font-medium text-slate-700">Device ready</p>
-            <p className="text-xs text-slate-500 mt-1">{device?.info?.Model} · {device?.info?.SerialNo}</p>
+            <p className="text-xs text-slate-500 mt-1">
+              {device?.label ? `${device.label} · ` : ''}
+              {device?.info?.Model} · {device?.info?.SerialNo}
+            </p>
           </>
         ) : (
           <p className="text-sm text-slate-500">Waiting for fingerprint device…</p>
@@ -107,7 +146,7 @@ export default function FingerprintCapture({
       )}
       {callError && (
         <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">
-          {callError instanceof MorfinError
+          {callError instanceof MorfinError || callError instanceof StartekError
             ? `${callError.code}: ${callError.description}`
             : callError.message}
         </div>
@@ -137,6 +176,7 @@ export default function FingerprintCapture({
                   const out = {
                     ok: false,
                     rawSdkResponse: null,
+                    vendor: null,
                     deviceSerial: '',
                     deviceModel: '',
                     templateFormat: galleryFormat,
@@ -144,7 +184,7 @@ export default function FingerprintCapture({
                     nfiq: null,
                     liveness: null,
                     score: 0,
-                    threshold: matchThreshold,
+                    threshold: effectiveThreshold,
                     bitmapBase64: null,
                     skipped: true,
                   }
@@ -177,13 +217,18 @@ function DeviceBanner({ status, device, error }) {
 
 function bannerFor(status, device, error) {
   switch (status) {
-    case Status.Ready:
+    case Status.Ready: {
+      const vendorPrefix = device?.label ? `${device.label} · ` : ''
+      const modelSerial = device
+        ? `${device.info?.Model || ''}${device.info?.SerialNo ? ' · ' + device.info.SerialNo : ''}`
+        : ''
       return {
         tone: 'border-emerald-200 bg-emerald-50 text-emerald-800',
         dot: 'bg-emerald-500',
         title: 'Device ready',
-        detail: device ? `${device.info?.Model} · ${device.info?.SerialNo}` : '',
+        detail: vendorPrefix + modelSerial,
       }
+    }
     case Status.Capturing:
       return {
         tone: 'border-indigo-200 bg-indigo-50 text-indigo-800',
@@ -231,6 +276,20 @@ function bannerFor(status, device, error) {
 
 function ResultSummary({ result }) {
   const { ok, score, threshold, quality, nfiq, liveness } = result
+  // Render numeric score/threshold with at most 2 decimals — SourceAFIS
+  // returns a double like 215.09143581040846 which is noisy for operators.
+  // Integer scores (Mantra MorFin returns ints) render as ints unchanged.
+  const fmt = (n) => {
+    if (typeof n !== 'number' || Number.isNaN(n)) return n
+    return Number.isInteger(n) ? n.toString() : n.toFixed(2)
+  }
+  // NFIQ 0 means "not measured" per the NIST spec (1..5 are real values where 1
+  // is best). Some vendors return 0 instead of null when they don't expose
+  // the metric — render as "—" for the operator's eye.
+  const nfiqDisplay = (typeof nfiq === 'number' && nfiq > 0) ? nfiq : '—'
+  // Quality is null for Startek (ACPL doesn't expose it in the public API);
+  // a real number for Mantra MorFin. Same display rule.
+  const qualityDisplay = (typeof quality === 'number' && quality > 0) ? quality : '—'
   return (
     <div
       className={`rounded-lg border p-3 text-sm ${
@@ -240,10 +299,10 @@ function ResultSummary({ result }) {
       }`}
     >
       <p className="font-semibold">
-        {ok ? 'Match' : 'No match'} · score {score} / threshold {threshold}
+        {ok ? 'Match' : 'No match'} · score {fmt(score)} / threshold {fmt(threshold)}
       </p>
       <p className="text-xs mt-1 text-slate-600">
-        quality {quality ?? '—'} · NFIQ {nfiq ?? '—'} ·{' '}
+        quality {qualityDisplay} · NFIQ {nfiqDisplay} ·{' '}
         liveness {liveness === 1 ? 'live' : liveness === 0 ? 'spoof' : '—'}
       </p>
     </div>

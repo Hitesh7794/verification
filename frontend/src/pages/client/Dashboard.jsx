@@ -1,7 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import AppShell from '../../components/AppShell.jsx'
 import {
-  Badge,
   Button,
   Card,
   CardBody,
@@ -15,7 +14,9 @@ import {
 import FingerprintCapture from '../../components/FingerprintCapture.jsx'
 import IrisCapture from '../../components/IrisCapture.jsx'
 import FaceMatchPanel from '../../components/FaceMatchPanel.jsx'
-import { api, fetchFPTemplate, fetchPhotoBlob } from '../../lib/api.js'
+import LowBalanceModal from '../../components/LowBalanceModal.jsx'
+import { api, fetchFPTemplate, fetchPhotoBlob, isWalletEmptyError } from '../../lib/api.js'
+import { getWalletConfig } from '../../lib/wallet.js'
 
 // Generate an idempotency key per verification attempt so a network retry
 // of the submit doesn't create two rows. crypto.randomUUID is available in
@@ -146,15 +147,34 @@ export default function ClientDashboard() {
   const [submitting, setSubmitting] = useState(false)
   const [result, setResult] = useState(null)
   const [verificationStartedAt, setVerificationStartedAt] = useState(null)
+  // Wallet integration: when /api/candidates/{roll} returns 402, we
+  // stash the ApiError + open LowBalanceModal. Once the operator tops
+  // up, we retry the lookup automatically.
+  const [walletErr, setWalletErr] = useState(null)        // ApiError | null
+  const [walletConfig, setWalletConfig] = useState(null)  // cached config
+  // walletRefreshKey is bumped to force WalletWidget to re-fetch (e.g.
+  // after a successful candidate lookup deducts a fee).
+  const [walletRefreshKey, setWalletRefreshKey] = useState(0)
+
+  // Fetch wallet config once on mount — cheap, idempotent, used by
+  // LowBalanceModal so it knows the fee/cap/key_id without a separate
+  // round-trip on the failure path.
+  useEffect(() => {
+    getWalletConfig().then(setWalletConfig).catch(() => {})
+  }, [])
 
   async function lookupRoll(e) {
     e?.preventDefault()
     setLookupErr('')
+    setWalletErr(null)
     if (!roll.trim()) return
     try {
       const c = await api(`/candidates/${encodeURIComponent(roll.trim())}`)
       setCandidate(c)
       setVerificationStartedAt(Date.now())
+      // Charge succeeded server-side → bump the widget refresh key so
+      // the navbar balance re-fetches the new (decremented) balance.
+      setWalletRefreshKey((k) => k + 1)
       // Photo and fingerprint template can fetch in parallel; either
       // failure is non-fatal — operator can still complete a manual
       // verification, so we just surface the absence in the UI.
@@ -176,6 +196,12 @@ export default function ClientDashboard() {
       }
       setStep(1)
     } catch (e) {
+      // HTTP 402 from the wallet middleware → open LowBalanceModal.
+      // Operator tops up → onDeposited fires → we retry this lookup.
+      if (isWalletEmptyError(e)) {
+        setWalletErr(e)
+        return
+      }
       setLookupErr(e.message || 'lookup failed')
     }
   }
@@ -219,12 +245,21 @@ export default function ClientDashboard() {
       }
       if (fpResult) {
         Object.assign(body, {
+          fp_vendor: fpResult.vendor || null,
           device_serial: fpResult.deviceSerial || null,
           device_model: fpResult.deviceModel || null,
           fp_template_format: fpResult.templateFormat || null,
           fp_quality: fpResult.quality,
           fp_nfiq: fpResult.nfiq,
-          fp_match_score: fpResult.score,
+          // Round to integer before sending: the backend's fp_match_score
+          // column is INTEGER. Mantra returns ints natively, but SourceAFIS
+          // returns doubles like 215.0914 — Go's JSON decoder would reject
+          // those against `*int`. Audit precision loss (215.09 → 215) is
+          // negligible because the gap between match (>100) and non-match
+          // (<5) is two orders of magnitude.
+          fp_match_score: typeof fpResult.score === 'number'
+            ? Math.round(fpResult.score)
+            : null,
           fp_liveness: fpResult.liveness,
         })
       }
@@ -270,7 +305,22 @@ export default function ClientDashboard() {
     <AppShell
       title="Center Operator Portal"
       subtitle="Biometric verification workstation"
+      walletRefreshKey={walletRefreshKey}
     >
+      {walletErr && walletConfig && (
+        <LowBalanceModal
+          err={walletErr}
+          config={walletConfig}
+          onClose={() => setWalletErr(null)}
+          onDeposited={() => {
+            // Top-up succeeded → retry the lookup that triggered 402.
+            // Bump the wallet refresh key so the navbar widget re-fetches.
+            setWalletErr(null)
+            setWalletRefreshKey((k) => k + 1)
+            lookupRoll()
+          }}
+        />
+      )}
       <PageHeader
         title="New verification"
         subtitle="Enter the candidate roll number, capture face and fingerprint, then record the decision."
@@ -321,11 +371,17 @@ export default function ClientDashboard() {
 
       {step >= 1 && candidate && (
         <div className="grid gap-6 lg:grid-cols-3">
-          <Card className="lg:col-span-1">
+          <Card className="lg:col-span-1 self-start">
             <CardHeader>
               <CardTitle>Candidate on file</CardTitle>
             </CardHeader>
             <CardBody>
+              {/* Just photo + roll. Organization / center / exam date /
+                  template badges were redundant for the operator workflow
+                  (they're not making routing decisions; they only need to
+                  confirm "this is the right person"). All of those fields
+                  are still available on the candidate object for the
+                  audit submit + future detail views. */}
               <div className="aspect-square w-full rounded-lg bg-slate-100 overflow-hidden mb-4">
                 {photoBlob ? (
                   <img src={photoBlob} alt="enrolled" className="w-full h-full object-cover" />
@@ -335,34 +391,12 @@ export default function ClientDashboard() {
                   </div>
                 )}
               </div>
-              <dl className="space-y-2 text-sm">
-                <div className="flex justify-between">
-                  <dt className="text-slate-500">Roll No.</dt>
-                  <dd className="font-medium text-slate-900">{candidate.roll_no}</dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-slate-500">Organization</dt>
-                  <dd className="font-medium text-slate-900">{candidate.org_code}</dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-slate-500">Center</dt>
-                  <dd className="font-medium text-slate-900 text-right max-w-[60%]">
-                    {candidate.center_name}
-                  </dd>
-                </div>
-                <div className="flex justify-between">
-                  <dt className="text-slate-500">Exam date</dt>
-                  <dd className="font-medium text-slate-900">{candidate.exam_date}</dd>
-                </div>
-                <div className="flex justify-between items-center">
-                  <dt className="text-slate-500">Templates</dt>
-                  <dd className="flex gap-1">
-                    {candidate.has_photo && <Badge tone="indigo">Photo</Badge>}
-                    {candidate.has_fp_image && <Badge tone="indigo">FP img</Badge>}
-                    {candidate.has_iso_template && <Badge tone="indigo">ISO</Badge>}
-                  </dd>
-                </div>
-              </dl>
+              <div className="flex items-baseline justify-between">
+                <span className="text-xs uppercase tracking-wide text-slate-500">Roll number</span>
+                <span className="text-lg font-semibold text-slate-900 tabular-nums">
+                  {candidate.roll_no}
+                </span>
+              </div>
             </CardBody>
           </Card>
 
@@ -391,9 +425,14 @@ export default function ClientDashboard() {
                 <CardBody>
                   {gallery ? (
                     <FingerprintCapture
+                      rollNo={candidate.roll_no}
                       galleryTemplate={gallery.template_b64}
                       galleryFormat={gallery.format}
-                      matchThreshold={140}
+                      // matchThreshold left unset on purpose: registry
+                      // provides the per-vendor default (Mantra 140,
+                      // Startek 40 — SourceAFIS 1-in-1000 FMR). Pass an
+                      // explicit number here only for one-off overrides
+                      // during calibration.
                       onResult={(r) => {
                         setFpResult(r)
                         if (step < 3) setStep(3)
@@ -478,6 +517,16 @@ export default function ClientDashboard() {
                         Compare the live capture against the candidate on file. SDK auto-matching
                         will integrate later — for now, record your decision manually.
                       </p>
+                      {/* Surface submit errors here too. lookupErr is shared
+                          between the roll-lookup step and the verification-submit
+                          step; without rendering it here, a failed submit
+                          (e.g. backend 4xx) shows nothing — the buttons just
+                          stop responding silently. */}
+                      {lookupErr && (
+                        <div className="mb-3 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">
+                          {lookupErr}
+                        </div>
+                      )}
                       <div className="flex gap-3">
                         <Button
                           variant="success"

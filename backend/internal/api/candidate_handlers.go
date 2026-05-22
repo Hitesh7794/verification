@@ -140,11 +140,12 @@ type verifyReq struct {
 	DeviceSerial string `json:"device_serial"`
 	DeviceModel  string `json:"device_model"`
 
+	FpVendor         string `json:"fp_vendor"`          // mantra|startek (NULL for legacy/manual rows)
 	FpTemplateFormat string `json:"fp_template_format"` // FMR_V2005|FMR_V2011|ANSI_V378
-	FpQuality        *int   `json:"fp_quality"`         // 1..100, MorFin
-	FpNfiq           *int   `json:"fp_nfiq"`            // 1..5, NIST
-	FpMatchScore     *int   `json:"fp_match_score"`     // MorFin MatchScore
-	FpLiveness       *int   `json:"fp_liveness"`        // -1 unknown, 0 spoof, 1 live
+	FpQuality        *int   `json:"fp_quality"`         // 1..100, vendor-defined scale
+	FpNfiq           *int   `json:"fp_nfiq"`            // 1..5, NIST (MorFin only)
+	FpMatchScore     *int   `json:"fp_match_score"`     // vendor-specific scale
+	FpLiveness       *int   `json:"fp_liveness"`        // -1 unknown, 0 spoof, 1 live (MorFin only)
 
 	IrisLeftScore    *float64 `json:"iris_left_score"`
 	IrisRightScore   *float64 `json:"iris_right_score"`
@@ -209,16 +210,16 @@ func (s *Server) createVerification(w http.ResponseWriter, r *http.Request) {
 			roll_no, org_id, center_id, operator_id,
 			face_match, fp_match, status, note,
 			device_serial, device_model,
-			fp_template_format, fp_quality, fp_nfiq, fp_match_score, fp_liveness,
+			fp_vendor, fp_template_format, fp_quality, fp_nfiq, fp_match_score, fp_liveness,
 			iris_left_score, iris_right_score, iris_left_quality, iris_right_quality,
 			face_match_score,
 			via, match_threshold, decision_ms, client_app_version,
 			idempotency_key
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
 		req.RollNo, *claims.OrgID, *claims.CenterID, claims.UserID,
 		boolInt(req.FaceMatch), boolInt(req.FpMatch), req.Status, nullable(req.Note),
 		nullable(req.DeviceSerial), nullable(req.DeviceModel),
-		nullable(req.FpTemplateFormat), nullableInt(req.FpQuality), nullableInt(req.FpNfiq),
+		nullable(req.FpVendor), nullable(req.FpTemplateFormat), nullableInt(req.FpQuality), nullableInt(req.FpNfiq),
 		nullableInt(req.FpMatchScore), nullableInt(req.FpLiveness),
 		nullableFloat(req.IrisLeftScore), nullableFloat(req.IrisRightScore),
 		nullableInt(req.IrisLeftQuality), nullableInt(req.IrisRightQuality),

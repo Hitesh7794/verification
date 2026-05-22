@@ -4,6 +4,20 @@ function getToken() {
   return localStorage.getItem('nv_token') || ''
 }
 
+// ApiError carries the HTTP status code and parsed body alongside the
+// error message — callers that need to branch on status code (e.g. the
+// candidate-lookup handler needs to detect 402 to open the deposit
+// modal) can do `e instanceof ApiError && e.status === 402`.
+export class ApiError extends Error {
+  constructor(message, { status, body, headers } = {}) {
+    super(message)
+    this.name = 'ApiError'
+    this.status = status
+    this.body = body       // the parsed JSON body (or null)
+    this.headers = headers // the response Headers object (or null)
+  }
+}
+
 export async function api(path, { method = 'GET', body, auth = true } = {}) {
   const headers = { 'Content-Type': 'application/json' }
   if (auth) {
@@ -17,14 +31,25 @@ export async function api(path, { method = 'GET', body, auth = true } = {}) {
   })
   if (!res.ok) {
     let msg = res.statusText
+    let parsedBody = null
     try {
-      const j = await res.json()
-      if (j.error) msg = j.error
+      parsedBody = await res.json()
+      if (parsedBody?.error) msg = parsedBody.error
     } catch {}
-    throw new Error(msg)
+    throw new ApiError(msg, {
+      status: res.status,
+      body: parsedBody,
+      headers: res.headers,
+    })
   }
   if (res.status === 204) return null
   return res.json()
+}
+
+// True when the error is an HTTP 402 from the wallet middleware. The
+// body contains { error, balance_paise, fee_paise }.
+export function isWalletEmptyError(err) {
+  return err instanceof ApiError && err.status === 402
 }
 
 export function photoUrl(roll) {
@@ -59,5 +84,23 @@ export async function postFaceMatch(roll, dataURLOrBase64) {
   return api('/face-match', {
     method: 'POST',
     body: { roll_no: roll, image_b64: dataURLOrBase64 },
+  })
+}
+
+// Posts a captured fingerprint probe template (base64 FMR/ANSI bytes from
+// any vendor's operator-laptop daemon) to the backend's fp-match orchestrator.
+// Backend looks up the gallery template for the roll, forwards probe + gallery
+// to fp-match-service (SourceAFIS), returns the score.
+//
+// Used by vendor clients that can't do stored-gallery 1:1 matching on the
+// operator laptop — today that's Startek/ACPL. Mantra MorFin keeps doing
+// its match locally via the vendor daemon (faster + battle-tested).
+//
+// Returns {roll_no, score, threshold, status, vendor} or throws on
+// transport / SDK error. The caller surfaces the error in the UI.
+export async function postFpMatch(roll, probeBase64, vendor) {
+  return api('/fp-match', {
+    method: 'POST',
+    body: { roll_no: roll, probe_b64: probeBase64, fp_vendor: vendor || '' },
   })
 }

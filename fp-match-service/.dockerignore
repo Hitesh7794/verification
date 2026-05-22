@@ -1,0 +1,10 @@
+target/
+dist/
+.git/
+**/.DS_Store
+*.log
+README.md
+build-deb.sh
+dev-up.sh
+dev-down.sh
+packaging/

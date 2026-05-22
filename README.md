@@ -5,10 +5,24 @@ operators verify candidate identity by capturing a live face photo, a
 live fingerprint (and optionally iris as fallback), comparing each
 against pre-enrolled records on file.
 
-> **Status (2026-05-07).**
-> - **Fingerprint 1:1 verification** — wired end-to-end against the
->   **MorFin Auth Web SDK** (devices: MELO041 / MFS500 / MARC10).
->   Native Windows + native Linux supported.
+> **Status (2026-05-18).**
+> - **Fingerprint 1:1 verification** — two vendors, both running
+>   side-by-side on operator laptops; the frontend polls both daemons in
+>   parallel and binds to whichever has a device plugged in. Matching
+>   is vendor-specific:
+>   - **Mantra MorFin Auth Web SDK** (devices: MELO041 / MFS500 / MARC10) —
+>     native Windows + native Linux. Capture + match happen on the
+>     operator laptop via the vendor's daemon.
+>   - **Startek / ACPL Capture API** (devices: FM220U L1 / AST300) —
+>     native Windows MSI. **Capture happens on the operator laptop;
+>     matching happens server-side** via `fp-match-service` (SourceAFIS,
+>     Apache 2.0) because ACPL's own matcher only supports same-session
+>     templates. Verified end-to-end 2026-05-16 with real hardware: real
+>     finger on roll 99999 → match score 373 / threshold 40 / status:true;
+>     real finger on roll 10001 (different person from gndu27) → score
+>     ~0 / threshold 40 / status:false. See
+>     [`STARTEK_INTEGRATION.md`](./STARTEK_INTEGRATION.md) and
+>     [`fp-match-service/README.md`](./fp-match-service/README.md).
 > - **Iris 1:1 verification** — wired end-to-end against the
 >   **Marvis Auth SDK** (device: MIS100V2). Used as automatic
 >   fallback when fingerprint match fails.
@@ -21,13 +35,24 @@ against pre-enrolled records on file.
 >     `{"ErrorCode":"0","ErrorDescription":"Found Devices: MIS100V2"}`.
 > - **Face 1:1 verification** — Luxand FaceSDK 8.3, server-side via
 >   `luxand-service` on the central server (browser webcam capture,
->   no per-laptop daemon). Working with real photos, FAR-tunable
->   threshold.
+>   no per-laptop daemon). Working with real photos. Default `FAR=0.01`
+>   (1-in-100, threshold ≈ 0.99) — calibrated for operator-supervised
+>   exam verification, not unattended fintech-style auth.
+> - **Per-client wallet with Razorpay test-mode top-ups** — every
+>   `/api/candidates/{roll}` lookup for a `client`-role user debits a
+>   fixed fee (default ₹5). When the balance can't cover the next fee
+>   the API returns HTTP 402 and the portal opens a Razorpay Checkout
+>   modal so the operator can top up. Verified end-to-end against
+>   real `api.razorpay.com` orders + HMAC signature verify. Admin can
+>   manually credit any operator wallet. See
+>   [`WALLET.md`](./WALLET.md) for the full flow + Razorpay test cards.
+>   (Admin / superadmin lookups are free — wallet feature is
+>   `client`-only.)
 > - **Operator-laptop install bundles** — `client-bootstrap/{linux,
 >   windows}` ship a one-command installer per OS. Windows bundle
 >   provisions WSL2 + Ubuntu + iris `.deb` + usbipd-win + scheduled
 >   task for USB auto-attach + MorFin native service via `nssm` +
->   cert imports + browser pin.
+>   ACPL Capture API MSI + cert imports + browser pin.
 > - **Mock daemons** stand in for the real SDKs during local dev, so
 >   the entire flow can be tested on macOS without USB hardware.
 > - **Pending:** EC2 server deploy (Postgres + nginx + TLS + systemd).
@@ -40,6 +65,10 @@ against pre-enrolled records on file.
 > - [`TECH_LEAD_QUESTIONS.md`](./TECH_LEAD_QUESTIONS.md) — longer Q&A version of the above.
 > - [`client-bootstrap/README.md`](./client-bootstrap/README.md) — operator-laptop install bundle internals.
 > - [`iris-service/README.md`](./iris-service/README.md) — Java service wrapping the Marvis SDK.
+> - [`luxand-service/README.md`](./luxand-service/README.md) — server-side face matcher (Luxand FaceSDK 8.3).
+> - [`fp-match-service/README.md`](./fp-match-service/README.md) — server-side fingerprint matcher (SourceAFIS). Unblocks the Startek path.
+> - [`STARTEK_INTEGRATION.md`](./STARTEK_INTEGRATION.md) — Startek/ACPL fingerprint integration + the L1 Capture API limitation it works around.
+> - [`WALLET.md`](./WALLET.md) — wallet feature + Razorpay test-mode integration + admin manual-credit flow.
 > - [`IRIS_TEST_WINDOWS.md`](./IRIS_TEST_WINDOWS.md) — step-by-step guide for testing the MIS100V2 iris device on a Windows laptop.
 
 ---
@@ -83,36 +112,68 @@ Portal-main/
 ├── backend/                       Go API + dev mocks
 │   ├── cmd/
 │   │   ├── server/                Main API server (:8080)
-│   │   ├── morfin-mock/           Fingerprint daemon stand-in (:8030)
+│   │   ├── morfin-mock/           Mantra fingerprint mock (:8030)
+│   │   ├── startek-mock/          Startek/ACPL Capture API mock (:8090)
 │   │   └── iris-mock/             Iris service stand-in (:8031)
 │   └── internal/
 │       ├── api/                   HTTP handlers
+│       │   ├── face_handlers.go        /api/face-match (Luxand server-side)
+│       │   ├── fp_handlers.go          /api/fp-match  (SourceAFIS server-side)
+│       │   ├── wallet_handlers.go      /api/wallet/*   (balance, deposit order, verify)
+│       │   ├── wallet_middleware.go    walletCharge — 402 path + same-roll cache
+│       │   └── ...
 │       ├── auth/                  JWT issue / parse
-│       ├── config/                Env-based config + threshold defaults
+│       ├── config/                Env-based config + threshold defaults + Razorpay keys
 │       ├── data/                  Filesystem index + template-format detection
-│       └── db/                    SQLite open + versioned migrations + seed
+│       ├── db/                    SQLite open + versioned migrations + seed
+│       ├── luxand/                HTTP client → luxand-service
+│       ├── fpmatch/               HTTP client → fp-match-service
+│       ├── wallet/                wallet store, atomic debit/credit, history
+│       └── razorpay/              Razorpay REST client + HMAC signature verify
 │
 ├── frontend/                      React 18 + Vite + Tailwind v4 + recharts
 │   └── src/
 │       ├── components/
-│       │   ├── AppShell.jsx
-│       │   ├── LoginShell.jsx
-│       │   ├── FingerprintCapture.jsx   ← drives the MorFin daemon
-│       │   ├── IrisCapture.jsx          ← drives the iris service
-│       │   └── ui.jsx
+│       │   ├── AppShell.jsx                 minimal header — wallet + avatar dropdown
+│       │   ├── AvatarMenu.jsx               clickable circle + dropdown (sign out, etc.)
+│       │   ├── LoginShell.jsx               clean centered login card
+│       │   ├── FingerprintCapture.jsx       vendor-neutral capture UI
+│       │   ├── IrisCapture.jsx              drives the iris service
+│       │   ├── FaceMatchPanel.jsx           webcam capture + /api/face-match
+│       │   ├── WalletWidget.jsx             navbar balance pill + Deposit + modal lifecycle
+│       │   ├── WalletBalanceBadge.jsx       coloured pill (emerald/amber/rose by balance)
+│       │   ├── DepositModal.jsx             preset/freeform amount + Razorpay Checkout launch
+│       │   ├── LowBalanceModal.jsx          blocks the page on HTTP 402
+│       │   └── ui.jsx                       Card, Button, Input, Label, Badge primitives
 │       ├── lib/
-│       │   ├── api.js                   ← portal API client
+│       │   ├── api.js                       portal API client + ApiError + isWalletEmptyError
 │       │   ├── auth.jsx
-│       │   ├── morfin.js                ← MorFin daemon client
-│       │   ├── iris.js                  ← iris service client
-│       │   └── useDeviceStatus.js       ← polling state machine
-│       └── pages/                       Landing / client / admin / superadmin
+│       │   ├── wallet.js                    /api/wallet/* + Razorpay Checkout loader
+│       │   ├── morfin.js                    Mantra MorFin daemon client (local match)
+│       │   ├── iris.js                      iris service client
+│       │   ├── fingerprint/                 multi-vendor FP layer
+│       │   │   ├── types.js                 Vendor enum + per-vendor thresholds
+│       │   │   ├── startek.js               ACPL Capture API client (capture only;
+│       │   │   │                             match → backend /api/fp-match)
+│       │   │   └── registry.js              parallel vendor probe + dispatch
+│       │   └── useDeviceStatus.js           polling state machine
+│       └── pages/                           Landing / client / admin / superadmin
 │
 ├── iris-service/                  Java + Javalin wrapper around Marvis SDK
 │   ├── src/main/java/.../         IrisProvider interface, Mock + Marvis impls
 │   ├── packaging/debian/          .deb files (control, postinst, systemd unit)
 │   ├── pom.xml                    Maven build
 │   └── build-deb.sh               Linux-only .deb packager
+│
+├── luxand-service/                Java + Javalin wrapper around Luxand FaceSDK 8.3
+│   ├── src/main/java/.../         FaceProvider + reflective JNA wrapper
+│   ├── Dockerfile, dev-up.sh      Local dev via Docker (x86_64 emulated on Mac)
+│   └── packaging/debian/          .deb files
+│
+├── fp-match-service/              Java + Javalin wrapper around SourceAFIS
+│   ├── src/main/java/.../         FpProvider + SourceAFIS impl
+│   ├── Dockerfile, dev-up.sh      Local dev via Docker (pure Java, no emulation)
+│   └── packaging/debian/          .deb files
 │
 ├── client-bootstrap/              Operator-laptop install bundles
 │   ├── linux/                     verification-portal-client_*_linux.tar.gz
@@ -234,7 +295,13 @@ To start completely fresh, delete `backend/verification.db*` first.
 | `DB_PATH`               | `verification.db`                      | SQLite file path                           |
 | `DATA_DIR`              | auto-detected sample data folder       | Candidate data root                        |
 | `JWT_SECRET`            | `dev-only-secret-change-me`            | Token signing secret                       |
-| `FP_MATCH_THRESHOLD`    | `140`                                  | Fingerprint match score threshold (matches the vendor's own `DEFAULT_MATCH_THRESHOLD = 140` constant verified in the daemon JAR's bytecode) |
+| `FP_MATCH_THRESHOLD`    | `140` (Mantra) / `40` (Startek)        | Mantra MorFin match-score threshold (vendor's bytecode constant). Startek/SourceAFIS uses 40 — SourceAFIS's published 1-in-1000 FMR threshold. Range 22-84 maps to FAR 1:100 → 1:1,000,000. Per-vendor frontend defaults live in `frontend/src/lib/fingerprint/types.js`; server-side override via `FP_MATCH_THRESHOLD` env var on the `fp-match-service` host. |
+| `FP_MATCH_BASE`         | `http://127.0.0.1:8050/fp/`            | Base URL for `fp-match-service` (SourceAFIS). Empty string disables the endpoint cleanly so the backend boots without the service. |
+| `RAZORPAY_KEY_ID`       | (empty)                                | Razorpay test/live API key. From Razorpay dashboard → Settings → API Keys. Public — exposed to the browser to init Checkout. Empty string disables wallet top-ups + skips the candidate-lookup charge entirely. |
+| `RAZORPAY_KEY_SECRET`   | (empty)                                | Razorpay HMAC key. Server-only. Used to verify Checkout signatures and authenticate to `api.razorpay.com`. Never leaves the backend. |
+| `WALLET_FEE_PER_LOOKUP_PAISE` | `500` (₹5)                       | Charged on every `GET /api/candidates/{roll}` by a `client`-role user. Set to `0` to disable wallet charging entirely. |
+| `WALLET_MAX_DEPOSIT_PAISE`    | `5000000` (₹50,000)              | Maximum single Razorpay top-up. |
+| `WALLET_SAME_ROLL_CACHE_MIN`  | `5`                              | Same client + same roll within this many minutes → no extra charge. Set `0` to disable the cache and bill every lookup. |
 | `IRIS_MATCH_THRESHOLD`  | `0.6`                                  | Iris score threshold (per eye)             |
 | `FACE_MATCH_THRESHOLD`  | `0.7`                                  | Luxand face score threshold (placeholder)  |
 | `ARTIFACT_RETENTION`    | `none`                                 | `none` / `metadata` / `full`               |
@@ -406,7 +473,7 @@ Build the bundles on a Linux box (the EC2 will do):
 ## Schema
 
 `backend/internal/db/migrate.go` is a versioned migration runner.
-Three migrations to date:
+Five migrations to date:
 
 1. `initial_schema` — orgs / centers / users / verifications + indexes
 2. `biometric_score_fields` — adds device identity, fingerprint scores
@@ -416,6 +483,14 @@ Three migrations to date:
    `idempotency_key`.
 3. `verification_artifacts` — optional storage of captured face / fp /
    iris bytes alongside the verification row, with sha256 + size.
+4. `fingerprint_vendor` — adds `fp_vendor TEXT` to `verifications`
+   (`mantra` | `startek` | NULL) so the audit row records which SDK
+   produced the match.
+5. `wallets` — adds `wallets` (per-user balance with `CHECK ≥ 0`) and
+   `wallet_transactions` (signed `amount_paise` ledger with
+   `balance_after_paise`, `kind ∈ {deposit, charge, admin_credit,
+   refund}`, optional `related_roll`, and unique partial index on
+   `razorpay_payment_id` for idempotent top-ups).
 
 All `CREATE TABLE`s use `IF NOT EXISTS`; all `ALTER TABLE`s are additive.
 Migrations run inside a transaction; partial application is impossible.
@@ -433,12 +508,31 @@ GET    /api/candidates/{roll}                    candidate metadata
 GET    /api/candidates/{roll}/photo              JPEG bytes
 GET    /api/candidates/{roll}/fp-template        {template_b64, format, size_bytes}
 
+POST   /api/face-match                           {roll_no, image_b64} → {score, threshold, status} via Luxand
+POST   /api/fp-match                             {roll_no, probe_b64, fp_vendor} → {score, threshold, status} via SourceAFIS
+
 POST   /api/verifications                        record a decision (idempotent)
 POST   /api/verifications/{id}/artifacts         multipart capture upload (gated by retention)
+
+# Wallet — client role only (admin/superadmin get free lookups)
+GET    /api/wallet                               {balance_paise, transactions[]}
+GET    /api/wallet/config                        {fee_per_lookup_paise, max_deposit_paise, razorpay_key_id, razorpay_enabled, ...}
+POST   /api/wallet/order                         {amount_paise} → Razorpay order_id (for Checkout init)
+POST   /api/wallet/verify-payment                {razorpay_order_id, razorpay_payment_id, razorpay_signature, amount_paise} → credit + balance
+
+# Admin manual top-up — admin/superadmin
+POST   /api/admin/wallet/credit                  {user_id, amount_paise, note} → credit operator's wallet
 
 GET    /api/admin/stats         /recent  /by-center  /timeline
 GET    /api/super/stats         /organizations  /top-centers
 ```
+
+The candidate-lookup endpoint above (`GET /api/candidates/{roll}`) returns
+**HTTP 402 Payment Required** with `{error, balance_paise, fee_paise}` when
+a `client` user has insufficient balance. Both successful and cached
+lookups also return wallet metadata in response headers:
+`X-Wallet-Balance-Paise` + `X-Wallet-Charged-Paise` (0 if served from the
+same-roll cache).
 
 ---
 

@@ -5,6 +5,8 @@
 # Pulls together:
 #   - vendor MorFin JAR + TLS certs extracted from the vendor .deb
 #     (Windows hosts the MorFin daemon natively — its DLLs work on Windows)
+#   - Startek/ACPL Capture API MSI + VC++ redist (from Setup_ACPL_L1_API/)
+#     (Windows-native MSI; registers its own Windows service on install)
 #   - mantra-iris-service .deb built from ../../iris-service
 #     (the iris service runs INSIDE WSL2 because the Marvis SDK's Windows
 #     DLL has a JNI signature mismatch — see IRIS_VENDOR_ISSUE.md)
@@ -23,6 +25,10 @@ BUNDLE_NAME="VerificationPortalClient-${VERSION}-windows"
 # --- inputs ---------------------------------------------------------------
 MORFIN_DEB="${MORFIN_DEB:-${ROOT}/../MorfinAuth_Linux_Web_SDK_1.0.0.0/Setup/MorfinAuthClientService.deb}"
 NSSM_EXE="${NSSM_EXE:-${ROOT}/client-bootstrap/windows/tools/nssm.exe}"
+# Startek/ACPL Capture API package — vendor-supplied tree containing the
+# MSI, the VC++ redist, and demo HTML test pages. Optional: if absent, the
+# bundle still builds, install.ps1 just skips the Startek phase.
+STARTEK_DIR="${STARTEK_DIR:-${ROOT}/Setup_ACPL_L1_API}"
 
 if [ ! -f "$MORFIN_DEB" ]; then
     echo "✗ MorFin .deb not found at $MORFIN_DEB" >&2
@@ -75,7 +81,7 @@ fi
 
 # --- assemble bundle ------------------------------------------------------
 OUT="dist/$BUNDLE_NAME"
-rm -rf "$OUT" && mkdir -p "$OUT/morfin/certs" "$OUT/iris-wsl" "$OUT/tools"
+rm -rf "$OUT" && mkdir -p "$OUT/morfin/certs" "$OUT/iris-wsl" "$OUT/tools" "$OUT/startek"
 
 # Windows-side: MorFin daemon JAR + certs (works native on Windows)
 cp "$MORFIN_JAR" "$OUT/morfin/"
@@ -83,6 +89,31 @@ cp "$MORFIN_JAR" "$OUT/morfin/"
 
 # WSL-side: iris service .deb (gets dpkg-installed inside the WSL distro)
 cp "$IRIS_DEB" "$OUT/iris-wsl/"
+
+# Windows-side: Startek/ACPL Capture API MSI + VC++ redist prereq.
+# Both files come from the vendor SDK package shipped by ACPL
+# (Setup_ACPL_L1_API/). Optional — if STARTEK_DIR is missing or the
+# MSI isn't there, install.ps1 just skips the Startek phase.
+if [ -d "$STARTEK_DIR" ]; then
+    STARTEK_MSI=$(ls "$STARTEK_DIR"/L1_API_Setup_*.msi 2>/dev/null | head -n1 || true)
+    if [ -n "$STARTEK_MSI" ] && [ -f "$STARTEK_MSI" ]; then
+        cp "$STARTEK_MSI" "$OUT/startek/"
+        echo "  staged startek MSI: $(basename "$STARTEK_MSI")"
+    else
+        echo "  ⚠ Startek MSI not found in $STARTEK_DIR (L1_API_Setup_*.msi)" >&2
+    fi
+    # VC++ 2017 x86 redist (required by ACPLAPI.DLL). Prefer the
+    # VC17_redist build that ACPL bundles; fall back to vcredist_x86 if
+    # only the older one is staged.
+    if [ -f "$STARTEK_DIR/Dependencies/VC17_redist.x86.exe" ]; then
+        cp "$STARTEK_DIR/Dependencies/VC17_redist.x86.exe" "$OUT/startek/"
+    elif [ -f "$STARTEK_DIR/Dependencies/vcredist_x86.exe" ]; then
+        cp "$STARTEK_DIR/Dependencies/vcredist_x86.exe" "$OUT/startek/VC17_redist.x86.exe"
+        echo "  ⚠ using older vcredist_x86.exe (VC17_redist.x86.exe not found)" >&2
+    fi
+else
+    echo "  (Setup_ACPL_L1_API/ not present at $STARTEK_DIR — bundling without Startek)"
+fi
 
 # Tooling
 [ -f "$NSSM_EXE" ] && cp "$NSSM_EXE" "$OUT/tools/" || true
@@ -112,13 +143,28 @@ asks you to reboot. After reboot, re-run the same command — it picks up
 where it left off.
 
 What this installs:
-  - MorfinAuthClientService  (Windows service, fingerprint, port 8030)
+  - MorfinAuthClientService    (Mantra MorFin fingerprint daemon, native
+                                Windows service, port 8030)
+  - ACPL Capture API service   (Startek FM220U L1 / AST300 fingerprint
+                                daemon, native Windows service, MSI-installed,
+                                ports 4443 HTTPS + 8090 HTTP)
   - WSL2 Ubuntu-22.04 distro hosting mantra-iris-service (iris, port 8031)
   - usbipd-win — passes the MIS100V2 iris USB device into WSL
   - VerificationPortal-IrisUsbAttach scheduled task — auto-attaches the
     iris device to WSL on every boot
   - Browser homepage policy (Chrome + Edge), Cert:\LocalMachine\Root
     cert imports, Desktop + Start Menu shortcuts.
+
+Both fingerprint vendors run side-by-side. The frontend polls both
+daemons in parallel and binds to whichever has a device plugged in —
+the operator never has to pick. If a deployment only uses one vendor,
+pass -SkipStartek or remove the corresponding service afterwards.
+
+Startek prerequisite NOT bundled (must be installed separately):
+  - Windows Certified RD Service for L1 Devices
+    Download from https://acpl.in.net/RdService.html and run its setup.
+    Required for the Capture API to take exclusive USB access. install.ps1
+    warns if it's missing.
 
 Why iris runs in WSL:
   Mantra's Marvis_Auth.jar bundles native Windows DLLs whose JNI
@@ -130,11 +176,14 @@ Why iris runs in WSL:
   Windows-native iris service is a one-flag change in install.ps1.
 
 After install — smoke tests:
-  curl http://localhost:8030/                                 # MorFin
+  curl http://localhost:8030/                                  # Mantra MorFin
+  curl http://localhost:8090/FM220/getserial                   # Startek (HTTP)
+  curl -k https://localhost:4443/FM220/getserial               # Startek (HTTPS)
   curl -X POST http://localhost:8031/iris/supporteddevicelist  # Iris (via WSL)
-  Get-Service MorfinAuthClientService                         # native service
-  wsl -d Ubuntu-22.04 -- systemctl status mantra-iris-service # WSL service
-  Get-ScheduledTask VerificationPortal-IrisUsbAttach          # USB attacher
+  Get-Service MorfinAuthClientService                          # native MorFin
+  Get-Service *ACPL* -ErrorAction SilentlyContinue             # native Capture API
+  wsl -d Ubuntu-22.04 -- systemctl status mantra-iris-service  # WSL iris
+  Get-ScheduledTask VerificationPortal-IrisUsbAttach           # USB attacher
 
 Uninstall:
   # Windows-side services + policies

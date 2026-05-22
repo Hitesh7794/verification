@@ -39,6 +39,32 @@ type Config struct {
 	// only accepts traffic from the backend itself.
 	LuxandBase      string // base URL, e.g. http://127.0.0.1:8040/face/
 	FaceTemplateDir string // disk cache for extracted gallery face templates
+
+	// fp-match-service (SourceAFIS) — server-side fingerprint matcher.
+	// Forwards the operator's probe template plus the candidate's gallery
+	// template; returns a similarity score. Same loopback-only deployment
+	// model as luxand. Empty string disables the endpoint cleanly so the
+	// backend still boots without the service running.
+	FpMatchBase string // base URL, e.g. http://127.0.0.1:8050/fp/
+
+	// Razorpay test-mode integration for the per-client wallet feature.
+	// Keys come from the Razorpay dashboard → Settings → API Keys (test
+	// mode); they look like rzp_test_<14 chars>. The KEY_ID is sent to
+	// the browser to init Razorpay Checkout (public); the KEY_SECRET
+	// stays server-side for order creation + HMAC signature verification.
+	//
+	// Both empty = wallet endpoints return 503 and the candidate-lookup
+	// charge middleware is bypassed (i.e. the portal runs unchanged for
+	// any deployment that doesn't want the wallet flow). That makes
+	// onboarding the keys an explicit opt-in instead of a silent crash
+	// vector.
+	RazorpayKeyID     string
+	RazorpayKeySecret string
+
+	// Per-deployment wallet tuning. All amounts in paise (₹1 = 100 paise).
+	WalletFeePerLookupPaise int    // default 500 = ₹5
+	WalletMaxDepositPaise   int    // default 5_000_000 = ₹50,000 (single deposit cap)
+	WalletSameRollCacheMin  int    // default 5 — same roll, same user, no re-charge for this many minutes
 }
 
 func Load() Config {
@@ -54,6 +80,12 @@ func Load() Config {
 		ArtifactDir:               envOr("ARTIFACT_DIR", "artifacts"),
 		LuxandBase:                envOr("LUXAND_BASE", "http://127.0.0.1:8040/face/"),
 		FaceTemplateDir:           envOr("FACE_TEMPLATE_DIR", "face_templates"),
+		FpMatchBase:               envOr("FP_MATCH_BASE", "http://127.0.0.1:8050/fp/"),
+		RazorpayKeyID:             envOr("RAZORPAY_KEY_ID", ""),
+		RazorpayKeySecret:         envOr("RAZORPAY_KEY_SECRET", ""),
+		WalletFeePerLookupPaise:   envInt("WALLET_FEE_PER_LOOKUP_PAISE", 500),
+		WalletMaxDepositPaise:     envInt("WALLET_MAX_DEPOSIT_PAISE", 5_000_000),
+		WalletSameRollCacheMin:    envInt("WALLET_SAME_ROLL_CACHE_MIN", 5),
 	}
 }
 

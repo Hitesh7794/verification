@@ -34,16 +34,20 @@ node_modules/
 # client-bootstrap/windows/README.md. Mirrors the Marvis JAR pattern.
 client-bootstrap/windows/tools/nssm.exe
 
-# ACPL L1 RD Service vendor package (Startek FM220U / AST300 fingerprint
-# devices, UIDAI Aadhaar L1 authentication). Vendor-supplied, downloaded
-# from acpl.in.net; not redistributable as part of this repo. Re-download
-# the package locally when working on the Startek fingerprint integration.
+# ACPL vendor packages — both the L1 RD Service (Aadhaar) and the
+# Capture API (1:1 local matching for Startek FM220U / AST300). Vendor-
+# supplied, downloaded from acpl.in.net; not redistributable as part of
+# this repo. Re-download locally when working on the Startek fingerprint
+# integration (see STARTEK_INTEGRATION.md).
 ACPL_L1_RD_Linux_Desktop_*/
 ACPL_L1_RD_Support_Tool/
 ACPL_L1_RD_Windows_*/
+Setup_ACPL_L1_API/
+L1_API_Setup_*.msi
 L1_RD_Intrgration_Guide*.pdf
 L1_RD_Integration_Guide*.pdf
 *Linux_RD_User_Guide*.pdf
+*Fingerprint*API*Guide*.pdf
 *ACPL*.pdf
 
 # Defense-in-depth: never accidentally commit private keys
@@ -51,6 +55,14 @@ L1_RD_Integration_Guide*.pdf
 *.key
 id_rsa*
 id_ed25519*
+
+# Razorpay API key downloads — Razorpay's dashboard ships keys as CSV files
+# with timestamps in the name. Pattern-match them so an accidental
+# download into the repo doesn't get committed. Same logic: the real
+# values live in backend/.env (which is already gitignored via `.env`).
+razorpay_*api_keys*.csv
+razorpay_*api_keys*.txt
+*razorpay*.csv
 
 # OS / editor / build noise
 .DS_Store

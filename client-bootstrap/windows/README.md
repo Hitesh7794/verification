@@ -68,12 +68,25 @@ VerificationPortalClient-<ver>-windows.zip
 ├── morfin/
 │   ├── morfinauth-client-service-1.0.0.0.jar       (vendor; runs Win-native)
 │   └── certs/                                        (vendor TLS certs)
+├── startek/                                          (optional — added 2026-05-15)
+│   ├── L1_API_Setup_*.msi                            (ACPL Capture API MSI;
+│   │                                                 registers its own service)
+│   └── VC17_redist.x86.exe                           (VS2017 redist prereq)
 ├── iris-wsl/
 │   └── mantra-iris-service_<ver>_all.deb           (installed inside WSL)
 ├── tools/
 │   └── nssm.exe                                      (Windows service registrar for MorFin)
 └── README.txt
 ```
+
+**Two fingerprint vendors ship side-by-side.** Operator laptops get both
+the Mantra MorFin daemon and the Startek/ACPL Capture API. The frontend
+polls both daemons in parallel and binds to whichever has a device
+plugged in — operators never pick a vendor. See
+[`STARTEK_INTEGRATION.md`](../../STARTEK_INTEGRATION.md) for the Startek
+details (ports, prereqs, troubleshooting, vendor questions).
+
+To deploy a Mantra-only fleet: `.\install.ps1 -PortalUrl ... -SkipStartek`.
 
 ## Prerequisites — operator laptop
 
@@ -85,8 +98,11 @@ VerificationPortalClient-<ver>-windows.zip
 | ~4 GB free disk | WSL2 + Ubuntu + JRE + iris .deb |
 | Adoptium Temurin JRE 17 on PATH | MorFin daemon needs Java |
 | Internet for first install | Downloads WSL kernel + Ubuntu image (~1 GB once) |
+| **For Startek devices only:** Windows Certified RD Service for L1 Devices, installed separately from https://acpl.in.net/RdService.html | The ACPL Capture API can't talk to FM220U without it (L1 RD holds the USB device; our client issues RELEASEFM220 to hand off) |
 
 The installer fails fast with a clear message if any of these aren't met.
+The Startek L1 RD prereq is checked but only warned, not enforced — a
+Mantra-only deployment doesn't need it.
 
 ## Building (build host)
 
@@ -97,6 +113,10 @@ Prerequisites:
 - `Marvis_Auth.jar` staged at `Portal-main/iris-service/lib/`
 - Vendor `MorfinAuthClientService.deb` accessible (auto-detected at the
   project's typical layout, override via `MORFIN_DEB=`)
+- *(Optional — for Startek support)* `Setup_ACPL_L1_API/` package
+  containing the ACPL Capture API MSI + VC++ redist (auto-detected at
+  repo root; override via `STARTEK_DIR=`). Build still succeeds without
+  it — the resulting bundle just omits the Startek phase.
 - `nssm.exe` (64-bit) at `client-bootstrap/windows/tools/nssm.exe`
   ([nssm.cc/download](https://nssm.cc/download), BSD-licensed)
 
@@ -152,21 +172,25 @@ re-registered, certs re-imported, policies overwritten).
               -WslDistro "Ubuntu-22.04" `
               -IrisHwId "2c0f:2100"
 
-.\install.ps1 -PortalUrl ... -SkipIris    # fingerprint-only centers
+.\install.ps1 -PortalUrl ... -SkipIris       # fingerprint-only centers (no iris hardware)
+.\install.ps1 -PortalUrl ... -SkipStartek    # Mantra-only deployments (no FM220 hardware)
 ```
 
 ## Verifying the install
 
 ```powershell
-# Native Windows service
-Get-Service MorfinAuthClientService
-curl http://localhost:8030/
+# Native Windows services
+Get-Service MorfinAuthClientService                                # Mantra MorFin
+Get-Service *ACPL* -ErrorAction SilentlyContinue                   # Startek/ACPL Capture API
+curl.exe http://localhost:8030/                                    # Mantra :8030
+curl.exe http://localhost:8090/FM220/getserial                     # Startek (HTTP)
+curl.exe -k https://localhost:4443/FM220/getserial                 # Startek (HTTPS)
 
 # Iris service inside WSL
 wsl -d Ubuntu-22.04 -- systemctl status mantra-iris-service
-curl -Method POST http://localhost:8031/iris/supporteddevicelist
+curl.exe -Method POST http://localhost:8031/iris/supporteddevicelist
 
-# USB passthrough
+# USB passthrough (iris only; Mantra/Startek FP run native, no usbipd needed)
 usbipd list                 # iris device should show "Shared" or "Attached"
 Get-ScheduledTask VerificationPortal-IrisUsbAttach
 ```
