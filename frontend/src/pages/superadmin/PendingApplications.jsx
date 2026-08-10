@@ -2,6 +2,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import AppShell from '../../components/shell/AppShell.jsx'
+import SuperTabs from '../../components/shell/SuperTabs.jsx'
 import {
   Button,
   Card,
@@ -87,6 +88,7 @@ export default function PendingApplications() {
 
   return (
     <AppShell>
+      <SuperTabs />
       <PageHeader
         title="Institution registrations"
         subtitle="Review and approve institution onboarding applications."

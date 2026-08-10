@@ -46,6 +46,8 @@ var migrations = []migration{
 	migration012AuditLog,
 	migration013RazorpayOrders,
 	migration014UniquePanEmail,
+	migration015ClientsExams,
+	migration016SubscriptionsOperatorScoping,
 }
 
 // Migrate applies every pending migration inside its own transaction.

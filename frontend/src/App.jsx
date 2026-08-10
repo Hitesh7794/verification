@@ -10,11 +10,17 @@ import AdminDashboard from './pages/admin/Dashboard.jsx'
 import AdminOperatorAccess from './pages/admin/OperatorAccess.jsx'
 import AdminHistory from './pages/admin/History.jsx'
 import AdminDownloads from './pages/admin/Downloads.jsx'
+import AdminCatalog from './pages/admin/Catalog.jsx'
+import AdminMyExams from './pages/admin/MyExams.jsx'
+import AdminOperators from './pages/admin/Operators.jsx'
 
 import SuperLogin from './pages/superadmin/Login.jsx'
 import SuperDashboard from './pages/superadmin/Dashboard.jsx'
 import PendingApplications from './pages/superadmin/PendingApplications.jsx'
 import ApplicationDetail from './pages/superadmin/ApplicationDetail.jsx'
+import SuperClients from './pages/superadmin/Clients.jsx'
+import SuperClientDetail from './pages/superadmin/ClientDetail.jsx'
+import SuperExamDetail from './pages/superadmin/ExamDetail.jsx'
 
 import Register from './pages/register/Register.jsx'
 import SetPassword from './pages/register/SetPassword.jsx'
@@ -155,6 +161,21 @@ export default function App() {
             }
           />
 
+          {/* Phase-2 admin surface: self-service catalog + subscriptions
+              + per-operator management (cap, date window, exam list). */}
+          <Route
+            path="/admin/catalog"
+            element={<RequireRole role="admin"><AdminCatalog /></RequireRole>}
+          />
+          <Route
+            path="/admin/my-exams"
+            element={<RequireRole role="admin"><AdminMyExams /></RequireRole>}
+          />
+          <Route
+            path="/admin/operators"
+            element={<RequireRole role="admin"><AdminOperators /></RequireRole>}
+          />
+
           <Route path="/superadmin/login" element={<SuperLogin />} />
           <Route
             path="/superadmin"
@@ -163,6 +184,21 @@ export default function App() {
                 <SuperDashboard />
               </RequireRole>
             }
+          />
+
+          {/* Exam catalog (Phase 1) — superadmin creates clients + exams
+              + uploads candidate CSVs. All superadmin-only. */}
+          <Route
+            path="/superadmin/clients"
+            element={<RequireRole role="superadmin"><SuperClients /></RequireRole>}
+          />
+          <Route
+            path="/superadmin/clients/:id"
+            element={<RequireRole role="superadmin"><SuperClientDetail /></RequireRole>}
+          />
+          <Route
+            path="/superadmin/exams/:id"
+            element={<RequireRole role="superadmin"><SuperExamDetail /></RequireRole>}
           />
         </>
       )}

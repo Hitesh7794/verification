@@ -16,6 +16,7 @@ import {
 import { Link } from 'react-router-dom'
 
 import AppShell from '../../components/shell/AppShell.jsx'
+import SuperTabs from '../../components/shell/SuperTabs.jsx'
 import {
   Badge,
   Card,
@@ -62,6 +63,7 @@ export default function SuperDashboard() {
 
   return (
     <AppShell title="Platform Superadmin" subtitle="Cross-organization oversight">
+      <SuperTabs />
       <PageHeader
         title="Platform overview"
         subtitle="System-wide telemetry across every organization, center and operator."

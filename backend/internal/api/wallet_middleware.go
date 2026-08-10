@@ -2,9 +2,11 @@ package api
 
 import (
 	"bytes"
+	"database/sql"
 	"errors"
 	"fmt"
 	"net/http"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -48,8 +50,45 @@ func (s *Server) walletCharge(next http.HandlerFunc) http.HandlerFunc {
 		fee := s.deps.Cfg.WalletFeePerLookupPaise
 		roll := chi.URLParam(r, "roll")
 
+		// 0. Operator-level pre-checks (date window). The cap check
+		// happens later — after the same-roll cache — so a free
+		// re-check doesn't get blocked by an exhausted cap.
+		var (
+			cap   sql.NullInt64
+			spent int64
+			vFrom sql.NullString
+			vTo   sql.NullString
+		)
+		err := s.deps.DB.QueryRowContext(r.Context(),
+			`SELECT spending_cap_paise, spent_paise, valid_from, valid_to
+			   FROM users WHERE id = ?`, claims.UserID,
+		).Scan(&cap, &spent, &vFrom, &vTo)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			writeErr(w, http.StatusInternalServerError, "operator lookup: "+err.Error())
+			return
+		}
+		today := time.Now().UTC().Format("2006-01-02")
+		if vFrom.Valid && today < normaliseYMD(vFrom.String) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(fmt.Sprintf(
+				`{"error":"operator not active until %s","valid_from":"%s"}`,
+				normaliseYMD(vFrom.String), normaliseYMD(vFrom.String))))
+			return
+		}
+		if vTo.Valid && today > normaliseYMD(vTo.String) {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusForbidden)
+			_, _ = w.Write([]byte(fmt.Sprintf(
+				`{"error":"operator access expired on %s","valid_to":"%s"}`,
+				normaliseYMD(vTo.String), normaliseYMD(vTo.String))))
+			return
+		}
+
 		// 1. Same-roll cache: any operator in this org already paid for
 		// this roll recently → no debit, run the handler normally.
+		// Cap doesn't apply here — this operator (or a colleague at the
+		// same org) already paid.
 		if cacheMin := s.deps.Cfg.WalletSameRollCacheMin; cacheMin > 0 && roll != "" {
 			hit, err := s.wallet.HasRecentChargeForRoll(r.Context(), orgID, roll, cacheMin)
 			if err != nil {
@@ -62,6 +101,18 @@ func (s *Server) walletCharge(next http.HandlerFunc) http.HandlerFunc {
 				next(w, r)
 				return
 			}
+		}
+
+		// 1.5. Cap check runs AFTER the cache. Purpose: block only new
+		// spend, not free re-checks. Same message shape the frontend
+		// expects for wallet-empty (402).
+		if cap.Valid && spent+int64(fee) > cap.Int64 {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusPaymentRequired)
+			_, _ = w.Write([]byte(fmt.Sprintf(
+				`{"error":"operator spending cap reached; ask your admin to raise it","spent_paise":%d,"cap_paise":%d,"fee_paise":%d}`,
+				spent, cap.Int64, fee)))
+			return
 		}
 
 		// 2. Pre-check funds so an underfunded org fails fast without
@@ -117,9 +168,35 @@ func (s *Server) walletCharge(next http.HandlerFunc) http.HandlerFunc {
 			writeErr(w, http.StatusInternalServerError, "wallet debit: "+err.Error())
 			return
 		}
+		// Bump this operator's running spent total. If it races and
+		// pushes over the cap by a tiny amount, we accept the overshoot
+		// — refunding the org for a service already rendered is worse
+		// than a small policy overshoot. Cap enforcement is at
+		// pre-check time; this is bookkeeping.
+		if _, err := s.deps.DB.ExecContext(r.Context(),
+			`UPDATE users SET spent_paise = spent_paise + ? WHERE id = ?`,
+			fee, claims.UserID,
+		); err != nil {
+			// Non-fatal: the debit landed, the response is buffered.
+			// Log but don't fail — operator's response is more important
+			// than perfect accounting on the audit trail.
+			fmt.Println("wallet_middleware: spent_paise bump failed:", err)
+		}
 		setWalletHeaders(buf.ResponseWriter, tx.BalanceAfterPaise, fee)
 		buf.flush()
 	}
+}
+
+// normaliseYMD accepts either a raw YYYY-MM-DD or a SQLite DATETIME
+// string (`YYYY-MM-DD HH:MM:SS`) and returns just the date component.
+// SQLite is lax about the DATE type: values inserted as `2026-08-15`
+// come back verbatim, but values that went through a DATETIME column
+// promotion or `CURRENT_TIMESTAMP` default may include a time part.
+func normaliseYMD(s string) string {
+	if len(s) >= 10 {
+		return s[:10]
+	}
+	return s
 }
 
 func setWalletHeaders(w http.ResponseWriter, balance, charged int) {

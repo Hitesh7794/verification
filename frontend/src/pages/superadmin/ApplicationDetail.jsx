@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react'
 import { Link, useParams } from 'react-router-dom'
 import AppShell from '../../components/shell/AppShell.jsx'
+import SuperTabs from '../../components/shell/SuperTabs.jsx'
 import {
   Button,
   Card,
@@ -172,6 +173,7 @@ export default function ApplicationDetail() {
   if (err) {
     return (
       <AppShell>
+        <SuperTabs />
         <div className="rounded-lg bg-rose-50 border border-rose-200 px-4 py-3 text-sm text-rose-800">{err}</div>
         <div className="mt-4">
           <Link to="/superadmin/applications" className="text-sm text-indigo-600 hover:underline">← Back to queue</Link>
@@ -183,6 +185,7 @@ export default function ApplicationDetail() {
   if (!app) {
     return (
       <AppShell>
+        <SuperTabs />
         <div className="animate-pulse text-sm text-slate-500">Loading application…</div>
       </AppShell>
     )
@@ -194,6 +197,7 @@ export default function ApplicationDetail() {
 
   return (
     <AppShell>
+      <SuperTabs />
       {/* HEADER: back link + status + hero card */}
       <div className="mb-4 flex items-center justify-between">
         <Link

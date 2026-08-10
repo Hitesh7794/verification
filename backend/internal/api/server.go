@@ -179,6 +179,20 @@ func (s *Server) Router() http.Handler {
 		r.Post("/api/admin/operator-access/disable", s.requireRole("admin")(s.adminDisableOperatorAccess))
 		r.Post("/api/admin/operator-access/enable", s.requireRole("admin")(s.adminEnableOperatorAccess))
 
+		// Phase-2 admin surface: exam catalog subscribe / unsubscribe.
+		r.Get("/api/admin/catalog",                    s.requireRole("admin")(s.adminCatalog))
+		r.Get("/api/admin/subscriptions",              s.requireRole("admin")(s.adminListSubscriptions))
+		r.Post("/api/admin/subscriptions",             s.requireRole("admin")(s.adminSubscribe))
+		r.Delete("/api/admin/subscriptions/{exam_id}", s.requireRole("admin")(s.adminUnsubscribe))
+
+		// Phase-2 admin surface: multi-operator management.
+		r.Get("/api/admin/operators",                  s.requireRole("admin")(s.adminListOperators))
+		r.Post("/api/admin/operators",                 s.requireRole("admin")(s.adminCreateOperator))
+		r.Get("/api/admin/operators/{id}",             s.requireRole("admin")(s.adminGetOperator))
+		r.Patch("/api/admin/operators/{id}",           s.requireRole("admin")(s.adminPatchOperator))
+		r.Post("/api/admin/operators/{id}/disable",    s.requireRole("admin")(s.adminDisableOperator))
+		r.Post("/api/admin/operators/{id}/enable",     s.requireRole("admin")(s.adminEnableOperator))
+
 		// Downloads — serves the operator-laptop install bundle. Open
 		// to admin (so an admin can grab + redistribute), to client
 		// (so an operator on a fresh laptop can self-serve when the
@@ -212,6 +226,28 @@ func (s *Server) Router() http.Handler {
 		r.Post("/api/superadmin/applications/{id}/approve", s.requireRole("superadmin", "ops_admin")(s.superadminApproveApplication))
 		r.Post("/api/superadmin/applications/{id}/reject", s.requireRole("superadmin", "ops_admin")(s.superadminRejectApplication))
 		r.Post("/api/superadmin/applications/{id}/resend-admin-link", s.requireRole("superadmin", "ops_admin")(s.superadminResendAdminLink))
+
+		// ── Exam catalog (Phase 1: superadmin creates clients + exams + candidates)
+		// Everything under this prefix is superadmin-only.
+		r.Post("/api/superadmin/clients",                              s.requireRole("superadmin")(s.superadminCreateClient))
+		r.Get("/api/superadmin/clients",                               s.requireRole("superadmin")(s.superadminListClients))
+		r.Get("/api/superadmin/clients/{id}",                          s.requireRole("superadmin")(s.superadminGetClient))
+		r.Patch("/api/superadmin/clients/{id}",                        s.requireRole("superadmin")(s.superadminPatchClient))
+		r.Post("/api/superadmin/clients/{id}/visibility",              s.requireRole("superadmin")(s.superadminToggleClientVisibility))
+		r.Post("/api/superadmin/clients/{id}/close",                   s.requireRole("superadmin")(s.superadminCloseClient))
+		r.Post("/api/superadmin/clients/{id}/reopen",                  s.requireRole("superadmin")(s.superadminReopenClient))
+
+		r.Post("/api/superadmin/clients/{id}/exams",                   s.requireRole("superadmin")(s.superadminCreateExam))
+		r.Get("/api/superadmin/exams/{id}",                            s.requireRole("superadmin")(s.superadminGetExam))
+		r.Patch("/api/superadmin/exams/{id}",                          s.requireRole("superadmin")(s.superadminPatchExam))
+		r.Post("/api/superadmin/exams/{id}/visibility",                s.requireRole("superadmin")(s.superadminToggleExamVisibility))
+		r.Post("/api/superadmin/exams/{id}/close",                     s.requireRole("superadmin")(s.superadminCloseExam))
+		r.Post("/api/superadmin/exams/{id}/reopen",                    s.requireRole("superadmin")(s.superadminReopenExam))
+
+		r.Post("/api/superadmin/exams/{id}/candidates",                s.requireRole("superadmin")(s.superadminUploadExamCSV))
+		r.Get("/api/superadmin/exams/{id}/candidates",                 s.requireRole("superadmin")(s.superadminListCandidates))
+		r.Get("/api/superadmin/exams/{id}/uploads",                    s.requireRole("superadmin")(s.superadminListUploads))
+		r.Get("/api/superadmin/uploads/{upload_id}/raw",               s.requireRole("superadmin")(s.superadminDownloadRawCSV))
 	})
 
 	return r

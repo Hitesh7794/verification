@@ -10,8 +10,11 @@ import { NavLink } from 'react-router-dom'
 
 const tabs = [
   { to: '/admin',                 label: 'Overview',        end: true  },
+  { to: '/admin/catalog',         label: 'Exam catalog',    end: false },
+  { to: '/admin/my-exams',        label: 'My exams',        end: false },
+  { to: '/admin/operators',       label: 'Operators',       end: false },
   { to: '/admin/history',         label: 'History',         end: false },
-  { to: '/admin/operator-access', label: 'Operator access', end: false },
+  { to: '/admin/operator-access', label: 'Shared login',    end: false },
   { to: '/admin/downloads',       label: 'Downloads',       end: false },
 ]
 
