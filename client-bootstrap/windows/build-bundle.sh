@@ -30,6 +30,19 @@ NSSM_EXE="${NSSM_EXE:-${ROOT}/client-bootstrap/windows/tools/nssm.exe}"
 # bundle still builds, install.ps1 just skips the Startek phase.
 STARTEK_DIR="${STARTEK_DIR:-${ROOT}/Setup_ACPL_L1_API}"
 
+# Bundled JRE for the MorFin daemon. The operator laptop's Java install
+# story used to be a manual prereq ("Adoptium JRE 17 on PATH" — a step
+# operators routinely got wrong). We now ship a private JRE inside the
+# bundle so install.ps1 can point nssm directly at a known java.exe.
+#
+# The redistributable URL from Adoptium's release API returns the latest
+# GA build for the requested version+platform. The download is cached
+# under .cache/ so re-builds are fast and offline-friendly.
+JRE_VERSION="${JRE_VERSION:-17}"
+JRE_URL="${JRE_URL:-https://api.adoptium.net/v3/binary/latest/${JRE_VERSION}/ga/windows/x64/jre/hotspot/normal/eclipse}"
+JRE_CACHE_DIR="${JRE_CACHE_DIR:-${ROOT}/client-bootstrap/windows/.cache}"
+JRE_CACHE_FILE="${JRE_CACHE_DIR}/adoptium-jre${JRE_VERSION}-windows-x64.zip"
+
 if [ ! -f "$MORFIN_DEB" ]; then
     echo "✗ MorFin .deb not found at $MORFIN_DEB" >&2
     echo "  Set MORFIN_DEB=/path/to/MorfinAuthClientService.deb" >&2
@@ -64,6 +77,21 @@ if [ ! -f "$IRIS_DEB" ]; then
     exit 1
 fi
 
+# --- bundled JRE (fetched once, cached) -----------------------------------
+mkdir -p "$JRE_CACHE_DIR"
+if [ ! -f "$JRE_CACHE_FILE" ]; then
+    echo "→ fetching Adoptium Temurin JRE ${JRE_VERSION} (Windows x64)"
+    if ! curl -fsSL --retry 3 -o "${JRE_CACHE_FILE}.partial" "$JRE_URL"; then
+        echo "✗ JRE download failed from $JRE_URL" >&2
+        rm -f "${JRE_CACHE_FILE}.partial"
+        exit 1
+    fi
+    mv "${JRE_CACHE_FILE}.partial" "$JRE_CACHE_FILE"
+    echo "  cached at $JRE_CACHE_FILE ($(du -h "$JRE_CACHE_FILE" | cut -f1))"
+else
+    echo "→ using cached JRE at $JRE_CACHE_FILE ($(du -h "$JRE_CACHE_FILE" | cut -f1))"
+fi
+
 # --- vendor JARs + certs (extracted from MorFin .deb) --------------------
 echo "→ extracting MorFin .deb"
 WORK="$(mktemp -d)"
@@ -86,6 +114,24 @@ rm -rf "$OUT" && mkdir -p "$OUT/morfin/certs" "$OUT/iris-wsl" "$OUT/tools" "$OUT
 # Windows-side: MorFin daemon JAR + certs (works native on Windows)
 cp "$MORFIN_JAR" "$OUT/morfin/"
 [ -d "$CERT_DIR" ] && cp "$CERT_DIR"/*.crt "$OUT/morfin/certs/" || true
+
+# Windows-side: bundled JRE (private, used only by the MorFin service).
+# We extract into a temp dir, then move the single top-level "jdk-...-jre/"
+# folder to morfin/jre/ — install.ps1 expects bin/java.exe at exactly
+# morfin/jre/bin/java.exe regardless of which Temurin point release we
+# pulled. Flattening here means install.ps1 never has to glob a version
+# suffix at runtime.
+echo "→ unpacking JRE into $OUT/morfin/jre/"
+JRE_TMP="$(mktemp -d)"
+trap 'rm -rf "$JRE_TMP" "$WORK"' EXIT
+unzip -q "$JRE_CACHE_FILE" -d "$JRE_TMP"
+JRE_INNER_DIR=$(find "$JRE_TMP" -maxdepth 1 -mindepth 1 -type d | head -n1)
+if [ -z "$JRE_INNER_DIR" ] || [ ! -d "$JRE_INNER_DIR/bin" ]; then
+    echo "✗ unpacked JRE didn't contain the expected jdk-*-jre/bin/ tree" >&2
+    exit 1
+fi
+mv "$JRE_INNER_DIR" "$OUT/morfin/jre"
+echo "  jre/bin/java.exe -> $(ls "$OUT/morfin/jre/bin/java.exe" 2>/dev/null || echo MISSING)"
 
 # WSL-side: iris service .deb (gets dpkg-installed inside the WSL distro)
 cp "$IRIS_DEB" "$OUT/iris-wsl/"
@@ -130,7 +176,9 @@ Prerequisites on the operator laptop:
   - Windows 10 (build 19041 / version 2004 May 2020 Update or newer)
     or Windows 11 — 64-bit only.
   - Virtualization enabled in BIOS/UEFI (most modern laptops on by default).
-  - Adoptium Temurin JRE 17 on PATH (https://adoptium.net/temurin/releases/?version=17)
+  - Java is BUNDLED — no separate JRE install needed. The bundle ships
+    its own Adoptium Temurin JRE 17 under morfin/jre/, used privately
+    by the MorFin daemon. Operator PATH is not modified.
   - Internet for first install (downloads WSL kernel + Ubuntu image).
 
 Install in an *elevated* PowerShell (Run as Administrator):

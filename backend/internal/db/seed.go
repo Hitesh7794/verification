@@ -87,9 +87,17 @@ func Seed(d *sql.DB, idx *data.Index) error {
 			if err != nil {
 				return err
 			}
-			_, err = tx.Exec(`INSERT INTO users(username,password_hash,role,org_id,center_id,display_name)
-			                  VALUES(?,?,?,?,?,?)`,
-				username, string(hash), role, orgID, centerID, display)
+			// Shared operator (client role) needs the plaintext column
+			// populated so the admin's "Operator access" dashboard can
+			// surface it. Human roles (admin/superadmin) intentionally
+			// do not store plaintext — see migration 010.
+			var plaintext any
+			if role == "client" {
+				plaintext = pwd
+			}
+			_, err = tx.Exec(`INSERT INTO users(username,password_hash,password_plaintext,role,org_id,center_id,display_name,activated_at)
+			                  VALUES(?,?,?,?,?,?,?,CURRENT_TIMESTAMP)`,
+				username, string(hash), plaintext, role, orgID, centerID, display)
 			return err
 		}
 
@@ -109,6 +117,58 @@ func Seed(d *sql.DB, idx *data.Index) error {
 				return err
 			}
 		}
+	}
+
+	// 3. Idempotent: ensure an ops_admin user exists. Runs on every
+	//    boot (not just first-run) so introducing migration 7 on an
+	//    existing DB still seeds the new role. INSERT OR IGNORE on
+	//    UNIQUE(username) makes this safe to re-run.
+	hash, err := bcrypt.GenerateFromPassword([]byte("ops123"), bcrypt.DefaultCost)
+	if err != nil {
+		return err
+	}
+	if _, err := tx.Exec(
+		`INSERT OR IGNORE INTO users(username, password_hash, role, display_name)
+		 VALUES(?, ?, 'ops_admin', ?)`,
+		"ops", string(hash), "Onboarding Ops Admin",
+	); err != nil {
+		return err
+	}
+
+	// 4. Idempotent: backfill password_plaintext for the demo client
+	//    seed users so the demo admin's "Operator access" dashboard
+	//    surfaces a working credential. Only touches rows where
+	//    plaintext is NULL — never overwrites an admin-set value. The
+	//    constant "client123" mirrors what mkUser would have set on
+	//    first-run for these specific seeded users.
+	if _, err := tx.Exec(
+		`UPDATE users
+		 SET password_plaintext = 'client123'
+		 WHERE role = 'client'
+		   AND username IN ('client', 'client2')
+		   AND password_plaintext IS NULL`,
+	); err != nil {
+		return err
+	}
+
+	// 5. Idempotent: mark the seeded super + ops accounts as needing
+	//    a password rotation on next login. Anyone with the source
+	//    code knows `super123` / `ops123`, so we refuse to let those
+	//    accounts do anything until a real password is set. Only
+	//    touches users whose password_hash hasn't been changed away
+	//    from the seeded bcrypt — if the operator has already rotated
+	//    (the flag was cleared), we don't re-set it.
+	if _, err := tx.Exec(
+		`UPDATE users
+		 SET password_change_required = 1
+		 WHERE username IN ('super', 'ops')
+		   AND password_change_required = 0
+		   -- Only on bcrypt of original seed, never after a real change.
+		   -- We can't check the cleartext, but we can check that the
+		   -- user has never updated activated_at past created_at.
+		   AND activated_at = created_at`,
+	); err != nil {
+		return err
 	}
 
 	return tx.Commit()

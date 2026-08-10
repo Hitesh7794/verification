@@ -1,5 +1,6 @@
 import { Link } from 'react-router-dom'
-import { Card, CardBody } from '../components/ui.jsx'
+import { Card, CardBody } from '../components/ui/ui.jsx'
+import { Brand } from '../components/ui/brand.jsx'
 
 const portals = [
   {
@@ -25,15 +26,9 @@ const portals = [
 export default function LandingPage() {
   return (
     <div className="min-h-screen bg-slate-50">
-      <header className="border-b border-slate-200 bg-white">
-        <div className="mx-auto max-w-7xl px-6 py-5 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="h-9 w-9 rounded-lg bg-indigo-600 flex items-center justify-center">
-              <span className="text-white font-bold">NV</span>
-            </div>
-            <span className="font-semibold text-slate-900">NEET Verification Portal</span>
-          </div>
-          <span className="text-xs text-slate-500">Mock build</span>
+      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/85 backdrop-blur supports-[backdrop-filter]:bg-white/70">
+        <div className="mx-auto max-w-7xl px-6 h-14 flex items-center justify-between">
+          <Brand />
         </div>
       </header>
 
@@ -63,6 +58,30 @@ export default function LandingPage() {
               </Card>
             </Link>
           ))}
+        </div>
+
+        {/* Public CTA for new institutions. Routes to the wizard at
+            /register/institution. Distinct visual treatment so it
+            doesn't compete with the operator portals above. */}
+        <div className="mt-12">
+          <Card>
+            <CardBody className="flex flex-wrap items-center justify-between gap-4">
+              <div>
+                <h3 className="text-base font-semibold text-slate-900">
+                  New institution? Register here.
+                </h3>
+                <p className="mt-1 text-sm text-slate-600">
+                  Tell us a few details, upload your recognition documents, and our team will activate your account within 48 hours.
+                </p>
+              </div>
+              <Link
+                to="/register/institution"
+                className="inline-flex items-center justify-center font-medium rounded-lg bg-indigo-600 text-white hover:bg-indigo-700 text-sm px-4 py-2"
+              >
+                Register your institution
+              </Link>
+            </CardBody>
+          </Card>
         </div>
       </main>
     </div>

@@ -6,17 +6,22 @@
   "scripts": {
     "dev": "vite",
     "build": "vite build",
+    "build:signup": "VITE_APP_MODE=signup vite build --outDir dist-signup",
+    "build:verify": "VITE_APP_MODE=verify vite build --outDir dist-verify",
+    "build:ops": "VITE_APP_MODE=ops vite build --outDir dist-ops",
+    "build:all": "npm run build:signup && npm run build:verify && npm run build:ops",
     "preview": "vite preview"
   },
   "dependencies": {
+    "framer-motion": "^12.40.0",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
     "react-router-dom": "^6.26.2",
     "recharts": "^2.12.7"
   },
   "devDependencies": {
-    "@vitejs/plugin-react": "^4.3.1",
     "@tailwindcss/vite": "^4.0.0",
+    "@vitejs/plugin-react": "^4.3.1",
     "tailwindcss": "^4.0.0",
     "vite": "^5.4.8"
   }

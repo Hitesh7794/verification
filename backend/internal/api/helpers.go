@@ -2,7 +2,9 @@ package api
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"strings"
 
@@ -36,6 +38,39 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			writeErr(w, http.StatusUnauthorized, "invalid token")
 			return
 		}
+
+		// Re-check the user against the DB on every request. The JWT
+		// proves the holder authenticated at some point in the last
+		// 12h, but does NOT prove the account is still valid right
+		// now: an admin may have disabled this user, the row may have
+		// been deleted, or the user's role may have changed. We pay
+		// one indexed-PK lookup per request to keep mid-session
+		// revocation actually mean something. Returning 401 (not 403)
+		// trips the frontend's auto-logout on the next call.
+		var disabledAt sql.NullTime
+		var dbRole string
+		err = s.deps.DB.QueryRowContext(r.Context(),
+			`SELECT role, disabled_at FROM users WHERE id = ?`, c.UserID,
+		).Scan(&dbRole, &disabledAt)
+		if errors.Is(err, sql.ErrNoRows) {
+			writeErr(w, http.StatusUnauthorized, "account no longer exists")
+			return
+		}
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "auth check failed")
+			return
+		}
+		if disabledAt.Valid {
+			writeErr(w, http.StatusUnauthorized, "account disabled")
+			return
+		}
+		if dbRole != c.Role {
+			// Role changed since JWT was issued — force re-login so
+			// the new role is reflected in the claims.
+			writeErr(w, http.StatusUnauthorized, "session role mismatch — please sign in again")
+			return
+		}
+
 		ctx := context.WithValue(r.Context(), claimsKey, c)
 		next.ServeHTTP(w, r.WithContext(ctx))
 	})

@@ -1,0 +1,60 @@
+VERIFICATION PORTAL — OPERATOR-LAPTOP CLIENT
+License and Terms of Use
+
+[PLACEHOLDER — replace this file with your institution's actual end-user
+licence agreement before publishing the installer to colleges. The text
+below is a generic placeholder that the wizard will display on the
+License page; operators must click "I accept the agreement" before they
+can proceed with the install.]
+
+================================================================
+1. SOFTWARE DESCRIPTION
+
+   This installer registers the following on the operator laptop:
+
+   - Mantra MorFin fingerprint daemon (vendor: Mantra Softech)
+   - Adoptium Temurin Java Runtime Environment 17 (vendor: Eclipse
+     Foundation; GPLv2 + Classpath Exception)
+   - Mantra MorFin USB driver (vendor: Mantra Softech)
+   - Optional: Startek/ACPL Capture API (vendor: Access Computech)
+   - Optional: WSL2 Ubuntu + Mantra Marvis iris service (vendor: Mantra)
+   - nssm — the Non-Sucking Service Manager (third-party, BSD licence)
+
+   Vendor components retain their own licences. This installer does
+   not transfer any rights beyond those granted by the original vendors.
+
+================================================================
+2. PRIVACY
+
+   The installer:
+   - Sends NO telemetry of its own.
+   - Does NOT collect personal information.
+   - Configures the operator's browser homepage to point at the
+     verification portal URL you specify during install. The portal
+     itself follows the institution's privacy policy, separate from
+     this software.
+
+================================================================
+3. NO WARRANTY
+
+   This software is provided AS IS, without warranty of any kind.
+   The publisher is not liable for any damages arising from its use,
+   including but not limited to data loss, hardware malfunction, or
+   business interruption.
+
+================================================================
+4. ATTRIBUTION
+
+   This software bundles components covered by the following licences:
+
+   - Adoptium Temurin JRE 17: GPL v2 with Classpath Exception
+     (https://openjdk.org/legal/gplv2+ce.html)
+   - nssm: BSD-style (https://nssm.cc/license)
+   - Mantra MorFin SDK: proprietary, terms via vendor
+   - ACPL Capture API: proprietary, terms via vendor
+
+   By installing, you accept these third-party terms as well.
+
+================================================================
+
+To proceed, click "I accept the agreement" below.

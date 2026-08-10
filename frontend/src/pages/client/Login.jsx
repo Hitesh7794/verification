@@ -1,4 +1,4 @@
-import LoginShell from '../../components/LoginShell.jsx'
+import LoginShell from '../../components/shell/LoginShell.jsx'
 
 export default function ClientLogin() {
   return (
@@ -9,6 +9,7 @@ export default function ClientLogin() {
       redirectTo="/client"
       accent="indigo"
       demo="client / client123"
+      rememberKey="nv_last_client_username"
     />
   )
 }

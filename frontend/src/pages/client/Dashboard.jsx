@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
-import AppShell from '../../components/AppShell.jsx'
+import { Link } from 'react-router-dom'
+import AppShell from '../../components/shell/AppShell.jsx'
 import {
   Button,
   Card,
@@ -10,13 +11,11 @@ import {
   Input,
   Label,
   PageHeader,
-} from '../../components/ui.jsx'
-import FingerprintCapture from '../../components/FingerprintCapture.jsx'
-import IrisCapture from '../../components/IrisCapture.jsx'
-import FaceMatchPanel from '../../components/FaceMatchPanel.jsx'
-import LowBalanceModal from '../../components/LowBalanceModal.jsx'
+} from '../../components/ui/ui.jsx'
+import FingerprintCapture from '../../components/verify/FingerprintCapture.jsx'
+import IrisCapture from '../../components/verify/IrisCapture.jsx'
+import FaceMatchPanel from '../../components/verify/FaceMatchPanel.jsx'
 import { api, fetchFPTemplate, fetchPhotoBlob, isWalletEmptyError } from '../../lib/api.js'
-import { getWalletConfig } from '../../lib/wallet.js'
 
 // Generate an idempotency key per verification attempt so a network retry
 // of the submit doesn't create two rows. crypto.randomUUID is available in
@@ -27,6 +26,29 @@ function newIdempotencyKey() {
 }
 
 const APP_VERSION = '0.2.0'
+
+// sessionStorage key for per-tab verification-in-progress state.
+// Persisted so an accidental refresh / power blip / network reconnect
+// doesn't throw an operator back to step 1 with their captures lost.
+// Scoped per-tab (sessionStorage, not localStorage) so two operators
+// sharing one machine across browser windows don't see each other's
+// in-flight verification.
+const STATE_KEY = 'nv_verify_state_v1'
+
+function loadPersistedState() {
+  try {
+    const raw = sessionStorage.getItem(STATE_KEY)
+    return raw ? JSON.parse(raw) : null
+  } catch {
+    return null
+  }
+}
+function persistState(state) {
+  try { sessionStorage.setItem(STATE_KEY, JSON.stringify(state)) } catch {}
+}
+function clearPersistedState() {
+  try { sessionStorage.removeItem(STATE_KEY) } catch {}
+}
 
 const STEPS = ['Roll Number', 'Face Capture', 'Fingerprint', 'Decision']
 
@@ -133,48 +155,103 @@ function WebcamCapture({ onCapture }) {
 
 
 export default function ClientDashboard() {
-  const [step, setStep] = useState(0)
-  const [roll, setRoll] = useState('')
+  // Lazy initialisers read sessionStorage so a refresh in the middle
+  // of a flow restores the operator to where they were. Photo blob,
+  // gallery template, and the snap data URL are intentionally NOT
+  // persisted (binary data, easy to refetch from roll); we hydrate
+  // those via re-lookup in the mount effect below.
+  const persisted = loadPersistedState()
+  const [step, setStep] = useState(persisted?.step ?? 0)
+  const [roll, setRoll] = useState(persisted?.roll ?? '')
   const [candidate, setCandidate] = useState(null)
   const [photoBlob, setPhotoBlob] = useState(null)
   const [gallery, setGallery] = useState(null) // {template_b64, format}
   const [lookupErr, setLookupErr] = useState('')
   const [snap, setSnap] = useState(null)
-  const [faceResult, setFaceResult] = useState(null) // result from FaceMatchPanel
-  const [fpResult, setFpResult] = useState(null) // result from FingerprintCapture
-  const [irisResult, setIrisResult] = useState(null) // result from IrisCapture (fallback)
-  const [showIris, setShowIris] = useState(false) // operator opted in to iris fallback
+  const [faceResult, setFaceResult] = useState(persisted?.faceResult ?? null)
+  const [fpResult, setFpResult] = useState(persisted?.fpResult ?? null)
+  const [irisResult, setIrisResult] = useState(persisted?.irisResult ?? null)
+  const [showIris, setShowIris] = useState(persisted?.showIris ?? false)
   const [submitting, setSubmitting] = useState(false)
   const [result, setResult] = useState(null)
-  const [verificationStartedAt, setVerificationStartedAt] = useState(null)
-  // Wallet integration: when /api/candidates/{roll} returns 402, we
-  // stash the ApiError + open LowBalanceModal. Once the operator tops
-  // up, we retry the lookup automatically.
-  const [walletErr, setWalletErr] = useState(null)        // ApiError | null
-  const [walletConfig, setWalletConfig] = useState(null)  // cached config
-  // walletRefreshKey is bumped to force WalletWidget to re-fetch (e.g.
-  // after a successful candidate lookup deducts a fee).
-  const [walletRefreshKey, setWalletRefreshKey] = useState(0)
+  const [verificationStartedAt, setVerificationStartedAt] = useState(persisted?.verificationStartedAt ?? null)
+  // Idempotency key is generated ONCE per verification (on first
+  // successful lookup) and reused across any submit retries. This
+  // way: network retry → backend sees same key → returns the same
+  // existing row (no duplicate). Browser-back + resubmit on the
+  // same flow → same key → idempotent. New "Start over" → fresh key.
+  const [idempotencyKey, setIdempotencyKey] = useState(persisted?.idempotencyKey ?? null)
+  // When the org's wallet is empty, the candidate-lookup endpoint
+  // returns HTTP 402. Operators can't top up themselves — this is
+  // surfaced as a passive banner directing them to their admin.
+  const [walletEmpty, setWalletEmpty] = useState(false)
 
-  // Fetch wallet config once on mount — cheap, idempotent, used by
-  // LowBalanceModal so it knows the fee/cap/key_id without a separate
-  // round-trip on the failure path.
+  // Persist whenever the meaningful state changes, so an unexpected
+  // refresh doesn't lose the operator's in-flight verification.
+  // photoBlob/gallery/snap are deliberately excluded — they're large
+  // and re-fetchable from `roll`.
   useEffect(() => {
-    getWalletConfig().then(setWalletConfig).catch(() => {})
+    if (step === 0 && !roll && !candidate && !faceResult && !fpResult) {
+      // Idle / cleared state — drop the persisted record entirely.
+      clearPersistedState()
+      return
+    }
+    persistState({
+      step, roll, faceResult, fpResult, irisResult, showIris,
+      verificationStartedAt, idempotencyKey,
+    })
+  }, [step, roll, faceResult, fpResult, irisResult, showIris,
+      verificationStartedAt, idempotencyKey, candidate])
+
+  // On mount, if we restored a flow past step 0, re-fetch the
+  // candidate so photo + template are available again. The wallet
+  // middleware's same-roll cache (5 min window) means this re-lookup
+  // doesn't double-charge.
+  useEffect(() => {
+    if (persisted && persisted.step > 0 && persisted.roll && !candidate) {
+      ;(async () => {
+        try {
+          const c = await api(`/candidates/${encodeURIComponent(persisted.roll)}`)
+          setCandidate(c)
+          try {
+            const url = await fetchPhotoBlob(persisted.roll)
+            setPhotoBlob(url)
+          } catch {}
+          if (c.has_iso_template) {
+            try {
+              const tpl = await fetchFPTemplate(persisted.roll)
+              setGallery(tpl)
+            } catch {}
+          }
+        } catch (e) {
+          // If the re-lookup fails (wallet empty / candidate gone),
+          // reset cleanly so the operator isn't stuck in a half-loaded
+          // step 2 with no candidate object.
+          if (isWalletEmptyError(e)) {
+            setWalletEmpty(true)
+          } else {
+            setLookupErr(e.message || 'Could not restore verification')
+          }
+          clearPersistedState()
+          setStep(0)
+        }
+      })()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   async function lookupRoll(e) {
     e?.preventDefault()
     setLookupErr('')
-    setWalletErr(null)
+    setWalletEmpty(false)
     if (!roll.trim()) return
     try {
       const c = await api(`/candidates/${encodeURIComponent(roll.trim())}`)
       setCandidate(c)
       setVerificationStartedAt(Date.now())
-      // Charge succeeded server-side → bump the widget refresh key so
-      // the navbar balance re-fetches the new (decremented) balance.
-      setWalletRefreshKey((k) => k + 1)
+      // Mint a fresh idempotency key for this verification. It will
+      // be reused across any submit retries within the same flow.
+      setIdempotencyKey(newIdempotencyKey())
       // Photo and fingerprint template can fetch in parallel; either
       // failure is non-fatal — operator can still complete a manual
       // verification, so we just surface the absence in the UI.
@@ -196,10 +273,11 @@ export default function ClientDashboard() {
       }
       setStep(1)
     } catch (e) {
-      // HTTP 402 from the wallet middleware → open LowBalanceModal.
-      // Operator tops up → onDeposited fires → we retry this lookup.
+      // HTTP 402 from the wallet middleware → org wallet is empty.
+      // Operator cannot self-serve; show a banner with the resolution
+      // path (notify admin to top up).
       if (isWalletEmptyError(e)) {
-        setWalletErr(e)
+        setWalletEmpty(true)
         return
       }
       setLookupErr(e.message || 'lookup failed')
@@ -241,7 +319,11 @@ export default function ClientDashboard() {
         match_threshold: fpResult?.threshold ?? null,
         decision_ms: decisionMs,
         client_app_version: APP_VERSION,
-        idempotency_key: newIdempotencyKey(),
+        // Stable across resubmits within this verification flow. The
+        // key was generated at lookup time and persisted, so a retry
+        // (network, browser back) reuses it; the backend's UNIQUE
+        // index returns the original row instead of inserting a dup.
+        idempotency_key: idempotencyKey || newIdempotencyKey(),
       }
       if (fpResult) {
         Object.assign(body, {
@@ -277,6 +359,10 @@ export default function ClientDashboard() {
 
       await api('/verifications', { method: 'POST', body })
       setResult(status)
+      // Flow is complete — discard the persisted state so a refresh
+      // lands the operator on a clean Step 1 ready for the next
+      // candidate, not on an old completed verification.
+      clearPersistedState()
     } catch (e) {
       setLookupErr(e.message)
     } finally {
@@ -292,6 +378,8 @@ export default function ClientDashboard() {
     setPhotoBlob(null)
     setGallery(null)
     setSnap(null)
+    setIdempotencyKey(null)
+    clearPersistedState()
     setFaceResult(null)
     setFpResult(null)
     setIrisResult(null)
@@ -305,27 +393,65 @@ export default function ClientDashboard() {
     <AppShell
       title="Center Operator Portal"
       subtitle="Biometric verification workstation"
-      walletRefreshKey={walletRefreshKey}
     >
-      {walletErr && walletConfig && (
-        <LowBalanceModal
-          err={walletErr}
-          config={walletConfig}
-          onClose={() => setWalletErr(null)}
-          onDeposited={() => {
-            // Top-up succeeded → retry the lookup that triggered 402.
-            // Bump the wallet refresh key so the navbar widget re-fetches.
-            setWalletErr(null)
-            setWalletRefreshKey((k) => k + 1)
-            lookupRoll()
-          }}
-        />
+      {walletEmpty && (
+        <div className="mb-6 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800 flex items-start gap-3">
+          <span className="mt-0.5">⚠</span>
+          <div className="flex-1">
+            <p className="font-semibold">Organisation wallet is empty</p>
+            <p className="mt-0.5 text-amber-700">
+              Candidate lookups are paused until your administrator tops up the
+              institution wallet. Please contact your admin and try again
+              shortly.
+            </p>
+          </div>
+          <button
+            type="button"
+            className="text-amber-700 hover:text-amber-900 text-lg leading-none"
+            onClick={() => setWalletEmpty(false)}
+            aria-label="Dismiss"
+          >
+            ×
+          </button>
+        </div>
       )}
       <PageHeader
         title="New verification"
         subtitle="Enter the candidate roll number, capture face and fingerprint, then record the decision."
         right={
-          step > 0 && (
+          // Two right-slot buttons, mutually exclusive by verification step:
+          //
+          //   step === 0 (roll-search page)  → "Download installer"
+          //   step >  0 (mid-verification)   → "Start over"
+          //
+          // The Downloads link only shows on the search page so it doesn't
+          // distract operators mid-capture; that's also the moment when a
+          // fresh-laptop operator first lands here, so discoverability is
+          // unchanged. Styled to match the Start-over button visually so
+          // the slot doesn't shift in appearance between steps.
+          step === 0 ? (
+            <Link
+              to="/client/downloads"
+              title="Download the install bundle for a new operator laptop"
+              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:ring-offset-1"
+            >
+              <svg
+                className="h-4 w-4 text-slate-500"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="2"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+                aria-hidden="true"
+              >
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                <polyline points="7 10 12 15 17 10" />
+                <line x1="12" y1="15" x2="12" y2="3" />
+              </svg>
+              Download installer
+            </Link>
+          ) : (
             <Button variant="secondary" onClick={reset}>
               Start over
             </Button>

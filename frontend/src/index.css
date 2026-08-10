@@ -19,3 +19,17 @@ body {
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 6px; }
 ::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+
+/* Loading-state shimmer used by <Skeleton>. The element overlays a
+   transparent → white-60% → transparent gradient and slides it left
+   to right. */
+@keyframes shimmer {
+  100% { transform: translateX(100%); }
+}
+
+/* Subtle dotted grid that pages can use as a faded background. Apply
+   with `bg-dot-grid` on a container; tone via opacity / colour. */
+.bg-dot-grid {
+  background-image: radial-gradient(circle, rgba(15, 23, 42, 0.06) 1px, transparent 1px);
+  background-size: 24px 24px;
+}

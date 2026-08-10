@@ -1,4 +1,4 @@
-import LoginShell from '../../components/LoginShell.jsx'
+import LoginShell from '../../components/shell/LoginShell.jsx'
 
 export default function SuperLogin() {
   return (

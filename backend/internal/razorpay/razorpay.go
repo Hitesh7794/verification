@@ -132,3 +132,24 @@ func (c *Client) VerifySignature(orderID, paymentID, signature string) bool {
 	// Razorpay sends the signature hex-lowercased; normalise just in case.
 	return hmac.Equal([]byte(expected), []byte(strings.ToLower(signature)))
 }
+
+// VerifyWebhookSignature checks that an incoming Razorpay webhook POST
+// is genuine. The signature is HMAC-SHA256 of the RAW request body
+// (the exact bytes Razorpay sent), keyed with the *webhook secret*
+// (NOT the same as KeySecret — webhooks have their own secret set per-
+// endpoint in the Razorpay dashboard). The signature is delivered in
+// the X-Razorpay-Signature request header, hex-encoded.
+//
+// Crucially, the body must be the unmodified bytes: any reformatting
+// (re-marshalling the JSON, normalising whitespace) breaks the HMAC.
+// Callers should read the body once into a []byte and pass it here
+// before unmarshalling.
+func VerifyWebhookSignature(body []byte, signature, webhookSecret string) bool {
+	if len(body) == 0 || signature == "" || webhookSecret == "" {
+		return false
+	}
+	mac := hmac.New(sha256.New, []byte(webhookSecret))
+	mac.Write(body)
+	expected := hex.EncodeToString(mac.Sum(nil))
+	return hmac.Equal([]byte(expected), []byte(strings.ToLower(signature)))
+}

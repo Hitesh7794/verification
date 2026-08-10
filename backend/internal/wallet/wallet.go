@@ -1,19 +1,25 @@
-// Package wallet implements the per-client wallet — balance, atomic
-// debit/credit, transaction history. All money is stored as int paise
-// to avoid floating-point money bugs.
+// Package wallet implements the per-organisation wallet — balance, atomic
+// debit/credit, transaction history. All money is stored as int paise to
+// avoid floating-point money bugs.
 //
-// Concurrency: each user's balance is updated via
+// One wallet per organisation. Operators (client role) trigger charges
+// against their org's wallet when they look up candidates; the admin
+// owns the balance, deposits funds via Razorpay, and sees the full
+// transaction history with operator attribution. Superadmin can view +
+// credit any org's wallet for support cases.
 //
-//	UPDATE wallets SET balance_paise = balance_paise - ? WHERE user_id = ? AND balance_paise >= ?
+// Concurrency: each org's balance is updated via
+//
+//	UPDATE wallets SET balance_paise = balance_paise - ? WHERE org_id = ? AND balance_paise >= ?
 //
 // so two simultaneous charges can't oversell. The transaction-history
 // insert + balance update happen in a single SQL transaction, which is
 // rolled back on any error including the balance-check failure.
 //
 // Wallet rows are created lazily — the first time someone tries to
-// read/charge/credit a user's wallet, an upsert ensures a 0-balance row
-// exists. This means the db.Seed step doesn't need to know which users
-// are clients; the wallet appears on first interaction.
+// read/charge/credit an org's wallet, an upsert ensures a 0-balance row
+// exists. This means newly-approved institutions get a wallet on first
+// interaction without any separate provisioning step.
 package wallet
 
 import (
@@ -27,7 +33,7 @@ import (
 // Errors. Handlers map these to specific HTTP status codes — see
 // wallet_handlers.go.
 var (
-	// ErrInsufficient is returned by Debit when the user's balance is
+	// ErrInsufficient is returned by Debit when the org's balance is
 	// below the requested amount. HTTP handler maps this to 402.
 	ErrInsufficient = errors.New("wallet: insufficient balance")
 
@@ -42,18 +48,21 @@ var (
 type Kind string
 
 const (
-	KindDeposit      Kind = "deposit"       // Razorpay-funded top-up
-	KindCharge       Kind = "charge"        // candidate-lookup fee
-	KindAdminCredit  Kind = "admin_credit"  // admin manual top-up of another user
-	KindRefund       Kind = "refund"        // future use; not exposed yet
+	KindDeposit     Kind = "deposit"      // Razorpay-funded top-up
+	KindCharge      Kind = "charge"       // candidate-lookup fee
+	KindAdminCredit Kind = "admin_credit" // superadmin manual top-up
+	KindRefund      Kind = "refund"       // future use; not exposed yet
 )
 
 // Transaction is one row of the audit ledger.
 type Transaction struct {
 	ID                int64
-	UserID            int64
+	OrgID             int64
+	ActorUserID       *int64 // operator who triggered a charge, or admin who deposited; nullable
+	ActorUsername     string // joined from users; empty if actor_user_id is NULL
+	ActorDisplayName  string // joined from users; empty if actor_user_id is NULL
 	Kind              Kind
-	AmountPaise       int   // signed: + for credits, - for charges
+	AmountPaise       int    // signed: + for credits, - for charges
 	BalanceAfterPaise int
 	RelatedRoll       string // empty when not applicable
 	RazorpayOrderID   string // empty when not applicable
@@ -70,41 +79,54 @@ type Store struct {
 
 func New(db *sql.DB) *Store { return &Store{db: db} }
 
-// Balance returns the user's current balance in paise, creating the
+// Balance returns the org's current balance in paise, creating the
 // wallet row on first use.
-func (s *Store) Balance(ctx context.Context, userID int64) (int, error) {
-	if err := s.ensureWallet(ctx, userID); err != nil {
+func (s *Store) Balance(ctx context.Context, orgID int64) (int, error) {
+	if err := s.ensureWallet(ctx, orgID); err != nil {
 		return 0, err
 	}
 	var bal int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT balance_paise FROM wallets WHERE user_id = ?`, userID).Scan(&bal)
+		`SELECT balance_paise FROM wallets WHERE org_id = ?`, orgID).Scan(&bal)
 	if err != nil {
 		return 0, err
 	}
 	return bal, nil
 }
 
-// History returns the most recent N transactions for a user, newest
-// first. limit is clamped to [1, 200].
-func (s *Store) History(ctx context.Context, userID int64, limit int) ([]Transaction, error) {
+// History returns the most recent N transactions for an org, newest
+// first, joined with users so the admin UI can render the operator
+// attribution without N+1 queries. limit is clamped to [1, 200].
+//
+// beforeID enables cursor pagination: pass 0 to get the newest page,
+// or the smallest `id` from the previous page to fetch the next
+// (older) page. Cursor-by-id is stable under concurrent inserts —
+// new transactions land with higher IDs and never disturb the
+// older pages the admin is scrolling through.
+func (s *Store) History(ctx context.Context, orgID int64, limit int, beforeID int64) ([]Transaction, error) {
 	if limit < 1 {
 		limit = 20
 	}
 	if limit > 200 {
 		limit = 200
 	}
-	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, user_id, kind, amount_paise, balance_after_paise,
-		        COALESCE(related_roll,''), COALESCE(razorpay_order_id,''),
-		        COALESCE(razorpay_payment_id,''), COALESCE(description,''),
-		        created_at
-		 FROM wallet_transactions
-		 WHERE user_id = ?
-		 ORDER BY id DESC
-		 LIMIT ?`,
-		userID, limit,
-	)
+	q := `SELECT t.id, t.org_id, t.actor_user_id,
+	             COALESCE(u.username,''), COALESCE(u.display_name,''),
+	             t.kind, t.amount_paise, t.balance_after_paise,
+	             COALESCE(t.related_roll,''), COALESCE(t.razorpay_order_id,''),
+	             COALESCE(t.razorpay_payment_id,''), COALESCE(t.description,''),
+	             t.created_at
+	      FROM wallet_transactions t
+	      LEFT JOIN users u ON u.id = t.actor_user_id
+	      WHERE t.org_id = ?`
+	args := []any{orgID}
+	if beforeID > 0 {
+		q += ` AND t.id < ?`
+		args = append(args, beforeID)
+	}
+	q += ` ORDER BY t.id DESC LIMIT ?`
+	args = append(args, limit)
+	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -113,12 +135,19 @@ func (s *Store) History(ctx context.Context, userID int64, limit int) ([]Transac
 	for rows.Next() {
 		var t Transaction
 		var k string
+		var actorID sql.NullInt64
 		if err := rows.Scan(
-			&t.ID, &t.UserID, &k, &t.AmountPaise, &t.BalanceAfterPaise,
+			&t.ID, &t.OrgID, &actorID,
+			&t.ActorUsername, &t.ActorDisplayName,
+			&k, &t.AmountPaise, &t.BalanceAfterPaise,
 			&t.RelatedRoll, &t.RazorpayOrderID, &t.RazorpayPaymentID,
 			&t.Description, &t.CreatedAt,
 		); err != nil {
 			return nil, err
+		}
+		if actorID.Valid {
+			id := actorID.Int64
+			t.ActorUserID = &id
 		}
 		t.Kind = Kind(k)
 		out = append(out, t)
@@ -126,12 +155,12 @@ func (s *Store) History(ctx context.Context, userID int64, limit int) ([]Transac
 	return out, rows.Err()
 }
 
-// HasRecentChargeForRoll returns true if user has already paid for this
-// specific roll within the last `windowMinutes` minutes. Used by the
-// candidate-lookup middleware to implement the "5-min same-roll cache" —
-// avoids double-charging when an operator refreshes a page or briefly
-// switches tabs.
-func (s *Store) HasRecentChargeForRoll(ctx context.Context, userID int64, roll string, windowMinutes int) (bool, error) {
+// HasRecentChargeForRoll returns true if the org has already paid for
+// this specific roll within the last `windowMinutes` minutes. Used by
+// the candidate-lookup middleware to implement the same-roll cache —
+// avoids double-charging when any operator in the org refreshes a page
+// or two operators happen to look up the same candidate close together.
+func (s *Store) HasRecentChargeForRoll(ctx context.Context, orgID int64, roll string, windowMinutes int) (bool, error) {
 	if roll == "" || windowMinutes <= 0 {
 		return false, nil
 	}
@@ -139,9 +168,9 @@ func (s *Store) HasRecentChargeForRoll(ctx context.Context, userID int64, roll s
 	var n int
 	err := s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM wallet_transactions
-		 WHERE user_id = ? AND related_roll = ? AND kind = 'charge'
+		 WHERE org_id = ? AND related_roll = ? AND kind = 'charge'
 		   AND created_at >= ?`,
-		userID, roll, cutoff,
+		orgID, roll, cutoff,
 	).Scan(&n)
 	if err != nil {
 		return false, err
@@ -149,16 +178,17 @@ func (s *Store) HasRecentChargeForRoll(ctx context.Context, userID int64, roll s
 	return n > 0, nil
 }
 
-// Debit subtracts `amountPaise` from user's balance and records a
-// 'charge' transaction. The whole thing is one DB transaction so we
+// Debit subtracts `amountPaise` from the org's balance and records a
+// 'charge' transaction attributed to `actorUserID` (the operator who
+// triggered the lookup). The whole thing is one DB transaction so we
 // can't get a debit without a ledger entry (or vice versa). Returns
 // ErrInsufficient if the balance would go below 0; in that case
 // nothing is written.
-func (s *Store) Debit(ctx context.Context, userID int64, amountPaise int, relatedRoll, description string) (Transaction, error) {
+func (s *Store) Debit(ctx context.Context, orgID, actorUserID int64, amountPaise int, relatedRoll, description string) (Transaction, error) {
 	if amountPaise <= 0 {
 		return Transaction{}, ErrInvalidAmount
 	}
-	if err := s.ensureWallet(ctx, userID); err != nil {
+	if err := s.ensureWallet(ctx, orgID); err != nil {
 		return Transaction{}, err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -175,8 +205,8 @@ func (s *Store) Debit(ctx context.Context, userID int64, amountPaise int, relate
 		`UPDATE wallets
 		 SET balance_paise = balance_paise - ?,
 		     updated_at    = CURRENT_TIMESTAMP
-		 WHERE user_id = ? AND balance_paise >= ?`,
-		amountPaise, userID, amountPaise,
+		 WHERE org_id = ? AND balance_paise >= ?`,
+		amountPaise, orgID, amountPaise,
 	)
 	if err != nil {
 		return Transaction{}, err
@@ -192,17 +222,18 @@ func (s *Store) Debit(ctx context.Context, userID int64, amountPaise int, relate
 	// Read the post-debit balance so we can stamp it on the ledger row.
 	var newBal int
 	if err := tx.QueryRowContext(ctx,
-		`SELECT balance_paise FROM wallets WHERE user_id = ?`, userID,
+		`SELECT balance_paise FROM wallets WHERE org_id = ?`, orgID,
 	).Scan(&newBal); err != nil {
 		return Transaction{}, err
 	}
 
 	res, err = tx.ExecContext(ctx,
 		`INSERT INTO wallet_transactions(
-			user_id, kind, amount_paise, balance_after_paise,
+			org_id, actor_user_id, kind, amount_paise, balance_after_paise,
 			related_roll, description
-		) VALUES (?, 'charge', ?, ?, ?, ?)`,
-		userID, -amountPaise, newBal, nullable(relatedRoll), nullable(description),
+		) VALUES (?, ?, 'charge', ?, ?, ?, ?)`,
+		orgID, actorUserID, -amountPaise, newBal,
+		nullable(relatedRoll), nullable(description),
 	)
 	if err != nil {
 		return Transaction{}, err
@@ -211,9 +242,11 @@ func (s *Store) Debit(ctx context.Context, userID int64, amountPaise int, relate
 	if err := tx.Commit(); err != nil {
 		return Transaction{}, err
 	}
+	actor := actorUserID
 	return Transaction{
 		ID:                id,
-		UserID:            userID,
+		OrgID:             orgID,
+		ActorUserID:       &actor,
 		Kind:              KindCharge,
 		AmountPaise:       -amountPaise,
 		BalanceAfterPaise: newBal,
@@ -223,21 +256,22 @@ func (s *Store) Debit(ctx context.Context, userID int64, amountPaise int, relate
 	}, nil
 }
 
-// Credit adds `amountPaise` to user's balance and records a transaction
-// with the given kind. Used for Razorpay-funded deposits and admin
-// manual top-ups. For Razorpay deposits, pass the order_id + payment_id;
-// the unique index on razorpay_payment_id makes the call idempotent
-// (network retries from the browser are safe — they fail with a unique-
-// violation that the caller can map to "already credited, here's the
-// existing row").
-func (s *Store) Credit(ctx context.Context, userID int64, amountPaise int, kind Kind, razorpayOrderID, razorpayPaymentID, description string) (Transaction, error) {
+// Credit adds `amountPaise` to the org's balance and records a
+// transaction with the given kind. Used for Razorpay-funded deposits
+// (actorUserID = the admin who initiated the deposit) and superadmin
+// manual top-ups (actorUserID = the superadmin). For Razorpay deposits,
+// pass the order_id + payment_id; the unique index on razorpay_payment_id
+// makes the call idempotent (network retries from the browser are safe
+// — they fail with a unique-violation that the caller can map to
+// "already credited, here's the existing row").
+func (s *Store) Credit(ctx context.Context, orgID, actorUserID int64, amountPaise int, kind Kind, razorpayOrderID, razorpayPaymentID, description string) (Transaction, error) {
 	if amountPaise <= 0 {
 		return Transaction{}, ErrInvalidAmount
 	}
 	if kind != KindDeposit && kind != KindAdminCredit && kind != KindRefund {
 		return Transaction{}, fmt.Errorf("wallet: invalid credit kind %q", kind)
 	}
-	if err := s.ensureWallet(ctx, userID); err != nil {
+	if err := s.ensureWallet(ctx, orgID); err != nil {
 		return Transaction{}, err
 	}
 	tx, err := s.db.BeginTx(ctx, nil)
@@ -250,23 +284,23 @@ func (s *Store) Credit(ctx context.Context, userID int64, amountPaise int, kind 
 		`UPDATE wallets
 		 SET balance_paise = balance_paise + ?,
 		     updated_at    = CURRENT_TIMESTAMP
-		 WHERE user_id = ?`,
-		amountPaise, userID,
+		 WHERE org_id = ?`,
+		amountPaise, orgID,
 	); err != nil {
 		return Transaction{}, err
 	}
 	var newBal int
 	if err := tx.QueryRowContext(ctx,
-		`SELECT balance_paise FROM wallets WHERE user_id = ?`, userID,
+		`SELECT balance_paise FROM wallets WHERE org_id = ?`, orgID,
 	).Scan(&newBal); err != nil {
 		return Transaction{}, err
 	}
 	res, err := tx.ExecContext(ctx,
 		`INSERT INTO wallet_transactions(
-			user_id, kind, amount_paise, balance_after_paise,
+			org_id, actor_user_id, kind, amount_paise, balance_after_paise,
 			razorpay_order_id, razorpay_payment_id, description
-		) VALUES (?, ?, ?, ?, ?, ?, ?)`,
-		userID, string(kind), amountPaise, newBal,
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		orgID, nullableID(actorUserID), string(kind), amountPaise, newBal,
 		nullable(razorpayOrderID), nullable(razorpayPaymentID), nullable(description),
 	)
 	if err != nil {
@@ -276,9 +310,15 @@ func (s *Store) Credit(ctx context.Context, userID int64, amountPaise int, kind 
 	if err := tx.Commit(); err != nil {
 		return Transaction{}, err
 	}
+	var actor *int64
+	if actorUserID > 0 {
+		v := actorUserID
+		actor = &v
+	}
 	return Transaction{
 		ID:                id,
-		UserID:            userID,
+		OrgID:             orgID,
+		ActorUserID:       actor,
 		Kind:              kind,
 		AmountPaise:       amountPaise,
 		BalanceAfterPaise: newBal,
@@ -298,8 +338,9 @@ func (s *Store) FindByRazorpayPaymentID(ctx context.Context, paymentID string) (
 	}
 	var t Transaction
 	var k string
+	var actorID sql.NullInt64
 	err := s.db.QueryRowContext(ctx,
-		`SELECT id, user_id, kind, amount_paise, balance_after_paise,
+		`SELECT id, org_id, actor_user_id, kind, amount_paise, balance_after_paise,
 		        COALESCE(related_roll,''), COALESCE(razorpay_order_id,''),
 		        COALESCE(razorpay_payment_id,''), COALESCE(description,''),
 		        created_at
@@ -307,7 +348,7 @@ func (s *Store) FindByRazorpayPaymentID(ctx context.Context, paymentID string) (
 		 WHERE razorpay_payment_id = ?`,
 		paymentID,
 	).Scan(
-		&t.ID, &t.UserID, &k, &t.AmountPaise, &t.BalanceAfterPaise,
+		&t.ID, &t.OrgID, &actorID, &k, &t.AmountPaise, &t.BalanceAfterPaise,
 		&t.RelatedRoll, &t.RazorpayOrderID, &t.RazorpayPaymentID,
 		&t.Description, &t.CreatedAt,
 	)
@@ -317,16 +358,20 @@ func (s *Store) FindByRazorpayPaymentID(ctx context.Context, paymentID string) (
 	if err != nil {
 		return nil, err
 	}
+	if actorID.Valid {
+		id := actorID.Int64
+		t.ActorUserID = &id
+	}
 	t.Kind = Kind(k)
 	return &t, nil
 }
 
-// ensureWallet creates a 0-balance row for `userID` if one doesn't exist
+// ensureWallet creates a 0-balance row for `orgID` if one doesn't exist
 // yet. Safe to call repeatedly — the INSERT OR IGNORE is idempotent.
-func (s *Store) ensureWallet(ctx context.Context, userID int64) error {
+func (s *Store) ensureWallet(ctx context.Context, orgID int64) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT OR IGNORE INTO wallets(user_id, balance_paise) VALUES (?, 0)`,
-		userID,
+		`INSERT OR IGNORE INTO wallets(org_id, balance_paise) VALUES (?, 0)`,
+		orgID,
 	)
 	return err
 }
@@ -336,4 +381,11 @@ func nullable(s string) any {
 		return nil
 	}
 	return s
+}
+
+func nullableID(id int64) any {
+	if id <= 0 {
+		return nil
+	}
+	return id
 }

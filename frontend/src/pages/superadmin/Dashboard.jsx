@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useState } from 'react'
 import {
   Cell,
   Pie,
@@ -13,7 +13,9 @@ import {
   Legend,
 } from 'recharts'
 
-import AppShell from '../../components/AppShell.jsx'
+import { Link } from 'react-router-dom'
+
+import AppShell from '../../components/shell/AppShell.jsx'
 import {
   Badge,
   Card,
@@ -22,8 +24,9 @@ import {
   CardTitle,
   PageHeader,
   StatCard,
-} from '../../components/ui.jsx'
+} from '../../components/ui/ui.jsx'
 import { api } from '../../lib/api.js'
+import { usePolling } from '../../lib/usePolling.js'
 
 const PIE_COLORS = ['#059669', '#e11d48']
 
@@ -33,31 +36,22 @@ export default function SuperDashboard() {
   const [topCenters, setTopCenters] = useState([])
   const [err, setErr] = useState('')
 
-  useEffect(() => {
-    let alive = true
-    async function load() {
-      try {
-        const [s, o, t] = await Promise.all([
-          api('/super/stats'),
-          api('/super/organizations'),
-          api('/super/top-centers'),
-        ])
-        if (!alive) return
-        setStats(s)
-        setOrgs(o)
-        setTopCenters(t)
-        setErr('')
-      } catch (e) {
-        if (alive) setErr(e.message)
-      }
+  // Visibility-aware polling — pauses when the tab is hidden.
+  usePolling(async () => {
+    try {
+      const [s, o, t] = await Promise.all([
+        api('/super/stats'),
+        api('/super/organizations'),
+        api('/super/top-centers'),
+      ])
+      setStats(s)
+      setOrgs(o)
+      setTopCenters(t)
+      setErr('')
+    } catch (e) {
+      setErr(e.message)
     }
-    load()
-    const id = setInterval(load, 4000) // live refresh
-    return () => {
-      alive = false
-      clearInterval(id)
-    }
-  }, [])
+  }, 4000)
 
   const pieData = stats
     ? [
@@ -71,6 +65,14 @@ export default function SuperDashboard() {
       <PageHeader
         title="Platform overview"
         subtitle="System-wide telemetry across every organization, center and operator."
+        right={
+          <Link
+            to="/superadmin/applications"
+            className="inline-flex items-center justify-center font-medium rounded-lg text-sm px-4 py-2 bg-white text-slate-700 border border-slate-300 hover:bg-slate-50"
+          >
+            Institution registrations →
+          </Link>
+        }
       />
 
       {err && (

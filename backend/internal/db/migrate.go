@@ -1,6 +1,7 @@
 package db
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 )
@@ -12,198 +13,39 @@ import (
 // appended to the end of the migrations slice with a fresh, monotonically
 // increasing version — never edit an existing migration after it has been
 // shipped, since some databases will already have applied it.
+//
+// Individual migrations live in their own files (migration_NNN_*.go) so
+// this runner stays readable. To add one, create migration_008_*.go with
+// a `var migration008X = migration{...}` and append it to the slice below.
 type migration struct {
 	version int
 	name    string
 	stmts   []string
+
+	// needsFKOff signals that this migration rebuilds a table that other
+	// tables have foreign-key references into (e.g., the SQLite "12-step
+	// rename to widen a CHECK constraint" pattern). SQLite ignores PRAGMA
+	// foreign_keys changes inside an open transaction, so the migration
+	// runner toggles it on a dedicated connection around the tx and
+	// restores it after.
+	needsFKOff bool
 }
 
 var migrations = []migration{
-	{
-		version: 1,
-		name:    "initial_schema",
-		stmts: []string{
-			`CREATE TABLE IF NOT EXISTS organizations (
-				id          INTEGER PRIMARY KEY AUTOINCREMENT,
-				code        TEXT NOT NULL UNIQUE,
-				name        TEXT NOT NULL,
-				created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-			)`,
-			`CREATE TABLE IF NOT EXISTS centers (
-				id          INTEGER PRIMARY KEY AUTOINCREMENT,
-				org_id      INTEGER NOT NULL REFERENCES organizations(id),
-				code        TEXT NOT NULL,
-				name        TEXT NOT NULL,
-				created_at  DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-				UNIQUE(org_id, code)
-			)`,
-			`CREATE INDEX IF NOT EXISTS idx_centers_org ON centers(org_id)`,
-			`CREATE TABLE IF NOT EXISTS users (
-				id            INTEGER PRIMARY KEY AUTOINCREMENT,
-				username      TEXT NOT NULL UNIQUE,
-				password_hash TEXT NOT NULL,
-				role          TEXT NOT NULL CHECK (role IN ('client','admin','superadmin')),
-				org_id        INTEGER REFERENCES organizations(id),
-				center_id     INTEGER REFERENCES centers(id),
-				display_name  TEXT NOT NULL,
-				created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-			)`,
-			`CREATE TABLE IF NOT EXISTS verifications (
-				id            INTEGER PRIMARY KEY AUTOINCREMENT,
-				roll_no       TEXT NOT NULL,
-				org_id        INTEGER NOT NULL,
-				center_id     INTEGER NOT NULL,
-				operator_id   INTEGER NOT NULL,
-				face_match    INTEGER NOT NULL DEFAULT 0,
-				fp_match      INTEGER NOT NULL DEFAULT 0,
-				status        TEXT NOT NULL CHECK (status IN ('verified','denied')),
-				note          TEXT,
-				created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-			)`,
-			`CREATE INDEX IF NOT EXISTS idx_verifications_org_created ON verifications(org_id, created_at)`,
-			`CREATE INDEX IF NOT EXISTS idx_verifications_center_created ON verifications(center_id, created_at)`,
-			`CREATE INDEX IF NOT EXISTS idx_verifications_roll ON verifications(roll_no)`,
-			`CREATE INDEX IF NOT EXISTS idx_verifications_status ON verifications(status)`,
-		},
-	},
-	{
-		version: 2,
-		name:    "biometric_score_fields",
-		stmts: []string{
-			// Hardware identity captured at decision time.
-			`ALTER TABLE verifications ADD COLUMN device_serial TEXT`,
-			`ALTER TABLE verifications ADD COLUMN device_model TEXT`,
-
-			// Fingerprint signals from MorFin: capture quality (1-100), NFIQ
-			// (1-5, NIST quality), match score (vendor scale, threshold-tested
-			// at decision time), liveness (-1 unknown / 0 spoof / 1 live),
-			// and the template format used for the gallery side of the match.
-			`ALTER TABLE verifications ADD COLUMN fp_template_format TEXT`,
-			`ALTER TABLE verifications ADD COLUMN fp_quality INTEGER`,
-			`ALTER TABLE verifications ADD COLUMN fp_nfiq INTEGER`,
-			`ALTER TABLE verifications ADD COLUMN fp_match_score INTEGER`,
-			`ALTER TABLE verifications ADD COLUMN fp_liveness INTEGER`,
-
-			// Iris signals from Marvis MatchImage. Two scores (left/right eye)
-			// plus per-eye quality from IrisAnatomy.
-			`ALTER TABLE verifications ADD COLUMN iris_left_score REAL`,
-			`ALTER TABLE verifications ADD COLUMN iris_right_score REAL`,
-			`ALTER TABLE verifications ADD COLUMN iris_left_quality INTEGER`,
-			`ALTER TABLE verifications ADD COLUMN iris_right_quality INTEGER`,
-
-			// Face score reserved for Luxand integration (later). Single
-			// similarity score (0..100 in vendor's scale).
-			`ALTER TABLE verifications ADD COLUMN face_match_score REAL`,
-
-			// Decision audit: which channel produced the verified/denied
-			// result, what threshold was applied at that moment (thresholds
-			// can change over time — log the value used), and how long the
-			// whole verification took (UX/SLA telemetry).
-			`ALTER TABLE verifications ADD COLUMN via TEXT`,
-			`ALTER TABLE verifications ADD COLUMN match_threshold INTEGER`,
-			`ALTER TABLE verifications ADD COLUMN decision_ms INTEGER`,
-			`ALTER TABLE verifications ADD COLUMN client_app_version TEXT`,
-
-			// Idempotency: client supplies a UUID; a retried POST returns
-			// the original row instead of inserting a duplicate.
-			`ALTER TABLE verifications ADD COLUMN idempotency_key TEXT`,
-			`CREATE UNIQUE INDEX IF NOT EXISTS idx_verifications_idempotency
-				ON verifications(idempotency_key)
-				WHERE idempotency_key IS NOT NULL`,
-		},
-	},
-	{
-		version: 3,
-		name:    "verification_artifacts",
-		stmts: []string{
-			`CREATE TABLE IF NOT EXISTS verification_artifacts (
-				id              INTEGER PRIMARY KEY AUTOINCREMENT,
-				verification_id INTEGER NOT NULL REFERENCES verifications(id) ON DELETE CASCADE,
-				kind            TEXT NOT NULL CHECK (kind IN (
-					'captured_face',
-					'captured_fp_image',
-					'captured_fp_template',
-					'captured_iris_left',
-					'captured_iris_right'
-				)),
-				mime            TEXT NOT NULL,
-				sha256          TEXT NOT NULL,
-				size_bytes      INTEGER NOT NULL,
-				storage_path    TEXT,
-				created_at      DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-			)`,
-			`CREATE INDEX IF NOT EXISTS idx_artifacts_verification ON verification_artifacts(verification_id)`,
-			`CREATE INDEX IF NOT EXISTS idx_artifacts_kind ON verification_artifacts(kind)`,
-		},
-	},
-	{
-		version: 4,
-		name:    "fingerprint_vendor",
-		stmts: []string{
-			// Records which fingerprint SDK produced the match. NULL on
-			// rows that predate multi-vendor support and on rows where the
-			// operator skipped the fingerprint step entirely. Allowed
-			// values today: 'mantra' (MorFin) and 'startek' (ACPL Capture
-			// API for FM220U L1). Open enum on purpose — new vendors
-			// don't need a schema change, just a frontend client.
-			`ALTER TABLE verifications ADD COLUMN fp_vendor TEXT`,
-		},
-	},
-	{
-		version: 5,
-		name:    "wallets",
-		stmts: []string{
-			// Per-user wallet. One row per user; only client-role users
-			// actually have a balance (we still create rows lazily so
-			// admin/superadmin can be credited if business logic ever
-			// extends). Currency is stored in paise (integer) to avoid
-			// floating-point money bugs — ₹10.50 = 1050 paise. Balance
-			// can never go negative thanks to the CHECK constraint;
-			// the debit path uses an UPDATE ... WHERE balance >= N
-			// pattern so concurrent debits can never oversell.
-			`CREATE TABLE IF NOT EXISTS wallets (
-				user_id       INTEGER PRIMARY KEY REFERENCES users(id),
-				balance_paise INTEGER NOT NULL DEFAULT 0 CHECK (balance_paise >= 0),
-				created_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-				updated_at    DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-			)`,
-			// Full audit ledger. amount_paise is signed: positive for
-			// credits (deposit, admin_credit, refund), negative for
-			// charges. balance_after_paise lets an auditor reconstruct
-			// the running balance without summing the whole history.
-			//
-			// Razorpay fields are populated only on deposit rows that
-			// came through Checkout. razorpay_payment_id has a unique
-			// partial index so a replayed verify-payment call (network
-			// retry by the browser) can't double-credit.
-			//
-			// related_roll links a charge row back to the specific roll
-			// number that triggered it — useful for the operator's "what
-			// did I just pay for?" question and for the 5-minute same-
-			// roll cache (we check whether the same user already paid
-			// for this roll within the last 5 min before charging again).
-			`CREATE TABLE IF NOT EXISTS wallet_transactions (
-				id                   INTEGER PRIMARY KEY AUTOINCREMENT,
-				user_id              INTEGER NOT NULL REFERENCES users(id),
-				kind                 TEXT NOT NULL CHECK (kind IN ('deposit','charge','admin_credit','refund')),
-				amount_paise         INTEGER NOT NULL,
-				balance_after_paise  INTEGER NOT NULL,
-				related_roll         TEXT,
-				razorpay_order_id    TEXT,
-				razorpay_payment_id  TEXT,
-				description          TEXT,
-				created_at           DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-			)`,
-			`CREATE INDEX IF NOT EXISTS idx_wallet_tx_user_created
-				ON wallet_transactions(user_id, created_at)`,
-			`CREATE INDEX IF NOT EXISTS idx_wallet_tx_user_roll_created
-				ON wallet_transactions(user_id, related_roll, created_at)
-				WHERE related_roll IS NOT NULL`,
-			`CREATE UNIQUE INDEX IF NOT EXISTS idx_wallet_tx_razorpay_payment
-				ON wallet_transactions(razorpay_payment_id)
-				WHERE razorpay_payment_id IS NOT NULL`,
-		},
-	},
+	migration001InitialSchema,
+	migration002BiometricScoreFields,
+	migration003VerificationArtifacts,
+	migration004FingerprintVendor,
+	migration005Wallets,
+	migration006InstitutionApplications,
+	migration007OpsAdminRole,
+	migration008OrgWallets,
+	migration009UserOnboarding,
+	migration010OperatorPlaintext,
+	migration011ForcePasswordChange,
+	migration012AuditLog,
+	migration013RazorpayOrders,
+	migration014UniquePanEmail,
 }
 
 // Migrate applies every pending migration inside its own transaction.
@@ -245,6 +87,43 @@ func Migrate(d *sql.DB) error {
 }
 
 func applyMigration(d *sql.DB, m migration) error {
+	// For migrations that rebuild a table that other tables reference,
+	// pin to a dedicated connection so we can toggle the per-connection
+	// PRAGMA foreign_keys around the rename. SQLite ignores changes to
+	// that pragma inside an open transaction.
+	if m.needsFKOff {
+		ctx := context.Background()
+		conn, err := d.Conn(ctx)
+		if err != nil {
+			return err
+		}
+		defer conn.Close()
+		if _, err := conn.ExecContext(ctx, "PRAGMA foreign_keys = OFF"); err != nil {
+			return fmt.Errorf("disable FK: %w", err)
+		}
+		// Best-effort restore. Even if the migration commits or rolls
+		// back, leaving FK on for the next caller is the safe default.
+		defer func() { _, _ = conn.ExecContext(ctx, "PRAGMA foreign_keys = ON") }()
+		tx, err := conn.BeginTx(ctx, nil)
+		if err != nil {
+			return err
+		}
+		defer tx.Rollback()
+		for _, s := range m.stmts {
+			if _, err := tx.ExecContext(ctx, s); err != nil {
+				return fmt.Errorf("exec %q: %w", firstLine(s), err)
+			}
+		}
+		if _, err := tx.ExecContext(ctx,
+			`INSERT INTO schema_migrations(version, name) VALUES(?, ?)`,
+			m.version, m.name,
+		); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
+
+	// Normal migration path — no FK toggling.
 	tx, err := d.Begin()
 	if err != nil {
 		return err

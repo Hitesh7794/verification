@@ -1,6 +1,7 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"net/http"
 	"time"
@@ -12,8 +13,10 @@ import (
 	"github.com/veni/neet-verification/internal/auth"
 	"github.com/veni/neet-verification/internal/config"
 	"github.com/veni/neet-verification/internal/data"
+	"github.com/veni/neet-verification/internal/email"
 	"github.com/veni/neet-verification/internal/fpmatch"
 	"github.com/veni/neet-verification/internal/luxand"
+	"github.com/veni/neet-verification/internal/magiclink"
 	"github.com/veni/neet-verification/internal/razorpay"
 	"github.com/veni/neet-verification/internal/wallet"
 )
@@ -31,6 +34,12 @@ type Server struct {
 	fpMatchCl  *fpmatch.Client   // optional; nil disables /api/fp-match cleanly
 	wallet     *wallet.Store     // optional; nil disables /api/wallet/* + candidate charge
 	razorpayCl *razorpay.Client  // optional; nil disables Razorpay deposit flow (admin_credit still works)
+
+	// Institution onboarding deps. Both always wire up — magicLinks is
+	// just a DB wrapper; emailer is the console sender by default and
+	// can be swapped for SMTP later via the constructor.
+	magicLinks *magiclink.Store
+	emailer    email.Sender
 }
 
 // NewServer wires the API. The luxand + fp-match + razorpay clients are
@@ -55,6 +64,19 @@ func NewServer(d Deps) *Server {
 	if d.Cfg.RazorpayKeyID != "" && d.Cfg.RazorpayKeySecret != "" {
 		s.razorpayCl = razorpay.New(d.Cfg.RazorpayKeyID, d.Cfg.RazorpayKeySecret)
 	}
+	// Onboarding deps. When SMTP_HOST is configured we use a real
+	// SMTPSender that talks to Gmail / SES / Zoho / etc; otherwise
+	// the ConsoleSender prints magic links to the backend log so dev
+	// without creds still works.
+	s.magicLinks = magiclink.New(d.DB)
+	if d.Cfg.SMTPHost != "" && d.Cfg.SMTPUser != "" && d.Cfg.SMTPPass != "" {
+		s.emailer = email.NewSMTPSender(
+			d.Cfg.SMTPHost, d.Cfg.SMTPPort,
+			d.Cfg.SMTPUser, d.Cfg.SMTPPass, d.Cfg.SMTPFrom,
+		)
+	} else {
+		s.emailer = email.NewConsoleSender()
+	}
 	return s
 }
 
@@ -65,8 +87,16 @@ func (s *Server) Router() http.Handler {
 	r.Use(chimw.RealIP)
 	r.Use(chimw.Recoverer)
 	r.Use(chimw.Timeout(30 * time.Second))
+	// CORS allowlist comes from config (ALLOWED_ORIGINS env). When unset
+	// we fall back to the Vite dev server URLs so a fresh `go run` against
+	// `npm run dev` Just Works. In production main.go enforces that
+	// AllowedOrigins is non-empty before NewServer is called.
+	allowed := s.deps.Cfg.AllowedOrigins
+	if len(allowed) == 0 {
+		allowed = []string{"http://localhost:5173", "http://127.0.0.1:5173"}
+	}
 	r.Use(cors.Handler(cors.Options{
-		AllowedOrigins:   []string{"http://localhost:5173", "http://127.0.0.1:5173"},
+		AllowedOrigins:   allowed,
 		AllowedMethods:   []string{"GET", "POST", "PUT", "DELETE", "OPTIONS"},
 		AllowedHeaders:   []string{"Authorization", "Content-Type"},
 		AllowCredentials: true,
@@ -74,18 +104,43 @@ func (s *Server) Router() http.Handler {
 	}))
 
 	r.Get("/api/health", s.health)
+	r.Get("/api/readyz", s.readyz)
 	r.Post("/api/auth/login", s.login)
+
+	// ----- public institution-registration endpoints -----
+	// These are intentionally unauthenticated — anyone with the form
+	// can apply. Spam/abuse defence is per-IP rate limiting + honeypot
+	// + superadmin manual review before any side-effect lands.
+	r.Post("/api/register/init", s.registerInit)
+	r.Post("/api/register/{id}/docs", s.registerUploadDoc)
+	r.Delete("/api/register/{id}/docs/{doc_id}", s.registerDeleteDoc)
+	r.Post("/api/register/{id}/submit", s.registerSubmit)
+	r.Get("/api/register/{id}", s.registerStatus)
+
+	// ----- public set-password landing -----
+	// Backs the magic-link the head clicks after approval.
+	r.Get("/api/set-password/verify", s.setPasswordVerify)
+	r.Post("/api/set-password", s.setPassword)
+
+	// ----- public Razorpay webhook -----
+	// Razorpay POSTs payment events here directly (server-to-server, no
+	// user session). Authentication is the HMAC-SHA256 of the body using
+	// RAZORPAY_WEBHOOK_SECRET; the handler refuses any unsigned POST.
+	// Public on purpose — Razorpay's servers can't carry our JWTs.
+	r.Post("/api/razorpay/webhook", s.razorpayWebhook)
 
 	r.Group(func(r chi.Router) {
 		r.Use(s.authMiddleware)
 
 		r.Get("/api/me", s.me)
+		r.Post("/api/me/change-password", s.changePassword)
 
 		// Client portal — note that getCandidate is wrapped in walletCharge
 		// for client-role users only. Admin/superadmin can lookup rolls
 		// for free (e.g. for audit/support); the charge fires once per
-		// (user_id, roll_no) within WalletSameRollCacheMin minutes so a
-		// refresh or quick re-search doesn't double-bill.
+		// (org_id, roll_no) within WalletSameRollCacheMin minutes so a
+		// refresh or any operator in the same org re-searching the same
+		// candidate doesn't double-bill.
 		r.Get("/api/candidates/{roll}",
 			s.requireRole("client", "admin", "superadmin")(
 				s.walletCharge(s.getCandidate)))
@@ -97,22 +152,66 @@ func (s *Server) Router() http.Handler {
 		r.Post("/api/verifications", s.requireRole("client")(s.createVerification))
 		r.Post("/api/verifications/{id}/artifacts", s.requireRole("client")(s.uploadArtifact))
 
-		// Wallet (client-role only)
-		r.Get("/api/wallet/config", s.requireRole("client")(s.walletConfig))
-		r.Get("/api/wallet", s.requireRole("client")(s.walletBalance))
-		r.Post("/api/wallet/order", s.requireRole("client")(s.walletOrder))
-		r.Post("/api/wallet/verify-payment", s.requireRole("client")(s.walletVerifyPayment))
+		// Wallet — admin sees own org, superadmin sees any org via ?org_id=N.
+		// Razorpay top-up is admin-only (admin tops up own org); superadmin
+		// uses /api/admin/wallet/credit for manual support credits.
+		r.Get("/api/wallet/config", s.requireRole("admin", "superadmin")(s.walletConfig))
+		r.Get("/api/wallet", s.requireRole("admin", "superadmin")(s.walletBalance))
+		r.Post("/api/wallet/order", s.requireRole("admin")(s.walletOrder))
+		r.Post("/api/wallet/verify-payment", s.requireRole("admin")(s.walletVerifyPayment))
 
 		// Admin / Superadmin
 		r.Get("/api/admin/stats", s.requireRole("admin", "superadmin")(s.adminStats))
 		r.Get("/api/admin/recent", s.requireRole("admin", "superadmin")(s.adminRecent))
 		r.Get("/api/admin/by-center", s.requireRole("admin", "superadmin")(s.adminByCenter))
 		r.Get("/api/admin/timeline", s.requireRole("admin", "superadmin")(s.adminTimeline))
-		r.Post("/api/admin/wallet/credit", s.requireRole("admin", "superadmin")(s.adminWalletCredit))
+		r.Get("/api/admin/verifications", s.requireRole("admin", "superadmin")(s.adminListVerifications))
+		r.Get("/api/admin/verifications.csv", s.requireRole("admin", "superadmin")(s.adminExportVerificationsCSV))
+		r.Post("/api/admin/wallet/credit", s.requireRole("superadmin")(s.adminWalletCredit))
+
+		// Admin-only shared operator credential. One client-role user
+		// per org; admin can view + reset + disable. The credential is
+		// the same for every operator machine at the institution.
+		// Strictly org-scoped via JWT claims.
+		r.Get("/api/admin/operator-access", s.requireRole("admin")(s.adminGetOperatorAccess))
+		r.Post("/api/admin/operator-access/reset-password", s.requireRole("admin")(s.adminResetOperatorAccess))
+		r.Post("/api/admin/operator-access/set-password", s.requireRole("admin")(s.adminSetOperatorPassword))
+		r.Post("/api/admin/operator-access/disable", s.requireRole("admin")(s.adminDisableOperatorAccess))
+		r.Post("/api/admin/operator-access/enable", s.requireRole("admin")(s.adminEnableOperatorAccess))
+
+		// Downloads — serves the operator-laptop install bundle. Open
+		// to admin (so an admin can grab + redistribute), to client
+		// (so an operator on a fresh laptop can self-serve when the
+		// admin can't physically deliver the zip), and to superadmin
+		// (for support work). Org-scoped: last-download metadata is
+		// recorded per org regardless of which role triggered it.
+		// Bundle artefact lives in DOWNLOADS_DIR; the handler picks
+		// the latest matching file at request time so a deploy drops
+		// a new build in place without a restart.
+		r.Get("/api/downloads",
+			s.requireRole("admin", "client", "superadmin")(s.adminListDownloads))
+		r.Get("/api/downloads/operator-client",
+			s.requireRole("admin", "client", "superadmin")(s.adminDownloadOperatorClient))
 
 		r.Get("/api/super/stats", s.requireRole("superadmin")(s.superStats))
 		r.Get("/api/super/organizations", s.requireRole("superadmin")(s.superOrganizations))
 		r.Get("/api/super/top-centers", s.requireRole("superadmin")(s.superTopCenters))
+		r.Get("/api/super/metrics", s.requireRole("superadmin")(s.superMetrics))
+		r.Get("/api/super/audit", s.requireRole("superadmin")(s.superAuditList))
+
+		// Institution-application review queue. Superadmin-only — the
+		// docs contain head-of-institution PII (mobile, email, PAN) so
+		// admin role intentionally doesn't have read access.
+		// Institution-application review queue. Allowed for
+		// superadmin (platform owner) AND ops_admin (dedicated
+		// onboarding-team role). Same endpoints, two roles — see
+		// migration 7 for the role split rationale.
+		r.Get("/api/superadmin/applications", s.requireRole("superadmin", "ops_admin")(s.superadminListApplications))
+		r.Get("/api/superadmin/applications/{id}", s.requireRole("superadmin", "ops_admin")(s.superadminGetApplication))
+		r.Get("/api/superadmin/applications/{id}/docs/{doc_id}", s.requireRole("superadmin", "ops_admin")(s.superadminDownloadDoc))
+		r.Post("/api/superadmin/applications/{id}/approve", s.requireRole("superadmin", "ops_admin")(s.superadminApproveApplication))
+		r.Post("/api/superadmin/applications/{id}/reject", s.requireRole("superadmin", "ops_admin")(s.superadminRejectApplication))
+		r.Post("/api/superadmin/applications/{id}/resend-admin-link", s.requireRole("superadmin", "ops_admin")(s.superadminResendAdminLink))
 	})
 
 	return r
@@ -124,4 +223,22 @@ func (s *Server) health(w http.ResponseWriter, r *http.Request) {
 		"candidates": s.deps.Index.CandidateCount(),
 		"centers":    s.deps.Index.CenterCount(),
 	})
+}
+
+// readyz is the orchestrator-readable check that the process can
+// actually serve traffic right now (DB reachable). Distinct from
+// `/api/health` which only proves the process is running — orchestrators
+// like Kubernetes use readiness probes to gate traffic during rolling
+// restarts and DB-failure backoff. Returns 503 instead of 500 so a
+// load balancer correctly drops the instance.
+func (s *Server) readyz(w http.ResponseWriter, r *http.Request) {
+	ctx, cancel := context.WithTimeout(r.Context(), 2*time.Second)
+	defer cancel()
+	if err := s.deps.DB.PingContext(ctx); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(http.StatusServiceUnavailable)
+		_, _ = w.Write([]byte(`{"ready":false,"reason":"db-unreachable"}`))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ready": true})
 }

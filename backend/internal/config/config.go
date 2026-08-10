@@ -4,6 +4,7 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
+	"strings"
 )
 
 type Config struct {
@@ -11,6 +12,28 @@ type Config struct {
 	DBPath    string
 	DataDir   string
 	JWTSecret string
+
+	// AppEnv switches deployment-aware behaviour. "production" (or anything
+	// non-empty other than "development"/"dev") enables strict checks that
+	// would be annoying in local dev: refusing to boot with the default
+	// JWT secret, requiring AllowedOrigins, etc. Empty / "development" /
+	// "dev" all behave like dev. Set APP_ENV=production in prod.
+	AppEnv string
+
+	// AllowedOrigins is the CORS allowlist. Comma-separated env var:
+	// "https://portal.example.com,https://signup.portal.example.com".
+	// In dev, defaults to the Vite dev server URLs so localhost development
+	// keeps working with no env vars set.
+	AllowedOrigins []string
+
+	// PublicBaseURL is the user-visible base URL the portal lives at —
+	// where magic links should send recipients. In dev this is empty
+	// and the link is composed from the incoming request's Origin or
+	// Host header (so localhost stays localhost). In production set it
+	// to the frontend URL, e.g. "https://portal.example.com". The
+	// backend itself may sit behind a different host (api.portal.*),
+	// but emails MUST point at the public frontend.
+	PublicBaseURL string
 
 	// Decision thresholds applied server-side as a sanity check on what
 	// the operator's browser submits. Per-org overrides come later; for
@@ -61,10 +84,41 @@ type Config struct {
 	RazorpayKeyID     string
 	RazorpayKeySecret string
 
+	// Razorpay webhook secret. Set per-endpoint in the Razorpay dashboard
+	// (Settings → Webhooks → click your URL → Secret). Razorpay HMAC-signs
+	// each webhook POST body with this secret and puts the hex in the
+	// X-Razorpay-Signature header — our handler refuses any POST whose
+	// signature doesn't verify. Different from RazorpayKeySecret on purpose
+	// so a compromised API key doesn't immediately let an attacker forge
+	// webhooks (and vice versa).
+	//
+	// Empty = webhook endpoint returns 503 (intentional: no webhook
+	// configured means we don't accept webhook traffic).
+	RazorpayWebhookSecret string
+
 	// Per-deployment wallet tuning. All amounts in paise (₹1 = 100 paise).
 	WalletFeePerLookupPaise int    // default 500 = ₹5
 	WalletMaxDepositPaise   int    // default 5_000_000 = ₹50,000 (single deposit cap)
 	WalletSameRollCacheMin  int    // default 5 — same roll, same user, no re-charge for this many minutes
+
+	// DownloadsDir is where the operator-laptop install bundle (the
+	// Windows .zip today, the signed .exe later) lives on disk. The
+	// admin Downloads page lists whatever the backend finds here and
+	// streams it to the requesting admin's browser. Production deploy
+	// sets DOWNLOADS_DIR to an absolute path like /opt/portal/downloads
+	// outside the source tree; dev defaults to "./downloads/" so a
+	// developer can drop the build artefact in place and iterate.
+	DownloadsDir string
+
+	// Outbound email via SMTP. SMTPHost == "" → falls back to the
+	// console sender (dev default). Any provider with STARTTLS on a
+	// numeric port works: Gmail (smtp.gmail.com:587), Zoho, Office
+	// 365, AWS SES SMTP, Resend, etc.
+	SMTPHost string
+	SMTPPort string // default 587
+	SMTPUser string
+	SMTPPass string // Gmail App Password / SES SMTP secret / etc — NOT a regular login password
+	SMTPFrom string // RFC-5322 From header, e.g. `Verification Portal <noreply@example.com>`
 }
 
 func Load() Config {
@@ -72,7 +126,10 @@ func Load() Config {
 		HTTPAddr:                  envOr("HTTP_ADDR", ":8080"),
 		DBPath:                    envOr("DB_PATH", "verification.db"),
 		DataDir:                   envOr("DATA_DIR", defaultDataDir()),
-		JWTSecret:                 envOr("JWT_SECRET", "dev-only-secret-change-me"),
+		JWTSecret:                 envOr("JWT_SECRET", DefaultDevJWTSecret),
+		AppEnv:                    envOr("APP_ENV", "development"),
+		AllowedOrigins:            envOrigins("ALLOWED_ORIGINS"),
+		PublicBaseURL:             strings.TrimRight(envOr("PUBLIC_BASE_URL", ""), "/"),
 		FPMatchThresholdDefault:   envInt("FP_MATCH_THRESHOLD", 140),
 		IrisMatchThresholdDefault: envFloat("IRIS_MATCH_THRESHOLD", 0.6),
 		FaceMatchThresholdDefault: envFloat("FACE_MATCH_THRESHOLD", 0.7),
@@ -83,10 +140,29 @@ func Load() Config {
 		FpMatchBase:               envOr("FP_MATCH_BASE", "http://127.0.0.1:8050/fp/"),
 		RazorpayKeyID:             envOr("RAZORPAY_KEY_ID", ""),
 		RazorpayKeySecret:         envOr("RAZORPAY_KEY_SECRET", ""),
+		RazorpayWebhookSecret:     envOr("RAZORPAY_WEBHOOK_SECRET", ""),
 		WalletFeePerLookupPaise:   envInt("WALLET_FEE_PER_LOOKUP_PAISE", 500),
 		WalletMaxDepositPaise:     envInt("WALLET_MAX_DEPOSIT_PAISE", 5_000_000),
 		WalletSameRollCacheMin:    envInt("WALLET_SAME_ROLL_CACHE_MIN", 5),
+		DownloadsDir:              envOr("DOWNLOADS_DIR", "downloads"),
+		SMTPHost:                  envOr("SMTP_HOST", ""),
+		SMTPPort:                  envOr("SMTP_PORT", "587"),
+		SMTPUser:                  envOr("SMTP_USER", ""),
+		SMTPPass:                  envOr("SMTP_PASS", ""),
+		SMTPFrom:                  envOr("SMTP_FROM", ""),
 	}
+}
+
+// DefaultDevJWTSecret is the dev-only fallback JWT_SECRET. main.go checks
+// against this constant to refuse boot in production with the default.
+const DefaultDevJWTSecret = "dev-only-secret-change-me"
+
+// IsProduction reports whether the server is running in production mode.
+// Anything other than "" / "development" / "dev" counts as prod, so an
+// operator typo on the env var fails closed (stricter checks apply).
+func (c Config) IsProduction() bool {
+	v := strings.ToLower(strings.TrimSpace(c.AppEnv))
+	return v != "" && v != "development" && v != "dev"
 }
 
 func envOr(k, def string) string {
@@ -94,6 +170,25 @@ func envOr(k, def string) string {
 		return v
 	}
 	return def
+}
+
+// envOrigins parses a comma-separated origin allowlist out of the env.
+// Trims whitespace + drops empties. Returns nil if unset; main.go decides
+// the appropriate dev fallback.
+func envOrigins(k string) []string {
+	raw := strings.TrimSpace(os.Getenv(k))
+	if raw == "" {
+		return nil
+	}
+	parts := strings.Split(raw, ",")
+	out := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p != "" {
+			out = append(out, p)
+		}
+	}
+	return out
 }
 
 func envInt(k string, def int) int {

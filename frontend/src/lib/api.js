@@ -1,7 +1,45 @@
+import { clearStoredSession, getRoleScope, getStoredToken } from './authStorage.js'
+
 const BASE = '/api'
 
+// Token used for an API call comes from the *current page's* portal
+// scope — admin pages send the admin token, client pages send the
+// operator token, superadmin pages send the superadmin token. This is
+// what lets admin and operator coexist in separate tabs without
+// overwriting each other's session.
 function getToken() {
-  return localStorage.getItem('nv_token') || ''
+  return getStoredToken(getRoleScope())
+}
+
+// Bookkeeping so a flood of 401s from a polling page doesn't trigger
+// repeated location.assign calls.
+let redirectingToLogin = false
+
+// onUnauthorized centralises the response to "your token is no longer
+// valid". The backend's authMiddleware returns 401 for any of:
+//   - signature failure (server JWT_SECRET rotated)
+//   - account disabled by admin since the token was issued
+//   - user row deleted
+//   - role changed since the token was issued
+//   - 12h token TTL elapsed
+//
+// In every case the right response is the same: clear the stored
+// session for this portal scope and route the user to that scope's
+// login page so they can re-authenticate.
+function onUnauthorized() {
+  if (redirectingToLogin) return
+  redirectingToLogin = true
+  const scope = getRoleScope()
+  if (scope) {
+    clearStoredSession(scope)
+  }
+  const loginPath = scope ? `/${scope}/login` : '/'
+  // Use assign rather than React Router so any in-flight component
+  // state (e.g. polling intervals) is hard-reset by the page reload —
+  // safer than relying on every component to react cleanly.
+  if (typeof window !== 'undefined' && window.location.pathname !== loginPath) {
+    window.location.assign(loginPath + '?session_expired=1')
+  }
 }
 
 // ApiError carries the HTTP status code and parsed body alongside the
@@ -36,6 +74,11 @@ export async function api(path, { method = 'GET', body, auth = true } = {}) {
       parsedBody = await res.json()
       if (parsedBody?.error) msg = parsedBody.error
     } catch {}
+    if (res.status === 401) {
+      // Token invalid / expired / account disabled / role changed.
+      // Clear scoped storage and redirect — see onUnauthorized.
+      onUnauthorized()
+    }
     throw new ApiError(msg, {
       status: res.status,
       body: parsedBody,
