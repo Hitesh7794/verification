@@ -22,6 +22,7 @@ import {
   uploadCandidateCSV,
   downloadRawCSV,
 } from '../../lib/superadmin/examCatalog.js'
+import { dateOnly, dateRange } from '../../lib/dates.js'
 
 // Superadmin > Exam detail — the exam meta, list of enrolled
 // candidates (paginated), CSV upload area, upload history with
@@ -132,7 +133,7 @@ export default function ExamDetail() {
             <span className="inline-flex items-center gap-2">
               <code className="text-xs bg-slate-100 px-1.5 py-0.5 rounded text-slate-700">{exam.exam_code}</code>
               <span className="text-slate-400">·</span>
-              <span>{exam.verification_from} → {exam.verification_to}</span>
+              <span>{dateRange(exam.verification_from, exam.verification_to)}</span>
               <span className="text-slate-400">·</span>
               {exam.visible ? <Pill tone="emerald" dot>Visible</Pill> : <Pill tone="slate" dot>Hidden</Pill>}
               {exam.closed && <Pill tone="amber" dot>Closed</Pill>}
@@ -273,7 +274,7 @@ export default function ExamDetail() {
                       <tr key={c.id} className="border-b border-slate-100 last:border-none hover:bg-slate-50/60">
                         <td className="px-4 py-3 font-mono text-xs text-slate-700 tabular-nums">{c.roll_no}</td>
                         <td className="px-4 py-3 text-slate-900">{c.name}</td>
-                        <td className="px-4 py-3 text-xs text-slate-500 tabular-nums">{c.verification_date || '—'}</td>
+                        <td className="px-4 py-3 text-xs text-slate-500 tabular-nums">{dateOnly(c.verification_date) || '—'}</td>
                       </tr>
                     ))}
                   </tbody>
@@ -290,10 +291,21 @@ export default function ExamDetail() {
 // ── Edit form (inline) ────────────────────────────────────────────────
 
 function EditExamForm({ exam, onCancel, onSaved }) {
+  // The API hands these back as RFC 3339 ("2026-08-06T00:00:00Z"), but
+  // <input type="date"> only accepts YYYY-MM-DD — anything else is
+  // treated as an invalid value and the field renders BLANK. That made
+  // the form look like it had lost the exam's dates, and forced the
+  // superadmin to re-pick both just to rename an exam. Normalise on the
+  // way in, and compare against the normalised value on the way out so
+  // the dirty-check doesn't see "2026-08-06" != "2026-08-06T00:00:00Z"
+  // and patch dates that were never touched.
+  const examFrom = dateOnly(exam.verification_from)
+  const examTo = dateOnly(exam.verification_to)
+
   const [name, setName] = useState(exam.name)
   const [trustview, setTrustview] = useState(exam.trustview_ref || '')
-  const [from, setFrom] = useState(exam.verification_from)
-  const [to, setTo] = useState(exam.verification_to)
+  const [from, setFrom] = useState(examFrom)
+  const [to, setTo] = useState(examTo)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
@@ -305,8 +317,8 @@ function EditExamForm({ exam, onCancel, onSaved }) {
       const patch = {}
       if (name !== exam.name) patch.name = name.trim()
       if (trustview !== (exam.trustview_ref || '')) patch.trustview_ref = trustview.trim()
-      if (from !== exam.verification_from) patch.verification_from = from
-      if (to !== exam.verification_to) patch.verification_to = to
+      if (from !== examFrom) patch.verification_from = from
+      if (to !== examTo) patch.verification_to = to
       if (Object.keys(patch).length === 0) {
         onCancel()
         return

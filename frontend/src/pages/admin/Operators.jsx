@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import AppShell from '../../components/shell/AppShell.jsx'
 import AdminTabs from '../../components/shell/AdminTabs.jsx'
@@ -197,6 +197,154 @@ export default function Operators() {
   )
 }
 
+// ── Assigned-exams dropdown ───────────────────────────────────────────
+//
+// Replaces the flat checkbox grid. With a college subscribed to more
+// than a handful of exams the grid pushed the Save button off-screen,
+// and there was no way to see at a glance which exams an operator
+// already had — you had to scan every checkbox.
+//
+// The panel is rendered IN FLOW rather than absolutely positioned. The
+// edit form lives inside a table cell whose ancestor is `overflow-x-auto`,
+// and per CSS a non-visible overflow on one axis forces the other to
+// `auto` too — so an absolute panel would be clipped or would spawn a
+// scrollbar instead of floating over the row. Growing the row is the
+// behaviour that actually works in both places this form is used.
+function ExamMultiSelect({ subs, value, onChange }) {
+  const [open, setOpen] = useState(false)
+  const boxRef = useRef(null)
+
+  // Close on outside click or Escape — standard dropdown affordances.
+  useEffect(() => {
+    if (!open) return
+    function onDocDown(e) {
+      if (boxRef.current && !boxRef.current.contains(e.target)) setOpen(false)
+    }
+    function onKey(e) {
+      if (e.key === 'Escape') setOpen(false)
+    }
+    document.addEventListener('mousedown', onDocDown)
+    document.addEventListener('keydown', onKey)
+    return () => {
+      document.removeEventListener('mousedown', onDocDown)
+      document.removeEventListener('keydown', onKey)
+    }
+  }, [open])
+
+  const selected = subs.filter((s) => value.includes(s.exam_id))
+  const allSelected = subs.length > 0 && selected.length === subs.length
+
+  const toggle = (id) =>
+    onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id])
+
+  const summary =
+    selected.length === 0
+      ? 'No exams assigned'
+      : selected.length === 1
+      ? selected[0].exam_code
+      : `${selected.length} exams assigned`
+
+  return (
+    <div ref={boxRef}>
+      {/* Trigger — reads as a select control. type="button" matters:
+          this sits inside a <form>, and a bare <button> would submit it. */}
+      <button
+        type="button"
+        onClick={() => setOpen((o) => !o)}
+        aria-expanded={open}
+        aria-haspopup="listbox"
+        className="w-full flex items-center justify-between gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-left text-sm text-slate-900 hover:bg-slate-50 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+      >
+        <span className={selected.length ? 'text-slate-900' : 'text-slate-400'}>
+          {summary}
+        </span>
+        <Icon.ChevronRight
+          className={`h-4 w-4 shrink-0 text-slate-400 transition-transform ${open ? 'rotate-90' : ''}`}
+        />
+      </button>
+
+      {open && (
+        <div className="mt-1 rounded-lg border border-slate-200 bg-white shadow-lg overflow-hidden">
+          <div className="flex items-center justify-between gap-2 border-b border-slate-100 bg-slate-50 px-3 py-2">
+            <span className="text-[11px] font-medium uppercase tracking-wider text-slate-500">
+              {selected.length} of {subs.length} selected
+            </span>
+            <div className="flex gap-1">
+              <button
+                type="button"
+                className="text-xs font-medium text-indigo-600 hover:underline disabled:text-slate-400 disabled:no-underline"
+                disabled={allSelected}
+                onClick={() => onChange(subs.map((s) => s.exam_id))}
+              >
+                Select all
+              </button>
+              <span className="text-slate-300">·</span>
+              <button
+                type="button"
+                className="text-xs font-medium text-indigo-600 hover:underline disabled:text-slate-400 disabled:no-underline"
+                disabled={selected.length === 0}
+                onClick={() => onChange([])}
+              >
+                Clear
+              </button>
+            </div>
+          </div>
+
+          <div className="max-h-56 overflow-y-auto py-1" role="listbox" aria-multiselectable="true">
+            {subs.map((s) => {
+              const checked = value.includes(s.exam_id)
+              return (
+                <label
+                  key={s.exam_id}
+                  role="option"
+                  aria-selected={checked}
+                  className={`flex items-center gap-3 px-3 py-2 cursor-pointer transition-colors ${
+                    checked ? 'bg-indigo-50/60 hover:bg-indigo-50' : 'hover:bg-slate-50'
+                  }`}
+                >
+                  <input
+                    type="checkbox"
+                    checked={checked}
+                    onChange={() => toggle(s.exam_id)}
+                    className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                  />
+                  <span className="min-w-0">
+                    <span className="block font-mono text-xs text-slate-700">{s.exam_code}</span>
+                    <span className="block truncate text-xs text-slate-500">{s.exam_name}</span>
+                  </span>
+                </label>
+              )
+            })}
+          </div>
+        </div>
+      )}
+
+      {/* Selected shown as removable chips, so the admin can see and
+          drop an assignment without opening the panel at all. */}
+      {selected.length > 0 && (
+        <div className="mt-2 flex flex-wrap gap-1.5">
+          {selected.map((s) => (
+            <span
+              key={s.exam_id}
+              className="inline-flex items-center gap-1 rounded-full bg-indigo-50 py-0.5 pl-2.5 pr-1 text-xs font-medium text-indigo-700"
+            >
+              {s.exam_code}
+              <button
+                type="button"
+                onClick={() => toggle(s.exam_id)}
+                aria-label={`Remove ${s.exam_code}`}
+                className="rounded-full p-0.5 text-indigo-400 hover:bg-indigo-100 hover:text-indigo-700"
+              >
+                <Icon.X className="h-3 w-3" />
+              </button>
+            </span>
+          ))}
+        </div>
+      )}
+    </div>
+  )
+}
+
 // ── Create / edit form ────────────────────────────────────────────────
 
 function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSaved }) {
@@ -212,10 +360,6 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
   const [examIds, setExamIds] = useState(operator?.assigned_exam_ids || [])
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
-
-  function toggleExam(id) {
-    setExamIds(cur => cur.includes(id) ? cur.filter(x => x !== id) : [...cur, id])
-  }
 
   async function onSubmit(e) {
     e.preventDefault()
@@ -349,22 +493,7 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
             Subscribe to at least one exam from the Exam catalog first.
           </p>
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-2 max-h-48 overflow-y-auto p-1">
-            {subs.map((s) => (
-              <label key={s.exam_id} className="flex items-center gap-2 p-2 rounded hover:bg-slate-100 cursor-pointer">
-                <input
-                  type="checkbox"
-                  checked={examIds.includes(s.exam_id)}
-                  onChange={() => toggleExam(s.exam_id)}
-                  className="rounded border-slate-300"
-                />
-                <div className="text-sm">
-                  <div className="font-mono text-xs text-slate-700">{s.exam_code}</div>
-                  <div className="text-slate-500 text-xs">{s.exam_name}</div>
-                </div>
-              </label>
-            ))}
-          </div>
+          <ExamMultiSelect subs={subs} value={examIds} onChange={setExamIds} />
         )}
       </div>
 

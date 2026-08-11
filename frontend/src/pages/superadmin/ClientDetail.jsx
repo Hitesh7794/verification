@@ -21,6 +21,7 @@ import {
   reopenExam,
   uploadCandidateCSV,
 } from '../../lib/superadmin/examCatalog.js'
+import { dateRange } from '../../lib/dates.js'
 
 // Superadmin > Client detail — client hero + list of its exams inline.
 // Every row: exam code, name, window, status chips, inline
@@ -197,7 +198,7 @@ export default function ClientDetail() {
                         </td>
                         <td className="px-5 py-3.5 font-medium text-slate-900">{e.name}</td>
                         <td className="px-5 py-3.5 text-xs text-slate-600 tabular-nums whitespace-nowrap">
-                          {e.verification_from} → {e.verification_to}
+                          {dateRange(e.verification_from, e.verification_to)}
                         </td>
                         <td className="px-5 py-3.5 text-slate-700 tabular-nums">{e.candidate_count}</td>
                         <td className="px-5 py-3.5">

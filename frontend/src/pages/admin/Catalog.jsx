@@ -10,6 +10,7 @@ import {
 import { Pill } from '../../components/ui/extras.jsx'
 import { FadeIn } from '../../components/ui/motion.jsx'
 import { getCatalog, subscribeExam, unsubscribeExam } from '../../lib/admin/examSubscriptions.js'
+import { dateRange } from '../../lib/dates.js'
 
 // Admin > Exam catalog — self-service. Browse every visible client and
 // their open exams. [Subscribe] adds an exam to this college's
@@ -104,7 +105,7 @@ export default function Catalog() {
                               <td className="px-5 py-3 font-mono text-xs text-slate-700 tabular-nums">{e.exam_code}</td>
                               <td className="px-5 py-3 text-slate-900">{e.name}</td>
                               <td className="px-5 py-3 text-xs text-slate-600 tabular-nums">
-                                {e.verification_from} → {e.verification_to}
+                                {dateRange(e.verification_from, e.verification_to)}
                               </td>
                               <td className="px-5 py-3 text-slate-700 tabular-nums">{e.candidate_count}</td>
                               <td className="px-5 py-3 text-right">
