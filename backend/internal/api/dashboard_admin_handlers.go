@@ -32,13 +32,20 @@ func (s *Server) adminStats(w http.ResponseWriter, r *http.Request) {
 	_ = s.deps.DB.QueryRowContext(r.Context(),
 		`SELECT COUNT(*) FROM verifications v`+where+` AND v.created_at >= ?`, args2...).Scan(&today)
 
-	var centers int
+	var centers, enrolled int
 	if c := claimsFrom(r); c.Role == "admin" && c.OrgID != nil {
 		_ = s.deps.DB.QueryRowContext(r.Context(),
 			`SELECT COUNT(*) FROM centers WHERE org_id=?`, *c.OrgID).Scan(&centers)
+		_ = s.deps.DB.QueryRowContext(r.Context(),
+			`SELECT COUNT(DISTINCT ec.id)
+			   FROM exam_candidates ec
+			   JOIN organization_exam_subscriptions s ON s.exam_id = ec.exam_id
+			  WHERE s.org_id = ?`, *c.OrgID).Scan(&enrolled)
 	} else {
 		_ = s.deps.DB.QueryRowContext(r.Context(),
 			`SELECT COUNT(*) FROM centers`).Scan(&centers)
+		_ = s.deps.DB.QueryRowContext(r.Context(),
+			`SELECT COUNT(*) FROM exam_candidates`).Scan(&enrolled)
 	}
 
 	successRate := 0.0
@@ -52,7 +59,7 @@ func (s *Server) adminStats(w http.ResponseWriter, r *http.Request) {
 		"denied":       denied,
 		"today":        today,
 		"centers":      centers,
-		"enrolled":     s.deps.Index.CandidateCount(),
+		"enrolled":     enrolled,
 		"success_rate": successRate,
 	})
 }
@@ -61,9 +68,9 @@ func (s *Server) adminRecent(w http.ResponseWriter, r *http.Request) {
 	where, args := s.scopeArgs(r)
 	rows, err := s.deps.DB.QueryContext(r.Context(),
 		`SELECT v.id, v.roll_no, v.status, v.face_match, v.fp_match, v.created_at,
-		        c.name, u.display_name
+		        COALESCE(c.name, ''), u.display_name
 		 FROM verifications v
-		 JOIN centers c ON c.id = v.center_id
+		 LEFT JOIN centers c ON c.id = v.center_id
 		 JOIN users u ON u.id = v.operator_id`+
 			where+` ORDER BY v.created_at DESC LIMIT 25`, args...)
 	if err != nil {

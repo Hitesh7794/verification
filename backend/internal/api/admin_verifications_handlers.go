@@ -98,10 +98,10 @@ func (s *Server) adminListVerifications(w http.ResponseWriter, r *http.Request) 
 
 	rows, err := s.deps.DB.QueryContext(r.Context(),
 		`SELECT v.id, v.roll_no, v.status, v.face_match, v.fp_match,
-		        COALESCE(v.via, ''), c.name, u.display_name, v.created_at,
+		        COALESCE(v.via, ''), COALESCE(c.name, ''), u.display_name, v.created_at,
 		        COALESCE(v.fp_vendor, ''), v.fp_match_score, v.face_match_score
 		 FROM verifications v
-		 JOIN centers c ON c.id = v.center_id
+		 LEFT JOIN centers c ON c.id = v.center_id
 		 JOIN users u ON u.id = v.operator_id`+
 			where+` ORDER BY v.id DESC LIMIT ?`, args...,
 	)
@@ -151,12 +151,12 @@ func (s *Server) adminExportVerificationsCSV(w http.ResponseWriter, r *http.Requ
 
 	rows, err := s.deps.DB.QueryContext(r.Context(),
 		`SELECT v.id, v.roll_no, v.status, v.face_match, v.fp_match,
-		        COALESCE(v.via, ''), c.name, u.display_name, v.created_at,
+		        COALESCE(v.via, ''), COALESCE(c.name, ''), u.display_name, v.created_at,
 		        COALESCE(v.fp_vendor, ''), v.fp_match_score, v.face_match_score,
 		        COALESCE(v.device_serial, ''), COALESCE(v.device_model, ''),
 		        v.decision_ms
 		 FROM verifications v
-		 JOIN centers c ON c.id = v.center_id
+		 LEFT JOIN centers c ON c.id = v.center_id
 		 JOIN users u ON u.id = v.operator_id`+
 			where+` ORDER BY v.id DESC LIMIT ?`, args...,
 	)
