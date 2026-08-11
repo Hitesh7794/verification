@@ -164,10 +164,13 @@ type verifyReq struct {
 
 func (s *Server) createVerification(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r)
-	if claims.OrgID == nil || claims.CenterID == nil {
-		writeErr(w, http.StatusForbidden, "client must be assigned to a center")
+	if claims.OrgID == nil {
+		writeErr(w, http.StatusForbidden, "operator missing org context")
 		return
 	}
+	// center_id is optional post-migration-017 — operators created via
+	// the Phase-2 flow (/api/admin/operators) don't get one and don't
+	// need one. Legacy operators still have their center_id honoured.
 
 	// Cap the request body. The verifyReq struct is small JSON; anything
 	// over a few KB is a misconfigured client or an attack.
@@ -216,7 +219,7 @@ func (s *Server) createVerification(w http.ResponseWriter, r *http.Request) {
 			via, match_threshold, decision_ms, client_app_version,
 			idempotency_key
 		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		req.RollNo, *claims.OrgID, *claims.CenterID, claims.UserID,
+		req.RollNo, *claims.OrgID, nullableInt64(claims.CenterID), claims.UserID,
 		boolInt(req.FaceMatch), boolInt(req.FpMatch), req.Status, nullable(req.Note),
 		nullable(req.DeviceSerial), nullable(req.DeviceModel),
 		nullable(req.FpVendor), nullable(req.FpTemplateFormat), nullableInt(req.FpQuality), nullableInt(req.FpNfiq),

@@ -1,5 +1,6 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
+import { motion, AnimatePresence } from 'framer-motion'
 import AppShell from '../../components/shell/AppShell.jsx'
 import SuperTabs from '../../components/shell/SuperTabs.jsx'
 import {
@@ -21,7 +22,7 @@ import {
   uploadCandidateCSV,
 } from '../../lib/superadmin/examCatalog.js'
 
-// Superadmin > Client detail — client card + list of its exams inline.
+// Superadmin > Client detail — client hero + list of its exams inline.
 // Every row: exam code, name, window, status chips, inline
 // visibility/close buttons, [Open →] link.
 export default function ClientDetail() {
@@ -64,46 +65,79 @@ export default function ClientDetail() {
   }
 
   if (loading) {
-    return <AppShell><div className="p-10 text-center text-sm text-slate-500">Loading…</div></AppShell>
+    return <AppShell><SuperTabs /><div className="p-12 text-center text-sm text-slate-500">Loading…</div></AppShell>
   }
   if (!client) {
     return (
       <AppShell>
+        <SuperTabs />
         <PageHeader title="Client not found" />
-        <Link to="/superadmin/clients" className="text-indigo-600 hover:underline text-sm">
-          ← Back to clients
-        </Link>
+        <Link to="/superadmin/clients" className="text-indigo-600 hover:underline text-sm">← Back to clients</Link>
       </AppShell>
     )
   }
+
+  const totalCandidates = exams.reduce((s, e) => s + (e.candidate_count || 0), 0)
+  const openExams = exams.filter(e => !e.closed).length
 
   return (
     <AppShell>
       <SuperTabs />
       <FadeIn>
-        <div className="mb-2">
-          <Link to="/superadmin/clients" className="text-xs text-slate-500 hover:text-slate-700">
-            ← All clients
+        <div className="mb-3">
+          <Link to="/superadmin/clients" className="inline-flex items-center gap-1 text-xs font-medium text-slate-500 hover:text-slate-800 transition-colors">
+            <Icon.ChevronLeft className="h-3.5 w-3.5" />
+            All clients
           </Link>
         </div>
-        <PageHeader
-          title={client.name}
-          subtitle={
-            <span className="inline-flex items-center gap-2">
-              {client.visible ? <Pill tone="emerald" dot>Visible</Pill> : <Pill tone="slate" dot>Hidden</Pill>}
-              {client.closed && <Pill tone="amber" dot>Closed</Pill>}
-              <span className="text-slate-400">·</span>
-              <span>{client.exam_count} exam{client.exam_count === 1 ? '' : 's'}</span>
-              {client.notes && <><span className="text-slate-400">·</span><span>{client.notes}</span></>}
-            </span>
-          }
-          right={
-            <Button onClick={() => setCreating(v => !v)}>
-              <Icon.Plus className="h-4 w-4 mr-1" />
-              {creating ? 'Cancel' : 'New exam'}
-            </Button>
-          }
-        />
+
+        {/* Client hero — avatar chip + name + status chips + a small
+            stat strip. More visual weight than a bare PageHeader row,
+            so the page has a clear "you're inside this client" anchor. */}
+        <div className="mb-8 rounded-xl bg-white ring-1 ring-slate-200 overflow-hidden">
+          <div className="h-1 bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500" />
+          <div className="p-5 sm:p-6">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="flex items-start gap-4 min-w-0">
+                <div className="h-12 w-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+                  <Icon.Building className="h-6 w-6" />
+                </div>
+                <div className="min-w-0">
+                  <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{client.name}</h1>
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                    {client.visible ? <Pill tone="emerald" dot>Visible</Pill> : <Pill tone="slate" dot>Hidden</Pill>}
+                    {client.closed && <Pill tone="amber" dot>Closed</Pill>}
+                    {client.notes && (
+                      <>
+                        <span className="text-slate-300">·</span>
+                        <span className="text-slate-600">{client.notes}</span>
+                      </>
+                    )}
+                  </div>
+                </div>
+              </div>
+              <Button onClick={() => setCreating(v => !v)}>
+                <Icon.Plus className="h-4 w-4 mr-1.5" />
+                {creating ? 'Cancel' : 'New exam'}
+              </Button>
+            </div>
+
+            <div className="mt-5 pt-5 border-t border-slate-100 grid grid-cols-3 gap-6 text-sm">
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Exams</p>
+                <p className="text-lg font-semibold text-slate-900 mt-0.5 tabular-nums">{exams.length}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Open</p>
+                <p className="text-lg font-semibold text-emerald-700 mt-0.5 tabular-nums">{openExams}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Candidates</p>
+                <p className="text-lg font-semibold text-slate-900 mt-0.5 tabular-nums">{totalCandidates.toLocaleString()}</p>
+              </div>
+            </div>
+          </div>
+        </div>
 
         {err && (
           <div role="alert" className="mb-4 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">
@@ -111,59 +145,69 @@ export default function ClientDetail() {
           </div>
         )}
 
-        {creating && (
-          <NewExamForm
-            clientId={client.id}
-            onCancel={() => setCreating(false)}
-            onCreated={async (examId) => {
-              setCreating(false)
-              await refresh()
-              nav(`/superadmin/exams/${examId}`)
-            }}
-          />
-        )}
+        <AnimatePresence initial={false}>
+          {creating && (
+            <motion.div
+              initial={{ opacity: 0, y: -8, height: 0 }}
+              animate={{ opacity: 1, y: 0, height: 'auto' }}
+              exit={{ opacity: 0, y: -8, height: 0 }}
+              transition={{ duration: 0.2, ease: 'easeOut' }}
+              className="overflow-hidden"
+            >
+              <NewExamForm
+                clientId={client.id}
+                onCancel={() => setCreating(false)}
+                onCreated={async (examId) => {
+                  setCreating(false)
+                  await refresh()
+                  nav(`/superadmin/exams/${examId}`)
+                }}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
 
         <Card>
           <CardBody className="p-0">
             {exams.length === 0 ? (
-              <div className="p-10 text-center">
-                <p className="text-sm text-slate-500">No exams under this client yet.</p>
-                <p className="text-xs text-slate-400 mt-1">Click <b>New exam</b> to add one.</p>
-              </div>
+              <EmptyExams onCreate={() => setCreating(true)} />
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
                   <thead>
-                    <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wider text-slate-500 bg-slate-50">
-                      <th className="px-4 py-2.5">Exam code</th>
-                      <th className="px-4 py-2.5">Name</th>
-                      <th className="px-4 py-2.5">Window</th>
-                      <th className="px-4 py-2.5">Candidates</th>
-                      <th className="px-4 py-2.5">Status</th>
-                      <th className="px-4 py-2.5 text-right">Actions</th>
+                    <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wider text-slate-500 bg-slate-50/70">
+                      <th className="px-5 py-3">Exam code</th>
+                      <th className="px-5 py-3">Name</th>
+                      <th className="px-5 py-3">Window</th>
+                      <th className="px-5 py-3">Candidates</th>
+                      <th className="px-5 py-3">Status</th>
+                      <th className="px-5 py-3 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
                     {exams.map((e) => (
-                      <tr key={e.id} className="border-b border-slate-100 last:border-none hover:bg-slate-50/60">
-                        <td className="px-4 py-3 font-mono text-xs text-slate-700 tabular-nums">
-                          <Link to={`/superadmin/exams/${e.id}`} className="hover:underline">
+                      <tr key={e.id} className="border-b border-slate-100 last:border-none hover:bg-slate-50/60 transition-colors">
+                        <td className="px-5 py-3.5">
+                          <Link
+                            to={`/superadmin/exams/${e.id}`}
+                            className="font-mono text-xs text-indigo-700 hover:underline tabular-nums"
+                          >
                             {e.exam_code}
                           </Link>
                         </td>
-                        <td className="px-4 py-3 font-medium text-slate-900">{e.name}</td>
-                        <td className="px-4 py-3 text-xs text-slate-600 tabular-nums">
+                        <td className="px-5 py-3.5 font-medium text-slate-900">{e.name}</td>
+                        <td className="px-5 py-3.5 text-xs text-slate-600 tabular-nums whitespace-nowrap">
                           {e.verification_from} → {e.verification_to}
                         </td>
-                        <td className="px-4 py-3 text-slate-700 tabular-nums">{e.candidate_count}</td>
-                        <td className="px-4 py-3">
-                          <div className="flex gap-1.5">
+                        <td className="px-5 py-3.5 text-slate-700 tabular-nums">{e.candidate_count}</td>
+                        <td className="px-5 py-3.5">
+                          <div className="flex gap-1.5 flex-wrap">
                             {e.visible ? <Pill tone="emerald" dot>Visible</Pill> : <Pill tone="slate" dot>Hidden</Pill>}
                             {e.closed && <Pill tone="amber" dot>Closed</Pill>}
                           </div>
                         </td>
-                        <td className="px-4 py-3">
-                          <div className="flex justify-end gap-2">
+                        <td className="px-5 py-3.5">
+                          <div className="flex justify-end gap-1">
                             <Button variant="ghost" size="sm" onClick={() => onToggleVisibility(e.id)}>
                               {e.visible ? 'Hide' : 'Show'}
                             </Button>
@@ -172,9 +216,10 @@ export default function ClientDetail() {
                               : <Button variant="ghost" size="sm" onClick={() => onClose(e.id)}>Close</Button>}
                             <Link
                               to={`/superadmin/exams/${e.id}`}
-                              className="inline-flex items-center px-2.5 py-1.5 text-xs font-medium rounded-md text-slate-700 hover:bg-slate-100"
+                              className="inline-flex items-center px-2.5 py-1.5 text-xs font-medium rounded-md text-indigo-600 hover:bg-indigo-50 transition-colors"
                             >
-                              Open →
+                              Open
+                              <Icon.ChevronRight className="h-3.5 w-3.5 ml-0.5" />
                             </Link>
                           </div>
                         </td>
@@ -191,7 +236,30 @@ export default function ClientDetail() {
   )
 }
 
-// ── Create-exam form + optional CSV upload immediately after ─────────
+function EmptyExams({ onCreate }) {
+  return (
+    <div className="p-14 text-center">
+      <div className="mx-auto h-14 w-14 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mb-4">
+        <Icon.FileText className="h-7 w-7" />
+      </div>
+      <h3 className="text-base font-semibold text-slate-900">No exams under this client yet</h3>
+      <p className="text-sm text-slate-500 mt-1 max-w-sm mx-auto">
+        Add an exam with its code, verification window, and candidate CSV.
+      </p>
+      <Button className="mt-5" onClick={onCreate}>
+        <Icon.Plus className="h-4 w-4 mr-1.5" />
+        New exam
+      </Button>
+    </div>
+  )
+}
+
+// ── Create-exam form ─────────────────────────────────────────────────
+// Broken into three visual sections so a first-time user reads it as a
+// short story rather than a wall of fields:
+//   1. Identity           — what the exam is called
+//   2. Verification window — when it's active
+//   3. Candidate data     — TrustView ref + CSV upload
 
 function NewExamForm({ clientId, onCancel, onCreated }) {
   const [name, setName] = useState('')
@@ -202,7 +270,7 @@ function NewExamForm({ clientId, onCancel, onCreated }) {
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
   const [csvFile, setCsvFile] = useState(null)
-  const [uploadResult, setUploadResult] = useState(null)
+  const fileInputRef = useRef(null)
 
   async function onSubmit(e) {
     e.preventDefault()
@@ -218,79 +286,111 @@ function NewExamForm({ clientId, onCancel, onCreated }) {
       })
       if (csvFile) {
         try {
-          const res = await uploadCandidateCSV(examId, csvFile)
-          setUploadResult(res)
+          await uploadCandidateCSV(examId, csvFile)
         } catch (uploadErr) {
-          setErr(`Exam created — but CSV upload failed: ${uploadErr.message}. You can retry from the exam page.`)
-          setTimeout(() => onCreated(examId), 2000)
+          const backend = uploadErr.body?.error ? `: ${uploadErr.body.error}` : ''
+          setErr(`Exam created — but CSV upload failed${backend}. You can retry from the exam page.`)
+          setTimeout(() => onCreated(examId), 2200)
           return
         }
       }
       onCreated(examId)
     } catch (e) {
-      setErr(e.message || 'Could not create exam')
+      const status = e.status ? ` (HTTP ${e.status})` : ''
+      const backend = e.body?.error ? `: ${e.body.error}` : ''
+      setErr(`${e.message || 'Could not create exam'}${status}${backend}`)
     } finally {
       setSaving(false)
     }
   }
 
+  const canSubmit = name.trim() && code.trim() && from && to
+
   return (
-    <Card className="mb-6">
-      <CardBody>
-        <form onSubmit={onSubmit} className="space-y-4">
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <Label>Name</Label>
-              <Input
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-                placeholder="e.g. UPSC Civil Services 2026"
-                maxLength={200}
-                required
-                autoFocus
-              />
-            </div>
-            <div>
-              <Label>Exam code <span className="text-xs text-slate-500 font-normal">(globally unique)</span></Label>
-              <Input
-                value={code}
-                onChange={(e) => setCode(e.target.value.toUpperCase())}
-                placeholder="EXAM-2026-01"
-                maxLength={60}
-                required
-              />
-            </div>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-            <div>
-              <Label>Verification from</Label>
-              <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} required />
-            </div>
-            <div>
-              <Label>Verification to</Label>
-              <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} required />
-            </div>
+    <div className="mb-6 rounded-xl bg-white ring-1 ring-slate-200 shadow-sm overflow-hidden">
+      <div className="h-1 bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500" />
+      <div className="p-5 sm:p-6">
+        <div className="flex items-start gap-3 mb-6">
+          <div className="h-9 w-9 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+            <Icon.FileText className="h-5 w-5" />
           </div>
           <div>
-            <Label>TrustView reference <span className="text-xs text-slate-500 font-normal">(optional)</span></Label>
-            <Input
-              value={trustview}
-              onChange={(e) => setTrustview(e.target.value)}
-              placeholder="TrustView exam ID or URL"
-            />
-          </div>
-          <div>
-            <Label>Candidate CSV <span className="text-xs text-slate-500 font-normal">(optional — can upload later)</span></Label>
-            <input
-              type="file"
-              accept=".csv,text/csv"
-              onChange={(e) => setCsvFile(e.target.files?.[0] || null)}
-              className="block w-full text-sm text-slate-700 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200"
-            />
-            <p className="mt-1 text-xs text-slate-500">
-              Columns required: <code>name</code>, <code>roll_no</code>, <code>verification_date</code>. Only passed candidates.
+            <h3 className="text-base font-semibold text-slate-900">New exam</h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Add an exam under this client. You can skip the CSV now and upload it later.
             </p>
           </div>
+        </div>
+
+        <form onSubmit={onSubmit} className="space-y-6">
+          {/* Section 1 — identity */}
+          <FormSection num="1" title="Identity" hint="What the exam is called and its unique code.">
+            <div className="grid grid-cols-1 sm:grid-cols-[1fr_240px] gap-4">
+              <div>
+                <Label>Name <span className="text-rose-500">*</span></Label>
+                <Input
+                  value={name}
+                  onChange={(e) => setName(e.target.value)}
+                  placeholder="e.g. UPSC Civil Services 2026"
+                  maxLength={200}
+                  required
+                  autoFocus
+                />
+              </div>
+              <div>
+                <Label>Exam code <span className="text-rose-500">*</span></Label>
+                <Input
+                  value={code}
+                  onChange={(e) => setCode(e.target.value.toUpperCase())}
+                  placeholder="EXAM-2026-01"
+                  maxLength={60}
+                  required
+                  className="font-mono uppercase tracking-wide"
+                />
+                <p className="text-[11px] text-slate-500 mt-1">Globally unique. Uppercase, no spaces.</p>
+              </div>
+            </div>
+          </FormSection>
+
+          {/* Section 2 — window */}
+          <FormSection num="2" title="Verification window" hint="Colleges can only verify candidates for this exam inside this date range.">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <Label>From <span className="text-rose-500">*</span></Label>
+                <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} required />
+              </div>
+              <div>
+                <Label>To <span className="text-rose-500">*</span></Label>
+                <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} required min={from || undefined} />
+              </div>
+            </div>
+          </FormSection>
+
+          {/* Section 3 — candidate data */}
+          <FormSection num="3" title="Candidate data" hint="Optional at creation time — you can wire TrustView and upload the CSV later.">
+            <div className="space-y-4">
+              <div>
+                <Label>TrustView reference <span className="text-slate-400 font-normal">(optional)</span></Label>
+                <Input
+                  value={trustview}
+                  onChange={(e) => setTrustview(e.target.value)}
+                  placeholder="TrustView exam ID or URL"
+                />
+              </div>
+              <div>
+                <Label>Candidate CSV <span className="text-slate-400 font-normal">(optional)</span></Label>
+                <CSVDropzone
+                  file={csvFile}
+                  onFile={setCsvFile}
+                  inputRef={fileInputRef}
+                />
+                <p className="text-[11px] text-slate-500 mt-1.5">
+                  Columns: <code className="text-slate-700">name</code>, <code className="text-slate-700">roll_no</code>,{' '}
+                  <code className="text-slate-700">verification_date</code>. Only passed candidates.
+                </p>
+              </div>
+            </div>
+          </FormSection>
 
           {err && (
             <div role="alert" className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">
@@ -298,14 +398,108 @@ function NewExamForm({ clientId, onCancel, onCreated }) {
             </div>
           )}
 
-          <div className="flex justify-end gap-2 pt-2">
+          <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
             <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>
-            <Button type="submit" disabled={saving}>
-              {saving ? 'Saving…' : (csvFile ? 'Create + upload' : 'Create exam')}
+            <Button type="submit" disabled={saving || !canSubmit}>
+              {saving ? 'Saving…' : (csvFile ? 'Create exam & upload CSV' : 'Create exam')}
             </Button>
           </div>
         </form>
-      </CardBody>
-    </Card>
+      </div>
+    </div>
   )
+}
+
+// FormSection — numbered section with a colored side rule so the eye
+// naturally tracks progress down the form.
+function FormSection({ num, title, hint, children }) {
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-[180px_1fr] gap-x-6 gap-y-3">
+      <div className="flex items-start gap-2.5 pt-1">
+        <span className="mt-0.5 flex h-5 w-5 shrink-0 items-center justify-center rounded-full bg-slate-900 text-white text-[10px] font-semibold tabular-nums">
+          {num}
+        </span>
+        <div className="min-w-0">
+          <p className="text-sm font-semibold text-slate-900 leading-tight">{title}</p>
+          {hint && <p className="text-[11px] text-slate-500 mt-0.5 leading-snug">{hint}</p>}
+        </div>
+      </div>
+      <div>{children}</div>
+    </div>
+  )
+}
+
+// CSVDropzone — bigger, friendlier upload area than the browser default.
+// Native file input is hidden and the surrounding div opens it. Shows
+// filename + size once a file's selected.
+function CSVDropzone({ file, onFile, inputRef }) {
+  const [dragging, setDragging] = useState(false)
+
+  function onDrop(e) {
+    e.preventDefault()
+    setDragging(false)
+    const f = e.dataTransfer.files?.[0]
+    if (f && (f.name.endsWith('.csv') || f.type === 'text/csv')) {
+      onFile(f)
+    }
+  }
+
+  return (
+    <div
+      onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
+      onDragLeave={() => setDragging(false)}
+      onDrop={onDrop}
+      onClick={() => inputRef.current?.click()}
+      className={
+        'group cursor-pointer rounded-lg border-2 border-dashed px-4 py-6 text-center transition ' +
+        (dragging
+          ? 'border-indigo-400 bg-indigo-50/50'
+          : file
+          ? 'border-emerald-300 bg-emerald-50/40'
+          : 'border-slate-300 bg-slate-50/40 hover:border-slate-400 hover:bg-slate-50')
+      }
+    >
+      <input
+        ref={inputRef}
+        type="file"
+        accept=".csv,text/csv"
+        onChange={(e) => onFile(e.target.files?.[0] || null)}
+        className="hidden"
+      />
+      {file ? (
+        <div className="flex items-center justify-center gap-3">
+          <div className="h-9 w-9 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center">
+            <Icon.Check className="h-5 w-5" />
+          </div>
+          <div className="text-left">
+            <p className="text-sm font-medium text-slate-900 truncate max-w-[280px]">{file.name}</p>
+            <p className="text-xs text-slate-500">{formatBytes(file.size)}</p>
+          </div>
+          <button
+            type="button"
+            className="ml-3 text-xs text-slate-500 hover:text-rose-600 transition-colors"
+            onClick={(e) => { e.stopPropagation(); onFile(null) }}
+          >
+            Remove
+          </button>
+        </div>
+      ) : (
+        <>
+          <div className="mx-auto h-9 w-9 rounded-lg bg-white text-slate-400 group-hover:text-slate-600 flex items-center justify-center ring-1 ring-slate-200">
+            <Icon.Upload className="h-5 w-5" />
+          </div>
+          <p className="mt-2 text-sm text-slate-700">
+            <span className="font-medium text-indigo-600 hover:underline">Choose a file</span> or drag and drop
+          </p>
+          <p className="text-[11px] text-slate-500 mt-0.5">.csv up to 20 MB</p>
+        </>
+      )}
+    </div>
+  )
+}
+
+function formatBytes(n) {
+  if (n < 1024) return n + ' B'
+  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'
+  return (n / (1024 * 1024)).toFixed(1) + ' MB'
 }
