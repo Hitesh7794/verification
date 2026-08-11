@@ -71,9 +71,11 @@ export function PortalHeader({ subtitle, tagLabel, right }) {
         </div>
         {right && <div className="shrink-0">{right}</div>}
       </div>
-      {/* Slim gradient accent under the header — matches the "institution"
-          gradient in the H1 so the page reads as one design, not chrome + form. */}
-      <div className="h-[2px] bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500 opacity-70" />
+      {/* Slim gradient accent under the header — deliberately the same
+          stops as ACCENTS.heading in Register.jsx (the only page that
+          mounts this header) so the rule and the H1 read as one design.
+          Keep the two in step if either changes. */}
+      <div className="h-[2px] bg-gradient-to-r from-indigo-700 via-indigo-600 to-blue-600 opacity-70" />
     </header>
   )
 }

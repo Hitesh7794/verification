@@ -2,8 +2,6 @@ import { useState } from 'react'
 import {
   Area,
   AreaChart,
-  Bar,
-  BarChart,
   Cell,
   CartesianGrid,
   Pie,
@@ -26,6 +24,7 @@ import {
   CardTitle,
   PageHeader,
 } from '../../components/ui/ui.jsx'
+import { StatCell, StatRow, StatShell } from '../../components/ui/statCard.jsx'
 import { api } from '../../lib/api.js'
 import { usePolling } from '../../lib/usePolling.js'
 
@@ -56,17 +55,15 @@ const nf = new Intl.NumberFormat('en-IN')
 export default function SuperDashboard() {
   const [stats, setStats] = useState(null)
   const [orgs, setOrgs] = useState([])
-  const [topCenters, setTopCenters] = useState([])
   const [timeline, setTimeline] = useState([])
   const [err, setErr] = useState('')
 
   // Visibility-aware polling — pauses when the tab is hidden.
   usePolling(async () => {
     try {
-      const [s, o, t, tl] = await Promise.all([
+      const [s, o, tl] = await Promise.all([
         api('/super/stats'),
         api('/super/organizations'),
-        api('/super/top-centers'),
         // scopeArgs() widens to WHERE 1=1 for superadmin, so this
         // endpoint returns platform-wide daily totals rather than a
         // single org's. No superadmin-specific route needed.
@@ -74,7 +71,6 @@ export default function SuperDashboard() {
       ])
       setStats(s)
       setOrgs(o)
-      setTopCenters(t)
       setTimeline(tl)
       setErr('')
     } catch (e) {
@@ -109,11 +105,6 @@ export default function SuperDashboard() {
     denied: d.denied,
   }))
 
-  const centers = [...topCenters]
-    .filter((c) => c.total > 0)
-    .sort((a, b) => b.total - a.total)
-    .slice(0, 8)
-
   return (
     <AppShell>
       <SuperTabs />
@@ -142,10 +133,13 @@ export default function SuperDashboard() {
           two-slice donut was the classic "the number IS the chart" case:
           two segments can't be compared by angle, and the reader ends up
           reading the legend anyway. */}
-      <div className="grid gap-5 lg:grid-cols-3 mb-6">
-        <Card className="lg:col-span-1">
+      <StatRow className="grid gap-5 lg:grid-cols-3 mb-6">
+        <StatCell className="lg:col-span-1">
+          <StatShell className="h-full">
           <CardBody>
-            <p className="text-sm font-medium text-slate-500">Verification success rate</p>
+            <p className="text-sm font-medium text-slate-500 transition-colors group-hover:text-slate-700">
+              Verification success rate
+            </p>
             <p className="mt-2 text-5xl font-semibold tracking-tight text-slate-900">
               {successPct.toFixed(1)}
               <span className="text-2xl text-slate-400">%</span>
@@ -162,7 +156,8 @@ export default function SuperDashboard() {
               </span>
             </div>
           </CardBody>
-        </Card>
+          </StatShell>
+        </StatCell>
 
         <div className="lg:col-span-2 grid gap-5 grid-cols-2 sm:grid-cols-4">
           <Tile label="Verifications" value={nf.format(total)} />
@@ -170,7 +165,7 @@ export default function SuperDashboard() {
           <Tile label="Centres" value={stats?.centers ?? '—'} />
           <Tile label="Operators & staff" value={stats?.users ?? '—'} />
         </div>
-      </div>
+      </StatRow>
 
       {/* ── Trend + share ────────────────────────────────────────────── */}
       <div className="grid gap-6 lg:grid-cols-3 mb-6">
@@ -297,54 +292,6 @@ export default function SuperDashboard() {
         </Card>
       </div>
 
-      {/* ── Top centres ──────────────────────────────────────────────── */}
-      <Card className="mb-6">
-        <CardHeader>
-          <CardTitle>Busiest centres</CardTitle>
-        </CardHeader>
-        <CardBody>
-          {centers.length === 0 ? (
-            <ChartEmpty />
-          ) : (
-            // Horizontal bars: centre names are long, and a horizontal
-            // layout reads them without rotating the labels 45°.
-            <div style={{ height: Math.max(180, centers.length * 34 + 24) }}>
-              <ResponsiveContainer>
-                <BarChart
-                  data={centers}
-                  layout="vertical"
-                  margin={{ top: 0, right: 40, left: 8, bottom: 0 }}
-                  barCategoryGap={8}
-                >
-                  <CartesianGrid stroke={GRID} horizontal={false} />
-                  <XAxis
-                    type="number"
-                    stroke={GRID}
-                    tick={{ fill: INK_MUTED, fontSize: 11 }}
-                    tickLine={false}
-                    axisLine={false}
-                  />
-                  <YAxis
-                    type="category"
-                    dataKey="name"
-                    width={190}
-                    stroke={GRID}
-                    tick={{ fill: INK_MUTED, fontSize: 11 }}
-                    tickLine={false}
-                    axisLine={false}
-                  />
-                  <Tooltip content={<CenterTooltip />} cursor={{ fill: '#f1f5f9' }} />
-                  {/* One series → one colour for every bar. Shading bars
-                      by their own value would burn the colour channel on
-                      information the bar length already carries. */}
-                  <Bar dataKey="total" fill={SERIES[0]} radius={[0, 4, 4, 0]} barSize={14} />
-                </BarChart>
-              </ResponsiveContainer>
-            </div>
-          )}
-        </CardBody>
-      </Card>
-
       {/* ── Table view — the WCAG-clean twin of every chart above ────── */}
       <Card>
         <CardHeader>
@@ -406,12 +353,16 @@ export default function SuperDashboard() {
 // large standalone number look loose.
 function Tile({ label, value }) {
   return (
-    <Card>
-      <CardBody>
-        <p className="text-xs font-medium uppercase tracking-wider text-slate-500">{label}</p>
-        <p className="mt-1.5 text-2xl font-semibold text-slate-900">{value}</p>
-      </CardBody>
-    </Card>
+    <StatCell className="h-full">
+      <StatShell className="h-full">
+        <CardBody>
+          <p className="text-xs font-medium uppercase tracking-wider text-slate-500 transition-colors group-hover:text-slate-700">
+            {label}
+          </p>
+          <p className="mt-1.5 text-2xl font-semibold text-slate-900">{value}</p>
+        </CardBody>
+      </StatShell>
+    </StatCell>
   )
 }
 
@@ -486,20 +437,6 @@ function ShareTooltip({ active, payload, total }) {
     <TooltipShell title={p.name}>
       <Row color={p.payload.fill} label="Verifications" value={nf.format(p.value)} />
       <div className="text-xs text-slate-500 tabular-nums">{pct}% of platform</div>
-    </TooltipShell>
-  )
-}
-
-function CenterTooltip({ active, payload }) {
-  if (!active || !payload?.length) return null
-  const c = payload[0].payload
-  const pct = c.total ? ((c.verified / c.total) * 100).toFixed(1) : '0.0'
-  return (
-    <TooltipShell title={c.name}>
-      <Row color={SERIES[0]} label="Verifications" value={nf.format(c.total)} />
-      <div className="text-xs text-slate-500 tabular-nums">
-        {nf.format(c.verified)} verified · {pct}%
-      </div>
     </TooltipShell>
   )
 }
