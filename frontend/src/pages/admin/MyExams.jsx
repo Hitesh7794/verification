@@ -11,6 +11,7 @@ import {
 import { Pill } from '../../components/ui/extras.jsx'
 import { FadeIn } from '../../components/ui/motion.jsx'
 import { getSubscriptions, unsubscribeExam } from '../../lib/admin/examSubscriptions.js'
+import { dateRange } from '../../lib/dates.js'
 
 // Admin > My exams — the exams this college has subscribed to. Read
 // mostly; only action is Unsubscribe (which cascades operator_exams).
@@ -95,7 +96,7 @@ export default function MyExams() {
                         <td className="px-4 py-3 font-mono text-xs text-slate-700 tabular-nums">{s.exam_code}</td>
                         <td className="px-4 py-3 text-slate-900">{s.exam_name}</td>
                         <td className="px-4 py-3 text-xs text-slate-600">{s.client_name}</td>
-                        <td className="px-4 py-3 text-xs text-slate-600 tabular-nums">{s.verification_from} → {s.verification_to}</td>
+                        <td className="px-4 py-3 text-xs text-slate-600 tabular-nums">{dateRange(s.verification_from, s.verification_to)}</td>
                         <td className="px-4 py-3 text-slate-700 tabular-nums">{s.candidate_count}</td>
                         <td className="px-4 py-3 text-slate-700 tabular-nums">{s.operator_count}</td>
                         <td className="px-4 py-3">

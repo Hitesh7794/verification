@@ -11,7 +11,7 @@ import {
   Label,
   PageHeader,
 } from '../../components/ui/ui.jsx'
-import { Icon, Pill } from '../../components/ui/extras.jsx'
+import { Icon, Pill, Skeleton } from '../../components/ui/extras.jsx'
 import { FadeIn } from '../../components/ui/motion.jsx'
 import {
   listClients,
@@ -26,22 +26,29 @@ import {
 // Every row has inline Visible/Hidden + Close/Reopen buttons (no modals).
 export default function Clients() {
   const [clients, setClients] = useState([])
+  // `loading` drives the first paint only. Row actions re-fetch through
+  // refresh({quiet:true}) so the table never swaps itself out mid-click.
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
   const [newNotes, setNewNotes] = useState('')
   const [saving, setSaving] = useState(false)
+  // id of the row with a request in flight — disables that row's buttons
+  // so a double-click can't fire the same toggle twice.
+  const [busyId, setBusyId] = useState(null)
+  // id of the row currently showing its inline "Close?" confirmation.
+  const [confirmingId, setConfirmingId] = useState(null)
 
-  const refresh = useCallback(async () => {
-    setLoading(true)
+  const refresh = useCallback(async ({ quiet = false } = {}) => {
+    if (!quiet) setLoading(true)
     setErr('')
     try {
       setClients(await listClients())
     } catch (e) {
-      setErr(e.message || 'Could not load clients')
+      setErr(errText(e, 'Could not load clients.'))
     } finally {
-      setLoading(false)
+      if (!quiet) setLoading(false)
     }
   }, [])
 
@@ -57,33 +64,45 @@ export default function Clients() {
       setNewName('')
       setNewNotes('')
       setCreating(false)
-      await refresh()
+      await refresh({ quiet: true })
     } catch (e) {
-      const status = e.status ? ` (HTTP ${e.status})` : ''
-      const backendMsg = e.body?.error ? `: ${e.body.error}` : ''
-      setErr(`${e.message || 'Create failed'}${status}${backendMsg}`)
-      // eslint-disable-next-line no-console
-      console.error('createClient failed', { status: e.status, body: e.body, message: e.message })
+      setErr(errText(e, 'Could not create the client.'))
     } finally {
       setSaving(false)
     }
   }
 
-  async function onToggleVisibility(id) {
-    await toggleClientVisibility(id)
-    await refresh()
+  // Every row action funnels through here: marks the row busy, reports
+  // failures in the page banner, and always clears the busy flag.
+  // Previously toggle/close/reopen had no error handling at all — a
+  // failed request became an unhandled rejection, the row silently
+  // didn't move, and it read as "the button is broken".
+  async function runRowAction(id, fn, fallbackMsg) {
+    setBusyId(id)
+    setErr('')
+    try {
+      await fn()
+      await refresh({ quiet: true })
+    } catch (e) {
+      setErr(errText(e, fallbackMsg))
+    } finally {
+      setBusyId(null)
+      setConfirmingId(null)
+    }
   }
 
-  async function onClose(id) {
-    if (!confirm('Close this client? It stays visible in history; existing exams under it will still show.')) return
-    await closeClient(id)
-    await refresh()
-  }
+  const onToggleVisibility = (c) =>
+    runRowAction(
+      c.id,
+      () => toggleClientVisibility(c.id),
+      `Could not ${c.visible ? 'hide' : 'show'} "${c.name}".`,
+    )
 
-  async function onReopen(id) {
-    await reopenClient(id)
-    await refresh()
-  }
+  const onClose = (c) =>
+    runRowAction(c.id, () => closeClient(c.id), `Could not close "${c.name}".`)
+
+  const onReopen = (c) =>
+    runRowAction(c.id, () => reopenClient(c.id), `Could not reopen "${c.name}".`)
 
   // Small at-a-glance stats above the table, so the page has a header
   // that reads as a dashboard rather than just a create-button + list.
@@ -195,7 +214,7 @@ export default function Clients() {
         <Card>
           <CardBody className="p-0">
             {loading ? (
-              <div className="p-12 text-center text-sm text-slate-500">Loading…</div>
+              <TableSkeleton />
             ) : clients.length === 0 ? (
               <EmptyClients onCreate={() => setCreating(true)} />
             ) : (
@@ -232,21 +251,69 @@ export default function Clients() {
                           {new Date(c.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
                         </td>
                         <td className="px-5 py-3.5">
-                          <div className="flex justify-end gap-1">
-                            <Button variant="ghost" size="sm" onClick={() => onToggleVisibility(c.id)}>
-                              {c.visible ? 'Hide' : 'Show'}
-                            </Button>
-                            {c.closed
-                              ? <Button variant="ghost" size="sm" onClick={() => onReopen(c.id)}>Reopen</Button>
-                              : <Button variant="ghost" size="sm" onClick={() => onClose(c.id)}>Close</Button>}
-                            <Link
-                              to={`/superadmin/clients/${c.id}`}
-                              className="inline-flex items-center px-2.5 py-1.5 text-xs font-medium rounded-md text-indigo-600 hover:bg-indigo-50 transition-colors"
-                            >
-                              Open
-                              <Icon.ChevronRight className="h-3.5 w-3.5 ml-0.5" />
-                            </Link>
-                          </div>
+                          {confirmingId === c.id ? (
+                            // Inline confirmation: swaps in place of the
+                            // buttons rather than opening a dialog, which
+                            // is what R5 ("no modal windows") asks for.
+                            <div className="flex items-center justify-end gap-2">
+                              <span className="text-xs text-slate-600 whitespace-nowrap">
+                                Close this client?
+                              </span>
+                              <Button
+                                variant="danger"
+                                size="sm"
+                                disabled={busyId === c.id}
+                                onClick={() => onClose(c)}
+                              >
+                                {busyId === c.id ? 'Closing…' : 'Confirm'}
+                              </Button>
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled={busyId === c.id}
+                                onClick={() => setConfirmingId(null)}
+                              >
+                                Cancel
+                              </Button>
+                            </div>
+                          ) : (
+                            <div className="flex justify-end gap-1">
+                              <Button
+                                variant="ghost"
+                                size="sm"
+                                disabled={busyId === c.id}
+                                onClick={() => onToggleVisibility(c)}
+                              >
+                                {busyId === c.id ? '…' : c.visible ? 'Hide' : 'Show'}
+                              </Button>
+                              {c.closed ? (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled={busyId === c.id}
+                                  onClick={() => onReopen(c)}
+                                >
+                                  Reopen
+                                </Button>
+                              ) : (
+                                <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  disabled={busyId === c.id}
+                                  onClick={() => setConfirmingId(c.id)}
+                                >
+                                  Close
+                                </Button>
+                              )}
+                              <Link
+                                to={`/superadmin/clients/${c.id}`}
+                                className="inline-flex items-center px-2.5 py-1.5 text-xs font-medium rounded-md text-indigo-600 hover:bg-indigo-50 transition-colors"
+                              >
+                                Open
+                                <Icon.ChevronRight className="h-3.5 w-3.5 ml-0.5" />
+                              </Link>
+                            </div>
+                          )}
                         </td>
                       </tr>
                     ))}
@@ -258,6 +325,32 @@ export default function Clients() {
         </Card>
       </FadeIn>
     </AppShell>
+  )
+}
+
+// Turn an ApiError into something worth showing a human. The backend's
+// `error` field is written for operators, so prefer it; fall back to a
+// task-specific sentence. Deliberately does NOT surface the HTTP status
+// — "(HTTP 500)" tells the superadmin nothing they can act on, and it's
+// already in the network tab for whoever is debugging.
+function errText(e, fallback) {
+  return e?.body?.error || e?.message || fallback
+}
+
+// Placeholder rows echoing the real table's rhythm, so the swap from
+// loading to loaded doesn't shift the layout.
+function TableSkeleton({ rows = 4 }) {
+  return (
+    <div className="divide-y divide-slate-100">
+      {Array.from({ length: rows }, (_, i) => (
+        <div key={i} className="flex items-center gap-4 px-5 py-4">
+          <Skeleton className="h-4 w-1/3" />
+          <Skeleton className="h-4 w-8" />
+          <Skeleton className="h-4 w-20" />
+          <Skeleton className="h-4 w-24 ml-auto" />
+        </div>
+      ))}
+    </div>
   )
 }
 
