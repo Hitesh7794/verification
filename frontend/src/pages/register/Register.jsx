@@ -32,9 +32,8 @@ import {
 // Multi-step institution registration wizard.
 //
 // UI conventions used here, kept consistent across all 3 steps:
-//   - Each step is a single EnhancedCard with a coloured accent bar at
-//     the top. Bar colour shifts step-by-step (indigo → violet →
-//     fuchsia) so the page visibly "warms up" toward submit.
+//   - One hue family (brand indigo) carries every accent; slate marks
+//     subordinate blocks and emerald means "done". See ACCENTS below.
 //   - Each section inside a step gets a small icon + tracker label
 //     above its fields.
 //   - Required-field markers are subtle (rose dot) instead of giant
@@ -45,12 +44,56 @@ import {
 // State persistence (localStorage), honeypot, and the per-doc upload
 // retry pattern from earlier remain unchanged.
 
+// Step indices are used throughout, so name them rather than scattering
+// magic numbers. REVIEW sits between Documents and Done: this form is
+// read by a human and a mistake costs the applicant days, so they get to
+// see every answer in one place before committing.
+const S_INSTITUTION = 0
+const S_ADDRESS = 1
+const S_DOCUMENTS = 2
+const S_REVIEW = 3
+const S_DONE = 4
+
 const STEPS = [
   { label: 'Institution', icon: Icon.Building },
   { label: 'Address & Head', icon: Icon.MapPin },
   { label: 'Documents', icon: Icon.FileText },
+  { label: 'Review', icon: Icon.Eye },
   { label: 'Done', icon: Icon.Check },
 ]
+
+// ─── Palette ───────────────────────────────────────────────────────────
+//
+// This form is filled in by a registrar, dean or vice-chancellor. They
+// arrive with an AISHE code, a PAN and a signed authorization letter,
+// and a human reviews the result before anything is activated. It sits
+// closer to a regulatory filing than to a product sign-up, so the colour
+// has to read institutional: credible, calm, and obviously not a
+// marketing page.
+//
+// What changed and why:
+//   - The heading ran indigo → violet → FUCHSIA. Pink is the single
+//     strongest "consumer startup" signal available, and it was the very
+//     first thing a vice-chancellor saw. Now two analogous stops in the
+//     brand hue — still crafted, no longer selling something.
+//   - The section icons were a grab-bag: teal→emerald here, indigo→violet
+//     there. Five hue families on one form reads unplanned.
+//   - Progress is already signalled three ways — the sidebar tracker,
+//     the emerald done-ticks, and the Continue/Submit label. Spending
+//     hue on it as well was the fourth, and the least legible.
+//
+// Emerald stays, but only where it means "done" — status, not decoration.
+const ACCENTS = {
+  // The word "institution" in the page heading. Two analogous stops in
+  // the brand hue, not three across half the colour wheel.
+  heading: 'from-indigo-700 via-indigo-600 to-blue-600',
+  // Primary section chip — brand indigo, matching the flat indigo-50
+  // chips that steps 1 and 3 already use.
+  section: 'from-indigo-500 to-indigo-600',
+  // Subordinate section on the same step. Slate rather than a second
+  // hue: it reads as "less important", which is the actual relationship.
+  sub: 'from-slate-600 to-slate-800',
+}
 
 // College + university only — schools and coaching centres are out
 // of scope for this portal. Each entry has a short blurb shown on
@@ -67,11 +110,6 @@ const INSTITUTION_TYPES = [
     blurb: 'Multi-faculty, degree-granting in its own right',
   },
 ]
-const TIERS = [
-  { value: 'tier_1', label: 'Tier 1' },
-  { value: 'tier_2', label: 'Tier 2' },
-  { value: 'tier_3', label: 'Tier 3' },
-]
 const AFFILIATION_BODIES = [
   'UGC', 'AICTE', 'CBSE', 'ICSE', 'State Board',
   'Deemed University', 'Autonomous', 'Other',
@@ -87,10 +125,66 @@ const REQUIRED_DOCS = [
   { kind: 'naac_certificate',     label: 'NAAC / NBA certificate', hint: 'Optional — strengthens your application', required: false },
 ]
 
+// ─── Field rules ───────────────────────────────────────────────────────
+//
+// One rule per field, so the same logic can run three ways:
+//   - on blur, for the single field the user just left
+//   - on change, but only for a field that is ALREADY showing an error,
+//     so a correction clears the message the moment it becomes valid
+//     rather than on the next Continue
+//   - for the whole step, when Continue is pressed
+//
+// Each rule returns an error string, or undefined when the value is
+// acceptable. `form` is passed for the couple of rules that depend on a
+// sibling field (affiliation "Other").
+const FIELD_RULES = {
+  institution_name: (v) =>
+    v.trim().length < 3 ? 'Required (at least 3 characters)' : undefined,
+  institution_type: (v) =>
+    INSTITUTION_TYPES.find((t) => t.value === v) ? undefined : 'Pick a type',
+  aishe_code: (v) => (!v.trim() ? 'Required' : undefined),
+  pan: (v) => {
+    if (!v.trim()) return 'Required'
+    return /^[A-Z]{5}[0-9]{4}[A-Z]$/i.test(v.trim()) ? undefined : 'Format: ABCDE1234F'
+  },
+  year_established: (v) => {
+    const year = Number(v)
+    if (!v || !year) return 'Required'
+    const now = new Date().getFullYear()
+    return year < 1800 || year > now ? `Must be between 1800 and ${now}` : undefined
+  },
+  affiliation_body: (v) => (!v ? 'Required' : undefined),
+  affiliation_body_other: (v, form) =>
+    form.affiliation_body === 'Other' && !v.trim() ? 'Please specify' : undefined,
+  approx_student_count: (v) => {
+    const n = Number(v)
+    if (!v || !n) return 'Required'
+    return n < 1 || n > 10_000_000 ? 'Must be a positive number' : undefined
+  },
+  address_line1: (v) => (!v.trim() ? 'Required' : undefined),
+  city: (v) => (!v.trim() ? 'Required' : undefined),
+  state: (v) => (!v.trim() ? 'Required' : undefined),
+  pin_code: (v) => (/^[0-9]{6}$/.test(v.trim()) ? undefined : 'PIN must be 6 digits'),
+  head_name: (v) => (v.trim().length < 2 ? 'Required' : undefined),
+  head_email: (v) =>
+    /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()) ? undefined : 'Invalid email',
+  head_mobile: (v) =>
+    /^[0-9]{10}$/.test(v.trim()) ? undefined : 'Mobile must be exactly 10 digits',
+}
+
+// Which fields belong to which step, for the Continue-time sweep.
+const STEP_FIELDS = [
+  [
+    'institution_name', 'institution_type', 'aishe_code', 'pan',
+    'year_established', 'affiliation_body', 'affiliation_body_other',
+    'approx_student_count',
+  ],
+  ['address_line1', 'city', 'state', 'pin_code', 'head_name', 'head_email', 'head_mobile'],
+]
+
 const EMPTY_FORM = {
   institution_name: '',
   institution_type: 'college',
-  tier: '',
   aishe_code: '',
   pan: '',
   year_established: '',
@@ -138,50 +232,51 @@ export default function Register() {
 
   function update(field, value) {
     setForm((f) => ({ ...f, [field]: value }))
+    // Live-correct: only re-run the rule for a field that is ALREADY
+    // showing an error, so the message disappears the instant the value
+    // becomes valid. Fields with no error stay quiet while typing —
+    // nobody wants "Invalid email" at "r@".
+    //
+    // Kept as its own setState rather than nested inside the setForm
+    // updater: updaters must be pure, and React may run them twice in
+    // StrictMode, which swallowed this update entirely on the first pass.
     setErrors((e) => {
       if (!e[field]) return e
-      const { [field]: _, ...rest } = e
-      return rest
+      const msg = FIELD_RULES[field]?.(String(value ?? ''), { ...form, [field]: value })
+      if (msg === e[field]) return e
+      const { [field]: _drop, ...rest } = e
+      return msg ? { ...rest, [field]: msg } : rest
     })
   }
 
-  function validateStep0() {
-    const e = {}
-    if (form.institution_name.trim().length < 3) e.institution_name = 'Required (at least 3 characters)'
-    if (!INSTITUTION_TYPES.find((t) => t.value === form.institution_type)) e.institution_type = 'Pick a type'
-    // Tier is optional — omit if not chosen
-    if (!form.aishe_code.trim()) e.aishe_code = 'Required'
-    if (!form.pan.trim()) e.pan = 'Required'
-    else if (!/^[A-Z]{5}[0-9]{4}[A-Z]$/i.test(form.pan.trim())) e.pan = 'Format: ABCDE1234F'
-    const year = Number(form.year_established)
-    if (!form.year_established || !year) e.year_established = 'Required'
-    else if (year < 1800 || year > new Date().getFullYear()) e.year_established = `Must be between 1800 and ${new Date().getFullYear()}`
-    if (!form.affiliation_body) e.affiliation_body = 'Required'
-    else if (form.affiliation_body === 'Other' && !form.affiliation_body_other.trim()) {
-      e.affiliation_body_other = 'Please specify'
-    }
-    const students = Number(form.approx_student_count)
-    if (!form.approx_student_count || !students) e.approx_student_count = 'Required'
-    else if (students < 1 || students > 10_000_000) e.approx_student_count = 'Must be a positive number'
-    setErrors(e)
-    return Object.keys(e).length === 0
+  // Blur handler. Stays silent on a field the user tabbed straight
+  // through without typing — flagging "Required" on something they
+  // haven't reached yet reads as nagging. Continue still catches those.
+  function validateOnBlur(field) {
+    const raw = form[field]
+    if (raw === undefined || String(raw).trim() === '') return
+    const msg = FIELD_RULES[field]?.(String(raw), form)
+    setErrors((e) => {
+      if (msg === e[field]) return e
+      const { [field]: _drop, ...rest } = e
+      return msg ? { ...rest, [field]: msg } : rest
+    })
   }
 
-  function validateStep1() {
+  // Whole-step sweep on Continue — this one DOES flag empty required
+  // fields, and merges into any errors already on screen.
+  function validateStep(index) {
     const e = {}
-    if (!form.address_line1.trim()) e.address_line1 = 'Required'
-    if (!form.city.trim()) e.city = 'Required'
-    if (!form.state.trim()) e.state = 'Required'
-    if (!/^[0-9]{6}$/.test(form.pin_code.trim())) e.pin_code = 'PIN must be 6 digits'
-    if (form.head_name.trim().length < 2) e.head_name = 'Required'
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.head_email.trim())) e.head_email = 'Invalid email'
-    if (!/^[0-9]{10}$/.test(form.head_mobile.trim())) e.head_mobile = 'Mobile must be exactly 10 digits'
+    for (const field of STEP_FIELDS[index]) {
+      const msg = FIELD_RULES[field]?.(String(form[field] ?? ''), form)
+      if (msg) e[field] = msg
+    }
     setErrors(e)
     return Object.keys(e).length === 0
   }
 
   async function goToStep2() {
-    if (!validateStep1()) return
+    if (!validateStep(S_ADDRESS)) return
     setSubmitting(true)
     setTopError('')
     try {
@@ -202,7 +297,7 @@ export default function Register() {
         const res = await registerInit(payload)
         setApplicationId(res.application_id)
       }
-      setStep(2)
+      setStep(S_DOCUMENTS)
     } catch (err) {
       setTopError(err.message)
     } finally {
@@ -259,10 +354,33 @@ export default function Register() {
     })
   }
 
-  async function finalize() {
+  // Documents → Review. The required-doc gate lives here now, so the
+  // applicant can't reach a review page that claims they're ready when
+  // they aren't.
+  function goToReview() {
     const missing = REQUIRED_DOCS.filter((d) => d.required && !uploaded[d.kind]?.doc_id)
     if (missing.length) {
       setTopError('Please upload: ' + missing.map((d) => d.label).join(', '))
+      return
+    }
+    setTopError('')
+    setStep(S_REVIEW)
+  }
+
+  async function finalize() {
+    // Re-check both field steps and the docs before the irreversible
+    // call. The applicant can jump back and edit from the review page,
+    // so the data may have changed since it was last validated.
+    const badStep = [S_INSTITUTION, S_ADDRESS].find((i) => !validateStep(i))
+    if (badStep !== undefined) {
+      setTopError('Some details need fixing — take another look at the highlighted fields.')
+      setStep(badStep)
+      return
+    }
+    const missing = REQUIRED_DOCS.filter((d) => d.required && !uploaded[d.kind]?.doc_id)
+    if (missing.length) {
+      setTopError('Please upload: ' + missing.map((d) => d.label).join(', '))
+      setStep(S_DOCUMENTS)
       return
     }
     setSubmitting(true)
@@ -270,7 +388,7 @@ export default function Register() {
     try {
       await submitApplication(applicationId)
       clearDraft()
-      setStep(3)
+      setStep(S_DONE)
     } catch (err) {
       setTopError(err.message)
     } finally {
@@ -283,7 +401,7 @@ export default function Register() {
     setForm(EMPTY_FORM)
     setApplicationId(null)
     setUploaded({})
-    setStep(0)
+    setStep(S_INSTITUTION)
     setTopError('')
   }
 
@@ -306,24 +424,21 @@ export default function Register() {
             WebkitMaskImage: 'radial-gradient(ellipse at top, black 40%, transparent 75%)',
           }}
         />
-        {/* three drifting orbs — warm indigo + violet + emerald hint */}
+        {/* Two cool orbs in adjacent hues (indigo + blue). Was indigo +
+            violet + emerald — three unrelated families competing behind
+            a form about PAN numbers and authorization letters. Dropped
+            to two, and softened, so the background stays background. */}
         <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 1.2, ease: 'easeOut' }}
-          className="absolute -top-40 -left-24 h-[28rem] w-[28rem] rounded-full bg-indigo-200/40 blur-[100px]"
+          className="absolute -top-40 -left-24 h-[28rem] w-[28rem] rounded-full bg-indigo-200/35 blur-[100px]"
         />
         <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 1.2, delay: 0.1, ease: 'easeOut' }}
-          className="absolute -top-24 right-[-6rem] h-[26rem] w-[26rem] rounded-full bg-violet-200/45 blur-[100px]"
-        />
-        <motion.div
-          initial={{ opacity: 0, scale: 0.9 }}
-          animate={{ opacity: 1, scale: 1 }}
-          transition={{ duration: 1.4, delay: 0.2, ease: 'easeOut' }}
-          className="absolute top-40 left-1/3 h-96 w-96 rounded-full bg-emerald-100/30 blur-[110px]"
+          className="absolute -top-24 right-[-6rem] h-[26rem] w-[26rem] rounded-full bg-blue-200/30 blur-[100px]"
         />
       </div>
 
@@ -350,12 +465,12 @@ export default function Register() {
           transition={{ duration: 0.5, ease: 'easeOut' }}
           className="text-3xl sm:text-4xl lg:text-[2.5rem] font-semibold tracking-tight text-slate-900 leading-tight"
         >
-          {step === 3
+          {step === S_DONE
             ? 'Application received'
             : (
               <>
                 Register your{' '}
-                <span className="bg-gradient-to-r from-indigo-600 via-violet-600 to-fuchsia-600 bg-clip-text text-transparent">
+                <span className={`bg-gradient-to-r ${ACCENTS.heading} bg-clip-text text-transparent`}>
                   institution
                 </span>
               </>
@@ -382,7 +497,7 @@ export default function Register() {
         />
 
         {/* Done step doesn't need the sidebar — full-width centred card. */}
-        {step === 3 ? (
+        {step === S_DONE ? (
           <div className="mt-6">
             <AnimatePresence mode="wait" initial={false}>
               <SlideStep key={step}>
@@ -406,34 +521,46 @@ export default function Register() {
             <div className="min-w-0">
               <AnimatePresence mode="wait" initial={false}>
                 <SlideStep key={step}>
-                  {step === 0 && (
+                  {step === S_INSTITUTION && (
                     <Step0
                       form={form}
                       errors={errors}
                       update={update}
+                      onBlurField={validateOnBlur}
                       onNext={() => {
-                        if (validateStep0()) setStep(1)
+                        if (validateStep(S_INSTITUTION)) setStep(S_ADDRESS)
                       }}
                     />
                   )}
-                  {step === 1 && (
+                  {step === S_ADDRESS && (
                     <Step1
                       form={form}
                       errors={errors}
                       update={update}
-                      onBack={() => setStep(0)}
+                      onBlurField={validateOnBlur}
+                      onBack={() => setStep(S_INSTITUTION)}
                       onNext={goToStep2}
                       submitting={submitting}
                     />
                   )}
-                  {step === 2 && (
+                  {step === S_DOCUMENTS && (
                     <Step2
                       applicationId={applicationId}
                       uploaded={uploaded}
                       errors={errors}
                       handleFile={handleFile}
                       removeDoc={removeDoc}
-                      onBack={() => setStep(1)}
+                      onBack={() => setStep(S_ADDRESS)}
+                      onSubmit={goToReview}
+                      submitting={submitting}
+                    />
+                  )}
+                  {step === S_REVIEW && (
+                    <ReviewStep
+                      form={form}
+                      uploaded={uploaded}
+                      onEdit={(s) => { setTopError(''); setStep(s) }}
+                      onBack={() => setStep(S_DOCUMENTS)}
                       onSubmit={finalize}
                       submitting={submitting}
                     />
@@ -458,7 +585,7 @@ function StepSidebar({ step }) {
     <aside className="lg:sticky lg:top-6 lg:self-start">
       <AestheticCard>
         <ol className="p-3 space-y-1.5">
-          {STEPS.slice(0, 3).map((s, i) => {
+          {STEPS.slice(0, 4).map((s, i) => {
             const active = i === step
             const done = i < step
             const IconComp = s.icon
@@ -515,7 +642,7 @@ function StepSidebar({ step }) {
 
 // ─── Step 0 ────────────────────────────────────────────────────────────
 
-function Step0({ form, errors, update, onNext }) {
+function Step0({ form, errors, update, onBlurField, onNext }) {
   return (
     <AestheticCard>
       {/* Header — generous padding so the chip + title don't feel
@@ -531,47 +658,32 @@ function Step0({ form, errors, update, onNext }) {
       </div>
 
       {/* Body — split into two clearly-spaced visual sections:
-            1. Pickers (Type + Tier)
+            1. Type picker
             2. Identifier / history fields
           Separated by a subtle labelled divider so the eye doesn't
           read everything as one undifferentiated grid. */}
       <div className="px-7 py-7 space-y-7">
-        <div className="grid grid-cols-1 sm:grid-cols-2 gap-7">
-          <div>
-            <Label>
-              Type <span className="text-rose-600 ml-0.5">*</span>
-            </Label>
-            <div className="grid grid-cols-2 gap-2.5">
-              {INSTITUTION_TYPES.map((t) => (
-                <CompactChoice
-                  key={t.value}
-                  selected={form.institution_type === t.value}
-                  onSelect={() => update('institution_type', t.value)}
-                  icon={Icon.Building}
-                  label={t.label}
-                />
-              ))}
-            </div>
-            {errors.institution_type && (
-              <p className="mt-1.5 text-xs text-rose-600">{errors.institution_type}</p>
-            )}
+        <div>
+          <Label>
+            Type <span className="text-rose-600 ml-0.5">*</span>
+          </Label>
+          {/* Capped width: with Tier gone this picker would otherwise
+              stretch the full card, turning two short options into two
+              very wide slabs. */}
+          <div className="grid grid-cols-2 gap-2.5 max-w-md">
+            {INSTITUTION_TYPES.map((t) => (
+              <CompactChoice
+                key={t.value}
+                selected={form.institution_type === t.value}
+                onSelect={() => update('institution_type', t.value)}
+                icon={Icon.Building}
+                label={t.label}
+              />
+            ))}
           </div>
-          <div>
-            <Label>
-              Tier <span className="text-slate-400 ml-1 text-xs font-normal">(optional)</span>
-            </Label>
-            <div className="grid grid-cols-3 gap-2.5">
-              {TIERS.map((t) => (
-                <ChipChoice
-                  key={t.value}
-                  selected={form.tier === t.value}
-                  onSelect={() => update('tier', form.tier === t.value ? '' : t.value)}
-                  label={t.label}
-                />
-              ))}
-            </div>
-            {errors.tier && <p className="mt-1.5 text-xs text-rose-600">{errors.tier}</p>}
-          </div>
+          {errors.institution_type && (
+            <p className="mt-1.5 text-xs text-rose-600">{errors.institution_type}</p>
+          )}
         </div>
 
         <Divider label="Identifiers & history" />
@@ -588,6 +700,7 @@ function Step0({ form, errors, update, onNext }) {
             <Input
               value={form.institution_name}
               onChange={(e) => update('institution_name', e.target.value)}
+              onBlur={() => onBlurField('institution_name')}
               placeholder="e.g. Saragarhi Memorial College of Eminence"
             />
           </Field>
@@ -596,6 +709,7 @@ function Step0({ form, errors, update, onNext }) {
               icon={Icon.ShieldCheck}
               value={form.aishe_code}
               onChange={(e) => update('aishe_code', e.target.value)}
+              onBlur={() => onBlurField('aishe_code')}
               placeholder="C-12345"
             />
           </Field>
@@ -604,6 +718,7 @@ function Step0({ form, errors, update, onNext }) {
               icon={Icon.File}
               value={form.pan}
               onChange={(e) => update('pan', e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10))}
+              onBlur={() => onBlurField('pan')}
               placeholder="ABCDE1234F"
               maxLength={10}
             />
@@ -629,6 +744,7 @@ function Step0({ form, errors, update, onNext }) {
                 <Input
                   value={form.affiliation_body_other}
                   onChange={(e) => update('affiliation_body_other', e.target.value)}
+                  onBlur={() => onBlurField('affiliation_body_other')}
                   placeholder="Specify affiliation body"
                   maxLength={80}
                 />
@@ -644,6 +760,7 @@ function Step0({ form, errors, update, onNext }) {
               type="number"
               value={form.approx_student_count}
               onChange={(e) => update('approx_student_count', e.target.value)}
+              onBlur={() => onBlurField('approx_student_count')}
               placeholder="500"
             />
           </Field>
@@ -663,18 +780,20 @@ function Step0({ form, errors, update, onNext }) {
   )
 }
 
-// CompactChoice — picker button for the Type slot. Bigger padding
-// than ChipChoice (px-4 py-3 vs px-3 py-3) and a leading icon chip so
-// the eye picks the category before the text. Used in a 2-up grid; the
-// dropped blurb (vs the old ChoiceCard) keeps things tidy without
+// CompactChoice — picker button for the Type slot. A leading icon chip
+// so the eye picks the category before the text. Used in a 2-up grid;
+// the dropped blurb (vs the old ChoiceCard) keeps things tidy without
 // feeling cramped.
 function CompactChoice({ selected, onSelect, icon: IconComp, label }) {
+  // `flex w-full` so both buttons fill their grid cell to exactly the
+  // same width, and `justify-center` so the icon + label sit centred
+  // rather than ragged against the left edge.
   return (
     <motion.button
       type="button"
       onClick={onSelect}
       whileTap={{ scale: 0.98 }}
-      className={`relative h-14 inline-flex items-center gap-2.5 rounded-xl border px-4 text-left transition-colors ${
+      className={`relative h-14 flex w-full items-center justify-center gap-2.5 rounded-xl border px-9 transition-colors ${
         selected
           ? 'border-slate-900 bg-slate-50/80 ring-1 ring-slate-900/10'
           : 'border-slate-200 bg-white hover:border-slate-300'
@@ -692,12 +811,15 @@ function CompactChoice({ selected, onSelect, icon: IconComp, label }) {
       <span className={`text-sm font-medium ${selected ? 'text-slate-900' : 'text-slate-800'}`}>
         {label}
       </span>
+      {/* Absolutely positioned, so selecting an option doesn't shove its
+          label off-centre and leave the two buttons visibly mismatched.
+          The symmetric px-9 reserves room for it on both sides. */}
       {selected && (
         <motion.span
           initial={{ scale: 0 }}
           animate={{ scale: 1 }}
           transition={{ duration: 0.15, ease: [0.22, 1.5, 0.36, 1] }}
-          className="ml-auto h-4 w-4 rounded-full bg-emerald-50 text-emerald-600 ring-1 ring-emerald-200 flex items-center justify-center"
+          className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 rounded-full bg-emerald-50 text-emerald-600 ring-1 ring-emerald-200 flex items-center justify-center"
         >
           <Icon.Check className="h-2.5 w-2.5" />
         </motion.span>
@@ -757,34 +879,170 @@ function ChoiceCard({ selected, onSelect, icon: IconComp, label, blurb }) {
   )
 }
 
-// ChipChoice — picker chip for tier selection. Same height as
-// CompactChoice (the Type picker) so the two pickers sit on a visually
-// matched baseline — without an icon chip of its own, ChipChoice would
-// otherwise look ~12px shorter. h-14 (56px) matches the Type button's
-// natural height (icon chip + vertical padding).
-function ChipChoice({ selected, onSelect, label }) {
+// ─── Review step ───────────────────────────────────────────────────────
+//
+// Everything the applicant is about to submit, in one read-only page.
+// This form is reviewed by a human and a rejection costs days, so the
+// cheapest possible fix for a typo'd PAN or a wrong email is letting
+// them see it before they commit.
+//
+// Every group has its own Edit link back to the step that owns it —
+// returning to the review page is just Continue, and the draft keeps
+// the answers, so a correction is a few seconds' round trip.
+function ReviewStep({ form, uploaded, onEdit, onBack, onSubmit, submitting }) {
+  const affiliation =
+    form.affiliation_body === 'Other'
+      ? form.affiliation_body_other
+      : form.affiliation_body
+
+  const typeLabel =
+    INSTITUTION_TYPES.find((t) => t.value === form.institution_type)?.label ||
+    form.institution_type
+
+  const address = [
+    form.address_line1,
+    form.address_line2,
+    [form.city, form.district].filter(Boolean).join(', '),
+    [form.state, form.pin_code].filter(Boolean).join(' — '),
+  ].filter((l) => l && l.trim())
+
+  const docs = REQUIRED_DOCS.filter((d) => uploaded[d.kind]?.doc_id)
+
   return (
-    <motion.button
-      type="button"
-      onClick={onSelect}
-      whileHover={{ y: -1, transition: { duration: 0.15 } }}
-      whileTap={{ scale: 0.98, y: 0 }}
-      className={`relative h-14 rounded-xl border px-4 transition-colors duration-150 inline-flex items-center justify-center gap-2
-                  ${selected
-                    ? 'border-slate-900 bg-slate-50/80 ring-1 ring-slate-900/10'
-                    : 'border-slate-200 bg-white hover:border-slate-300'}`}
-    >
-      <p className={`text-sm font-semibold ${selected ? 'text-slate-900' : 'text-slate-800'}`}>{label}</p>
-      {selected && (
-        <motion.span
-          initial={{ scale: 0 }}
-          animate={{ scale: 1 }}
-          className="h-5 w-5 rounded-md bg-emerald-50 text-emerald-600 ring-1 ring-emerald-200 flex items-center justify-center"
+    <AestheticCard>
+      <div className="px-7 py-6 border-b border-slate-100">
+        <div className="flex items-start gap-3">
+          <span className="h-10 w-10 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center shrink-0">
+            <Icon.Eye className="h-5 w-5" />
+          </span>
+          <div>
+            <h2 className="text-base font-semibold text-slate-900">Review your application</h2>
+            <p className="text-sm text-slate-500 mt-0.5">
+              Check every detail before submitting. Our team reviews this manually,
+              so a correction now saves days later.
+            </p>
+          </div>
+        </div>
+      </div>
+
+      <div className="px-7 py-6 space-y-6">
+        <ReviewGroup
+          title="Institution"
+          onEdit={() => onEdit(S_INSTITUTION)}
+          rows={[
+            ['Name', form.institution_name],
+            ['Type', typeLabel],
+            ['AISHE code', form.aishe_code],
+            ['PAN', form.pan?.toUpperCase()],
+            ['Year established', form.year_established],
+            ['Affiliation', affiliation],
+            ['Approx. students', form.approx_student_count],
+          ]}
+        />
+
+        <ReviewGroup
+          title="Campus address"
+          onEdit={() => onEdit(S_ADDRESS)}
+          rows={[
+            ['Address', address.join('\n')],
+            ['Expected centres', form.expected_centres],
+          ]}
+        />
+
+        <ReviewGroup
+          title="Head of institution"
+          onEdit={() => onEdit(S_ADDRESS)}
+          rows={[
+            ['Name', form.head_name],
+            ['Designation', form.head_designation],
+            ['Email', form.head_email],
+            ['Mobile', form.head_mobile],
+          ]}
+          // The activation link goes to this address — if it's wrong the
+          // applicant never hears back, so it's worth calling out.
+          note="The activation link is sent to this email address after approval."
+        />
+
+        <div>
+          <div className="flex items-center justify-between gap-3 mb-2">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-600">
+              Documents
+            </h3>
+            <button
+              type="button"
+              onClick={() => onEdit(S_DOCUMENTS)}
+              className="text-xs font-medium text-indigo-600 hover:text-indigo-800 hover:underline"
+            >
+              Edit
+            </button>
+          </div>
+          <ul className="rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
+            {docs.map((d) => (
+              <li key={d.kind} className="flex items-center gap-3 px-4 py-2.5">
+                <span className="h-6 w-6 rounded-md bg-emerald-50 text-emerald-600 ring-1 ring-emerald-200 flex items-center justify-center shrink-0">
+                  <Icon.Check className="h-3.5 w-3.5" />
+                </span>
+                <span className="text-sm text-slate-800">{d.label}</span>
+                <span className="ml-auto text-xs text-slate-500 truncate max-w-[45%]">
+                  {uploaded[d.kind]?.original_name}
+                </span>
+              </li>
+            ))}
+            {docs.length === 0 && (
+              <li className="px-4 py-3 text-sm text-slate-500">No documents uploaded.</li>
+            )}
+          </ul>
+        </div>
+
+        <div className="rounded-lg bg-slate-50 border border-slate-200 px-4 py-3 text-xs text-slate-600 leading-relaxed">
+          Submitting locks the application for review. You won't be able to edit it
+          afterwards — our team will contact the head of institution at the email above.
+        </div>
+      </div>
+
+      <FooterBar>
+        <Button type="button" variant="ghost" onClick={onBack} disabled={submitting}>
+          Back
+        </Button>
+        <Button type="button" onClick={onSubmit} disabled={submitting}>
+          {submitting ? 'Submitting…' : 'Submit application'}
+        </Button>
+      </FooterBar>
+    </AestheticCard>
+  )
+}
+
+// One labelled block of read-only answers, with an Edit link back to
+// whichever step owns them.
+function ReviewGroup({ title, rows, onEdit, note }) {
+  const filled = rows.filter(([, v]) => v !== undefined && v !== null && String(v).trim() !== '')
+  return (
+    <div>
+      <div className="flex items-center justify-between gap-3 mb-2">
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-600">{title}</h3>
+        <button
+          type="button"
+          onClick={onEdit}
+          className="text-xs font-medium text-indigo-600 hover:text-indigo-800 hover:underline"
         >
-          <Icon.Check className="h-3 w-3" />
-        </motion.span>
-      )}
-    </motion.button>
+          Edit
+        </button>
+      </div>
+      <dl className="rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
+        {filled.map(([k, v]) => (
+          <div key={k} className="flex gap-4 px-4 py-2.5">
+            <dt className="text-xs text-slate-500 w-40 shrink-0 pt-0.5">{k}</dt>
+            {/* whitespace-pre-line so the multi-line address keeps its
+                line breaks instead of collapsing into one run-on line. */}
+            <dd className="text-sm text-slate-900 min-w-0 break-words whitespace-pre-line">{v}</dd>
+          </div>
+        ))}
+        {filled.length === 0 && (
+          <div className="px-4 py-3 text-sm text-slate-500">Nothing entered.</div>
+        )}
+      </dl>
+      {note && <p className="mt-1.5 text-xs text-slate-500">{note}</p>}
+    </div>
   )
 }
 
@@ -959,16 +1217,18 @@ function YearPicker({ value, onChange, placeholder = 'Pick year' }) {
 
 // ─── Step 1 ────────────────────────────────────────────────────────────
 
-function Step1({ form, errors, update, onBack, onNext, submitting }) {
+function Step1({ form, errors, update, onBlurField, onBack, onNext, submitting }) {
   return (
     <div className="space-y-5">
       {/* Section 1 — Campus address.
           Own card so it visually reads as a distinct block from the
-          head-of-institution section below. Soft teal accent on the
-          icon chip to differentiate from the violet head chip. */}
+          head-of-institution section below. Both sections now share
+          this step's accent — the ICONS already say "place" vs
+          "person", so spending a second hue on that distinction was
+          buying nothing and cost the form its coherence. */}
       <SectionCard
         icon={Icon.MapPin}
-        accent="from-teal-500 to-emerald-600"
+        accent={ACCENTS.section}
         title="Campus address"
         subtitle="Where the institution is physically located."
       >
@@ -992,6 +1252,7 @@ function Step1({ form, errors, update, onBack, onNext, submitting }) {
             <Input
               value={form.state}
               onChange={(e) => update('state', e.target.value)}
+              onBlur={() => onBlurField('state')}
               placeholder="e.g. Punjab"
               autoComplete="off"
             />
@@ -1000,6 +1261,7 @@ function Step1({ form, errors, update, onBack, onNext, submitting }) {
             <Input
               value={form.city}
               onChange={(e) => update('city', e.target.value)}
+              onBlur={() => onBlurField('city')}
               placeholder="e.g. Amritsar"
               autoComplete="off"
             />
@@ -1016,6 +1278,7 @@ function Step1({ form, errors, update, onBack, onNext, submitting }) {
           <Input
             value={form.pin_code}
             onChange={(e) => update('pin_code', e.target.value.replace(/\D/g, '').slice(0, 6))}
+            onBlur={() => onBlurField('pin_code')}
             placeholder="143001"
             inputMode="numeric"
             maxLength={6}
@@ -1024,14 +1287,12 @@ function Step1({ form, errors, update, onBack, onNext, submitting }) {
         </Field>
       </SectionCard>
 
-      {/* Section 2 — Head of institution.
-          Indigo accent on the icon chip — visually different from the
-          address card so the operator knows they're switching context
-          from "place" to "person". Compact callout under the heading
-          highlights what this email will be used for. */}
+      {/* Section 2 — Head of institution. Slate chip marks it as the
+          subordinate block on this step; the shield icon and the
+          callout carry the "this is a person, and it matters" weight. */}
       <SectionCard
         icon={Icon.ShieldCheck}
-        accent="from-indigo-500 to-violet-500"
+        accent={ACCENTS.sub}
         title="Head of institution"
         subtitle="We send the activation link to this person after approval."
       >
@@ -1044,6 +1305,7 @@ function Step1({ form, errors, update, onBack, onNext, submitting }) {
             <Input
               value={form.head_name}
               onChange={(e) => update('head_name', e.target.value)}
+              onBlur={() => onBlurField('head_name')}
               placeholder="Dr. Rajesh Kumar"
             />
           </Field>
@@ -1062,6 +1324,7 @@ function Step1({ form, errors, update, onBack, onNext, submitting }) {
               type="email"
               value={form.head_email}
               onChange={(e) => update('head_email', e.target.value)}
+              onBlur={() => onBlurField('head_email')}
               placeholder="principal@college.ac.in"
             />
           </Field>
@@ -1070,6 +1333,7 @@ function Step1({ form, errors, update, onBack, onNext, submitting }) {
               icon={Icon.Phone}
               value={form.head_mobile}
               onChange={(e) => update('head_mobile', e.target.value.replace(/\D/g, '').slice(0, 10))}
+              onBlur={() => onBlurField('head_mobile')}
               inputMode="numeric"
               maxLength={10}
               placeholder="9876543210"
@@ -1183,8 +1447,13 @@ function Step2({ applicationId, uploaded, errors, handleFile, removeDoc, onBack,
           <Icon.ChevronLeft className="mr-1.5 h-4 w-4" />
           Back
         </Button>
-        <Button onClick={onSubmit} disabled={submitting} size="lg" variant="success">
-          {submitting ? 'Submitting…' : 'Submit for review'}
+        {/* Goes to the Review step, not to submit — the label has to say
+            so, or the applicant braces for a commit that isn't happening
+            yet. `success` variant dropped for the same reason: green
+            reads as "this is the final action". */}
+        <Button onClick={onSubmit} size="lg">
+          Review application
+          <Icon.ChevronRight className="ml-1.5 h-4 w-4" />
         </Button>
       </FooterBar>
     </AestheticCard>
