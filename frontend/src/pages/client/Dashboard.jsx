@@ -50,7 +50,14 @@ function clearPersistedState() {
   try { sessionStorage.removeItem(STATE_KEY) } catch {}
 }
 
-const STEPS = ['Roll Number', 'Face Capture', 'Fingerprint', 'Decision']
+// Face-first flow (Aug 2026): the operator captures the candidate's
+// face BEFORE the enrolled record is revealed. Face capture is what
+// charges the wallet — a commitment to spending. Only after face-match
+// completes do we show the enrolled photo + details, then run the
+// fingerprint verification if the candidate has one on file. The final
+// verified/not-verified verdict is computed from the match thresholds;
+// no manual button any more.
+const STEPS = ['Roll Number', 'Face Capture', 'Fingerprint', 'Result']
 
 function Stepper({ step }) {
   return (
@@ -185,6 +192,32 @@ export default function ClientDashboard() {
   // returns HTTP 402. Operators can't top up themselves — this is
   // surfaced as a passive banner directing them to their admin.
   const [walletEmpty, setWalletEmpty] = useState(false)
+
+  // ── Auto-decide + auto-submit ────────────────────────────────────
+  // Face-first flow: as soon as we have enough signal to decide, we
+  // submit the verification automatically — no manual button.
+  //
+  //   • Candidate has a fingerprint template → wait for BOTH face and
+  //     fingerprint. Both must PASS for "verified" (strict AND).
+  //   • Candidate has only face → face alone decides.
+  //
+  // Guarded by `result` and `submitting` so it fires exactly once per
+  // verification flow. `reset()` clears result and puts us back to
+  // step 0, ready for the next candidate.
+  useEffect(() => {
+    if (result || submitting) return
+    if (!candidate || !faceResult) return
+    const needsFP = !!candidate.has_iso_template
+    if (needsFP && !fpResult) return
+    const facePass = !!(faceResult && faceResult.ok === true)
+    const fpPass   = !!(fpResult   && fpResult.ok   === true)
+    const finalStatus = needsFP
+      ? (facePass && fpPass ? 'verified' : 'denied')
+      : (facePass ? 'verified' : 'denied')
+    if (step < 3) setStep(3)
+    submitVerification(finalStatus)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [candidate, faceResult, fpResult, result, submitting])
 
   // Persist whenever the meaningful state changes, so an unexpected
   // refresh doesn't lose the operator's in-flight verification.
@@ -495,19 +528,42 @@ export default function ClientDashboard() {
         </Card>
       )}
 
-      {step >= 1 && candidate && (
+      {/* Step 1 — face capture only. Candidate summary is deliberately
+          hidden here: the operator must capture a face before the
+          enrolled record is revealed (and before the wallet is
+          charged). This nudges "person in front of me first, then
+          look at their record" rather than the other way round. */}
+      {step === 1 && candidate && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Step 2 — Live face capture</CardTitle>
+          </CardHeader>
+          <CardBody>
+            <p className="text-sm text-slate-600 mb-4">
+              Capture the candidate's face to unlock their enrolled record.
+              This is the payable step — the wallet is charged when the
+              face capture is submitted (₹ per lookup, same-roll retries
+              are free within 5 minutes).
+            </p>
+            <FaceMatchPanel
+              rollNo={candidate.roll_no}
+              onResult={(r) => {
+                setFaceResult(r)
+                setSnap(r?.snapshot ?? null)
+                if (step < 2) setStep(2)
+              }}
+            />
+          </CardBody>
+        </Card>
+      )}
+
+      {step >= 2 && candidate && (
         <div className="grid gap-6 lg:grid-cols-3">
           <Card className="lg:col-span-1 self-start">
             <CardHeader>
               <CardTitle>Candidate on file</CardTitle>
             </CardHeader>
             <CardBody>
-              {/* Just photo + roll. Organization / center / exam date /
-                  template badges were redundant for the operator workflow
-                  (they're not making routing decisions; they only need to
-                  confirm "this is the right person"). All of those fields
-                  are still available on the candidate object for the
-                  audit submit + future detail views. */}
               <div className="aspect-square w-full rounded-lg bg-slate-100 overflow-hidden mb-4">
                 {photoBlob ? (
                   <img src={photoBlob} alt="enrolled" className="w-full h-full object-cover" />
@@ -523,25 +579,19 @@ export default function ClientDashboard() {
                   {candidate.roll_no}
                 </span>
               </div>
+              {faceResult && (
+                <div className="mt-3 text-xs text-slate-600 flex items-baseline justify-between">
+                  <span className="uppercase tracking-wide text-slate-500">Face match</span>
+                  <span className={`font-semibold tabular-nums ${faceResult.ok ? 'text-emerald-700' : 'text-rose-700'}`}>
+                    {faceResult.ok ? 'PASS' : 'FAIL'}
+                    {typeof faceResult.score === 'number' && ` · ${faceResult.score.toFixed(2)}`}
+                  </span>
+                </div>
+              )}
             </CardBody>
           </Card>
 
           <div className="lg:col-span-2 space-y-6">
-            <Card>
-              <CardHeader>
-                <CardTitle>Step 2 — Live face capture &amp; match</CardTitle>
-              </CardHeader>
-              <CardBody>
-                <FaceMatchPanel
-                  rollNo={candidate.roll_no}
-                  onResult={(r) => {
-                    setFaceResult(r)
-                    setSnap(r?.snapshot ?? null)
-                    if (step < 2) setStep(2)
-                  }}
-                />
-              </CardBody>
-            </Card>
 
             {step >= 2 && (
               <Card>
@@ -612,7 +662,7 @@ export default function ClientDashboard() {
             {step >= 3 && (
               <Card>
                 <CardHeader>
-                  <CardTitle>Step 4 — Operator decision</CardTitle>
+                  <CardTitle>Step 4 — Result</CardTitle>
                 </CardHeader>
                 <CardBody>
                   {result ? (
@@ -633,43 +683,28 @@ export default function ClientDashboard() {
                       <p className="text-sm text-slate-600 mt-1">
                         Decision recorded for roll {candidate.roll_no}.
                       </p>
+                      <div className="mt-3 text-xs text-slate-600 space-y-0.5">
+                        {faceResult && (
+                          <div>Face match: <b className={faceResult.ok ? 'text-emerald-700' : 'text-rose-700'}>{faceResult.ok ? 'PASS' : 'FAIL'}</b></div>
+                        )}
+                        {fpResult && (
+                          <div>Fingerprint: <b className={fpResult.ok ? 'text-emerald-700' : 'text-rose-700'}>{fpResult.ok ? 'PASS' : 'FAIL'}</b></div>
+                        )}
+                      </div>
                       <div className="mt-3">
                         <Button onClick={reset}>Start next verification</Button>
                       </div>
                     </div>
                   ) : (
                     <>
-                      <p className="text-sm text-slate-600 mb-4">
-                        Compare the live capture against the candidate on file. SDK auto-matching
-                        will integrate later — for now, record your decision manually.
-                      </p>
-                      {/* Surface submit errors here too. lookupErr is shared
-                          between the roll-lookup step and the verification-submit
-                          step; without rendering it here, a failed submit
-                          (e.g. backend 4xx) shows nothing — the buttons just
-                          stop responding silently. */}
                       {lookupErr && (
                         <div className="mb-3 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">
                           {lookupErr}
                         </div>
                       )}
-                      <div className="flex gap-3">
-                        <Button
-                          variant="success"
-                          size="lg"
-                          disabled={submitting}
-                          onClick={() => submitVerification('verified')}
-                        >
-                          {submitting ? 'Saving...' : 'Verified'}
-                        </Button>
-                        <Button
-                          variant="danger"
-                          size="lg"
-                          disabled={submitting}
-                          onClick={() => submitVerification('denied')}
-                        >
-                          Not verified
-                        </Button>
+                      <div className="flex items-center gap-3 text-sm text-slate-600">
+                        <span className="inline-block h-3 w-3 rounded-full bg-indigo-500 animate-pulse" />
+                        {submitting ? 'Recording verification…' : 'Deciding based on match thresholds…'}
                       </div>
                     </>
                   )}

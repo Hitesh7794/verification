@@ -18,15 +18,20 @@ package api
 //   POST   /api/admin/operators/{id}/enable  restore
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/veni/neet-verification/internal/email"
 )
 
 // ── DTOs ──────────────────────────────────────────────────────────────
@@ -36,6 +41,7 @@ type operatorRow struct {
 	Username         string     `json:"username"`
 	Password         string     `json:"password,omitempty"` // plaintext, admin visibility only
 	DisplayName      string     `json:"display_name"`
+	Email            string     `json:"email,omitempty"`
 	Status           string     `json:"status"` // active | disabled
 	SpendingCapPaise *int64     `json:"spending_cap_paise,omitempty"`
 	SpentPaise       int64      `json:"spent_paise"`
@@ -57,7 +63,7 @@ func (s *Server) adminListOperators(w http.ResponseWriter, r *http.Request) {
 	orgID := *claims.OrgID
 	rows, err := s.deps.DB.QueryContext(r.Context(), `
 		SELECT id, username, COALESCE(password_plaintext,''), display_name,
-		       disabled_at, spending_cap_paise, spent_paise,
+		       COALESCE(email,''), disabled_at, spending_cap_paise, spent_paise,
 		       valid_from, valid_to, created_at
 		FROM users
 		WHERE org_id = ? AND role = 'client'
@@ -74,7 +80,7 @@ func (s *Server) adminListOperators(w http.ResponseWriter, r *http.Request) {
 		var cap sql.NullInt64
 		var vFrom, vTo sql.NullString
 		if err := rows.Scan(&o.ID, &o.Username, &o.Password, &o.DisplayName,
-			&disabledAt, &cap, &o.SpentPaise, &vFrom, &vTo, &o.CreatedAt); err != nil {
+			&o.Email, &disabledAt, &cap, &o.SpentPaise, &vFrom, &vTo, &o.CreatedAt); err != nil {
 			writeErr(w, http.StatusInternalServerError, "row scan: "+err.Error())
 			return
 		}
@@ -164,12 +170,12 @@ func (s *Server) loadOperatorForOrg(r *http.Request, orgID, id int64) (*operator
 	var vFrom, vTo sql.NullString
 	err := s.deps.DB.QueryRowContext(r.Context(), `
 		SELECT id, username, COALESCE(password_plaintext,''), display_name,
-		       disabled_at, spending_cap_paise, spent_paise,
+		       COALESCE(email,''), disabled_at, spending_cap_paise, spent_paise,
 		       valid_from, valid_to, created_at
 		  FROM users
 		 WHERE id = ? AND org_id = ? AND role = 'client'`, id, orgID,
 	).Scan(&o.ID, &o.Username, &o.Password, &o.DisplayName,
-		&disabledAt, &cap, &o.SpentPaise, &vFrom, &vTo, &o.CreatedAt)
+		&o.Email, &disabledAt, &cap, &o.SpentPaise, &vFrom, &vTo, &o.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -216,6 +222,7 @@ type createOperatorReq struct {
 	Username         string  `json:"username"`
 	Password         string  `json:"password"`
 	DisplayName      string  `json:"display_name"`
+	Email            string  `json:"email,omitempty"` // optional; if set, we send a welcome mail
 	SpendingCapPaise *int64  `json:"spending_cap_paise,omitempty"`
 	ValidFrom        string  `json:"valid_from,omitempty"` // YYYY-MM-DD or empty
 	ValidTo          string  `json:"valid_to,omitempty"`
@@ -236,8 +243,21 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 	}
 	req.Username = strings.TrimSpace(req.Username)
 	req.DisplayName = strings.TrimSpace(req.DisplayName)
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
 	if len(req.Username) < 3 || len(req.Username) > 60 {
 		writeErr(w, http.StatusBadRequest, "username required (3-60 chars)")
+		return
+	}
+	if req.Email == "" {
+		writeErr(w, http.StatusBadRequest, "email is required")
+		return
+	}
+	if !isPlausibleEmail(req.Email) {
+		writeErr(w, http.StatusBadRequest, "email is not a valid address")
+		return
+	}
+	if strings.TrimSpace(req.ValidFrom) == "" || strings.TrimSpace(req.ValidTo) == "" {
+		writeErr(w, http.StatusBadRequest, "valid_from and valid_to are required (YYYY-MM-DD)")
 		return
 	}
 	if err := validatePassword(req.Password); err != nil {
@@ -249,6 +269,10 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.SpendingCapPaise != nil && *req.SpendingCapPaise <= 0 {
 		writeErr(w, http.StatusBadRequest, "spending_cap_paise must be > 0 or omitted")
+		return
+	}
+	if err := s.checkCapAgainstWallet(r, orgID, req.SpendingCapPaise); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 	vFrom, vTo, err := parseDateWindow(req.ValidFrom, req.ValidTo)
@@ -278,10 +302,11 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 	// NULL centre.
 	res, err := tx.ExecContext(r.Context(), `
 		INSERT INTO users(username, password_hash, role, org_id,
-		                  display_name, password_plaintext,
+		                  display_name, email, password_plaintext,
 		                  spending_cap_paise, valid_from, valid_to)
-		VALUES(?, ?, 'client', ?, ?, ?, ?, ?, ?)`,
-		req.Username, string(hash), orgID, req.DisplayName, req.Password,
+		VALUES(?, ?, 'client', ?, ?, ?, ?, ?, ?, ?)`,
+		req.Username, string(hash), orgID, req.DisplayName,
+		nullable(req.Email), req.Password,
 		nullableInt64(req.SpendingCapPaise), vFrom, vTo)
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed: users.username") {
@@ -303,7 +328,31 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 	s.auditFromRequest(r, "operator.create", "user", uid, map[string]any{
 		"username": req.Username,
 		"exams":    req.ExamIDs,
+		"emailed":  req.Email != "",
 	})
+
+	// Best-effort welcome email. Fire-and-forget in a goroutine so a
+	// slow SMTP handshake (Gmail STARTTLS can take multiple seconds)
+	// doesn't stretch the admin's create-operator response. Any
+	// failure is logged; the admin already has the credentials in the
+	// API response and can re-share them manually.
+	if req.Email != "" && s.emailer != nil {
+		loginURL := strings.TrimRight(s.deps.Cfg.PublicBaseURL, "/") + "/client/login"
+		to := req.Email
+		body := buildOperatorWelcomeEmail(req.DisplayName, req.Username, req.Password, loginURL)
+		go func(sender email.Sender) {
+			ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancel()
+			if err := sender.Send(ctx, email.Message{
+				To:      to,
+				Subject: "Your Verification Portal operator account",
+				Body:    body,
+			}); err != nil {
+				log.Printf("welcome email to %s: %v", to, err)
+			}
+		}(s.emailer)
+	}
+
 	op, _ := s.loadOperatorForOrg(r, orgID, uid)
 	writeJSON(w, http.StatusCreated, op)
 }
@@ -312,6 +361,7 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 
 type patchOperatorReq struct {
 	DisplayName      *string  `json:"display_name,omitempty"`
+	Email            *string  `json:"email,omitempty"` // empty string clears
 	Password         *string  `json:"password,omitempty"`     // if present, hash + store plaintext
 	SpendingCapPaise *int64   `json:"spending_cap_paise,omitempty"`
 	ClearSpendingCap bool     `json:"clear_spending_cap,omitempty"` // sentinel: set to NULL
@@ -366,6 +416,19 @@ func (s *Server) adminPatchOperator(w http.ResponseWriter, r *http.Request) {
 		sets = append(sets, "display_name = ?")
 		args = append(args, n)
 	}
+	if req.Email != nil {
+		e := strings.ToLower(strings.TrimSpace(*req.Email))
+		if e == "" {
+			writeErr(w, http.StatusBadRequest, "email cannot be empty")
+			return
+		}
+		if !isPlausibleEmail(e) {
+			writeErr(w, http.StatusBadRequest, "email is not a valid address")
+			return
+		}
+		sets = append(sets, "email = ?")
+		args = append(args, e)
+	}
 	if req.Password != nil {
 		if err := validatePassword(*req.Password); err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
@@ -386,6 +449,10 @@ func (s *Server) adminPatchOperator(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "spending_cap_paise must be > 0 (use clear_spending_cap to remove)")
 			return
 		}
+		if err := s.checkCapAgainstWallet(r, orgID, req.SpendingCapPaise); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
 		sets = append(sets, "spending_cap_paise = ?")
 		args = append(args, *req.SpendingCapPaise)
 	}
@@ -395,10 +462,18 @@ func (s *Server) adminPatchOperator(w http.ResponseWriter, r *http.Request) {
 	if req.ValidFrom != nil || req.ValidTo != nil {
 		vFromStr, vToStr := "", ""
 		if req.ValidFrom != nil {
-			vFromStr = *req.ValidFrom
+			vFromStr = strings.TrimSpace(*req.ValidFrom)
+			if vFromStr == "" {
+				writeErr(w, http.StatusBadRequest, "valid_from cannot be empty")
+				return
+			}
 		}
 		if req.ValidTo != nil {
-			vToStr = *req.ValidTo
+			vToStr = strings.TrimSpace(*req.ValidTo)
+			if vToStr == "" {
+				writeErr(w, http.StatusBadRequest, "valid_to cannot be empty")
+				return
+			}
 		}
 		vFrom, vTo, err := parseDateWindow(vFromStr, vToStr)
 		if err != nil {
@@ -494,6 +569,8 @@ func parseDateWindow(fromStr, toStr string) (any, any, error) {
 	var vFrom, vTo any
 	fromStr = strings.TrimSpace(fromStr)
 	toStr = strings.TrimSpace(toStr)
+	today := time.Now().UTC().Format("2006-01-02")
+
 	if fromStr == "" {
 		vFrom = nil
 	} else {
@@ -511,6 +588,13 @@ func parseDateWindow(fromStr, toStr string) (any, any, error) {
 			return nil, nil, errors.New("valid_to must be YYYY-MM-DD")
 		}
 		vTo = t.Format("2006-01-02")
+		// Reject already-expired operators. An operator whose window
+		// ends before today can never verify anything — it's a policy
+		// mistake, not a legitimate configuration. Backdating valid_from
+		// stays allowed (useful for backfill / immediate activation).
+		if vTo.(string) < today {
+			return nil, nil, errors.New("valid_to cannot be in the past (today is " + today + ")")
+		}
 	}
 	if fromStr != "" && toStr != "" && fromStr > toStr {
 		return nil, nil, errors.New("valid_from must be <= valid_to")
@@ -523,5 +607,72 @@ func nullableInt64(p *int64) any {
 		return nil
 	}
 	return *p
+}
+
+// Wrapper so the operator handler doesn't need to reach into the
+// onboarding-register package's regex directly. Same lax pattern —
+// "shape looks like an email address"; delivery is the real validator.
+func isPlausibleEmail(s string) bool {
+	return reEmail.MatchString(s)
+}
+
+// buildOperatorWelcomeEmail composes the plain-text welcome message
+// sent to a newly-created operator. Contains their username, the
+// admin-chosen password (in plain text because the admin already saw
+// it in the API response — this email is purely a delivery
+// convenience), and the login URL.
+//
+// If the admin later rotates the operator's password via the PATCH
+// endpoint, this email is NOT resent — the admin is responsible for
+// sharing the new credential.
+func buildOperatorWelcomeEmail(displayName, username, password, loginURL string) string {
+	if displayName == "" {
+		displayName = username
+	}
+	return fmt.Sprintf(`Hello %s,
+
+Your Verification Portal operator account is ready. Sign in and start
+verifying candidates.
+
+  Sign-in URL: %s
+  Username:    %s
+  Password:    %s
+
+Keep this email — the password is not stored elsewhere in a form you
+can recover. If you lose it, ask your administrator to reset it from
+the portal's Operators page.
+
+— Verification Portal
+`, displayName, loginURL, username, password)
+}
+
+// checkCapAgainstWallet enforces the rule the admin asked for: a new
+// or updated operator spending cap can't exceed the org's current
+// wallet balance. Returns a user-facing error string with the numbers
+// filled in so the admin can act on it (top up + retry, or use a
+// smaller cap).
+//
+// A NULL cap (no cap at all) is allowed regardless of balance — that's
+// the "no ceiling, wallet-empty is the only limit" mode.
+//
+// This is a per-operator check, not a sum-of-all-operator-caps check.
+// Multiple operators can each be capped at ≤ balance; the wallet is
+// still a shared pool and gets debited atomically at charge time, so
+// the first-come-first-served semantics remain correct.
+func (s *Server) checkCapAgainstWallet(r *http.Request, orgID int64, cap *int64) error {
+	if cap == nil {
+		return nil
+	}
+	bal, err := s.wallet.Balance(r.Context(), orgID)
+	if err != nil {
+		return fmt.Errorf("wallet balance lookup: %w", err)
+	}
+	if int64(bal) < *cap {
+		return fmt.Errorf(
+			"cap ₹%.2f exceeds wallet balance ₹%.2f — top up the wallet or use a smaller cap",
+			float64(*cap)/100, float64(bal)/100,
+		)
+	}
+	return nil
 }
 

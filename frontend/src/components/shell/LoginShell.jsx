@@ -134,7 +134,14 @@ export default function LoginShell({ expectedRole, expectedRoles, redirectTo, re
 
           <form onSubmit={onSubmit} className="space-y-4" autoComplete="on">
             <div>
-              <Label>Username</Label>
+              {/* Admin + operator can sign in with either their username
+                  or the email address on their account. Superadmin has
+                  no email on file so the label stays plain "Username". */}
+              <Label>
+                {allowedRoles.includes('superadmin')
+                  ? 'Username'
+                  : 'Username or email'}
+              </Label>
               <Input
                 value={username}
                 onChange={(e) => setUsername(e.target.value)}

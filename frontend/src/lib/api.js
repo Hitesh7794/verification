@@ -124,9 +124,14 @@ export async function fetchFPTemplate(roll) {
 // Returns {face_found, score, threshold, status, roll_no} or throws on
 // transport / SDK error. The caller surfaces the error in the UI.
 export async function postFaceMatch(roll, dataURLOrBase64) {
-  return api('/face-match', {
+  // URL-scoped: the wallet middleware extracts {roll} from the path for
+  // its same-roll cache. Also this is now the wallet-chargeable event
+  // (face-first flow — Aug 2026). Backend charges ₹ on every hit
+  // regardless of match outcome; the 5-min cache still applies for
+  // retries of the same roll.
+  return api(`/candidates/${encodeURIComponent(roll)}/face-match`, {
     method: 'POST',
-    body: { roll_no: roll, image_b64: dataURLOrBase64 },
+    body: { image_b64: dataURLOrBase64 },
   })
 }
 
@@ -142,8 +147,8 @@ export async function postFaceMatch(roll, dataURLOrBase64) {
 // Returns {roll_no, score, threshold, status, vendor} or throws on
 // transport / SDK error. The caller surfaces the error in the UI.
 export async function postFpMatch(roll, probeBase64, vendor) {
-  return api('/fp-match', {
+  return api(`/candidates/${encodeURIComponent(roll)}/fp-match`, {
     method: 'POST',
-    body: { roll_no: roll, probe_b64: probeBase64, fp_vendor: vendor || '' },
+    body: { probe_b64: probeBase64, fp_vendor: vendor || '' },
   })
 }

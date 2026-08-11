@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"net/http"
+	"strings"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -32,20 +33,33 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var (
-		id              int64
-		passHash        string
-		role            string
-		orgID           sql.NullInt64
-		centerID        sql.NullInt64
-		displayName     string
-		disabledAt      sql.NullTime
-		passChangeReq   int
+		id            int64
+		passHash      string
+		role          string
+		orgID         sql.NullInt64
+		centerID      sql.NullInt64
+		displayName   string
+		disabledAt    sql.NullTime
+		passChangeReq int
+		actualUsername string
 	)
+	// The identifier can be either a username (case-sensitive) OR an
+	// email (case-insensitive, admin/client roles only). Superadmin
+	// stays username-only — that account has no email on file by
+	// design. The DB stores emails lowercase, so we normalise the
+	// email side of the OR to match.
+	identifier := strings.TrimSpace(req.Username)
+	emailLower := strings.ToLower(identifier)
 	err := s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT id,password_hash,role,org_id,center_id,display_name,disabled_at,password_change_required
-		 FROM users WHERE username=?`,
-		req.Username,
-	).Scan(&id, &passHash, &role, &orgID, &centerID, &displayName, &disabledAt, &passChangeReq)
+		`SELECT id, password_hash, role, org_id, center_id, display_name,
+		        disabled_at, password_change_required, username
+		   FROM users
+		  WHERE username = ?
+		     OR (email = ? AND role IN ('admin','client'))
+		  LIMIT 1`,
+		identifier, emailLower,
+	).Scan(&id, &passHash, &role, &orgID, &centerID, &displayName,
+		&disabledAt, &passChangeReq, &actualUsername)
 	if err == sql.ErrNoRows {
 		s.auditAnonymous(r, "login.failure", map[string]any{
 			"username": req.Username, "reason": "unknown_user",
@@ -76,7 +90,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 
 	claims := auth.Claims{
 		UserID:   id,
-		Username: req.Username,
+		Username: actualUsername, // canonical from DB, not the raw input
 		Role:     role,
 	}
 	if orgID.Valid {
@@ -99,7 +113,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		"token": tok,
 		"user": map[string]any{
 			"id":                       id,
-			"username":                 req.Username,
+			"username":                 actualUsername,
 			"role":                     role,
 			"display_name":             displayName,
 			"org_id":                   claims.OrgID,

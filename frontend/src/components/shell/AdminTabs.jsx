@@ -8,13 +8,17 @@ import { NavLink } from 'react-router-dom'
 // admin patterns — it's calmer than the pill-button alternative and
 // reads as in-context navigation rather than a CTA.
 
+// The old "Shared login" tab (single-operator-per-org credential) was
+// dropped from the nav in Aug 2026 once Phase-2 multi-operator management
+// replaced it. The /admin/operator-access route + backend endpoints are
+// kept for backward compat in case anyone bookmarked them, but the tab
+// is gone so new admins don't stumble onto the legacy flow.
 const tabs = [
   { to: '/admin',                 label: 'Overview',        end: true  },
   { to: '/admin/catalog',         label: 'Exam catalog',    end: false },
   { to: '/admin/my-exams',        label: 'My exams',        end: false },
   { to: '/admin/operators',       label: 'Operators',       end: false },
   { to: '/admin/history',         label: 'History',         end: false },
-  { to: '/admin/operator-access', label: 'Shared login',    end: false },
   { to: '/admin/downloads',       label: 'Downloads',       end: false },
 ]
 

@@ -135,20 +135,28 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/me", s.me)
 		r.Post("/api/me/change-password", s.changePassword)
 
-		// Client portal — note that getCandidate is wrapped in walletCharge
-		// for client-role users only. Admin/superadmin can lookup rolls
-		// for free (e.g. for audit/support); the charge fires once per
-		// (org_id, roll_no) within WalletSameRollCacheMin minutes so a
-		// refresh or any operator in the same org re-searching the same
-		// candidate doesn't double-bill.
+		// Client portal — FACE-FIRST FLOW:
+		//   Candidate lookup is FREE for everyone (operator confirms a
+		//   roll exists before opening the webcam; no incentive to
+		//   avoid the confirmation).
+		//   The chargeable event is the face-match itself: the wallet
+		//   is debited on every face capture, regardless of match
+		//   outcome — the operator committed to spending by capturing.
+		//   Same-roll 5-min cache still applies for retries.
 		r.Get("/api/candidates/{roll}",
-			s.requireRole("client", "admin", "superadmin")(
-				s.walletCharge(s.getCandidate)))
+			s.requireRole("client", "admin", "superadmin")(s.getCandidate))
 		r.Get("/api/candidates/{roll}/photo", s.requireRole("client", "admin", "superadmin")(s.getCandidatePhoto))
 		r.Get("/api/candidates/{roll}/fp-template", s.requireRole("client")(s.getCandidateFPTemplate))
 		r.Get("/api/candidates/{roll}/face-template", s.requireRole("client", "admin", "superadmin")(s.getCandidateFaceTemplate))
+		// New URL-scoped routes so the wallet middleware can extract
+		// {roll} for the same-roll 5-min cache. Old body-based routes
+		// stay wired below for anything still calling them.
+		r.Post("/api/candidates/{roll}/face-match", s.requireRole("client")(s.walletCharge(s.faceMatch)))
+		r.Post("/api/candidates/{roll}/fp-match",   s.requireRole("client")(s.fpMatch))
+		// Legacy (kept for a release window; the new operator UI uses
+		// the URL-scoped routes above).
 		r.Post("/api/face-match", s.requireRole("client")(s.faceMatch))
-		r.Post("/api/fp-match", s.requireRole("client")(s.fpMatch))
+		r.Post("/api/fp-match",   s.requireRole("client")(s.fpMatch))
 		r.Post("/api/verifications", s.requireRole("client")(s.createVerification))
 		r.Post("/api/verifications/{id}/artifacts", s.requireRole("client")(s.uploadArtifact))
 

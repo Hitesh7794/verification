@@ -10,7 +10,7 @@ import {
   Label,
   PageHeader,
 } from '../../components/ui/ui.jsx'
-import { Pill } from '../../components/ui/extras.jsx'
+import { Icon, Pill } from '../../components/ui/extras.jsx'
 import { FadeIn } from '../../components/ui/motion.jsx'
 import {
   listOperators,
@@ -20,6 +20,7 @@ import {
   enableOperator,
   getSubscriptions,
 } from '../../lib/admin/examSubscriptions.js'
+import { getWallet, formatRupees } from '../../lib/wallet/wallet.js'
 
 // Admin > Operators — per-operator management (Phase 2). Each operator
 // has: username, password, display name, optional spending cap,
@@ -28,6 +29,7 @@ import {
 export default function Operators() {
   const [operators, setOperators] = useState([])
   const [subs, setSubs] = useState([])
+  const [walletBalancePaise, setWalletBalancePaise] = useState(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [creating, setCreating] = useState(false)
@@ -37,9 +39,14 @@ export default function Operators() {
     setLoading(true)
     setErr('')
     try {
-      const [ops, sb] = await Promise.all([listOperators(), getSubscriptions()])
+      const [ops, sb, wallet] = await Promise.all([
+        listOperators(),
+        getSubscriptions(),
+        getWallet().catch(() => null), // wallet is best-effort; don't fail the page
+      ])
       setOperators(ops)
       setSubs(sb)
+      setWalletBalancePaise(wallet?.balance_paise ?? null)
     } catch (e) {
       setErr(e.message || 'Load failed')
     } finally {
@@ -90,6 +97,7 @@ export default function Operators() {
         {creating && (
           <OperatorForm
             subs={subs}
+            walletBalancePaise={walletBalancePaise}
             mode="create"
             onCancel={() => setCreating(false)}
             onSaved={async () => { setCreating(false); await refresh() }}
@@ -126,7 +134,10 @@ export default function Operators() {
                       <>
                         <tr key={o.id} className="border-b border-slate-100 last:border-none hover:bg-slate-50/60">
                           <td className="px-4 py-3 font-mono text-xs text-slate-700">{o.username}</td>
-                          <td className="px-4 py-3 text-slate-900">{o.display_name}</td>
+                          <td className="px-4 py-3">
+                            <div className="text-slate-900">{o.display_name}</div>
+                            {o.email && <div className="text-xs text-slate-500 mt-0.5">{o.email}</div>}
+                          </td>
                           <td className="px-4 py-3 text-xs text-slate-600 tabular-nums">
                             {o.spending_cap_paise ? (
                               <span>
@@ -164,6 +175,7 @@ export default function Operators() {
                             <td colSpan={7} className="bg-slate-50 border-b border-slate-100 p-4">
                               <OperatorForm
                                 subs={subs}
+                                walletBalancePaise={walletBalancePaise}
                                 mode="edit"
                                 operator={o}
                                 onCancel={() => setEditing(null)}
@@ -187,11 +199,13 @@ export default function Operators() {
 
 // ── Create / edit form ────────────────────────────────────────────────
 
-function OperatorForm({ subs, mode, operator, onCancel, onSaved }) {
+function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSaved }) {
   const isEdit = mode === 'edit'
   const [username, setUsername] = useState(operator?.username || '')
   const [password, setPassword] = useState('')
+  const [showPw, setShowPw] = useState(false)
   const [displayName, setDisplayName] = useState(operator?.display_name || '')
+  const [email, setEmail] = useState(operator?.email || '')
   const [capRupees, setCapRupees] = useState(operator?.spending_cap_paise ? String(operator.spending_cap_paise / 100) : '')
   const [validFrom, setValidFrom] = useState(operator?.valid_from || '')
   const [validTo, setValidTo] = useState(operator?.valid_to || '')
@@ -212,6 +226,7 @@ function OperatorForm({ subs, mode, operator, onCancel, onSaved }) {
       if (isEdit) {
         const patch = { exam_ids: examIds }
         if (displayName !== operator.display_name) patch.display_name = displayName
+        if (email !== (operator.email || '')) patch.email = email
         if (password.trim()) patch.password = password
         if (validFrom !== (operator.valid_from || '')) patch.valid_from = validFrom
         if (validTo !== (operator.valid_to || '')) patch.valid_to = validTo
@@ -223,6 +238,7 @@ function OperatorForm({ subs, mode, operator, onCancel, onSaved }) {
           username: username.trim(),
           password,
           display_name: displayName.trim() || username.trim(),
+          email: email.trim() || undefined,
           spending_cap_paise: capPaise,
           valid_from: validFrom || undefined,
           valid_to: validTo || undefined,
@@ -253,8 +269,42 @@ function OperatorForm({ subs, mode, operator, onCancel, onSaved }) {
           <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
         </div>
         <div>
+          <Label>Email</Label>
+          <Input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="operator@college.edu"
+            required
+          />
+          {!isEdit && (
+            <p className="text-[11px] text-slate-500 mt-1">
+              The operator will get an email with their username, password, and login link.
+            </p>
+          )}
+        </div>
+        <div>
           <Label>{isEdit ? 'New password (leave blank to keep)' : 'Password'}</Label>
-          <Input type="text" value={password} onChange={(e) => setPassword(e.target.value)} required={!isEdit} minLength={10} />
+          <div className="relative">
+            <Input
+              type={showPw ? 'text' : 'password'}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              required={!isEdit}
+              minLength={10}
+              autoComplete="new-password"
+              className="pr-10"
+            />
+            <button
+              type="button"
+              onClick={() => setShowPw(v => !v)}
+              aria-label={showPw ? 'Hide password' : 'Show password'}
+              tabIndex={-1}
+              className="absolute inset-y-0 right-0 px-3 flex items-center text-slate-400 hover:text-slate-700 transition-colors"
+            >
+              <Icon.Eye className="h-4 w-4" />
+            </button>
+          </div>
         </div>
         <div>
           <Label>Spending cap (₹, leave blank = no cap)</Label>
@@ -266,14 +316,27 @@ function OperatorForm({ subs, mode, operator, onCancel, onSaved }) {
             onChange={(e) => setCapRupees(e.target.value)}
             placeholder="e.g. 10"
           />
+          {walletBalancePaise != null && (
+            (() => {
+              const capPaise = capRupees.trim() ? Math.round(Number(capRupees) * 100) : null
+              const overBalance = capPaise != null && capPaise > walletBalancePaise
+              return (
+                <p className={`text-[11px] mt-1 ${overBalance ? 'text-rose-600 font-medium' : 'text-slate-500'}`}>
+                  {overBalance
+                    ? `Cap exceeds wallet balance ${formatRupees(walletBalancePaise)}. Top up the wallet first, or lower the cap.`
+                    : `Wallet balance: ${formatRupees(walletBalancePaise)} — cap must be ≤ this.`}
+                </p>
+              )
+            })()
+          )}
         </div>
         <div>
-          <Label>Valid from (optional)</Label>
-          <Input type="date" value={validFrom} onChange={(e) => setValidFrom(e.target.value)} />
+          <Label>Valid from</Label>
+          <Input type="date" value={validFrom} onChange={(e) => setValidFrom(e.target.value)} required />
         </div>
         <div>
-          <Label>Valid to (optional)</Label>
-          <Input type="date" value={validTo} onChange={(e) => setValidTo(e.target.value)} />
+          <Label>Valid to</Label>
+          <Input type="date" value={validTo} onChange={(e) => setValidTo(e.target.value)} required min={validFrom || undefined} />
         </div>
       </div>
       <div>

@@ -91,9 +91,15 @@ func (s *Server) faceMatch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	roll := strings.TrimSpace(req.RollNo)
+	// Prefer roll from URL path (new URL-scoped route) so the wallet
+	// middleware saw the same value we're about to act on. Fall back
+	// to the body field for the legacy /api/face-match route.
+	roll := strings.TrimSpace(chi.URLParam(r, "roll"))
 	if roll == "" {
-		writeErr(w, http.StatusBadRequest, "roll_no required")
+		roll = strings.TrimSpace(req.RollNo)
+	}
+	if roll == "" {
+		writeErr(w, http.StatusBadRequest, "roll_no required (URL path or body)")
 		return
 	}
 

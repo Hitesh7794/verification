@@ -193,6 +193,10 @@ func TestWalletCharge_FailedLookupDoesNotDebit(t *testing.T) {
 // invoking the inner handler — confirms the early 402 path still
 // fires after the buffered refactor.
 func TestWalletCharge_EmptyWalletRejected(t *testing.T) {
+	// Face-first flow (from Aug 2026): the wallet charge fires on the
+	// face-match endpoint, not on the free candidate lookup. This test
+	// asserts an empty wallet blocks the operator at the face capture
+	// step — which is the operator's first payable action.
 	s, a, _ := twoOrgServer(t)
 	s.deps.Cfg.WalletFeePerLookupPaise = 500
 	// Force wallet to 0 explicitly.
@@ -206,9 +210,16 @@ func TestWalletCharge_EmptyWalletRejected(t *testing.T) {
 		"username": a.OperatorUsername, "password": a.OperatorPassword,
 	})
 	opToken := loginBody["token"].(string)
-	code, _ := doJSON(t, s, "GET", "/api/candidates/anything", opToken, nil)
+	// Candidate lookup itself is free now — must NOT 402.
+	if code, _ := doJSON(t, s, "GET", "/api/candidates/anything", opToken, nil); code == http.StatusPaymentRequired {
+		t.Errorf("candidate lookup should be free (no 402), got %d", code)
+	}
+	// Face-match on an empty wallet must 402 (pre-check inside walletCharge).
+	code, _ := doJSON(t, s, "POST", "/api/candidates/anything/face-match", opToken, map[string]any{
+		"image_b64": "",
+	})
 	if code != http.StatusPaymentRequired {
-		t.Errorf("empty wallet lookup must 402, got %d", code)
+		t.Errorf("face-match on empty wallet must 402, got %d", code)
 	}
 }
 

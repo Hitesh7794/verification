@@ -8,6 +8,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/go-chi/chi/v5"
+
 	"github.com/veni/neet-verification/internal/fpmatch"
 )
 
@@ -63,9 +65,14 @@ func (s *Server) fpMatch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	roll := strings.TrimSpace(req.RollNo)
+	// Prefer roll from URL path (new URL-scoped route) so this stays
+	// aligned with the face-match handler's contract.
+	roll := strings.TrimSpace(chi.URLParam(r, "roll"))
 	if roll == "" {
-		writeErr(w, http.StatusBadRequest, "roll_no required")
+		roll = strings.TrimSpace(req.RollNo)
+	}
+	if roll == "" {
+		writeErr(w, http.StatusBadRequest, "roll_no required (URL path or body)")
 		return
 	}
 	probeB64 := strings.TrimSpace(req.ProbeB64)
