@@ -148,6 +148,8 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/candidates/{roll}/photo", s.requireRole("client", "admin", "superadmin")(s.getCandidatePhoto))
 		r.Get("/api/candidates/{roll}/fp-template", s.requireRole("client")(s.getCandidateFPTemplate))
 		r.Get("/api/candidates/{roll}/face-template", s.requireRole("client", "admin", "superadmin")(s.getCandidateFaceTemplate))
+		// Phase 3c: attempt counter for the operator UI's "Nth attempt" chip.
+		r.Get("/api/candidates/{roll}/attempts", s.requireRole("client", "admin")(s.getCandidateAttempts))
 		// New URL-scoped routes so the wallet middleware can extract
 		// {roll} for the same-roll 5-min cache. Old body-based routes
 		// stay wired below for anything still calling them.

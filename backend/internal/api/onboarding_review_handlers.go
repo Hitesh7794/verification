@@ -489,10 +489,16 @@ func (s *Server) superadminApproveApplication(w http.ResponseWriter, r *http.Req
 		writeErr(w, http.StatusInternalServerError, "bcrypt: "+err.Error())
 		return
 	}
+	// Copy the KYC head_email onto the users row so the admin can
+	// sign in with either their username or the email they used to
+	// register (see auth_handlers.login — accepts both for admin +
+	// client roles). Case-normalised to match how email login queries.
+	adminEmail := strings.ToLower(strings.TrimSpace(headEmail))
 	res, err := tx.ExecContext(r.Context(),
-		`INSERT INTO users(username, password_hash, role, org_id, display_name)
-		 VALUES(?, ?, 'admin', ?, ?)`,
+		`INSERT INTO users(username, password_hash, role, org_id, display_name, email)
+		 VALUES(?, ?, 'admin', ?, ?, ?)`,
 		username, string(placeholder), orgID, headName+" ("+headDesignation+")",
+		nullable(adminEmail),
 	)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "user insert: "+err.Error())

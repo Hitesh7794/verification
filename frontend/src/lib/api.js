@@ -152,3 +152,11 @@ export async function postFpMatch(roll, probeBase64, vendor) {
     body: { probe_b64: probeBase64, fp_vendor: vendor || '' },
   })
 }
+
+// Phase 3c — attempt counter for the "Nth attempt on this roll" chip.
+// Backend counts verifications for the caller's org over the past 30
+// days. Returns { roll_no, count, since, last_at? }. Non-fatal on
+// failure: the operator flow proceeds without the chip.
+export async function getCandidateAttempts(roll) {
+  return api(`/candidates/${encodeURIComponent(roll)}/attempts`)
+}

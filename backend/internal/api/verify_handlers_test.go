@@ -97,6 +97,44 @@ func testServer(t *testing.T) (s *Server, token, roll string, cleanup func()) {
 		t.Fatal(err)
 	}
 
+	// Phase 3a — the operator's roll lookup now goes through
+	// exam_candidates JOIN operator_exams. Seed a client + exam +
+	// exam_candidate for the test roll and assign it to the operator
+	// so every test that uses this fixture keeps working. Photos and
+	// templates still live on the filesystem (legacy artifact path).
+	if _, err := d.Exec(`INSERT INTO clients(name, notes) VALUES('Test Board', 'seed')`); err != nil {
+		t.Fatal(err)
+	}
+	var clientRowID int64
+	if err := d.QueryRow(`SELECT id FROM clients ORDER BY id DESC LIMIT 1`).Scan(&clientRowID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(`
+		INSERT INTO exams(client_id, name, exam_code, verification_from, verification_to)
+		VALUES(?, 'Test Exam', 'TEST-EXAM-001', '2020-01-01', '2099-12-31')`,
+		clientRowID); err != nil {
+		t.Fatal(err)
+	}
+	var examID int64
+	if err := d.QueryRow(`SELECT id FROM exams WHERE exam_code='TEST-EXAM-001'`).Scan(&examID); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(`
+		INSERT INTO exam_candidates(exam_id, roll_no, name, verification_date)
+		VALUES(?, ?, 'Test Candidate', '2026-06-01')`, examID, roll); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(`
+		INSERT INTO organization_exam_subscriptions(org_id, exam_id, subscribed_by)
+		VALUES(?, ?, ?)`, orgID, examID, uid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(`
+		INSERT INTO operator_exams(user_id, exam_id) VALUES(?, ?)`,
+		uid, examID); err != nil {
+		t.Fatal(err)
+	}
+
 	cleanup = func() { d.Close() }
 	return s, tok, roll, cleanup
 }

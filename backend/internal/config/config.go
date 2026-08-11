@@ -99,7 +99,7 @@ type Config struct {
 	// Per-deployment wallet tuning. All amounts in paise (₹1 = 100 paise).
 	WalletFeePerLookupPaise int    // default 500 = ₹5
 	WalletMaxDepositPaise   int    // default 5_000_000 = ₹50,000 (single deposit cap)
-	WalletSameRollCacheMin  int    // default 5 — same roll, same user, no re-charge for this many minutes
+	WalletSameRollCacheMin  int    // default 1440 (24h) — same roll, same org, no re-charge inside this window
 
 	// DownloadsDir is where the operator-laptop install bundle (the
 	// Windows .zip today, the signed .exe later) lives on disk. The
@@ -143,7 +143,7 @@ func Load() Config {
 		RazorpayWebhookSecret:     envOr("RAZORPAY_WEBHOOK_SECRET", ""),
 		WalletFeePerLookupPaise:   envInt("WALLET_FEE_PER_LOOKUP_PAISE", 500),
 		WalletMaxDepositPaise:     envInt("WALLET_MAX_DEPOSIT_PAISE", 5_000_000),
-		WalletSameRollCacheMin:    envInt("WALLET_SAME_ROLL_CACHE_MIN", 5),
+		WalletSameRollCacheMin:    envInt("WALLET_SAME_ROLL_CACHE_MIN", 1440),
 		DownloadsDir:              envOr("DOWNLOADS_DIR", "downloads"),
 		SMTPHost:                  envOr("SMTP_HOST", ""),
 		SMTPPort:                  envOr("SMTP_PORT", "587"),

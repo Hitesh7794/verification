@@ -16,6 +16,8 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+
+	"github.com/veni/neet-verification/internal/auth"
 )
 
 // Maximum artifact upload size. Captured fingerprint images are <100 KB,
@@ -43,30 +45,69 @@ var allowedVerificationVia = map[string]bool{
 	"manual":      true,
 }
 
+// getCandidate — Phase 3a exam-scoped lookup.
+//
+// The roll must live in exam_candidates and be reachable by the caller:
+//   client (operator) → the exam is in the operator's operator_exams
+//   admin             → the exam is subscribed by the operator's org
+//   superadmin        → any exam
+//
+// If the roll doesn't match under those rules, we return 404 "no data" —
+// there is deliberately no leak of "the roll exists in another exam
+// you don't have access to". That's the security gate.
+//
+// Biometric artifacts (photo, fp template) are still fetched by roll_no
+// from the filesystem (legacy path). Once S3 + TrustView land the
+// artifact URLs become derived from exam_code, but the DB-level gate
+// here doesn't need to change again.
 func (s *Server) getCandidate(w http.ResponseWriter, r *http.Request) {
 	roll := strings.TrimSpace(chi.URLParam(r, "roll"))
 	if roll == "" {
 		writeErr(w, http.StatusBadRequest, "missing roll")
 		return
 	}
-	c, ok := s.deps.Index.Get(roll)
-	if !ok {
-		writeErr(w, http.StatusNotFound, "candidate not found")
+	claims := claimsFrom(r)
+	if claims == nil {
+		writeErr(w, http.StatusUnauthorized, "missing token")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"roll_no":             c.RollNo,
-		"org_code":            c.OrgCode,
-		"center_code":         c.CenterCode,
-		"center_name":         c.CenterName,
-		"exam_date":           c.ExamDate,
-		"has_photo":           c.HasPhoto,
-		"has_fp_image":        c.HasFpImage,
-		"has_iso_template":    c.HasIsoTpl,
-		"fp_template_format":  c.FpTemplateFormat,
-		"photo_url":           "/api/candidates/" + roll + "/photo",
-		"fp_template_url":     "/api/candidates/" + roll + "/fp-template",
-	})
+
+	ec, err := s.lookupExamCandidate(r, claims, roll)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
+		return
+	}
+	if ec == nil {
+		writeErr(w, http.StatusNotFound, "no data")
+		return
+	}
+
+	// Optionally attach the legacy filesystem indexer's metadata so the
+	// operator UI can still surface has_photo / has_iso_template flags
+	// without a separate HEAD request. Filesystem is our biometric
+	// source until S3 lands; a matching roll_no in gndu27 means we can
+	// serve those assets. Absence just means "no enrolled photo/fp
+	// yet" — operator UI handles that gracefully.
+	fsRow, hasFS := s.deps.Index.Get(roll)
+
+	resp := map[string]any{
+		"roll_no":           ec.RollNo,
+		"name":              ec.Name,
+		"verification_date": ec.VerificationDate,
+		"exam_id":           ec.ExamID,
+		"exam_code":         ec.ExamCode,
+		"exam_name":         ec.ExamName,
+		"client_id":         ec.ClientID,
+		"client_name":       ec.ClientName,
+		// Biometric availability — filesystem-backed until S3/TrustView.
+		"has_photo":          hasFS && fsRow.HasPhoto,
+		"has_fp_image":       hasFS && fsRow.HasFpImage,
+		"has_iso_template":   hasFS && fsRow.HasIsoTpl,
+		"fp_template_format": func() string { if hasFS { return fsRow.FpTemplateFormat }; return "" }(),
+		"photo_url":          "/api/candidates/" + roll + "/photo",
+		"fp_template_url":    "/api/candidates/" + roll + "/fp-template",
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // getCandidateFPTemplate returns the candidate's enrolled fingerprint
@@ -483,4 +524,157 @@ func isUniqueViolation(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "UNIQUE constraint failed") ||
 		strings.Contains(msg, "23505")
+}
+
+// ── Phase 3a exam-scoped lookup ──────────────────────────────────────
+
+// examCandidateRow is what a lookup returns after the role-based scope
+// filter has been applied. The exam context (id / code / name / client)
+// travels alongside so the operator UI can show "exam: UPSC-CS-2026"
+// as a small pill, and the audit trail on POST /api/verifications can
+// tag the row with which exam produced it (Phase 3+).
+type examCandidateRow struct {
+	ID               int64
+	ExamID           int64
+	ExamCode         string
+	ExamName         string
+	ClientID         int64
+	ClientName       string
+	RollNo           string
+	Name             string
+	VerificationDate string // may be empty if the CSV row omitted the date
+}
+
+// lookupExamCandidate finds a candidate the caller is allowed to see.
+// Returns (row, nil) on a hit, (nil, nil) if the roll is nowhere the
+// caller can reach, and (nil, err) on a real DB error.
+//
+// Role-based scoping — the entire security gate lives here:
+//
+//   client (operator)  →  row must be in an exam the operator is
+//                         assigned to via operator_exams
+//   admin              →  row must be in an exam the operator's org
+//                         subscribes to via organization_exam_subscriptions
+//   superadmin         →  no scope filter — sees everything
+//
+// A roll that exists in exam_candidates for some OTHER org's exam is
+// invisible: the SELECT simply returns no rows. We deliberately do not
+// return a distinct "exists but forbidden" — that would leak the
+// existence of enrollments across tenants.
+func (s *Server) lookupExamCandidate(r *http.Request, claims *authClaims, roll string) (*examCandidateRow, error) {
+	if claims == nil {
+		return nil, nil
+	}
+
+	var (
+		query string
+		args  []any
+	)
+	base := `
+		SELECT ec.id, ec.exam_id, e.exam_code, e.name, e.client_id, c.name,
+		       ec.roll_no, ec.name, COALESCE(ec.verification_date, '')
+		  FROM exam_candidates ec
+		  JOIN exams   e ON e.id = ec.exam_id
+		  JOIN clients c ON c.id = e.client_id
+		 WHERE ec.roll_no = ?`
+
+	switch claims.Role {
+	case "client":
+		if claims.UserID == 0 {
+			return nil, nil
+		}
+		query = base + `
+		  AND EXISTS (
+		    SELECT 1 FROM operator_exams oe
+		     WHERE oe.exam_id = ec.exam_id AND oe.user_id = ?
+		  )
+		LIMIT 1`
+		args = []any{roll, claims.UserID}
+
+	case "admin":
+		if claims.OrgID == nil {
+			return nil, nil
+		}
+		query = base + `
+		  AND EXISTS (
+		    SELECT 1 FROM organization_exam_subscriptions s
+		     WHERE s.exam_id = ec.exam_id AND s.org_id = ?
+		  )
+		LIMIT 1`
+		args = []any{roll, *claims.OrgID}
+
+	case "superadmin", "ops_admin":
+		query = base + ` LIMIT 1`
+		args = []any{roll}
+
+	default:
+		return nil, nil
+	}
+
+	var out examCandidateRow
+	err := s.deps.DB.QueryRowContext(r.Context(), query, args...).Scan(
+		&out.ID, &out.ExamID, &out.ExamCode, &out.ExamName,
+		&out.ClientID, &out.ClientName,
+		&out.RollNo, &out.Name, &out.VerificationDate,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &out, nil
+}
+
+// authClaims mirrors auth.Claims — kept as a local alias so this file
+// doesn't need to import the auth package just for the type reference.
+type authClaims = auth.Claims
+
+// ── Phase 3c attempt counter ─────────────────────────────────────────
+//
+// Operator UI shows a small "3rd attempt" chip when they open a
+// candidate. We look 30 days back so a genuine multi-day re-verify
+// (student returned) still surfaces prior context, but very old
+// history doesn't pollute the badge.
+//
+// Scoped to the caller's org so a college can't see how many times
+// another college has looked up the same roll. That would leak
+// enrollment traffic.
+
+func (s *Server) getCandidateAttempts(w http.ResponseWriter, r *http.Request) {
+	roll := strings.TrimSpace(chi.URLParam(r, "roll"))
+	if roll == "" {
+		writeErr(w, http.StatusBadRequest, "missing roll")
+		return
+	}
+	claims := claimsFrom(r)
+	if claims == nil || claims.OrgID == nil {
+		writeErr(w, http.StatusForbidden, "org context required")
+		return
+	}
+	cutoff := time.Now().UTC().Add(-30 * 24 * time.Hour)
+
+	var (
+		count  int64
+		lastAt sql.NullTime
+	)
+	err := s.deps.DB.QueryRowContext(r.Context(), `
+		SELECT COUNT(*), MAX(created_at)
+		  FROM verifications
+		 WHERE org_id = ? AND roll_no = ? AND created_at >= ?`,
+		*claims.OrgID, roll, cutoff,
+	).Scan(&count, &lastAt)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
+		return
+	}
+	out := map[string]any{
+		"roll_no": roll,
+		"count":   count,
+		"since":   cutoff.Format(time.RFC3339),
+	}
+	if lastAt.Valid {
+		out["last_at"] = lastAt.Time.Format(time.RFC3339)
+	}
+	writeJSON(w, http.StatusOK, out)
 }

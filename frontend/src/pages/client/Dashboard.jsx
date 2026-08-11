@@ -15,7 +15,7 @@ import {
 import FingerprintCapture from '../../components/verify/FingerprintCapture.jsx'
 import IrisCapture from '../../components/verify/IrisCapture.jsx'
 import FaceMatchPanel from '../../components/verify/FaceMatchPanel.jsx'
-import { api, fetchFPTemplate, fetchPhotoBlob, isWalletEmptyError } from '../../lib/api.js'
+import { api, fetchFPTemplate, fetchPhotoBlob, isWalletEmptyError, getCandidateAttempts } from '../../lib/api.js'
 
 // Generate an idempotency key per verification attempt so a network retry
 // of the submit doesn't create two rows. crypto.randomUUID is available in
@@ -23,6 +23,21 @@ import { api, fetchFPTemplate, fetchPhotoBlob, isWalletEmptyError } from '../../
 function newIdempotencyKey() {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID()
   return 'k-' + Date.now() + '-' + Math.random().toString(36).slice(2)
+}
+
+// Short "how long ago" string for the attempt-counter chip. Coarse on
+// purpose — the exact minute doesn't matter, only the recency.
+function relativeAgo(iso) {
+  const then = new Date(iso).getTime()
+  if (!then) return ''
+  const secs = Math.max(1, Math.floor((Date.now() - then) / 1000))
+  if (secs < 60)       return `${secs}s ago`
+  const mins = Math.floor(secs / 60)
+  if (mins < 60)       return `${mins}m ago`
+  const hrs = Math.floor(mins / 60)
+  if (hrs < 24)        return `${hrs}h ago`
+  const days = Math.floor(hrs / 24)
+  return `${days}d ago`
 }
 
 const APP_VERSION = '0.2.0'
@@ -173,6 +188,7 @@ export default function ClientDashboard() {
   const [candidate, setCandidate] = useState(null)
   const [photoBlob, setPhotoBlob] = useState(null)
   const [gallery, setGallery] = useState(null) // {template_b64, format}
+  const [attempts, setAttempts] = useState(null) // {count, last_at?} — Phase 3c
   const [lookupErr, setLookupErr] = useState('')
   const [snap, setSnap] = useState(null)
   const [faceResult, setFaceResult] = useState(persisted?.faceResult ?? null)
@@ -304,6 +320,13 @@ export default function ClientDashboard() {
       } else {
         setGallery(null)
       }
+      // Attempt-counter fetch — non-fatal; if it fails, we just hide
+      // the chip. Kept off the critical path (parallel-safe).
+      try {
+        setAttempts(await getCandidateAttempts(roll.trim()))
+      } catch {
+        setAttempts(null)
+      }
       setStep(1)
     } catch (e) {
       // HTTP 402 from the wallet middleware → org wallet is empty.
@@ -411,6 +434,7 @@ export default function ClientDashboard() {
     setPhotoBlob(null)
     setGallery(null)
     setSnap(null)
+    setAttempts(null)
     setIdempotencyKey(null)
     clearPersistedState()
     setFaceResult(null)
@@ -579,6 +603,24 @@ export default function ClientDashboard() {
                   {candidate.roll_no}
                 </span>
               </div>
+              {/* Phase 3c — attempt-counter chip. Only shown when the
+                  operator's org has previously looked up this roll
+                  (count > 0 means at least one prior verification row). */}
+              {attempts && attempts.count > 0 && (
+                <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-amber-50 border border-amber-200 px-2.5 py-0.5 text-[11px] font-medium text-amber-800">
+                  <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
+                  {(() => {
+                    const n = attempts.count + 1
+                    const suffix = n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th'
+                    return `${n}${suffix} attempt on this roll`
+                  })()}
+                  {attempts.last_at && (
+                    <span className="text-amber-700/70 font-normal">
+                      · last {relativeAgo(attempts.last_at)}
+                    </span>
+                  )}
+                </div>
+              )}
               {faceResult && (
                 <div className="mt-3 text-xs text-slate-600 flex items-baseline justify-between">
                   <span className="uppercase tracking-wide text-slate-500">Face match</span>
