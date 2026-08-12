@@ -6,6 +6,7 @@ package api
 // area so `go test -run` is easy to scope.
 
 import (
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -321,10 +322,37 @@ func TestChangePassword_OperatorSyncsPlaintext(t *testing.T) {
 	if code != http.StatusOK {
 		t.Fatalf("operator change-password: %d", code)
 	}
-	// Admin's GET should see the new plaintext.
-	_, getBody := doJSON(t, s, "GET", "/api/admin/operator-access", a.AdminToken, nil)
-	if getBody["password"] != newPw {
-		t.Errorf("admin view must show synced plaintext; got %v", getBody["password"])
+	// Admin's operator list should see the new plaintext. (The legacy
+	// /admin/operator-access endpoint was removed; the invariant now
+	// lives on /admin/operators, which returns a JSON array so we
+	// unmarshal it here directly rather than through doJSON's map
+	// helper.)
+	req := httptest.NewRequest("GET", "/api/admin/operators", nil)
+	req.RemoteAddr = "127.0.0.1:1234"
+	req.Header.Set("Authorization", "Bearer "+a.AdminToken)
+	rr := httptest.NewRecorder()
+	s.Router().ServeHTTP(rr, req)
+	if rr.Code != http.StatusOK {
+		t.Fatalf("list operators: %d", rr.Code)
+	}
+	var envelope struct {
+		Operators []map[string]any `json:"operators"`
+	}
+	if err := json.Unmarshal(rr.Body.Bytes(), &envelope); err != nil {
+		t.Fatalf("decode list: %v", err)
+	}
+	found := false
+	for _, row := range envelope.Operators {
+		if row["username"] == a.OperatorUsername {
+			found = true
+			if row["password"] != newPw {
+				t.Errorf("admin view must show synced plaintext; got %v", row["password"])
+			}
+			break
+		}
+	}
+	if !found {
+		t.Errorf("operator %q not in admin list", a.OperatorUsername)
 	}
 }
 

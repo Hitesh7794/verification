@@ -7,7 +7,6 @@ import ClientDownloads from './pages/client/Downloads.jsx'
 
 import AdminLogin from './pages/admin/Login.jsx'
 import AdminDashboard from './pages/admin/Dashboard.jsx'
-import AdminOperatorAccess from './pages/admin/OperatorAccess.jsx'
 import AdminHistory from './pages/admin/History.jsx'
 import AdminDownloads from './pages/admin/Downloads.jsx'
 import AdminCatalog from './pages/admin/Catalog.jsx'
@@ -133,14 +132,6 @@ export default function App() {
             element={
               <RequireRole role="admin">
                 <AdminDashboard />
-              </RequireRole>
-            }
-          />
-          <Route
-            path="/admin/operator-access"
-            element={
-              <RequireRole role="admin">
-                <AdminOperatorAccess />
               </RequireRole>
             }
           />

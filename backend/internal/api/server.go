@@ -179,16 +179,6 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/admin/verifications.csv", s.requireRole("admin", "superadmin")(s.adminExportVerificationsCSV))
 		r.Post("/api/admin/wallet/credit", s.requireRole("superadmin")(s.adminWalletCredit))
 
-		// Admin-only shared operator credential. One client-role user
-		// per org; admin can view + reset + disable. The credential is
-		// the same for every operator machine at the institution.
-		// Strictly org-scoped via JWT claims.
-		r.Get("/api/admin/operator-access", s.requireRole("admin")(s.adminGetOperatorAccess))
-		r.Post("/api/admin/operator-access/reset-password", s.requireRole("admin")(s.adminResetOperatorAccess))
-		r.Post("/api/admin/operator-access/set-password", s.requireRole("admin")(s.adminSetOperatorPassword))
-		r.Post("/api/admin/operator-access/disable", s.requireRole("admin")(s.adminDisableOperatorAccess))
-		r.Post("/api/admin/operator-access/enable", s.requireRole("admin")(s.adminEnableOperatorAccess))
-
 		// Phase-2 admin surface: exam catalog subscribe / unsubscribe.
 		r.Get("/api/admin/catalog",                    s.requireRole("admin")(s.adminCatalog))
 		r.Get("/api/admin/subscriptions",              s.requireRole("admin")(s.adminListSubscriptions))

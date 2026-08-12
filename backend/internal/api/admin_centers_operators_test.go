@@ -19,7 +19,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
-	"strings"
 	"testing"
 	"time"
 
@@ -37,7 +36,6 @@ import (
 type orgFixture struct {
 	OrgID            int64
 	OrgCode          string
-	CenterID         int64
 	AdminID          int64
 	AdminUser        string
 	AdminToken       string
@@ -87,14 +85,6 @@ func seedOrgFixture(t *testing.T, s *Server, jwt *auth.JWTService, orgCode, orgN
 	}
 	orgID, _ := res.LastInsertId()
 
-	cres, err := s.deps.DB.Exec(
-		`INSERT INTO centers(org_id, code, name) VALUES(?, 'MAIN', ?)`, orgID, orgName,
-	)
-	if err != nil {
-		t.Fatalf("insert center: %v", err)
-	}
-	centerID, _ := cres.LastInsertId()
-
 	adminHash, _ := bcrypt.GenerateFromPassword([]byte("admin-test-pw"), bcrypt.MinCost)
 	ures, err := s.deps.DB.Exec(
 		`INSERT INTO users(username, password_hash, role, org_id, display_name, activated_at)
@@ -109,9 +99,9 @@ func seedOrgFixture(t *testing.T, s *Server, jwt *auth.JWTService, orgCode, orgN
 	opHash, _ := bcrypt.GenerateFromPassword([]byte(opPassword), bcrypt.MinCost)
 	opRes, err := s.deps.DB.Exec(
 		`INSERT INTO users(username, password_hash, password_plaintext, role,
-		                   org_id, center_id, display_name, activated_at)
-		 VALUES(?, ?, ?, 'client', ?, ?, 'Centre Operator', CURRENT_TIMESTAMP)`,
-		opUser, string(opHash), opPassword, orgID, centerID,
+		                   org_id, display_name, activated_at)
+		 VALUES(?, ?, ?, 'client', ?, 'Centre Operator', CURRENT_TIMESTAMP)`,
+		opUser, string(opHash), opPassword, orgID,
 	)
 	if err != nil {
 		t.Fatalf("insert operator: %v", err)
@@ -129,7 +119,6 @@ func seedOrgFixture(t *testing.T, s *Server, jwt *auth.JWTService, orgCode, orgN
 	}
 	return orgFixture{
 		OrgID: orgID, OrgCode: orgCode,
-		CenterID:         centerID,
 		AdminID:          adminID,
 		AdminUser:        adminUser,
 		AdminToken:       tok,
@@ -166,254 +155,13 @@ func doJSON(t *testing.T, s *Server, method, path, token string, body any) (int,
 	return rr.Code, out
 }
 
+
 // -----------------------------------------------------------------------
-// Operator access — view, reset, disable/enable
+// Approval flow — end-to-end (only surviving high-level test in this file;
+// the legacy /admin/operator-access GET/reset/disable tests were removed
+// with their handlers as part of the Phase-2 cleanup.)
 // -----------------------------------------------------------------------
 
-func TestAdminGetOperatorAccess_HappyPath(t *testing.T) {
-	s, a, _ := twoOrgServer(t)
-	code, body := doJSON(t, s, "GET", "/api/admin/operator-access", a.AdminToken, nil)
-	if code != http.StatusOK {
-		t.Fatalf("want 200, got %d body=%v", code, body)
-	}
-	if body["username"] != a.OperatorUsername {
-		t.Errorf("username: want %q, got %v", a.OperatorUsername, body["username"])
-	}
-	if body["password"] != a.OperatorPassword {
-		t.Errorf("password must be visible to admin; want %q, got %v", a.OperatorPassword, body["password"])
-	}
-	if body["status"] != "active" {
-		t.Errorf("status: want active, got %v", body["status"])
-	}
-}
-
-// The critical multi-tenant test: admin A's GET must show A's operator,
-// never B's. We assert by username because the password strings differ
-// per fixture too — either field leaking would be a security incident.
-func TestAdminGetOperatorAccess_OrgIsolation(t *testing.T) {
-	s, a, b := twoOrgServer(t)
-	_, bodyA := doJSON(t, s, "GET", "/api/admin/operator-access", a.AdminToken, nil)
-	_, bodyB := doJSON(t, s, "GET", "/api/admin/operator-access", b.AdminToken, nil)
-	if bodyA["username"] == b.OperatorUsername || bodyA["password"] == b.OperatorPassword {
-		t.Errorf("admin A leaked org B's operator: %v", bodyA)
-	}
-	if bodyB["username"] == a.OperatorUsername || bodyB["password"] == a.OperatorPassword {
-		t.Errorf("admin B leaked org A's operator: %v", bodyB)
-	}
-	if bodyA["username"] != a.OperatorUsername {
-		t.Errorf("admin A should see own operator, got %v", bodyA["username"])
-	}
-	if bodyB["username"] != b.OperatorUsername {
-		t.Errorf("admin B should see own operator, got %v", bodyB["username"])
-	}
-}
-
-func TestAdminResetOperatorAccess_ChangesBothHashAndPlaintext(t *testing.T) {
-	s, a, _ := twoOrgServer(t)
-
-	// Before reset: operator can log in with the original password.
-	beforeCode, _ := doJSON(t, s, "POST", "/api/auth/login", "", map[string]any{
-		"username": a.OperatorUsername, "password": a.OperatorPassword,
-	})
-	if beforeCode != http.StatusOK {
-		t.Fatalf("operator login before reset: want 200, got %d", beforeCode)
-	}
-
-	// Reset.
-	rcode, rbody := doJSON(t, s, "POST", "/api/admin/operator-access/reset-password", a.AdminToken, nil)
-	if rcode != http.StatusOK {
-		t.Fatalf("reset: %d %v", rcode, rbody)
-	}
-	newPassword := rbody["password"].(string)
-	if newPassword == a.OperatorPassword {
-		t.Fatal("reset must yield a different password")
-	}
-	if len(newPassword) < 8 {
-		t.Errorf("new password looks suspiciously short: %q", newPassword)
-	}
-
-	// Old password no longer works (hash was rotated).
-	oldCode, _ := doJSON(t, s, "POST", "/api/auth/login", "", map[string]any{
-		"username": a.OperatorUsername, "password": a.OperatorPassword,
-	})
-	if oldCode != http.StatusUnauthorized {
-		t.Errorf("old password should be rejected; got %d", oldCode)
-	}
-
-	// New password works.
-	newCode, _ := doJSON(t, s, "POST", "/api/auth/login", "", map[string]any{
-		"username": a.OperatorUsername, "password": newPassword,
-	})
-	if newCode != http.StatusOK {
-		t.Errorf("new password should log in; got %d", newCode)
-	}
-
-	// Subsequent GET reflects the new plaintext — they must stay in sync.
-	_, getBody := doJSON(t, s, "GET", "/api/admin/operator-access", a.AdminToken, nil)
-	if getBody["password"] != newPassword {
-		t.Errorf("GET after reset should reflect new password; got %v", getBody["password"])
-	}
-}
-
-func TestAdminDisableEnableOperatorAccess_LoginCycle(t *testing.T) {
-	s, a, _ := twoOrgServer(t)
-
-	// Disable.
-	dcode, _ := doJSON(t, s, "POST", "/api/admin/operator-access/disable", a.AdminToken, nil)
-	if dcode != http.StatusOK {
-		t.Fatalf("disable: %d", dcode)
-	}
-
-	// Operator login refused with 403 + "disabled" message (not 401, so
-	// the legitimate operator knows their creds are right and the
-	// problem is access policy).
-	code, body := doJSON(t, s, "POST", "/api/auth/login", "", map[string]any{
-		"username": a.OperatorUsername, "password": a.OperatorPassword,
-	})
-	if code != http.StatusForbidden {
-		t.Errorf("disabled login: want 403, got %d", code)
-	}
-	if msg, _ := body["error"].(string); !strings.Contains(msg, "disabled") {
-		t.Errorf("disabled login error must mention 'disabled', got %q", msg)
-	}
-
-	// Re-enable.
-	ecode, _ := doJSON(t, s, "POST", "/api/admin/operator-access/enable", a.AdminToken, nil)
-	if ecode != http.StatusOK {
-		t.Fatalf("enable: %d", ecode)
-	}
-	code2, _ := doJSON(t, s, "POST", "/api/auth/login", "", map[string]any{
-		"username": a.OperatorUsername, "password": a.OperatorPassword,
-	})
-	if code2 != http.StatusOK {
-		t.Errorf("login after re-enable: want 200, got %d", code2)
-	}
-}
-
-// Admin sets a custom (non-random) password for the shared operator.
-// The new password must work for login, the old one must not, and the
-// dashboard's subsequent GET must reflect it.
-func TestAdminSetOperatorPassword_HappyPath(t *testing.T) {
-	s, a, _ := twoOrgServer(t)
-
-	const newPw = "OperatorPick42!"
-	code, body := doJSON(t, s, "POST", "/api/admin/operator-access/set-password", a.AdminToken,
-		map[string]any{"password": newPw})
-	if code != http.StatusOK {
-		t.Fatalf("set-password: %d %v", code, body)
-	}
-	if body["password"] != newPw {
-		t.Errorf("response must echo the new password; got %v", body["password"])
-	}
-
-	// Old password rejected.
-	oldCode, _ := doJSON(t, s, "POST", "/api/auth/login", "", map[string]any{
-		"username": a.OperatorUsername, "password": a.OperatorPassword,
-	})
-	if oldCode != http.StatusUnauthorized {
-		t.Errorf("old password should be rejected; got %d", oldCode)
-	}
-
-	// New password works.
-	newCode, _ := doJSON(t, s, "POST", "/api/auth/login", "", map[string]any{
-		"username": a.OperatorUsername, "password": newPw,
-	})
-	if newCode != http.StatusOK {
-		t.Errorf("new password should log in; got %d", newCode)
-	}
-
-	// GET reflects the new plaintext.
-	_, getBody := doJSON(t, s, "GET", "/api/admin/operator-access", a.AdminToken, nil)
-	if getBody["password"] != newPw {
-		t.Errorf("GET after set must reflect new password; got %v", getBody["password"])
-	}
-}
-
-// Validation: weak passwords are rejected with 400. Matches the
-// strength floor used elsewhere in the product.
-func TestAdminSetOperatorPassword_ValidationRejects(t *testing.T) {
-	s, a, _ := twoOrgServer(t)
-	for _, bad := range []string{
-		"",               // empty
-		"short1",         // too short
-		"onlyletters!!!", // no digit
-		"1234567890",     // no letter
-	} {
-		code, _ := doJSON(t, s, "POST", "/api/admin/operator-access/set-password", a.AdminToken,
-			map[string]any{"password": bad})
-		if code != http.StatusBadRequest {
-			t.Errorf("expected 400 for %q, got %d", bad, code)
-		}
-	}
-}
-
-// Admin A's set-password must not touch admin B's operator credential.
-func TestAdminSetOperatorPassword_OrgScoped(t *testing.T) {
-	s, a, b := twoOrgServer(t)
-	_, _ = doJSON(t, s, "POST", "/api/admin/operator-access/set-password", a.AdminToken,
-		map[string]any{"password": "AdminAPick99!"})
-
-	// Admin B's operator must still log in with its original password.
-	code, _ := doJSON(t, s, "POST", "/api/auth/login", "", map[string]any{
-		"username": b.OperatorUsername, "password": b.OperatorPassword,
-	})
-	if code != http.StatusOK {
-		t.Errorf("admin A's set-password must not affect admin B's operator; got %d", code)
-	}
-}
-
-// Cross-org adversarial: admin A calling reset/disable/enable should
-// only ever affect their own org's operator, never admin B's.
-func TestAdminOperatorAccess_ResetIsOrgScoped(t *testing.T) {
-	s, a, b := twoOrgServer(t)
-	_, _ = doJSON(t, s, "POST", "/api/admin/operator-access/reset-password", a.AdminToken, nil)
-
-	// Admin B's operator must STILL log in with its original password —
-	// admin A's reset must not have touched the row.
-	code, _ := doJSON(t, s, "POST", "/api/auth/login", "", map[string]any{
-		"username": b.OperatorUsername, "password": b.OperatorPassword,
-	})
-	if code != http.StatusOK {
-		t.Errorf("admin A's reset must not affect admin B's operator (got login code %d)", code)
-	}
-}
-
-func TestAdminOperatorAccess_DisableIsOrgScoped(t *testing.T) {
-	s, a, b := twoOrgServer(t)
-	_, _ = doJSON(t, s, "POST", "/api/admin/operator-access/disable", a.AdminToken, nil)
-
-	// Admin B's operator should still log in.
-	code, _ := doJSON(t, s, "POST", "/api/auth/login", "", map[string]any{
-		"username": b.OperatorUsername, "password": b.OperatorPassword,
-	})
-	if code != http.StatusOK {
-		t.Errorf("admin A's disable must not affect admin B's operator (got login code %d)", code)
-	}
-}
-
-// If an admin's org has no shared operator row (defensive — production
-// orgs always have one via the approval flow, but a hand-seeded org
-// might not), the GET should 404 cleanly, not panic.
-func TestAdminGetOperatorAccess_NoOperator_404(t *testing.T) {
-	s, _, _ := twoOrgServer(t)
-	// Manually create a fresh org + admin with no shared operator.
-	res, _ := s.deps.DB.Exec(`INSERT INTO organizations(code, name) VALUES('NEWORG', 'New Org')`)
-	orgID, _ := res.LastInsertId()
-	hash, _ := bcrypt.GenerateFromPassword([]byte("x"), bcrypt.MinCost)
-	ures, _ := s.deps.DB.Exec(
-		`INSERT INTO users(username, password_hash, role, org_id, display_name, activated_at)
-		 VALUES('lonely_admin', ?, 'admin', ?, 'Admin', CURRENT_TIMESTAMP)`,
-		string(hash), orgID,
-	)
-	loneID, _ := ures.LastInsertId()
-	tok, _ := s.deps.JWT.Issue(auth.Claims{
-		UserID: loneID, Username: "lonely_admin", Role: "admin", OrgID: &orgID,
-	})
-	code, body := doJSON(t, s, "GET", "/api/admin/operator-access", tok, nil)
-	if code != http.StatusNotFound {
-		t.Errorf("no-operator GET should be 404, got %d body=%v", code, body)
-	}
-}
 
 // Full integration: the registration approval flow auto-creates the
 // shared operator and the returned credentials immediately work for
@@ -456,9 +204,8 @@ func TestApprovalFlow_ReturnsWorkingSharedOperator(t *testing.T) {
 	if user["org_id"] == nil {
 		t.Errorf("operator must carry org_id claim")
 	}
-	if user["center_id"] == nil {
-		t.Errorf("operator must be bound to the auto-created MAIN centre")
-	}
+	// center_id was removed from the login response along with the
+	// centers table in migration 021.
 }
 
 // approvalTestServer is a minimal server with one superadmin user
