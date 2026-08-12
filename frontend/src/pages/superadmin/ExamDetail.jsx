@@ -122,7 +122,7 @@ export default function ExamDetail() {
     await refreshExam()
   }
   async function onClose() {
-    if (!confirm('Close this exam? New verifications will be blocked (reversible).')) return
+    if (!confirm('End this exam? New verifications will be blocked. Existing data is preserved and you can reopen it later.')) return
     await closeExam(id)
     await refreshExam()
   }
@@ -165,8 +165,8 @@ export default function ExamDetail() {
               <span className="text-slate-400">·</span>
               <span>{dateRange(exam.verification_from, exam.verification_to)}</span>
               <span className="text-slate-400">·</span>
-              {exam.visible ? <Pill tone="emerald" dot>Visible</Pill> : <Pill tone="slate" dot>Hidden</Pill>}
-              {exam.closed && <Pill tone="amber" dot>Closed</Pill>}
+              {exam.visible ? <Pill tone="emerald" dot>Listed</Pill> : <Pill tone="slate" dot>Unlisted</Pill>}
+              {exam.closed && <Pill tone="amber" dot>Ended</Pill>}
             </span>
           }
           right={
@@ -174,12 +174,30 @@ export default function ExamDetail() {
               <Button variant="ghost" onClick={() => setEditing(v => !v)}>
                 {editing ? 'Cancel' : 'Edit'}
               </Button>
-              <Button variant="ghost" onClick={onToggleVisibility}>
-                {exam.visible ? 'Hide' : 'Show'}
+              <Button
+                variant="ghost"
+                onClick={onToggleVisibility}
+                title={exam.visible
+                  ? 'Remove from the catalog admins subscribe from (reversible)'
+                  : 'Add back to the catalog admins subscribe from'}
+              >
+                {exam.visible ? 'Unlist' : 'List'}
               </Button>
               {exam.closed
-                ? <Button variant="ghost" onClick={onReopen}>Reopen</Button>
-                : <Button variant="ghost" onClick={onClose}>Close</Button>}
+                ? <Button
+                    variant="ghost"
+                    onClick={onReopen}
+                    title="Allow new verifications against this exam again"
+                  >
+                    Reopen
+                  </Button>
+                : <Button
+                    variant="ghost"
+                    onClick={onClose}
+                    title="Stop accepting new verifications (existing data preserved, reversible)"
+                  >
+                    End
+                  </Button>}
             </div>
           }
         />

@@ -23,7 +23,7 @@ import {
 
 // Superadmin > Clients — the top-level exam-body catalog.
 // A client is the conducting authority (UP Govt, NTA); it owns exams.
-// Every row has inline Visible/Hidden + Close/Reopen buttons (no modals).
+// Every row has inline List/Unlist + End/Reopen buttons (no modals).
 export default function Clients() {
   const [clients, setClients] = useState([])
   // `loading` drives the first paint only. Row actions re-fetch through
@@ -130,7 +130,7 @@ export default function Clients() {
         {!loading && totalClients > 0 && (
           <div className="grid grid-cols-3 gap-3 mb-6">
             <StatChip label="Clients" value={totalClients} />
-            <StatChip label="Visible + open" value={visibleClients} tone="emerald" />
+            <StatChip label="Listed + active" value={visibleClients} tone="emerald" />
             <StatChip label="Exams under them" value={totalExams} tone="indigo" />
           </div>
         )}
@@ -242,9 +242,9 @@ export default function Clients() {
                         <td className="px-5 py-3.5">
                           <div className="flex gap-1.5 flex-wrap">
                             {c.visible
-                              ? <Pill tone="emerald" dot>Visible</Pill>
-                              : <Pill tone="slate" dot>Hidden</Pill>}
-                            {c.closed && <Pill tone="amber" dot>Closed</Pill>}
+                              ? <Pill tone="emerald" dot>Listed</Pill>
+                              : <Pill tone="slate" dot>Unlisted</Pill>}
+                            {c.closed && <Pill tone="amber" dot>Ended</Pill>}
                           </div>
                         </td>
                         <td className="px-5 py-3.5 text-xs text-slate-500 tabular-nums">
@@ -257,7 +257,7 @@ export default function Clients() {
                             // is what R5 ("no modal windows") asks for.
                             <div className="flex items-center justify-end gap-2">
                               <span className="text-xs text-slate-600 whitespace-nowrap">
-                                Close this client?
+                                End this client?
                               </span>
                               <Button
                                 variant="danger"
@@ -265,7 +265,7 @@ export default function Clients() {
                                 disabled={busyId === c.id}
                                 onClick={() => onClose(c)}
                               >
-                                {busyId === c.id ? 'Closing…' : 'Confirm'}
+                                {busyId === c.id ? 'Ending…' : 'Confirm'}
                               </Button>
                               <Button
                                 variant="ghost"
@@ -283,8 +283,11 @@ export default function Clients() {
                                 size="sm"
                                 disabled={busyId === c.id}
                                 onClick={() => onToggleVisibility(c)}
+                                title={c.visible
+                                  ? 'Remove from the catalog admins subscribe from (reversible)'
+                                  : 'Add back to the catalog admins subscribe from'}
                               >
-                                {busyId === c.id ? '…' : c.visible ? 'Hide' : 'Show'}
+                                {busyId === c.id ? '…' : c.visible ? 'Unlist' : 'List'}
                               </Button>
                               {c.closed ? (
                                 <Button
@@ -292,6 +295,7 @@ export default function Clients() {
                                   size="sm"
                                   disabled={busyId === c.id}
                                   onClick={() => onReopen(c)}
+                                  title="Allow new activity under this client again"
                                 >
                                   Reopen
                                 </Button>
@@ -301,15 +305,17 @@ export default function Clients() {
                                   size="sm"
                                   disabled={busyId === c.id}
                                   onClick={() => setConfirmingId(c.id)}
+                                  title="Stop accepting new activity under this client (existing data preserved, reversible)"
                                 >
-                                  Close
+                                  End
                                 </Button>
                               )}
                               <Link
                                 to={`/superadmin/clients/${c.id}`}
                                 className="inline-flex items-center px-2.5 py-1.5 text-xs font-medium rounded-md text-indigo-600 hover:bg-indigo-50 transition-colors"
+                                title="Open this client's detail page to see and manage its exams"
                               >
-                                Open
+                                Manage
                                 <Icon.ChevronRight className="h-3.5 w-3.5 ml-0.5" />
                               </Link>
                             </div>

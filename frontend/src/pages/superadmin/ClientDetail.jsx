@@ -55,7 +55,7 @@ export default function ClientDetail() {
     await refresh()
   }
   async function onClose(examId) {
-    if (!confirm('Close this exam? New verifications against it will be blocked (reversible).')) return
+    if (!confirm('End this exam? New verifications against it will be blocked. Existing data is preserved and you can reopen it later.')) return
     await closeExam(examId)
     await refresh()
   }
@@ -202,23 +202,45 @@ export default function ClientDetail() {
                         <td className="px-5 py-3.5 text-slate-700 tabular-nums">{e.candidate_count}</td>
                         <td className="px-5 py-3.5">
                           <div className="flex gap-1.5 flex-wrap">
-                            {e.visible ? <Pill tone="emerald" dot>Visible</Pill> : <Pill tone="slate" dot>Hidden</Pill>}
-                            {e.closed && <Pill tone="amber" dot>Closed</Pill>}
+                            {e.visible ? <Pill tone="emerald" dot>Listed</Pill> : <Pill tone="slate" dot>Unlisted</Pill>}
+                            {e.closed && <Pill tone="amber" dot>Ended</Pill>}
                           </div>
                         </td>
                         <td className="px-5 py-3.5">
                           <div className="flex justify-end gap-1">
-                            <Button variant="ghost" size="sm" onClick={() => onToggleVisibility(e.id)}>
-                              {e.visible ? 'Hide' : 'Show'}
+                            <Button
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => onToggleVisibility(e.id)}
+                              title={e.visible
+                                ? 'Remove from the catalog admins subscribe from (reversible)'
+                                : 'Add back to the catalog admins subscribe from'}
+                            >
+                              {e.visible ? 'Unlist' : 'List'}
                             </Button>
                             {e.closed
-                              ? <Button variant="ghost" size="sm" onClick={() => onReopen(e.id)}>Reopen</Button>
-                              : <Button variant="ghost" size="sm" onClick={() => onClose(e.id)}>Close</Button>}
+                              ? <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => onReopen(e.id)}
+                                  title="Allow new verifications against this exam again"
+                                >
+                                  Reopen
+                                </Button>
+                              : <Button
+                                  variant="ghost"
+                                  size="sm"
+                                  onClick={() => onClose(e.id)}
+                                  title="Stop accepting new verifications (existing data preserved, reversible)"
+                                >
+                                  End
+                                </Button>}
                             <Link
                               to={`/superadmin/exams/${e.id}`}
                               className="inline-flex items-center px-2.5 py-1.5 text-xs font-medium rounded-md text-indigo-600 hover:bg-indigo-50 transition-colors"
+                              title="Open this exam's detail page to upload CSVs, edit fields, and see verifications"
                             >
-                              Open
+                              Manage
                               <Icon.ChevronRight className="h-3.5 w-3.5 ml-0.5" />
                             </Link>
                           </div>
