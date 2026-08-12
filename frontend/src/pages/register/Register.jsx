@@ -169,8 +169,36 @@ const FIELD_RULES = {
   head_name: (v) => (v.trim().length < 2 ? 'Required' : undefined),
   head_email: (v) =>
     /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()) ? undefined : 'Invalid email',
-  head_mobile: (v) =>
-    /^[0-9]{10}$/.test(v.trim()) ? undefined : 'Mobile must be exactly 10 digits',
+  head_mobile: (v) => {
+    // Indian mobile format:
+    //   - 10 digits total
+    //   - first digit must be 6, 7, 8 or 9 (TRAI mobile ranges;
+    //     landline numbers start with 2-5 and don't belong here)
+    // The input onChange normaliser has already stripped country codes,
+    // leading 0, spaces, dashes and parens so what lands here is a bare
+    // digit string of length 0..10.
+    return /^[6-9][0-9]{9}$/.test(v.trim())
+      ? undefined
+      : 'Enter a 10-digit Indian mobile starting with 6, 7, 8 or 9'
+  },
+}
+
+// normaliseIndianMobile accepts anything the user might paste — with
+// spaces, dashes, parens, +91 prefix, trunk-0 prefix — and returns a
+// bare 10-digit string (or fewer digits if they haven't finished typing).
+// Called from the onChange handler so the field always shows the canonical
+// form, matching what the validator expects.
+function normaliseIndianMobile(raw) {
+  let digits = String(raw || '').replace(/\D/g, '')
+  // "+919876543210" or "919876543210" → drop the "91" country code.
+  if (digits.length > 10 && digits.startsWith('91')) {
+    digits = digits.slice(2)
+  }
+  // "09876543210" → drop the trunk-0 prefix.
+  if (digits.length === 11 && digits.startsWith('0')) {
+    digits = digits.slice(1)
+  }
+  return digits.slice(0, 10)
 }
 
 // Which fields belong to which step, for the Continue-time sweep.
@@ -1346,10 +1374,10 @@ function Step1({ form, errors, update, onBlurField, onBack, onNext, submitting }
             <InputWithIcon
               icon={Icon.Phone}
               value={form.head_mobile}
-              onChange={(e) => update('head_mobile', e.target.value.replace(/\D/g, '').slice(0, 10))}
+              onChange={(e) => update('head_mobile', normaliseIndianMobile(e.target.value))}
               onBlur={() => onBlurField('head_mobile')}
               inputMode="numeric"
-              maxLength={10}
+              maxLength={14}
               placeholder="9876543210"
             />
           </Field>

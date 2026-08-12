@@ -107,8 +107,12 @@ var (
 	// external APIs here — the superadmin's eyeball is the truth source.
 	// We just reject obviously-malformed values so the queue isn't full
 	// of garbage.
-	reEmail  = regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+$`)
-	reMobile = regexp.MustCompile(`^[0-9]{10}$`)
+	reEmail = regexp.MustCompile(`^[^\s@]+@[^\s@]+\.[^\s@]+$`)
+	// Indian mobile: 10 digits, first digit 6/7/8/9 (TRAI mobile ranges).
+	// Country code + trunk-0 prefix are stripped on the frontend before
+	// submit; the backend still enforces the canonical form as a defence
+	// against bad API clients / direct curl calls.
+	reMobile = regexp.MustCompile(`^[6-9][0-9]{9}$`)
 	rePAN    = regexp.MustCompile(`^[A-Z]{5}[0-9]{4}[A-Z]$`)
 	rePIN    = regexp.MustCompile(`^[0-9]{6}$`)
 )
@@ -525,7 +529,7 @@ func validateInit(r *registerInitReq) error {
 		return errors.New("head_email is not a valid email")
 	}
 	if !reMobile.MatchString(r.HeadMobile) {
-		return errors.New("head_mobile must be exactly 10 digits")
+		return errors.New("head_mobile must be a 10-digit Indian mobile starting with 6, 7, 8 or 9")
 	}
 	if !rePIN.MatchString(r.PinCode) {
 		return errors.New("pin_code must be 6 digits")
