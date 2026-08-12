@@ -50,6 +50,8 @@ var migrations = []migration{
 	migration016SubscriptionsOperatorScoping,
 	migration017CenterOptional,
 	migration018RepairUserFKs,
+	migration019DynamicCatalog,
+	migration020ProbePhoto,
 }
 
 // Migrate applies every pending migration inside its own transaction.

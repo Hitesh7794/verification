@@ -527,15 +527,26 @@ func (s *Server) superadminUploadExamCSV(w http.ResponseWriter, r *http.Request)
 	}
 	defer tx.Rollback()
 
-	// UPSERT semantics: same (exam_id, roll_no) → update name +
-	// verification_date. Keeps the CSV as source of truth for that pair
-	// without exploding on re-upload.
+	// UPSERT semantics: same (exam_id, roll_no) → update every mutable
+	// field from the CSV. Keeps the CSV as source of truth for that pair
+	// without exploding on re-upload. Extended columns (registration_id,
+	// father_name, dob, gender, shift_name, centre_code) are all
+	// nullable — a bare 3-column CSV leaves them NULL.
 	stmt, err := tx.PrepareContext(r.Context(), `
-		INSERT INTO exam_candidates(exam_id, roll_no, name, verification_date)
-		VALUES(?, ?, ?, ?)
+		INSERT INTO exam_candidates(
+			exam_id, roll_no, name, verification_date,
+			registration_id, father_name, dob, gender, shift_name, centre_code
+		)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(exam_id, roll_no) DO UPDATE SET
-			name = excluded.name,
-			verification_date = excluded.verification_date`)
+			name              = excluded.name,
+			verification_date = excluded.verification_date,
+			registration_id   = excluded.registration_id,
+			father_name       = excluded.father_name,
+			dob               = excluded.dob,
+			gender            = excluded.gender,
+			shift_name        = excluded.shift_name,
+			centre_code       = excluded.centre_code`)
 	if err != nil {
 		_ = os.Remove(storagePath)
 		writeErr(w, http.StatusInternalServerError, "db prepare: "+err.Error())
@@ -545,7 +556,10 @@ func (s *Server) superadminUploadExamCSV(w http.ResponseWriter, r *http.Request)
 
 	for _, p := range parsed {
 		if _, err := stmt.ExecContext(r.Context(),
-			examID, p.rollNo, p.name, nullable(p.verificationDate)); err != nil {
+			examID, p.rollNo, p.name, nullable(p.verificationDate),
+			nullable(p.registrationID), nullable(p.fatherName), nullable(p.dob),
+			nullable(p.gender), nullable(p.shiftName), nullable(p.centreCode),
+		); err != nil {
 			_ = os.Remove(storagePath)
 			writeErr(w, http.StatusInternalServerError, "db insert row: "+err.Error())
 			return
@@ -866,16 +880,35 @@ type parsedRow struct {
 	rollNo           string
 	name             string
 	verificationDate string // YYYY-MM-DD or empty
+
+	// Optional fields — all may be empty. Present when the CSV carries
+	// extra columns from the extended template (candidates_template.csv).
+	// These land on the PDF receipt at verification time.
+	registrationID string
+	fatherName     string
+	dob            string // YYYY-MM-DD or empty
+	gender         string
+	shiftName      string
+	centreCode     string
 }
 
-// parseCandidateCSV enforces the strict spec:
+// parseCandidateCSV enforces the strict spec on the two required
+// columns (name + roll_no) and opportunistically picks up extended
+// fields when present.
 //
 //   - Header row required (any casing).
-//   - Must contain columns: name, roll_no, verification_date. Extra
-//     columns are ignored.
-//   - Every data row must have all three cells non-empty.
-//   - verification_date parseable as YYYY-MM-DD or DD/MM/YYYY.
+//   - Must contain columns: name, roll_no.
+//   - Optional columns picked up when present: verification_date,
+//     registration_id, fname (father name), dob, gender, shift_name,
+//     centre_code. Unknown columns are ignored.
+//   - Every data row must have name + roll_no non-empty.
+//   - verification_date + dob parseable as YYYY-MM-DD or DD/MM/YYYY
+//     when present; validated only if provided.
 //   - Duplicate roll_no inside one file is a hard error.
+//
+// verification_date used to be mandatory (matching the original 3-column
+// template) but the extended NEET-style template omits it entirely, so
+// it's now optional — absent → NULL on the DB row.
 //
 // Returns (rows, errors). Any non-empty errors list means the caller
 // must reject the upload — nothing gets seeded.
@@ -888,6 +921,7 @@ func parseCandidateCSV(buf []byte) ([]parsedRow, []csvValidationErr) {
 		return nil, []csvValidationErr{{Line: 1, Msg: "could not read header: " + err.Error()}}
 	}
 	nameIdx, rollIdx, dateIdx := -1, -1, -1
+	regIdx, fnameIdx, dobIdx, genderIdx, shiftIdx, centreIdx := -1, -1, -1, -1, -1, -1
 	for i, h := range header {
 		h = strings.ToLower(strings.TrimSpace(h))
 		switch h {
@@ -897,11 +931,31 @@ func parseCandidateCSV(buf []byte) ([]parsedRow, []csvValidationErr) {
 			rollIdx = i
 		case "verification_date", "verification date", "date":
 			dateIdx = i
+		case "registration_id", "registrationid", "reg_id", "regid":
+			regIdx = i
+		case "fname", "father_name", "father", "fathers_name":
+			fnameIdx = i
+		case "dob", "date_of_birth", "birth_date":
+			dobIdx = i
+		case "gender", "sex":
+			genderIdx = i
+		case "shift_name", "shift":
+			shiftIdx = i
+		case "centre_code", "center_code", "centercode", "centrecode":
+			centreIdx = i
 		}
 	}
-	if nameIdx < 0 || rollIdx < 0 || dateIdx < 0 {
+	if nameIdx < 0 || rollIdx < 0 {
 		return nil, []csvValidationErr{{Line: 1,
-			Msg: "header must contain 'name', 'roll_no' and 'verification_date'"}}
+			Msg: "header must contain 'name' and 'roll_no'"}}
+	}
+
+	// Pull a cell by index; returns "" if index missing or out of range.
+	pick := func(row []string, idx int) string {
+		if idx < 0 || idx >= len(row) {
+			return ""
+		}
+		return strings.TrimSpace(row[idx])
 	}
 
 	var out []parsedRow
@@ -918,32 +972,54 @@ func parseCandidateCSV(buf []byte) ([]parsedRow, []csvValidationErr) {
 			verrs = append(verrs, csvValidationErr{Line: line, Msg: err.Error()})
 			continue
 		}
-		if maxIdx := max3(nameIdx, rollIdx, dateIdx); maxIdx >= len(row) {
+		name := pick(row, nameIdx)
+		roll := pick(row, rollIdx)
+		if name == "" || roll == "" {
 			verrs = append(verrs, csvValidationErr{Line: line,
-				Msg: fmt.Sprintf("row has %d columns, expected at least %d", len(row), maxIdx+1)})
+				Msg: "name and roll_no are required"})
 			continue
 		}
-		name := strings.TrimSpace(row[nameIdx])
-		roll := strings.TrimSpace(row[rollIdx])
-		date := strings.TrimSpace(row[dateIdx])
-		if name == "" || roll == "" || date == "" {
-			verrs = append(verrs, csvValidationErr{Line: line,
-				Msg: "name, roll_no and verification_date are all required"})
-			continue
-		}
-		normDate, ok := normaliseDate(date)
-		if !ok {
-			verrs = append(verrs, csvValidationErr{Line: line,
-				Msg: "verification_date must be YYYY-MM-DD or DD/MM/YYYY"})
-			continue
+		// verification_date is optional; validate only if provided.
+		dateRaw := pick(row, dateIdx)
+		normDate := ""
+		if dateRaw != "" {
+			nd, ok := normaliseDate(dateRaw)
+			if !ok {
+				verrs = append(verrs, csvValidationErr{Line: line,
+					Msg: "verification_date must be YYYY-MM-DD or DD/MM/YYYY"})
+				continue
+			}
+			normDate = nd
 		}
 		if prev, dup := seen[roll]; dup {
 			verrs = append(verrs, csvValidationErr{Line: line,
 				Msg: fmt.Sprintf("duplicate roll_no %q (first at line %d)", roll, prev)})
 			continue
 		}
+		// Optional DOB — validated only if provided.
+		dobRaw := pick(row, dobIdx)
+		dobNorm := ""
+		if dobRaw != "" {
+			if d, ok := normaliseDate(dobRaw); ok {
+				dobNorm = d
+			} else {
+				verrs = append(verrs, csvValidationErr{Line: line,
+					Msg: "dob must be YYYY-MM-DD or DD/MM/YYYY"})
+				continue
+			}
+		}
 		seen[roll] = line
-		out = append(out, parsedRow{rollNo: roll, name: name, verificationDate: normDate})
+		out = append(out, parsedRow{
+			rollNo:           roll,
+			name:             name,
+			verificationDate: normDate,
+			registrationID:   pick(row, regIdx),
+			fatherName:       pick(row, fnameIdx),
+			dob:              dobNorm,
+			gender:           pick(row, genderIdx),
+			shiftName:        pick(row, shiftIdx),
+			centreCode:       pick(row, centreIdx),
+		})
 	}
 	return out, verrs
 }

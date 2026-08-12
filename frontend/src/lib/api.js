@@ -123,15 +123,20 @@ export async function fetchFPTemplate(roll) {
 //
 // Returns {face_found, score, threshold, status, roll_no} or throws on
 // transport / SDK error. The caller surfaces the error in the UI.
-export async function postFaceMatch(roll, dataURLOrBase64) {
+export async function postFaceMatch(roll, dataURLOrBase64, idempotencyKey) {
   // URL-scoped: the wallet middleware extracts {roll} from the path for
   // its same-roll cache. Also this is now the wallet-chargeable event
   // (face-first flow — Aug 2026). Backend charges ₹ on every hit
   // regardless of match outcome; the 5-min cache still applies for
   // retries of the same roll.
+  //
+  // idempotencyKey is stashed on the backend under
+  // /data/probes/temp/<key>.jpg so createVerification can promote it
+  // to the permanent probe path for the PDF receipt. Optional —
+  // omitting it just skips probe persistence.
   return api(`/candidates/${encodeURIComponent(roll)}/face-match`, {
     method: 'POST',
-    body: { image_b64: dataURLOrBase64 },
+    body: { image_b64: dataURLOrBase64, idempotency_key: idempotencyKey || '' },
   })
 }
 
@@ -157,6 +162,61 @@ export async function postFpMatch(roll, probeBase64, vendor) {
 // Backend counts verifications for the caller's org over the past 30
 // days. Returns { roll_no, count, since, last_at? }. Non-fatal on
 // failure: the operator flow proceeds without the chip.
+// Fetches the verification receipt PDF and triggers a download in the
+// browser. Auth token is attached to the fetch (not just the URL),
+// which is why we can't hand a naked <a href> to the user.
+export async function downloadVerificationPDF(id) {
+  if (!id) return
+  const res = await fetch(`${BASE}/verifications/${id}/pdf`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  })
+  if (!res.ok) {
+    let msg = `PDF download failed (HTTP ${res.status})`
+    try {
+      const j = await res.json()
+      if (j.error) msg = j.error
+    } catch (_) { /* PDF errors usually aren't JSON */ }
+    throw new Error(msg)
+  }
+  const blob = await res.blob()
+  const objUrl = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = objUrl
+  a.download = `verification-${id}.pdf`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  // Revoke on next tick so the anchor's navigation completes first.
+  setTimeout(() => URL.revokeObjectURL(objUrl), 1000)
+}
+
+// Uploads a per-exam CSV. `kind` picks the endpoint:
+//   'candidates' → POST /api/superadmin/exams/{id}/candidates
+//   'centres'    → POST /api/superadmin/exams/{id}/centres/upload
+//   'operators'  → POST /api/admin/exams/{id}/operators/upload
+// Multipart body, single file field named 'file'. Returns the parsed
+// JSON response as-is; caller handles validation-error shape.
+export async function uploadExamCSV(examID, kind, file) {
+  const path = {
+    candidates: `/superadmin/exams/${examID}/candidates`,
+    centres:    `/superadmin/exams/${examID}/centres/upload`,
+    operators:  `/admin/exams/${examID}/operators/upload`,
+  }[kind]
+  if (!path) throw new Error(`unknown upload kind: ${kind}`)
+  const fd = new FormData()
+  fd.append('file', file)
+  const res = await fetch(`${BASE}${path}`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${getToken()}` },
+    body: fd,
+  })
+  const j = await res.json().catch(() => ({}))
+  if (!res.ok && res.status !== 422) {
+    throw new Error(j.error || `upload failed (HTTP ${res.status})`)
+  }
+  return { status: res.status, body: j }
+}
+
 export async function getCandidateAttempts(roll) {
   return api(`/candidates/${encodeURIComponent(roll)}/attempts`)
 }

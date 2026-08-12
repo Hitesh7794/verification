@@ -6,6 +6,8 @@ import {
   Button,
   Card,
   CardBody,
+  CardHeader,
+  CardTitle,
   Input,
   Label,
   PageHeader,
@@ -22,6 +24,7 @@ import {
   uploadCandidateCSV,
   downloadRawCSV,
 } from '../../lib/superadmin/examCatalog.js'
+import { uploadExamCSV } from '../../lib/api.js'
 import { dateOnly, dateRange } from '../../lib/dates.js'
 
 // Superadmin > Exam detail — the exam meta, list of enrolled
@@ -40,6 +43,11 @@ export default function ExamDetail() {
   const [uploadErr, setUploadErr] = useState(null)
   const [uploading, setUploading] = useState(false)
   const [editing, setEditing] = useState(false)
+  // Centres CSV upload — separate state so it doesn't clash with the
+  // candidates upload panel's uploading/uploadErr signals.
+  const [centresUploading, setCentresUploading] = useState(false)
+  const [centresUploadInfo, setCentresUploadInfo] = useState(null) // {ok, msg} | null
+  const [centresUploadErrs, setCentresUploadErrs] = useState(null)
 
   const refreshExam = useCallback(async () => {
     try {
@@ -84,6 +92,28 @@ export default function ExamDetail() {
       }
     } finally {
       setUploading(false)
+    }
+  }
+
+  async function onCentresUpload(file) {
+    if (!file) return
+    setCentresUploading(true)
+    setCentresUploadErrs(null)
+    setCentresUploadInfo(null)
+    try {
+      const { status, body } = await uploadExamCSV(id, 'centres', file)
+      if (status === 422 && body?.validation_errors) {
+        setCentresUploadErrs(body.validation_errors)
+        return
+      }
+      setCentresUploadInfo({
+        ok: true,
+        msg: `Uploaded — ${body.rows_seeded} centre${body.rows_seeded === 1 ? '' : 's'} seeded.`,
+      })
+    } catch (e) {
+      setCentresUploadInfo({ ok: false, msg: e.message || 'Centres upload failed' })
+    } finally {
+      setCentresUploading(false)
     }
   }
 
@@ -164,17 +194,19 @@ export default function ExamDetail() {
           <EditExamForm exam={exam} onCancel={() => setEditing(false)} onSaved={async () => { setEditing(false); await refreshExam() }} />
         )}
 
-        {/* CSV upload area */}
+        {/* Candidate CSV upload */}
         <Card className="mb-6">
-          <CardBody>
-            <div className="flex flex-wrap items-center justify-between gap-3 mb-3">
-              <div>
-                <h3 className="text-sm font-semibold text-slate-900">Upload candidate CSV</h3>
-                <p className="text-xs text-slate-500 mt-0.5">
-                  Columns: <code>name</code>, <code>roll_no</code>, <code>verification_date</code>. Only passed candidates.
-                </p>
-              </div>
+          <CardHeader className="flex items-start justify-between gap-4">
+            <div>
+              <CardTitle>Candidates</CardTitle>
+              <p className="mt-1 text-xs text-slate-500">
+                Required: <code>name</code>, <code>roll_no</code>. Optional: <code>verification_date</code>,
+                {' '}<code>registration_id</code>, <code>fname</code>, <code>dob</code>,
+                {' '}<code>gender</code>, <code>shift_name</code>, <code>centre_code</code>. Unknown columns are ignored.
+              </p>
             </div>
+          </CardHeader>
+          <CardBody>
             <input
               type="file"
               accept=".csv,text/csv"
@@ -191,6 +223,53 @@ export default function ExamDetail() {
                     <li key={i}>Line {v.line}: {v.msg}</li>
                   ))}
                   {uploadErr.length > 10 && <li>… {uploadErr.length - 10} more</li>}
+                </ul>
+              </div>
+            )}
+          </CardBody>
+        </Card>
+
+        {/* Centres CSV upload — feeds the per-exam exam_centres catalog,
+            which the PDF receipt reads for the centre address block. */}
+        <Card className="mb-6">
+          <CardHeader className="flex items-start justify-between gap-4">
+            <div>
+              <CardTitle>Centres</CardTitle>
+              <p className="mt-1 text-xs text-slate-500">
+                Required: <code>centre_code</code>, <code>centre_name</code>. Optional: <code>address</code>,
+                {' '}<code>city</code>, <code>state</code>, <code>pincode</code>. Extra fields
+                (zone, lat/lng, RM…) are ignored.
+              </p>
+            </div>
+          </CardHeader>
+          <CardBody>
+            <input
+              type="file"
+              accept=".csv,text/csv"
+              disabled={centresUploading}
+              onChange={(e) => onCentresUpload(e.target.files?.[0])}
+              className="block w-full text-sm text-slate-700 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200"
+            />
+            {centresUploading && <p className="mt-2 text-xs text-slate-500">Uploading + validating…</p>}
+            {centresUploadInfo && (
+              <div
+                className={`mt-3 rounded-lg px-3 py-2 text-sm border ${
+                  centresUploadInfo.ok
+                    ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                    : 'bg-rose-50 border-rose-200 text-rose-700'
+                }`}
+              >
+                {centresUploadInfo.msg}
+              </div>
+            )}
+            {centresUploadErrs && (
+              <div className="mt-3 rounded-lg bg-rose-50 border border-rose-200 p-3">
+                <p className="text-sm font-semibold text-rose-800 mb-1">Upload rejected — {centresUploadErrs.length} problem{centresUploadErrs.length === 1 ? '' : 's'}:</p>
+                <ul className="text-xs text-rose-700 space-y-0.5">
+                  {centresUploadErrs.slice(0, 10).map((v, i) => (
+                    <li key={i}>Line {v.line}: {v.msg}</li>
+                  ))}
+                  {centresUploadErrs.length > 10 && <li>… {centresUploadErrs.length - 10} more</li>}
                 </ul>
               </div>
             )}

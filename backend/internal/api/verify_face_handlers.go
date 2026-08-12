@@ -23,6 +23,13 @@ type faceMatchReq struct {
 	ImageB64 string `json:"image_b64"`
 	// Optional explicit mime; default image/jpeg.
 	Mime string `json:"mime"`
+	// Optional per-verification key minted at lookup time on the client.
+	// When present, the raw probe bytes are stashed at
+	// {ArtifactDir}/probes/temp/<key>.jpg — the createVerification
+	// handler later moves that file to its permanent location and
+	// records the path on the verifications row for the PDF receipt.
+	// Absent → no probe is persisted (backward-compatible).
+	IdempotencyKey string `json:"idempotency_key"`
 }
 
 // faceMatchResp echoes everything the dashboard wants to surface inline.
@@ -148,6 +155,19 @@ func (s *Server) faceMatch(w http.ResponseWriter, r *http.Request) {
 		}
 		return
 	}
+
+	// Persist the probe under the client-supplied idempotency key. Kept
+	// regardless of match outcome — a denied verification still deserves
+	// the probe on its PDF receipt so a reviewer can see what was
+	// captured. Failure to write is not fatal: the match already
+	// happened, and the PDF just won't have the captured photo.
+	if k := safeSlug(req.IdempotencyKey); k != "" && k != "file" {
+		tempDir := filepath.Join(s.deps.Cfg.ArtifactDir, "probes", "temp")
+		if err := os.MkdirAll(tempDir, 0o755); err == nil {
+			_ = os.WriteFile(filepath.Join(tempDir, k+".jpg"), imgBytes, 0o644)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, faceMatchResp{
 		RollNo:    roll,
 		FaceFound: res.FaceFound,

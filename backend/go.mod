@@ -6,6 +6,7 @@ require (
 	github.com/go-chi/chi/v5 v5.0.12
 	github.com/go-chi/cors v1.2.1
 	github.com/golang-jwt/jwt/v5 v5.2.1
+	github.com/jung-kurt/gofpdf v1.16.2
 	golang.org/x/crypto v0.21.0
 	modernc.org/sqlite v1.34.1
 )

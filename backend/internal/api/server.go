@@ -258,6 +258,21 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/superadmin/exams/{id}/candidates",                 s.requireRole("superadmin")(s.superadminListCandidates))
 		r.Get("/api/superadmin/exams/{id}/uploads",                    s.requireRole("superadmin")(s.superadminListUploads))
 		r.Get("/api/superadmin/uploads/{upload_id}/raw",               s.requireRole("superadmin")(s.superadminDownloadRawCSV))
+
+		// Per-exam centre catalog (migration 019). Superadmin uploads /
+		// lists (board-owned data); admin reads if their org is subscribed.
+		r.Post("/api/superadmin/exams/{id}/centres/upload", s.requireRole("superadmin")(s.uploadExamCentres))
+		r.Get("/api/superadmin/exams/{id}/centres",         s.requireRole("superadmin")(s.listExamCentres))
+		r.Get("/api/admin/exams/{id}/centres",              s.requireRole("admin")(s.listExamCentres))
+
+		// Per-exam bulk operator upload — admin creates their own
+		// operators in bulk and links them to a subscribed exam.
+		r.Post("/api/admin/exams/{id}/operators/upload", s.requireRole("admin")(s.uploadExamOperators))
+
+		// PDF verification receipt — role-scoped inside the handler
+		// (operator: own rows; admin: org rows; superadmin: all).
+		r.Get("/api/verifications/{id}/pdf",
+			s.requireRole("client", "admin", "superadmin", "ops_admin")(s.verificationPDF))
 	})
 
 	return r

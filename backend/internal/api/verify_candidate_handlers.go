@@ -99,6 +99,14 @@ func (s *Server) getCandidate(w http.ResponseWriter, r *http.Request) {
 		"exam_name":         ec.ExamName,
 		"client_id":         ec.ClientID,
 		"client_name":       ec.ClientName,
+		// Extended catalog (migration 019) — empty strings when the CSV
+		// omitted them, so the frontend can conditionally hide fields.
+		"registration_id": ec.RegistrationID,
+		"father_name":     ec.FatherName,
+		"dob":             ec.DOB,
+		"gender":          ec.Gender,
+		"shift_name":      ec.ShiftName,
+		"centre_code":     ec.CentreCode,
 		// Biometric availability — filesystem-backed until S3/TrustView.
 		"has_photo":          hasFS && fsRow.HasPhoto,
 		"has_fp_image":       hasFS && fsRow.HasFpImage,
@@ -286,11 +294,61 @@ func (s *Server) createVerification(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	id, _ := res.LastInsertId()
+
+	// Promote the probe photo, if the face-match endpoint stashed one
+	// under the same idempotency key. Best-effort: a missing temp file
+	// (fingerprint-only flow, or a legacy client that didn't send the
+	// key on face-match) just leaves probe_photo_path NULL.
+	if req.IdempotencyKey != "" && id > 0 {
+		if path := s.promoteProbePhoto(req.IdempotencyKey, id); path != "" {
+			_, _ = s.deps.DB.ExecContext(r.Context(),
+				`UPDATE verifications SET probe_photo_path = ? WHERE id = ?`,
+				path, id)
+		}
+	}
+
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":     id,
 		"status": req.Status,
 		"via":    req.Via,
 	})
+}
+
+// promoteProbePhoto moves the temp probe file (dropped by the
+// face-match endpoint under idempotencyKey) into a permanent
+// verification-scoped location, and returns that path. Returns "" if
+// there was no temp file to promote (fingerprint-only flow, retake
+// after abandonment, backward-compat client).
+//
+// Layout on disk:
+//
+//	{ArtifactDir}/probes/temp/<idem-key>.jpg      (before promotion)
+//	{ArtifactDir}/probes/YYYY/MM/<verification_id>.jpg (after)
+//
+// Keying by verification_id after promotion gives us a 1:1 mapping —
+// the PDF endpoint reads verifications.probe_photo_path and streams
+// exactly that file. Retakes create a new verification row → new
+// probe file → the PDF for retake N shows only the day of retake N.
+func (s *Server) promoteProbePhoto(idemKey string, verificationID int64) string {
+	k := safeSlug(idemKey)
+	if k == "" || k == "file" {
+		return ""
+	}
+	tempPath := filepath.Join(s.deps.Cfg.ArtifactDir, "probes", "temp", k+".jpg")
+	if _, err := os.Stat(tempPath); err != nil {
+		return ""
+	}
+	now := time.Now().UTC()
+	permDir := filepath.Join(s.deps.Cfg.ArtifactDir, "probes",
+		fmt.Sprintf("%04d", now.Year()), fmt.Sprintf("%02d", int(now.Month())))
+	if err := os.MkdirAll(permDir, 0o755); err != nil {
+		return ""
+	}
+	permPath := filepath.Join(permDir, fmt.Sprintf("%d.jpg", verificationID))
+	if err := os.Rename(tempPath, permPath); err != nil {
+		return ""
+	}
+	return permPath
 }
 
 // findByIdempotencyKey looks up a previously-recorded verification by the
@@ -543,6 +601,17 @@ type examCandidateRow struct {
 	RollNo           string
 	Name             string
 	VerificationDate string // may be empty if the CSV row omitted the date
+
+	// Extended catalog fields — populated when the CSV upload provided
+	// them (migration 019 onwards). All may be empty on legacy rows.
+	// Consumed by the PDF-receipt endpoint and shown on the operator
+	// candidate card.
+	RegistrationID string
+	FatherName     string
+	DOB            string
+	Gender         string
+	ShiftName      string
+	CentreCode     string
 }
 
 // lookupExamCandidate finds a candidate the caller is allowed to see.
@@ -572,7 +641,10 @@ func (s *Server) lookupExamCandidate(r *http.Request, claims *authClaims, roll s
 	)
 	base := `
 		SELECT ec.id, ec.exam_id, e.exam_code, e.name, e.client_id, c.name,
-		       ec.roll_no, ec.name, COALESCE(ec.verification_date, '')
+		       ec.roll_no, ec.name, COALESCE(ec.verification_date, ''),
+		       COALESCE(ec.registration_id, ''), COALESCE(ec.father_name, ''),
+		       COALESCE(ec.dob, ''),             COALESCE(ec.gender, ''),
+		       COALESCE(ec.shift_name, ''),      COALESCE(ec.centre_code, '')
 		  FROM exam_candidates ec
 		  JOIN exams   e ON e.id = ec.exam_id
 		  JOIN clients c ON c.id = e.client_id
@@ -616,6 +688,8 @@ func (s *Server) lookupExamCandidate(r *http.Request, claims *authClaims, roll s
 		&out.ID, &out.ExamID, &out.ExamCode, &out.ExamName,
 		&out.ClientID, &out.ClientName,
 		&out.RollNo, &out.Name, &out.VerificationDate,
+		&out.RegistrationID, &out.FatherName, &out.DOB,
+		&out.Gender, &out.ShiftName, &out.CentreCode,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil

@@ -15,7 +15,7 @@ import {
 import FingerprintCapture from '../../components/verify/FingerprintCapture.jsx'
 import IrisCapture from '../../components/verify/IrisCapture.jsx'
 import FaceMatchPanel from '../../components/verify/FaceMatchPanel.jsx'
-import { api, fetchFPTemplate, fetchPhotoBlob, isWalletEmptyError, getCandidateAttempts } from '../../lib/api.js'
+import { api, fetchFPTemplate, fetchPhotoBlob, isWalletEmptyError, getCandidateAttempts, downloadVerificationPDF } from '../../lib/api.js'
 
 // Generate an idempotency key per verification attempt so a network retry
 // of the submit doesn't create two rows. crypto.randomUUID is available in
@@ -197,6 +197,10 @@ export default function ClientDashboard() {
   const [showIris, setShowIris] = useState(persisted?.showIris ?? false)
   const [submitting, setSubmitting] = useState(false)
   const [result, setResult] = useState(null)
+  // Verification id echoed back by the POST — powers the "Download PDF"
+  // button on the result panel. Cleared by reset() so a new flow doesn't
+  // download the previous candidate's receipt.
+  const [verificationId, setVerificationId] = useState(null)
   const [verificationStartedAt, setVerificationStartedAt] = useState(persisted?.verificationStartedAt ?? null)
   // Idempotency key is generated ONCE per verification (on first
   // successful lookup) and reused across any submit retries. This
@@ -413,7 +417,8 @@ export default function ClientDashboard() {
         body.face_match_score = faceResult.score
       }
 
-      await api('/verifications', { method: 'POST', body })
+      const created = await api('/verifications', { method: 'POST', body })
+      if (created && created.id) setVerificationId(created.id)
       setResult(status)
       // Flow is complete — discard the persisted state so a refresh
       // lands the operator on a clean Step 1 ready for the next
@@ -442,6 +447,7 @@ export default function ClientDashboard() {
     setIrisResult(null)
     setShowIris(false)
     setResult(null)
+    setVerificationId(null)
     setLookupErr('')
     setVerificationStartedAt(null)
   }
@@ -571,6 +577,7 @@ export default function ClientDashboard() {
             </p>
             <FaceMatchPanel
               rollNo={candidate.roll_no}
+              idempotencyKey={idempotencyKey}
               onResult={(r) => {
                 setFaceResult(r)
                 setSnap(r?.snapshot ?? null)
@@ -733,8 +740,16 @@ export default function ClientDashboard() {
                           <div>Fingerprint: <b className={fpResult.ok ? 'text-emerald-700' : 'text-rose-700'}>{fpResult.ok ? 'PASS' : 'FAIL'}</b></div>
                         )}
                       </div>
-                      <div className="mt-3">
+                      <div className="mt-3 flex flex-wrap items-center gap-2">
                         <Button onClick={reset}>Start next verification</Button>
+                        {verificationId && (
+                          <Button
+                            variant="secondary"
+                            onClick={() => downloadVerificationPDF(verificationId)}
+                          >
+                            Download PDF
+                          </Button>
+                        )}
                       </div>
                     </div>
                   ) : (

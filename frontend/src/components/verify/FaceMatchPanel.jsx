@@ -24,6 +24,11 @@ import { postFaceMatch } from '../../lib/api.js'
 export default function FaceMatchPanel({
   rollNo,
   onResult, // ({ ok, score, threshold, faceFound, captured, raw }) => void
+  // Optional: per-verification idempotency key from the parent. Passed
+  // through to postFaceMatch so the backend can stash the probe under
+  // this key for later promotion by createVerification. Absent → probe
+  // won't be persisted (backward-compatible).
+  idempotencyKey,
 }) {
   const videoRef = useRef(null)
   // streamRef holds the live MediaStream across renders. When the user
@@ -120,7 +125,7 @@ export default function FaceMatchPanel({
       }
       setSnap(dataURL)
 
-      const resp = await postFaceMatch(rollNo, dataURL)
+      const resp = await postFaceMatch(rollNo, dataURL, idempotencyKey)
       const out = {
         ok: !!resp.status,
         captured: true,

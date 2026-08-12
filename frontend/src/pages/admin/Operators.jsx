@@ -21,6 +21,7 @@ import {
   getSubscriptions,
 } from '../../lib/admin/examSubscriptions.js'
 import { getWallet, formatRupees } from '../../lib/wallet/wallet.js'
+import { uploadExamCSV } from '../../lib/api.js'
 
 // Admin > Operators — per-operator management (Phase 2). Each operator
 // has: username, password, display name, optional spending cap,
@@ -34,6 +35,11 @@ export default function Operators() {
   const [err, setErr] = useState('')
   const [creating, setCreating] = useState(false)
   const [editing, setEditing] = useState(null) // operator id currently being edited
+  const [bulking, setBulking] = useState(false)
+  const [bulkExamID, setBulkExamID] = useState('')
+  const [bulkFile, setBulkFile] = useState(null)
+  const [bulkBusy, setBulkBusy] = useState(false)
+  const [bulkResult, setBulkResult] = useState(null) // last response body
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -56,6 +62,22 @@ export default function Operators() {
 
   useEffect(() => { refresh() }, [refresh])
 
+  async function onBulkUpload(e) {
+    e?.preventDefault()
+    if (!bulkExamID || !bulkFile) return
+    setBulkBusy(true)
+    setBulkResult(null)
+    try {
+      const { status, body } = await uploadExamCSV(bulkExamID, 'operators', bulkFile)
+      setBulkResult({ status, body })
+      if (status < 400) await refresh()
+    } catch (err) {
+      setBulkResult({ status: 0, body: { error: err.message || 'Bulk upload failed' } })
+    } finally {
+      setBulkBusy(false)
+    }
+  }
+
   async function onToggle(id, currentlyDisabled) {
     try {
       if (currentlyDisabled) {
@@ -77,11 +99,99 @@ export default function Operators() {
           title="Operators"
           subtitle="Per-operator credentials, spending caps, date windows, and assigned exams."
           right={
-            <Button onClick={() => { setCreating(v => !v); setEditing(null) }}>
-              {creating ? 'Cancel' : '+ New operator'}
-            </Button>
+            <div className="flex gap-2">
+              <Button variant="secondary" onClick={() => { setBulking(v => !v); setCreating(false); setEditing(null) }}>
+                {bulking ? 'Cancel bulk' : 'Bulk upload CSV'}
+              </Button>
+              <Button onClick={() => { setCreating(v => !v); setBulking(false); setEditing(null) }}>
+                {creating ? 'Cancel' : '+ New operator'}
+              </Button>
+            </div>
           }
         />
+
+        {bulking && (
+          <Card className="mb-4">
+            <CardBody>
+              <h3 className="text-sm font-semibold text-slate-900 mb-1">Bulk-upload operators from CSV</h3>
+              <p className="text-xs text-slate-500 mb-3">
+                Required columns: <code>username</code>, <code>password</code>, <code>first_name</code>,
+                {' '}<code>last_name</code>, <code>email</code>. Extra columns (<code>phone</code>,
+                {' '}<code>centre_code</code>, <code>lab_code</code>, <code>config_name</code>,
+                {' '}<code>max_sessions</code>) are recognised but not stored.
+              </p>
+              <form onSubmit={onBulkUpload} className="grid gap-3 sm:grid-cols-3 sm:items-end">
+                <div>
+                  <Label>Assign to exam</Label>
+                  <select
+                    value={bulkExamID}
+                    onChange={(e) => setBulkExamID(e.target.value)}
+                    className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+                  >
+                    <option value="">Pick a subscribed exam…</option>
+                    {subs.map((s) => (
+                      <option key={s.exam_id} value={s.exam_id}>
+                        {s.exam_code} — {s.exam_name}
+                      </option>
+                    ))}
+                  </select>
+                </div>
+                <div className="sm:col-span-1">
+                  <Label>CSV file</Label>
+                  <input
+                    type="file"
+                    accept=".csv,text/csv"
+                    onChange={(e) => setBulkFile(e.target.files?.[0] || null)}
+                    className="block w-full text-sm text-slate-700 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200"
+                  />
+                </div>
+                <div>
+                  <Button type="submit" disabled={!bulkExamID || !bulkFile || bulkBusy}>
+                    {bulkBusy ? 'Uploading…' : 'Upload'}
+                  </Button>
+                </div>
+              </form>
+
+              {bulkResult && (
+                <div
+                  className={`mt-3 rounded-lg px-3 py-2 text-sm border ${
+                    bulkResult.status >= 200 && bulkResult.status < 300
+                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
+                      : 'bg-rose-50 border-rose-200 text-rose-700'
+                  }`}
+                >
+                  {bulkResult.body?.error ? (
+                    <p>{bulkResult.body.error}</p>
+                  ) : (
+                    <>
+                      <p className="font-medium">
+                        {bulkResult.body?.rows_created || 0} created ·{' '}
+                        {bulkResult.body?.rows_assigned || 0} linked ·{' '}
+                        {bulkResult.body?.rows_failed || 0} failed
+                      </p>
+                      {bulkResult.body?.skipped_columns?.length > 0 && (
+                        <p className="text-xs mt-1 opacity-80">
+                          Ignored columns: {bulkResult.body.skipped_columns.join(', ')}
+                        </p>
+                      )}
+                      {bulkResult.body?.row_errors?.length > 0 && (
+                        <ul className="mt-2 text-xs list-disc list-inside space-y-0.5">
+                          {bulkResult.body.row_errors.slice(0, 10).map((e, i) => (
+                            <li key={i}>{e.line ? `Line ${e.line}: ` : ''}{e.msg}</li>
+                          ))}
+                          {bulkResult.body.row_errors.length > 10 && (
+                            <li>… {bulkResult.body.row_errors.length - 10} more</li>
+                          )}
+                        </ul>
+                      )}
+                    </>
+                  )}
+                </div>
+              )}
+            </CardBody>
+          </Card>
+        )}
+
         {subs.length === 0 && (
           <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800">
             You haven't subscribed to any exams yet — operators need at least one subscribed exam to verify against.{' '}

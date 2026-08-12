@@ -13,7 +13,7 @@ import {
   Label,
   PageHeader,
 } from '../../components/ui/ui.jsx'
-import { api } from '../../lib/api.js'
+import { api, downloadVerificationPDF } from '../../lib/api.js'
 import { getRoleScope, getStoredToken } from '../../lib/authStorage.js'
 
 // /admin/history — paginated verification audit with roll/status/date
@@ -230,6 +230,7 @@ export default function AdminHistory() {
                   <th className="text-left px-4 py-2 font-medium">Via</th>
                   <th className="text-left px-4 py-2 font-medium">Centre</th>
                   <th className="text-left px-4 py-2 font-medium">Operator</th>
+                  <th className="text-right px-4 py-2 font-medium">PDF</th>
                 </tr>
               </thead>
               <tbody>
@@ -243,11 +244,23 @@ export default function AdminHistory() {
                     <td className="px-4 py-2 text-slate-600">{r.via || '—'}</td>
                     <td className="px-4 py-2 text-slate-600 truncate max-w-[160px]">{r.center_name}</td>
                     <td className="px-4 py-2 text-slate-600 truncate max-w-[200px]">{r.operator_name}</td>
+                    <td className="px-4 py-2 text-right">
+                      <button
+                        type="button"
+                        onClick={() =>
+                          downloadVerificationPDF(r.id).catch((e) => setErr(e.message))
+                        }
+                        className="text-sm font-medium text-indigo-600 hover:text-indigo-800"
+                        title={`Download receipt for verification ${r.id}`}
+                      >
+                        Download
+                      </button>
+                    </td>
                   </tr>
                 ))}
                 {rows.length === 0 && !loading && (
                   <tr>
-                    <td colSpan={6} className="py-10">
+                    <td colSpan={7} className="py-10">
                       <EmptyState
                         title="No verifications match"
                         body="Try widening the date range or clearing filters."
