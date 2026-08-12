@@ -7,7 +7,7 @@ behind a JSON HTTP API on `127.0.0.1:8050`.
 | Service              | Port  | Where it runs    | Wraps                                  |
 |----------------------|-------|------------------|----------------------------------------|
 | morfin-client-service | 8030  | Operator laptop  | MorFin fingerprint SDK (Mantra)        |
-| mantra-iris-service   | 8031  | Operator laptop  | Marvis iris SDK (Mantra)               |
+| MarvisAuthClientService | 8031 | Operator laptop  | Marvis iris SDK (Mantra, native Win)  |
 | ACPL Capture API      | 8090/4443 | Operator laptop | Startek FM220U L1 (ACPL)             |
 | luxand-service        | 8040  | Central server   | Luxand FaceSDK 8.3 — face matching     |
 | **fp-match-service**  | **8050** | **Central server** | **SourceAFIS — fingerprint matching** |

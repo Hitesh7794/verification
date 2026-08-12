@@ -1,4 +1,4 @@
-# install.ps1 -- operator-laptop bootstrap (Windows 10 19041+ / Windows 11).
+# install.ps1 -- operator-laptop bootstrap (Windows 10 / Windows 11).
 #
 # Architecture:
 #
@@ -6,21 +6,17 @@
 #     Browser -> portal URL                  (portal frontend, served remote)
 #             -> localhost:8030              (Mantra MorFin FP, native Win)
 #             -> localhost:4443 / :8090      (Startek/ACPL FP, native Win)
-#             -> localhost:8031              (mantra-iris-service in WSL2)
+#             -> localhost:8031              (Marvis Auth iris, native Win)
 #
-#     WSL2 Ubuntu - runs mantra-iris-service.deb on :8031
-#         ^
-#         | usbipd-win passes through MIS100V2 (vendor 2c0f:2100) - needed
-#         | because Mantra's Marvis_Auth.jar Windows DLL has a JNI
-#         | signature mismatch (vendor bug); the Linux .so in the same
-#         | JAR works fine.
-#         |
 #     USB devices: MorFin readers (MELO041 / MFS500 / MARC10), Startek
-#     FM220U L1 (0BCA:8230) / AST300 (34F9:8230), Marvis MIS100V2 (2c0f:2100).
+#     FM220U L1 (0BCA:8230) / AST300 (34F9:8230), Marvis MIS100V2
+#     (2C0F:2100).
 #
-# Two-phase: if WSL2 isn't enabled, phase 1 enables Windows features and
-# prompts for a reboot. After reboot, re-run; the script detects WSL2 is
-# now ready and continues with provisioning.
+# Historical note: v1.0 of the Marvis SDK crashed on Windows because
+# its JAR's native DLL had a JNI signature mismatch. Iris used to run
+# via a WSL2 + usbipd + Java-daemon workaround. Retired -- v1.4 of the
+# Marvis Auth Web SDK ships a native Windows service (MarvisAuthClient-
+# Service.exe) that self-registers on :8031. See IRIS_NOTES.md.
 #
 # Re-runnable: every step is idempotent, so re-running after a partial
 # failure or to update config is safe.
@@ -37,17 +33,10 @@ param(
 
     [string]$InstallRoot = "C:\Program Files\VerificationPortal",
 
-    # WSL distro to provision the iris service in. Default Ubuntu 22.04
-    # (current LTS, well-supported by usbipd + systemd in WSL).
-    [string]$WslDistro = "Ubuntu-22.04",
-
-    # Mantra iris device USB hardware ID (vendor:product). Found via
-    # `usbipd list` on a host with the device plugged in. Documented in
-    # IRIS_VENDOR_ISSUE.md as VID 2C0F / PID 2100 for MIS100V2.
-    [string]$IrisHwId = "2c0f:2100",
-
     # Skip iris provisioning. Use only when iris hardware isn't part of
-    # the deployment (fingerprint-only centers).
+    # the deployment (fingerprint-only centers) OR when the Marvis
+    # Auth installer isn't staged in vendor/ (in which case Install-
+    # MarvisIris will warn and skip regardless).
     [switch]$SkipIris,
 
     # Skip Startek/ACPL Capture API install. Use only when Startek
@@ -73,21 +62,23 @@ function Require-Admin {
 }
 
 function Require-OsCompatible {
-    # WSL2 needs Windows 10 build 19041+ (May 2020 update / version 2004)
-    # or Windows 11 (build 22000+). 32-bit Windows isn't supported either.
+    # 64-bit Windows 10 build 17763 (October 2018, 1809 LTSC) or newer.
+    # Marvis Auth v1.4 needs .NET Framework 4.7.2+ which ships with
+    # 1803+; ACPL Capture API MSI needs a modern Installer engine which
+    # is Windows 10 1607+. 17763 is the lowest common denominator that
+    # covers both plus any vendor security-catalog freshness assumptions.
     if (-not [System.Environment]::Is64BitOperatingSystem) {
-        throw "32-bit Windows detected. WSL2 requires 64-bit. Use a Linux operator laptop instead."
+        throw "32-bit Windows detected. Vendor daemons require 64-bit."
     }
     $build = [System.Environment]::OSVersion.Version.Build
-    if ($build -lt 19041) {
+    if ($build -lt 17763) {
         throw @"
-Windows build $build is too old for WSL2 (requires 19041+).
-Run Windows Update until Settings -> System -> About shows
-'Version 22H2' (or newer) and 'OS build 19045+' / Windows 11.
-Then re-run this installer.
+Windows build $build is too old (requires 17763+; that's Windows 10
+1809 / October 2018 update or newer). Run Windows Update until
+Settings -> System -> About shows a supported build, then re-run.
 "@
     }
-    Write-Host "[OK] Windows build $build (WSL2-capable)"
+    Write-Host "[OK] Windows build $build"
 }
 
 function Resolve-BundledJava {
@@ -122,223 +113,94 @@ or download a fresh OperatorPortalSetup bundle from the admin portal.
     return $cmd.Source
 }
 
+
 # ---------------------------------------------------------------------------
-# Phase 1 -- WSL2 enablement (may require reboot)
+# Phase 1 -- Marvis Iris (native Windows service)
 # ---------------------------------------------------------------------------
+# Retired: v1.0 of the SDK crashed on Windows (JNI signature mismatch)
+# so iris ran via WSL2 + usbipd + a Java daemon. v1.4's Web SDK ships
+# a native Windows service (MarvisAuthClientService.exe) that self-
+# registers on localhost:8031. See IRIS_NOTES.md.
+#
+# Vendor payload is not committed to git (197 MB, not redistributable).
+# The bundle builder stages it at ./vendor/MarvisAuthClientService.exe;
+# if missing, we warn and skip so fingerprint-only builds still work.
 
-function Test-Wsl2Ready {
-    # Check the underlying Windows optional features directly -- more robust
-    # than invoking `wsl --status`, which writes its banner to stderr (which
-    # PS5.1 turns into a terminating error under ErrorActionPreference=Stop).
-    $f1 = (Get-WindowsOptionalFeature -Online -FeatureName 'Microsoft-Windows-Subsystem-Linux' -ErrorAction SilentlyContinue).State
-    $f2 = (Get-WindowsOptionalFeature -Online -FeatureName 'VirtualMachinePlatform' -ErrorAction SilentlyContinue).State
-    return ($f1 -eq 'Enabled' -and $f2 -eq 'Enabled')
-}
-
-function Test-WslDistroPresent([string]$Name) {
-    # `wsl -l -q` lists installed distros (one per line, UTF-16-LE on
-    # older WSL -- strip nulls before matching). EAP=Continue locally so
-    # any banner-on-stderr from older WSL builds doesn't terminate the
-    # script before we get to inspect the output.
-    $oldPref = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        $list = (& wsl.exe -l -q 2>$null) -replace "`0", "" -split "`r?`n" | Where-Object { $_ }
-        return ($list -contains $Name)
-    } catch {
-        return $false
-    } finally {
-        $ErrorActionPreference = $oldPref
-    }
-}
-
-function Enable-Wsl2 {
-    Write-Host "-> enabling WSL2 + Virtual Machine Platform (Windows features)"
-    # Enabling these features requires a reboot before they take effect.
-    # `dism /online /norestart` keeps the script responsive; we tell the
-    # user to reboot at the end and re-run.
-    $needsReboot = $false
-    foreach ($feature in @('Microsoft-Windows-Subsystem-Linux', 'VirtualMachinePlatform')) {
-        $state = (Get-WindowsOptionalFeature -Online -FeatureName $feature -ErrorAction SilentlyContinue).State
-        if ($state -ne 'Enabled') {
-            Write-Host "  enabling $feature..."
-            Enable-WindowsOptionalFeature -Online -FeatureName $feature -NoRestart -All | Out-Null
-            $needsReboot = $true
-        } else {
-            Write-Host "  [OK] $feature already enabled"
-        }
-    }
-
-    Write-Host "-> setting WSL default version to 2"
-    & wsl.exe --set-default-version 2 *>$null
-
-    Write-Host "-> updating WSL kernel"
-    & wsl.exe --update *>$null
-
-    if ($needsReboot) {
+function Install-MarvisIris {
+    $installer = Join-Path $PSScriptRoot 'vendor\MarvisAuthClientService.exe'
+    if (-not (Test-Path $installer)) {
         Write-Warning @"
+Marvis Auth Client Service installer not found at:
+  $installer
 
-WSL2 features have been enabled but require a REBOOT to take effect.
+Iris capture will NOT work on this laptop. Either:
+  1. Drop MarvisAuthClientService.exe (from the Marvis Auth Web SDK
+     1.4.0.0 bundle) into that path and re-run this script, or
+  2. Re-run with -SkipIris to acknowledge and continue without iris.
 
-  1. Reboot the machine.
-  2. Re-run this same install.ps1 (with the same -PortalUrl).
-  3. The script will detect WSL2 is ready and continue with provisioning.
-
-Exiting now. No services have been registered yet.
+Fingerprint installation continues either way.
 "@
-        exit 0
-    }
-}
-
-function Install-WslDistro([string]$Name) {
-    if (Test-WslDistroPresent $Name) {
-        Write-Host "[OK] WSL distro '$Name' already installed"
         return
     }
-    Write-Host "-> installing WSL distro '$Name' (downloads ~500MB)"
-    # WSL CLI flags evolved across Windows builds. Older inbox WSL doesn't
-    # support `--no-launch`; newer Store WSL does. Try the modern form
-    # first, fall back to the legacy form, and use `wsl --shutdown` after
-    # the legacy install to close any setup window the distro may auto-open.
-    $oldPref = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        $output = & wsl.exe --install -d $Name --no-launch 2>&1
-        $rc = $LASTEXITCODE
-        if ($rc -ne 0) {
-            Write-Host "  --no-launch not supported on this WSL build; retrying without it"
-            Write-Host "  (an Ubuntu setup window may open briefly -- close it; the script will continue)"
-            $output = & wsl.exe --install -d $Name 2>&1
-            $rc = $LASTEXITCODE
-        }
-        $output | ForEach-Object { if ($_) { Write-Host "  $_" } }
-        if ($rc -ne 0) {
-            throw "WSL distro install failed (exit $rc). Run 'wsl --list --online' to see available distros and retry with -WslDistro <Name>."
-        }
-        # Force a clean shutdown of any auto-launched session before we re-enter.
-        Start-Sleep -Seconds 3
-        & wsl.exe --shutdown *>$null
-    } finally {
-        $ErrorActionPreference = $oldPref
+
+    # Vendor doesn't publish a canonical service name in the SDK docs;
+    # match anything that looks like theirs. First-match-wins is fine
+    # because they're not supposed to register multiple services.
+    function Get-MarvisService {
+        Get-Service -Name 'MarvisAuthClientService','*Marvis*','*MarvisAuth*' `
+            -ErrorAction SilentlyContinue |
+            Select-Object -First 1
     }
 
-    # First boot to finalize. Pass `--user root` to skip the new-user prompt;
-    # we'll create an unprivileged user via the setup script instead.
-    Write-Host "-> first-boot of '$Name' as root (~15s)"
-    & wsl.exe -d $Name --user root -- echo "ready" | Out-Null
-    if ($LASTEXITCODE -ne 0) {
-        throw "First-boot of '$Name' failed (exit $LASTEXITCODE). Try running 'wsl -d $Name --user root -- echo ready' manually to see what went wrong."
-    }
-}
-
-# ---------------------------------------------------------------------------
-# Phase 2 -- usbipd-win (USB passthrough into WSL)
-# ---------------------------------------------------------------------------
-
-function Install-Usbipd {
-    if (Get-Command usbipd.exe -ErrorAction SilentlyContinue) {
-        Write-Host "[OK] usbipd-win already installed"
-        return
-    }
-    Write-Host "-> installing usbipd-win (USB passthrough for WSL)"
-    if (Get-Command winget.exe -ErrorAction SilentlyContinue) {
-        & winget install --exact --id dorssel.usbipd-win --silent --accept-source-agreements --accept-package-agreements
-        if ($LASTEXITCODE -ne 0) {
-            throw "winget failed to install usbipd-win. Manual install: https://github.com/dorssel/usbipd-win/releases"
+    $svc = Get-MarvisService
+    if ($svc) {
+        Write-Host "[OK] $($svc.Name) already registered ($($svc.Status))"
+        if ($svc.Status -ne 'Running') {
+            Write-Host "  -> starting service"
+            Start-Service $svc.Name
+            Start-Sleep -Seconds 2
         }
     } else {
-        throw @"
-winget not available; install usbipd-win manually:
-  Download the latest .msi from https://github.com/dorssel/usbipd-win/releases
-  Run the installer, then re-run this install.ps1.
+        Write-Host "-> running Marvis installer (silent /S attempt)"
+        # Try NSIS-style silent first. If the vendor uses InstallShield
+        # or WiX, silent may not register the service -- fall back to
+        # interactive so the operator clicks through once.
+        Start-Process -FilePath $installer -ArgumentList '/S' -Wait | Out-Null
+        Start-Sleep -Seconds 3
+        $svc = Get-MarvisService
+        if (-not $svc) {
+            Write-Warning "  Silent install didn't register the service. Opening the installer interactively -- click through Next > Install > Finish."
+            Start-Process -FilePath $installer -Verb RunAs -Wait | Out-Null
+            Start-Sleep -Seconds 3
+            $svc = Get-MarvisService
+            if (-not $svc) {
+                throw @"
+Marvis Auth Client Service didn't register after the interactive installer.
+Try running it manually as Administrator:
+  $installer
+Then re-run install.ps1 -SkipIris to continue past the iris phase.
+"@
+            }
+        }
+        Write-Host "[OK] $($svc.Name) installed and running"
+    }
+
+    # Verify the daemon actually responds on :8031. Vendor sample uses
+    # POST /marvisauth/info with an empty body for the health check.
+    try {
+        $resp = Invoke-WebRequest -Uri 'http://localhost:8031/marvisauth/info' `
+                    -Method POST -TimeoutSec 5 -UseBasicParsing -ErrorAction Stop
+        Write-Host "[OK] Marvis daemon responding on http://localhost:8031/ (HTTP $($resp.StatusCode))"
+    } catch {
+        Write-Warning @"
+$($svc.Name) is registered but not responding on http://localhost:8031/
+Check the service:
+  Get-Service $($svc.Name)
+  Get-NetTCPConnection -LocalPort 8031
 "@
     }
-    # winget puts usbipd in %ProgramFiles%\usbipd-win\ -- refresh PATH so
-    # subsequent calls in this same script find it.
-    $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
-                [System.Environment]::GetEnvironmentVariable("Path", "User")
 }
 
-function Bind-IrisDevice([string]$HwId) {
-    # usbipd 4.x: `bind` makes the device shareable (admin, persistent),
-    # `attach --auto-attach` keeps it attached to WSL across replug events.
-    Write-Host "-> binding USB device $HwId for WSL passthrough"
-    # EAP=Continue locally so the `2>&1 |` patterns (which feed native-command
-    # stderr into the pipeline) don't terminate under PS5.1+EAP=Stop.
-    $oldPref = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        $null = & usbipd.exe list --usbids 2>$null
-        # usbipd `bind` is idempotent; no harm in calling on an already-bound device.
-        & usbipd.exe bind --hardware-id $HwId 2>&1 | ForEach-Object { Write-Host "  $_" }
-
-        # Attach immediately (does nothing if device not currently plugged in).
-        & usbipd.exe attach --hardware-id $HwId --wsl --auto-attach 2>&1 |
-            Select-Object -First 5 | ForEach-Object { Write-Host "  $_" }
-    } finally {
-        $ErrorActionPreference = $oldPref
-    }
-}
-
-function Register-IrisAttachTask([string]$HwId) {
-    # usbipd's `--auto-attach` is per-process and dies if PowerShell exits.
-    # Use Task Scheduler to start it at every user logon as a background
-    # task that survives logout/login cycles.
-    $taskName = "VerificationPortal-IrisUsbAttach"
-    $usbipdPath = (Get-Command usbipd.exe).Source
-    $action = New-ScheduledTaskAction -Execute $usbipdPath `
-        -Argument "attach --hardware-id $HwId --wsl --auto-attach"
-    $trigger = New-ScheduledTaskTrigger -AtLogOn
-    $settings = New-ScheduledTaskSettingsSet -StartWhenAvailable -DontStopIfGoingOnBatteries `
-        -AllowStartIfOnBatteries -RestartCount 5 -RestartInterval (New-TimeSpan -Minutes 1)
-    # Run as the SYSTEM account so the task survives user-switch and works
-    # even before a user logs in. usbipd has the right capabilities here.
-    $principal = New-ScheduledTaskPrincipal -UserId "SYSTEM" -RunLevel Highest
-
-    Unregister-ScheduledTask -TaskName $taskName -Confirm:$false -ErrorAction SilentlyContinue
-    Register-ScheduledTask -TaskName $taskName -Action $action -Trigger $trigger `
-        -Settings $settings -Principal $principal | Out-Null
-    Write-Host "  -> scheduled task '$taskName' will reattach the iris device on every boot"
-}
-
-# ---------------------------------------------------------------------------
-# Phase 3 -- Provision iris service inside WSL
-# ---------------------------------------------------------------------------
-
-function Provision-Wsl([string]$Distro) {
-    $setupScript = Join-Path $PSScriptRoot 'wsl-iris-setup.sh'
-    if (-not (Test-Path $setupScript)) {
-        throw "wsl-iris-setup.sh missing from bundle (expected at $setupScript)."
-    }
-    $debDir = Join-Path $PSScriptRoot 'iris-wsl'
-    if (-not (Test-Path $debDir)) {
-        throw "iris-wsl/ directory missing from bundle (must contain mantra-iris-service_*_all.deb)."
-    }
-
-    # Translate Windows paths to WSL paths so the distro can see them.
-    # WSL auto-mounts `C:\` as `/mnt/c/`, so we rewrite the prefix.
-    $setupScriptWsl = (Resolve-Path $setupScript).Path -replace '\\', '/' `
-        -replace '^([A-Za-z]):', '/mnt/$($matches[1].ToLower())' 2>$null
-    # PowerShell's regex can't easily lowercase the captured group inline;
-    # fall back to a manual two-step.
-    $setupScriptWsl = (Resolve-Path $setupScript).Path
-    $drive = $setupScriptWsl.Substring(0, 1).ToLower()
-    $setupScriptWsl = "/mnt/$drive" + ($setupScriptWsl.Substring(2) -replace '\\', '/')
-
-    $debDirWsl = (Resolve-Path $debDir).Path
-    $drive = $debDirWsl.Substring(0, 1).ToLower()
-    $debDirWsl = "/mnt/$drive" + ($debDirWsl.Substring(2) -replace '\\', '/')
-
-    Write-Host "-> running iris provisioning script inside WSL distro '$Distro'"
-    Write-Host "  (this installs JRE, the iris .deb, and enables systemd; ~2 min)"
-
-    # `bash -c` runs the script with the .deb path passed as an argument.
-    # `--user root` because we need apt + systemctl.
-    & wsl.exe -d $Distro --user root -- bash $setupScriptWsl $debDirWsl
-    if ($LASTEXITCODE -ne 0) {
-        throw "WSL provisioning script exited with code $LASTEXITCODE. Check 'wsl -d $Distro' to debug."
-    }
-}
 
 # ---------------------------------------------------------------------------
 # Phase 4 -- MorFin daemon (Windows-native -- works without WSL)
@@ -756,20 +618,11 @@ if (Test-Path (Join-Path $PSScriptRoot 'startek')) {
     Copy-Item -Recurse -Force (Join-Path $PSScriptRoot 'startek') $InstallRoot
 }
 
-# --- iris (WSL2 path) -------------------------------------------------------
+# --- iris (native Windows service, Marvis Auth Web SDK 1.4) ---------------
 if (-not $SkipIris) {
     Write-Host ""
-    Write-Host "=== Iris service (WSL2 + usbipd) ==="
-    if (-not (Test-Wsl2Ready)) {
-        Enable-Wsl2     # may exit here with a reboot prompt
-    } else {
-        Write-Host "[OK] WSL2 already enabled"
-    }
-    Install-WslDistro $WslDistro
-    Install-Usbipd
-    Bind-IrisDevice  $IrisHwId
-    Register-IrisAttachTask $IrisHwId
-    Provision-Wsl    $WslDistro
+    Write-Host "=== Iris daemon -- Marvis Auth (Windows native) ==="
+    Install-MarvisIris
 } else {
     Write-Host "-> -SkipIris set; iris service NOT installed"
 }
@@ -810,8 +663,7 @@ if (-not $SkipStartek) {
     Write-Host "  FP -- Startek:  https://localhost:4443/  (ACPL Capture API; HTTPS) or :8090 (HTTP)"
 }
 if (-not $SkipIris) {
-    Write-Host "  Iris (WSL):    http://localhost:8031/  (wsl -d $WslDistro -- systemctl status mantra-iris-service)"
-    Write-Host "  USB attach:    Get-ScheduledTask VerificationPortal-IrisUsbAttach"
+    Write-Host "  Iris:          http://localhost:8031/  (Get-Service *Marvis*)"
 }
 Write-Host "  Shortcut:      Desktop + Start Menu"
 Write-Host ""
@@ -822,5 +674,5 @@ if (-not $SkipStartek) {
     Write-Host "  curl -k https://localhost:4443/FM220/getserial                # Startek (HTTPS)"
 }
 if (-not $SkipIris) {
-    Write-Host "  curl -X POST http://localhost:8031/iris/supporteddevicelist  # Iris"
+    Write-Host "  curl.exe -X POST http://localhost:8031/marvisauth/info       # Marvis iris"
 }

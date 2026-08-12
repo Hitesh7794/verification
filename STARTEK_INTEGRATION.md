@@ -13,7 +13,7 @@ to whichever vendor has a device plugged in.
 > candidate (roll 10001, Mantra-extracted) correctly scores ~0 → no
 > match. The full pipeline is documented below.
 
-This document is the Startek analogue of `IRIS_TEST_WINDOWS.md` — vendor
+This document is the Startek analogue of `IRIS_NOTES.md` — vendor
 specifics, install ordering, ports, troubleshooting. The cross-vendor
 architecture and the "why" of the abstraction is documented in
 `CONTEXT.md` §"Multi-vendor fingerprint".

@@ -1,8 +1,8 @@
 # uninstall.ps1 -- remove the Verification Portal operator-laptop install.
 #
 # Reverses everything install.ps1 did. Defaults are conservative: vendor
-# drivers (MorFin USB driver, ACPL Capture API) and WSL distros are NOT
-# removed unless explicitly requested, because other software on the
+# drivers (MorFin USB driver, ACPL Capture API, Marvis iris service) are
+# NOT removed unless explicitly requested, because other software on the
 # laptop might rely on them. Pass the -Remove* flags below for a full
 # nuke.
 #
@@ -27,15 +27,13 @@ param(
     # Also uninstall the Startek ACPL Capture API MSI.
     [switch]$RemoveStartek,
 
-    # Also remove the WSL iris service. Doesn't unregister the WSL
-    # distro itself (might host other workloads).
-    [switch]$RemoveWsl,
+    # Also uninstall the Marvis Auth Client Service (iris daemon on :8031).
+    # Vendor-provided Windows service; other Mantra-using apps on this
+    # laptop may rely on it.
+    [switch]$RemoveIris,
 
     # Also remove the imported Mantra TLS certs from Cert:\LocalMachine\Root.
-    [switch]$RemoveCerts,
-
-    # WSL distro hosting the iris service (only relevant with -RemoveWsl).
-    [string]$WslDistro = "Ubuntu-22.04"
+    [switch]$RemoveCerts
 )
 
 # EAP=Continue is the right default for an uninstaller. Native commands
@@ -162,15 +160,41 @@ function Remove-Shortcuts {
     }
 }
 
-function Remove-IrisTask {
-    $taskName = 'VerificationPortal-IrisUsbAttach'
-    $task = Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue
-    if ($task) {
-        Write-Host "-> unregistering scheduled task $taskName"
-        Unregister-ScheduledTask -TaskName $taskName -Confirm:$false
-        Write-Host "[OK] scheduled task removed"
+function Remove-MarvisIris {
+    # Vendor's Marvis Auth Client Service registers under a name that
+    # matches 'Marvis' — no fixed canonical name in the SDK docs so we
+    # pattern-match. Stop first, then uninstall via the vendor's
+    # registered Programs & Features entry.
+    $svc = Get-Service -Name 'MarvisAuthClientService','*Marvis*','*MarvisAuth*' `
+             -ErrorAction SilentlyContinue |
+           Select-Object -First 1
+    if (-not $svc) {
+        Write-Host "  [skip] Marvis Auth Client Service not registered"
+        return
+    }
+    Write-Host "-> stopping $($svc.Name)"
+    Stop-Service $svc.Name -Force -ErrorAction SilentlyContinue
+
+    # Look up the vendor uninstall string in the Programs & Features
+    # registry (both x86 + x64 hives to cover 32-bit and 64-bit
+    # installers). Skip if not found — operator can uninstall via
+    # Settings -> Apps as a fallback.
+    $uninstallKeys = @(
+        'HKLM:\SOFTWARE\Microsoft\Windows\CurrentVersion\Uninstall\*',
+        'HKLM:\SOFTWARE\WOW6432Node\Microsoft\Windows\CurrentVersion\Uninstall\*'
+    )
+    $entry = Get-ItemProperty -Path $uninstallKeys -ErrorAction SilentlyContinue |
+        Where-Object { $_.DisplayName -like '*Marvis*' } |
+        Select-Object -First 1
+    if ($entry -and $entry.UninstallString) {
+        Write-Host "-> running vendor uninstaller: $($entry.UninstallString)"
+        Start-Process -FilePath 'cmd.exe' `
+            -ArgumentList '/c', $entry.UninstallString, '/S' `
+            -Wait -ErrorAction SilentlyContinue | Out-Null
+        Write-Host "[OK] Marvis Auth Client Service uninstalled"
     } else {
-        Write-Host "  [skip] scheduled task $taskName not present"
+        Write-Warning "  Marvis service present but no Programs & Features entry found."
+        Write-Warning "  Uninstall manually via Settings -> Apps or `Get-Package '*Marvis*' | Uninstall-Package -Force`."
     }
 }
 
@@ -255,20 +279,6 @@ function Remove-StartekCaptureApi {
     Write-Host "[OK] ACPL Capture API removed"
 }
 
-function Remove-IrisService {
-    Write-Host "-> uninstalling mantra-iris-service from WSL distro $WslDistro"
-    $oldPref = $ErrorActionPreference
-    $ErrorActionPreference = 'Continue'
-    try {
-        & wsl.exe -d $WslDistro --user root -- apt-get purge -y mantra-iris-service 2>&1 |
-            ForEach-Object { if ($_) { Write-Host "    $_" } }
-    } finally {
-        $ErrorActionPreference = $oldPref
-    }
-    Write-Host "[OK] mantra-iris-service uninstalled from $WslDistro"
-    Write-Host "  (the $WslDistro distro itself is preserved; to remove entirely:"
-    Write-Host "   wsl --unregister $WslDistro)"
-}
 
 # ---------------------------------------------------------------------------
 # Main
@@ -282,7 +292,7 @@ Write-Host "====================================================================
 Write-Host "Install root        : $InstallRoot"
 Write-Host "Remove MorFin driver: $($RemoveDriver.IsPresent)"
 Write-Host "Remove Startek      : $($RemoveStartek.IsPresent)"
-Write-Host "Remove iris (WSL)   : $($RemoveWsl.IsPresent)"
+Write-Host "Remove Marvis iris  : $($RemoveIris.IsPresent)"
 Write-Host "Remove vendor certs : $($RemoveCerts.IsPresent)"
 Write-Host ""
 
@@ -301,32 +311,28 @@ Write-Host ""
 Write-Host "=== Phase 4: desktop + start menu shortcuts ==="
 Remove-Shortcuts
 
-Write-Host ""
-Write-Host "=== Phase 5: scheduled tasks ==="
-Remove-IrisTask
-
 if ($RemoveCerts) {
     Write-Host ""
-    Write-Host "=== Phase 6: vendor TLS certs ==="
+    Write-Host "=== Phase 5: vendor TLS certs ==="
     Remove-VendorCerts
 }
 
 if ($RemoveDriver) {
     Write-Host ""
-    Write-Host "=== Phase 7: MorFin USB driver ==="
+    Write-Host "=== Phase 6: MorFin USB driver ==="
     Remove-MorfinDriver
 }
 
 if ($RemoveStartek) {
     Write-Host ""
-    Write-Host "=== Phase 8: Startek Capture API ==="
+    Write-Host "=== Phase 7: Startek Capture API ==="
     Remove-StartekCaptureApi
 }
 
-if ($RemoveWsl) {
+if ($RemoveIris) {
     Write-Host ""
-    Write-Host "=== Phase 9: WSL iris service ==="
-    Remove-IrisService
+    Write-Host "=== Phase 8: Marvis iris daemon ==="
+    Remove-MarvisIris
 }
 
 Write-Host ""

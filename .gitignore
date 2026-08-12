@@ -2,8 +2,11 @@ gndu27_enrollments_data_2026-04-08*/
 rhl.ppk copy 2
 TECH_LEAD_QUESTIONS.md
 
-# Vendor JARs are not redistributable; staged locally for builds only.
-iris-service/lib/*.jar
+# Vendor Marvis Auth Web SDK — Windows-native iris daemon. Not
+# redistributable; ~200 MB. Drop into client-bootstrap/windows/vendor/
+# before running install.ps1 (or build-bundle.sh will stage it there).
+# See client-bootstrap/windows/vendor/README.md for the download link.
+client-bootstrap/windows/vendor/MarvisAuthClientService*.exe
 
 # Luxand SDK + license: never commit. Vendor terms forbid redistribution
 # of the SDK; the license key is per-deployment and confidential.

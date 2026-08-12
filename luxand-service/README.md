@@ -9,7 +9,7 @@ JPEG ships up to the backend, the backend forwards it here.
 | Service              | Port  | Where it runs    | Wraps                           |
 |----------------------|-------|------------------|---------------------------------|
 | morfin-client-service | 8030  | Operator laptop  | MorFin fingerprint SDK          |
-| mantra-iris-service   | 8031  | Operator laptop  | Marvis iris SDK                 |
+| MarvisAuthClientService | 8031 | Operator laptop  | Marvis iris SDK (native Win)  |
 | **luxand-service**    | **8040** | **Central server** | **Luxand FaceSDK 8.3**         |
 
 ## Endpoints

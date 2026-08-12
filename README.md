@@ -24,15 +24,11 @@ against pre-enrolled records on file.
 >     [`STARTEK_INTEGRATION.md`](./STARTEK_INTEGRATION.md) and
 >     [`fp-match-service/README.md`](./fp-match-service/README.md).
 > - **Iris 1:1 verification** — wired end-to-end against the
->   **Marvis Auth SDK** (device: MIS100V2). Used as automatic
->   fallback when fingerprint match fails.
->   - On Linux operator laptops: native via the iris `.deb`.
->   - On Windows operator laptops: via **WSL2 + usbipd-win**, since
->     Mantra's Windows DLL is broken (vendor's own sample crashes
->     identically — see [`IRIS_VENDOR_ISSUE.md`](./IRIS_VENDOR_ISSUE.md)).
->     Verified end-to-end on Win10 19045 with real hardware:
->     `curl http://localhost:8031/iris/connecteddevicelist` →
->     `{"ErrorCode":"0","ErrorDescription":"Found Devices: MIS100V2"}`.
+>   **Marvis Auth Web SDK 1.4** (device: MIS100V2). Used as automatic
+>   fallback when fingerprint match fails. Native Windows service
+>   (`MarvisAuthClientService.exe`) on `localhost:8031/marvisauth/*`;
+>   frontend hits it directly. See [`IRIS_NOTES.md`](./IRIS_NOTES.md)
+>   for the setup + the retired v1.0 WSL2 workaround story.
 > - **Face 1:1 verification** — Luxand FaceSDK 8.3, server-side via
 >   `luxand-service` on the central server (browser webcam capture,
 >   no per-laptop daemon). Working with real photos. Default `FAR=0.01`
@@ -64,12 +60,11 @@ against pre-enrolled records on file.
 > - [`ISSUES.md`](./ISSUES.md) — the 5 open decisions for the tech lead.
 > - [`TECH_LEAD_QUESTIONS.md`](./TECH_LEAD_QUESTIONS.md) — longer Q&A version of the above.
 > - [`client-bootstrap/README.md`](./client-bootstrap/README.md) — operator-laptop install bundle internals.
-> - [`iris-service/README.md`](./iris-service/README.md) — Java service wrapping the Marvis SDK.
+> - [`IRIS_NOTES.md`](./IRIS_NOTES.md) — Marvis iris SDK deployment + retired v1.0 WSL2 workaround story.
 > - [`luxand-service/README.md`](./luxand-service/README.md) — server-side face matcher (Luxand FaceSDK 8.3).
 > - [`fp-match-service/README.md`](./fp-match-service/README.md) — server-side fingerprint matcher (SourceAFIS). Unblocks the Startek path.
 > - [`STARTEK_INTEGRATION.md`](./STARTEK_INTEGRATION.md) — Startek/ACPL fingerprint integration + the L1 Capture API limitation it works around.
 > - [`WALLET.md`](./WALLET.md) — wallet feature + Razorpay test-mode integration + admin manual-credit flow.
-> - [`IRIS_TEST_WINDOWS.md`](./IRIS_TEST_WINDOWS.md) — step-by-step guide for testing the MIS100V2 iris device on a Windows laptop.
 
 ---
 
@@ -159,10 +154,7 @@ Portal-main/
 │       │   └── useDeviceStatus.js           polling state machine
 │       └── pages/                           Landing / client / admin / superadmin
 │
-├── iris-service/                  Java + Javalin wrapper around Marvis SDK
-│   ├── src/main/java/.../         IrisProvider interface, Mock + Marvis impls
-│   ├── packaging/debian/          .deb files (control, postinst, systemd unit)
-│   ├── pom.xml                    Maven build
+├── IRIS_NOTES.md                  Marvis iris SDK setup + retired WSL2 workaround story
 │   └── build-deb.sh               Linux-only .deb packager
 │
 ├── luxand-service/                Java + Javalin wrapper around Luxand FaceSDK 8.3
@@ -540,7 +532,8 @@ same-roll cache).
 
 ```bash
 cd backend && go test ./...           # 23+ Go tests
-cd iris-service && mvn test           # 7 JUnit tests for the iris service
+# (iris integration tests retired — Marvis daemon is now vendor-provided,
+# nothing for us to unit-test on our side)
 ```
 
 Coverage: migration runner, format detector, both mock daemons,

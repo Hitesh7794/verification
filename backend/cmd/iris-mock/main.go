@@ -1,13 +1,23 @@
-// Command iris-mock impersonates the mantra-iris-service we'll ship as
-// a .deb to operator laptops. It listens on localhost:8031 and answers
-// the same JSON shapes the real Java service will return, so the
-// frontend's iris fallback can be developed and tested without USB
-// hardware.
+// Command iris-mock impersonates the vendor Marvis Auth Client Service
+// daemon that ships as MarvisAuthClientService.exe on operator laptops.
+// It listens on localhost:8031 and answers rough JSON shapes matching
+// the vendor SDK's /marvisauth/* API so the frontend's iris fallback
+// can be developed and tested without the Windows daemon + USB hardware.
 //
 // The endpoint convention mirrors morfin-mock: every method lives under
-// /iris/<method>, returns {"ErrorCode": "0|<code>", "ErrorDescription":
-// "...", ...data}. Strings for ErrorCode (not ints) so the frontend
-// can compare with === '0' identically across both daemons.
+// /marvisauth/<method>, returns {"ErrorCode": "0|<code>",
+// "ErrorDescription": "...", ...data}. Strings for ErrorCode (not ints)
+// so the frontend can compare with === '0' identically across both
+// daemons.
+//
+// SHAPES ARE APPROXIMATE — the vendor doesn't publish authoritative
+// samples for every response, and the mock exists for dev-only UI
+// smoke tests. Real integration testing needs the actual Windows
+// service. See IRIS_NOTES.md.
+//
+// Historical note: this mock previously served /iris/* to match the
+// Java iris-service we ran in WSL2. Since Aug 2026 the frontend hits
+// /marvisauth/* directly and the WSL2 pipeline is retired.
 package main
 
 import (
@@ -91,7 +101,7 @@ const (
 )
 
 func main() {
-	addr := flag.String("addr", ":8031", "listen address (default :8031, mirrors mantra-iris-service)")
+	addr := flag.String("addr", ":8031", "listen address (default :8031, mirrors MarvisAuthClientService.exe)")
 	flag.Parse()
 
 	st := newState()
@@ -99,23 +109,23 @@ func main() {
 
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain")
-		fmt.Fprintf(w, "iris-mock\n\nendpoints under /iris/ — see docs/iris-api.md.\nflip state via POST /control.\n")
+		fmt.Fprintf(w, "iris-mock\n\nendpoints under /marvisauth/ — see IRIS_NOTES.md.\nflip state via POST /control.\n")
 	})
 
-	mux.HandleFunc("/iris/", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/marvisauth/", func(w http.ResponseWriter, r *http.Request) {
 		setCORS(w, r)
 		if r.Method == http.MethodOptions {
 			w.WriteHeader(http.StatusNoContent)
 			return
 		}
-		method := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/iris/"), "/")
+		method := strings.TrimSuffix(strings.TrimPrefix(r.URL.Path, "/marvisauth/"), "/")
 		method = strings.ToLower(method)
 
 		body := map[string]any{}
 		if r.ContentLength > 0 {
 			_ = json.NewDecoder(r.Body).Decode(&body)
 		}
-		log.Printf("iris/%s body-keys=%v", method, mapKeys(body))
+		log.Printf("marvisauth/%s body-keys=%v", method, mapKeys(body))
 
 		if st.consumeFailure() {
 			writeJSON(w, envelope{ErrorCode: errBad, ErrorDescription: "injected failure"})

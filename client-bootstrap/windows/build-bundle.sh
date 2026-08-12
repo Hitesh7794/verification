@@ -4,13 +4,14 @@
 # Cross-platform: runs on macOS / Linux / Windows (under WSL or git-bash).
 # Pulls together:
 #   - vendor MorFin JAR + TLS certs extracted from the vendor .deb
-#     (Windows hosts the MorFin daemon natively — its DLLs work on Windows)
+#     (Windows hosts the MorFin daemon natively via nssm — its DLLs work)
 #   - Startek/ACPL Capture API MSI + VC++ redist (from Setup_ACPL_L1_API/)
 #     (Windows-native MSI; registers its own Windows service on install)
-#   - mantra-iris-service .deb built from ../../iris-service
-#     (the iris service runs INSIDE WSL2 because the Marvis SDK's Windows
-#     DLL has a JNI signature mismatch — see IRIS_VENDOR_ISSUE.md)
-#   - install.ps1 + wsl-iris-setup.sh + tools/nssm.exe
+#   - Marvis Auth Client Service installer (MarvisAuthClientService.exe)
+#     from Mantra's Marvis Auth Web SDK 1.4.0.0+ package. Native Windows
+#     service — no WSL, no JAR. Retired the old WSL2 workaround, see
+#     IRIS_NOTES.md for the story.
+#   - install.ps1 + tools/nssm.exe + Adoptium Temurin JRE 17 for MorFin
 #
 # Output: dist/VerificationPortalClient-<version>-windows.zip
 
@@ -25,6 +26,11 @@ BUNDLE_NAME="VerificationPortalClient-${VERSION}-windows"
 # --- inputs ---------------------------------------------------------------
 MORFIN_DEB="${MORFIN_DEB:-${ROOT}/../MorfinAuth_Linux_Web_SDK_1.0.0.0/Setup/MorfinAuthClientService.deb}"
 NSSM_EXE="${NSSM_EXE:-${ROOT}/client-bootstrap/windows/tools/nssm.exe}"
+# Marvis Auth Client Service installer (native Windows iris daemon).
+# Not committed to git — see client-bootstrap/windows/vendor/README.md
+# for the download source. Falls back to skipping the iris payload if
+# absent so fingerprint-only builds still succeed.
+MARVIS_EXE="${MARVIS_EXE:-${ROOT}/client-bootstrap/windows/vendor/MarvisAuthClientService.exe}"
 # Startek/ACPL Capture API package — vendor-supplied tree containing the
 # MSI, the VC++ redist, and demo HTML test pages. Optional: if absent, the
 # bundle still builds, install.ps1 just skips the Startek phase.
@@ -54,27 +60,6 @@ if [ ! -f "$NSSM_EXE" ]; then
     echo "  Download nssm 2.24+ from https://nssm.cc/download" >&2
     echo "  Place the 64-bit nssm.exe at $NSSM_EXE" >&2
     echo "  (Continuing — bundle will fail to install on Windows without it.)" >&2
-fi
-
-if ! command -v mvn >/dev/null 2>&1; then
-    echo "✗ mvn required to build mantra-iris-service.deb" >&2
-    exit 1
-fi
-
-if ! command -v dpkg-deb >/dev/null 2>&1; then
-    echo "✗ dpkg-deb required to build mantra-iris-service.deb" >&2
-    echo "  On macOS: brew install dpkg" >&2
-    echo "  On Linux: apt-get install dpkg" >&2
-    exit 1
-fi
-
-# --- iris .deb (will be installed inside WSL2 on the operator laptop) ----
-echo "→ building mantra-iris-service .deb"
-( cd "${ROOT}/iris-service" && ./build-deb.sh )
-IRIS_DEB=$(ls "${ROOT}/iris-service/dist/mantra-iris-service_"*"_all.deb" | head -n1)
-if [ ! -f "$IRIS_DEB" ]; then
-    echo "✗ iris .deb build failed" >&2
-    exit 1
 fi
 
 # --- bundled JRE (fetched once, cached) -----------------------------------
@@ -109,7 +94,7 @@ fi
 
 # --- assemble bundle ------------------------------------------------------
 OUT="dist/$BUNDLE_NAME"
-rm -rf "$OUT" && mkdir -p "$OUT/morfin/certs" "$OUT/iris-wsl" "$OUT/tools" "$OUT/startek"
+rm -rf "$OUT" && mkdir -p "$OUT/morfin/certs" "$OUT/vendor" "$OUT/tools" "$OUT/startek"
 
 # Windows-side: MorFin daemon JAR + certs (works native on Windows)
 cp "$MORFIN_JAR" "$OUT/morfin/"
@@ -133,8 +118,16 @@ fi
 mv "$JRE_INNER_DIR" "$OUT/morfin/jre"
 echo "  jre/bin/java.exe -> $(ls "$OUT/morfin/jre/bin/java.exe" 2>/dev/null || echo MISSING)"
 
-# WSL-side: iris service .deb (gets dpkg-installed inside the WSL distro)
-cp "$IRIS_DEB" "$OUT/iris-wsl/"
+# Windows-side: Marvis Auth iris installer.
+# Optional — if absent, install.ps1 warns and skips the iris phase so
+# fingerprint-only fleets can still deploy from a partial bundle.
+if [ -f "$MARVIS_EXE" ]; then
+    cp "$MARVIS_EXE" "$OUT/vendor/MarvisAuthClientService.exe"
+    echo "  staged Marvis iris installer: $(du -h "$MARVIS_EXE" | cut -f1)"
+else
+    echo "  ⚠ MarvisAuthClientService.exe not found at $MARVIS_EXE (iris phase will be skipped on install)" >&2
+    echo "     See client-bootstrap/windows/vendor/README.md for the download source." >&2
+fi
 
 # Windows-side: Startek/ACPL Capture API MSI + VC++ redist prereq.
 # Both files come from the vendor SDK package shipped by ACPL
@@ -164,49 +157,46 @@ fi
 # Tooling
 [ -f "$NSSM_EXE" ] && cp "$NSSM_EXE" "$OUT/tools/" || true
 
-# Scripts (install.ps1 + the WSL provisioning script it invokes)
-cp install.ps1         "$OUT/install.ps1"
-cp wsl-iris-setup.sh   "$OUT/wsl-iris-setup.sh"
+# Scripts
+cp install.ps1   "$OUT/install.ps1"
+cp uninstall.ps1 "$OUT/uninstall.ps1"
 
 cat > "$OUT/README.txt" <<EOF
 Verification Portal — operator-laptop install bundle (Windows)
 Version: ${VERSION}
 
 Prerequisites on the operator laptop:
-  - Windows 10 (build 19041 / version 2004 May 2020 Update or newer)
+  - Windows 10 (build 17763 / 1809 October 2018 update or newer)
     or Windows 11 — 64-bit only.
-  - Virtualization enabled in BIOS/UEFI (most modern laptops on by default).
   - Java is BUNDLED — no separate JRE install needed. The bundle ships
     its own Adoptium Temurin JRE 17 under morfin/jre/, used privately
     by the MorFin daemon. Operator PATH is not modified.
-  - Internet for first install (downloads WSL kernel + Ubuntu image).
+  - Internet is NOT required for install — everything is bundled.
 
 Install in an *elevated* PowerShell (Run as Administrator):
 
   Set-ExecutionPolicy -Scope Process Bypass
   .\install.ps1 -PortalUrl https://your-portal-url
 
-If WSL2 isn't already enabled, the script enables the Windows features and
-asks you to reboot. After reboot, re-run the same command — it picks up
-where it left off.
-
 What this installs:
-  - MorfinAuthClientService    (Mantra MorFin fingerprint daemon, native
-                                Windows service, port 8030)
-  - ACPL Capture API service   (Startek FM220U L1 / AST300 fingerprint
-                                daemon, native Windows service, MSI-installed,
-                                ports 4443 HTTPS + 8090 HTTP)
-  - WSL2 Ubuntu-22.04 distro hosting mantra-iris-service (iris, port 8031)
-  - usbipd-win — passes the MIS100V2 iris USB device into WSL
-  - VerificationPortal-IrisUsbAttach scheduled task — auto-attaches the
-    iris device to WSL on every boot
+  - Marvis Auth Client Service   (Mantra iris daemon, native Windows
+                                  service, port 8031, self-registered
+                                  by MarvisAuthClientService.exe)
+  - MorfinAuthClientService      (Mantra MorFin fingerprint daemon,
+                                  native Windows service via nssm,
+                                  port 8030)
+  - ACPL Capture API service     (Startek FM220U L1 / AST300 daemon,
+                                  MSI-installed native service, ports
+                                  4443 HTTPS + 8090 HTTP)
   - Browser homepage policy (Chrome + Edge), Cert:\LocalMachine\Root
     cert imports, Desktop + Start Menu shortcuts.
 
 Both fingerprint vendors run side-by-side. The frontend polls both
 daemons in parallel and binds to whichever has a device plugged in —
 the operator never has to pick. If a deployment only uses one vendor,
-pass -SkipStartek or remove the corresponding service afterwards.
+pass -SkipStartek.
+
+Iris hardware not part of the deployment? Pass -SkipIris.
 
 Startek prerequisite NOT bundled (must be installed separately):
   - Windows Certified RD Service for L1 Devices
@@ -214,37 +204,17 @@ Startek prerequisite NOT bundled (must be installed separately):
     Required for the Capture API to take exclusive USB access. install.ps1
     warns if it's missing.
 
-Why iris runs in WSL:
-  Mantra's Marvis_Auth.jar bundles native Windows DLLs whose JNI
-  callback signatures don't match the Java classes in the same JAR
-  (verified against bytecode — see IRIS_VENDOR_ISSUE.md). The Linux
-  .so files in the same JAR work correctly. WSL2 + usbipd lets us
-  use the working Linux binaries even on a Windows operator laptop.
-  When Mantra ships a corrected Windows DLL, switching back to a
-  Windows-native iris service is a one-flag change in install.ps1.
-
 After install — smoke tests:
-  curl http://localhost:8030/                                  # Mantra MorFin
-  curl http://localhost:8090/FM220/getserial                   # Startek (HTTP)
-  curl -k https://localhost:4443/FM220/getserial               # Startek (HTTPS)
-  curl -X POST http://localhost:8031/iris/supporteddevicelist  # Iris (via WSL)
-  Get-Service MorfinAuthClientService                          # native MorFin
-  Get-Service *ACPL* -ErrorAction SilentlyContinue             # native Capture API
-  wsl -d Ubuntu-22.04 -- systemctl status mantra-iris-service  # WSL iris
-  Get-ScheduledTask VerificationPortal-IrisUsbAttach           # USB attacher
+  curl.exe http://localhost:8030/                                # Mantra MorFin
+  curl.exe http://localhost:8090/FM220/getserial                 # Startek (HTTP)
+  curl.exe -k https://localhost:4443/FM220/getserial             # Startek (HTTPS)
+  curl.exe -X POST http://localhost:8031/marvisauth/info         # Marvis iris
+  Get-Service MorfinAuthClientService                            # native MorFin
+  Get-Service *ACPL* -ErrorAction SilentlyContinue               # native Capture API
+  Get-Service *Marvis*                                           # native iris
 
 Uninstall:
-  # Windows-side services + policies
-  Stop-Service MorfinAuthClientService -Force
-  & "C:\Program Files\VerificationPortal\tools\nssm.exe" remove MorfinAuthClientService confirm
-  Unregister-ScheduledTask -TaskName VerificationPortal-IrisUsbAttach -Confirm:\$false
-  Remove-Item -Recurse "C:\Program Files\VerificationPortal"
-  Remove-Item HKLM:\SOFTWARE\Policies\Google\Chrome\HomepageLocation
-  Remove-Item HKLM:\SOFTWARE\Policies\Microsoft\Edge\HomepageLocation
-  # WSL-side iris service
-  wsl -d Ubuntu-22.04 -- sudo apt-get purge -y mantra-iris-service
-  # Optional — full WSL distro removal:
-  # wsl --unregister Ubuntu-22.04
+  .\uninstall.ps1 -RemoveDriver -RemoveStartek -RemoveIris -RemoveCerts
 EOF
 
 # --- zip ------------------------------------------------------------------

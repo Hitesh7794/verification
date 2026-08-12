@@ -2,65 +2,64 @@ import { useEffect, useState } from 'react'
 import { Button } from '../ui/ui.jsx'
 import { iris, IrisError } from '../../lib/verify/iris.js'
 
-// IrisCapture is the fallback used when fingerprint match fails. Same
-// auto-init / auto-recover discipline as FingerprintCapture, but for
-// iris there's no enrolled gallery in the sample data, so capture is
-// for **audit only** unless an iris template is supplied via props.
+// IrisCapture is the fallback used when fingerprint match fails.
+// Operator triggers a single-eye capture; if a gallery template is
+// supplied via props, we also run a 1:1 match server-side. Otherwise
+// the capture lands on the verifications row as audit-only.
 //
-// When the operator triggers capture, we call /iris/capture (which
-// wraps Marvis AutoCapture) and surface the per-eye quality + image.
-// If both `galleryLeft` and `galleryRight` are supplied (base64), we
-// then call /iris/match to compute scores; otherwise we just record
-// the capture as evidence and let the operator decide manually.
+// Since the switch to Mantra's native Windows Marvis Auth Web SDK
+// (v1.4, replacing the WSL2 + Java fallback), the daemon captures a
+// single eye per invocation rather than left+right in one shot. We
+// keep the old result contract (leftQuality/rightQuality/etc.) so
+// Dashboard.jsx and the verifications table shape don't change — one
+// capture maps to the "left*" slots, "right*" stay null. If we later
+// decide to prompt for both eyes, run capture twice and merge.
+//
+// Auto-heartbeat: polls /marvisauth/info every 2s to detect whether
+// the daemon is up. If it goes down mid-session we surface it before
+// the operator clicks and gets a cryptic error. Same discipline as
+// FingerprintCapture.
 
 export default function IrisCapture({
-  galleryLeft,    // base64 of enrolled left iris (optional)
-  galleryRight,   // base64 of enrolled right iris (optional)
-  galleryFormat = 'K7',
-  matchThreshold = 0.6,
-  onResult,       // (result) => void
+  galleryTemplate,          // base64 iris template (optional; enables match)
+  galleryFormat,            // numeric ImgFormat matching the gallery (default ISO)
+  matchThreshold = 0.6,     // score gate for "ok"; SDK scores are 0..1
+  quality = 55,             // min capture quality (1..100), passed to /capture
+  timeoutMs = 10000,        // wall-clock capture timeout
+  onResult,                 // (result) => void
 }) {
-  const [status, setStatus] = useState('checking') // checking|service_down|no_device|ready|capturing|error
-  const [device, setDevice] = useState(null)
+  const [status, setStatus] = useState('checking') // checking|service_down|ready|capturing|error
+  const [device, setDevice] = useState(null)       // { model, serial } from /info
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
 
+  // Heartbeat — every 2s, ping /marvisauth/info to check the daemon
+  // is alive. Vendor SDK auto-inits the attached device on first
+  // capture, so there's no explicit init/connected-list to call.
   useEffect(() => {
     let alive = true
     let timer
     async function tick() {
       if (!alive) return
       try {
-        const devs = await iris.getConnectedDevices()
+        const env = await iris.getInfo()
         if (!alive) return
-        if (devs.length === 0) {
-          setStatus('no_device')
-          setDevice(null)
-        } else {
-          // Auto-init silently when a device is detected.
-          const name = devs[0]
-          if (!device || device.name !== name) {
-            try {
-              await iris.init(name)
-              const info = await iris.getInfo(name)
-              if (!alive) return
-              setDevice({ name, info })
-              setStatus('ready')
-            } catch (e) {
-              if (!alive) return
-              setStatus(e instanceof IrisError && e.kind === 'device' ? 'no_device' : 'error')
-              setError(e)
-            }
-          } else {
-            setStatus('ready')
-          }
-        }
+        setDevice({
+          model:  env.Model  || env.DeviceModel  || '',
+          serial: env.SerialNo || env.SerialNumber || '',
+        })
+        // Only flip to 'ready' when idle — never trample 'capturing'.
+        setStatus((s) => (s === 'capturing' ? s : 'ready'))
       } catch (e) {
         if (!alive) return
-        setStatus(e instanceof IrisError && e.kind === 'service' ? 'service_down' : 'error')
-        setError(e)
-        setDevice(null)
+        if (e instanceof IrisError && e.kind === 'service') {
+          setStatus('service_down')
+          setDevice(null)
+        } else {
+          setStatus('error')
+          setError(e)
+        }
       }
       timer = setTimeout(tick, 2000)
     }
@@ -69,8 +68,7 @@ export default function IrisCapture({
       alive = false
       if (timer) clearTimeout(timer)
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [device?.name])
+  }, [])
 
   async function onCapture() {
     setBusy(true)
@@ -78,51 +76,57 @@ export default function IrisCapture({
     setResult(null)
     setStatus('capturing')
     try {
-      const cap = await iris.capture()
-      let matchEnv = null
-      if (galleryLeft || galleryRight) {
-        // The probe images coming back from /iris/capture aren't
-        // raw template bytes — they're whatever the SDK exposed via
-        // GetImage (BMP by default in our Java wrapper). Pass them
-        // straight through; the format param tells the matcher how
-        // to interpret both sides.
-        matchEnv = await iris.match({
-          probeLeft: cap.Left?.BitmapB64,
-          probeRight: cap.Right?.BitmapB64,
-          galleryLeft,
-          galleryRight,
+      // Two shapes here depending on whether a gallery is supplied:
+      //   - gallery present → /match (captures + compares in one hop,
+      //     returns Score alongside Quality + BitmapData)
+      //   - no gallery      → /capture (audit-only, no Score)
+      let env
+      let matched = null // null = no match attempted
+      if (galleryTemplate) {
+        env = await iris.match({
+          galleryTemplate,
           format: galleryFormat,
+          quality,
+          timeoutMs,
         })
+        // Vendor sample surfaces Score + Status; we treat Status
+        // (their own boolean) as the primary signal, tightened by our
+        // own threshold gate for a defence-in-depth check.
+        const score = num(env.Score)
+        matched = !!env.Status && score != null && score >= matchThreshold
+      } else {
+        env = await iris.capture({ quality, timeoutMs })
       }
-      const left = cap.Left?.Quality ?? null
-      const right = cap.Right?.Quality ?? null
-      const lScore = matchEnv?.LeftScore ?? null
-      const rScore = matchEnv?.RightScore ?? null
-      const passed = matchEnv
-        ? !!matchEnv.Status &&
-          ((lScore != null && lScore >= matchThreshold) ||
-            (rScore != null && rScore >= matchThreshold))
-        : null
 
+      // Keep the old result-object contract so Dashboard.jsx's submit
+      // body and the verifications.iris_* columns don't need to
+      // change. Single-eye capture → populate 'left*', leave 'right*'
+      // NULL.
       const out = {
-        ok: passed,                           // null = no match was attempted
+        ok: matched,
         captured: true,
-        deviceSerial: device?.info?.SerialNo || '',
-        deviceModel: device?.info?.Model || '',
-        leftQuality: left,
-        rightQuality: right,
-        leftScore: lScore,
-        rightScore: rScore,
-        threshold: matchThreshold,
-        leftBmp: cap.Left?.BitmapB64 || null,
-        rightBmp: cap.Right?.BitmapB64 || null,
+        deviceSerial: device?.serial || '',
+        deviceModel:  device?.model  || '',
+        leftQuality:  num(env.Quality),
+        rightQuality: null,
+        leftScore:    num(env.Score),
+        rightScore:   null,
+        threshold:    matchThreshold,
+        leftBmp:      env.BitmapData || null,
+        rightBmp:     null,
       }
       setResult(out)
       onResult?.(out)
       setStatus('ready')
     } catch (e) {
       setError(e)
-      setStatus(e instanceof IrisError && e.kind === 'device' ? 'no_device' : 'error')
+      if (e instanceof IrisError && e.kind === 'service') {
+        setStatus('service_down')
+      } else if (e instanceof IrisError && e.kind === 'device') {
+        setStatus('error')
+      } else {
+        setStatus('error')
+      }
     } finally {
       setBusy(false)
     }
@@ -132,24 +136,13 @@ export default function IrisCapture({
     <div className="space-y-3">
       <Banner status={status} device={device} error={error} />
 
-      {(result?.leftBmp || result?.rightBmp) && (
-        <div className="grid grid-cols-2 gap-3">
-          {['leftBmp', 'rightBmp'].map((k) => (
-            <div
-              key={k}
-              className="aspect-video rounded-lg bg-slate-100 overflow-hidden flex items-center justify-center"
-            >
-              {result[k] ? (
-                <img
-                  src={`data:image/bmp;base64,${result[k]}`}
-                  alt={k}
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                <span className="text-xs text-slate-400">{k.replace('Bmp', '')}</span>
-              )}
-            </div>
-          ))}
+      {result?.leftBmp && (
+        <div className="rounded-lg bg-slate-100 overflow-hidden flex items-center justify-center aspect-video">
+          <img
+            src={`data:image/bmp;base64,${result.leftBmp}`}
+            alt="captured iris"
+            className="max-h-64 object-contain"
+          />
         </div>
       )}
 
@@ -176,6 +169,15 @@ export default function IrisCapture({
   )
 }
 
+// num safely coerces vendor numeric-string quirks to a real Number or
+// null. Vendor sample sometimes returns "0.85" as a string; sometimes
+// as a JSON number. Handle both without exploding.
+function num(v) {
+  if (v === undefined || v === null || v === '') return null
+  const n = Number(v)
+  return Number.isFinite(n) ? n : null
+}
+
 function Banner({ status, device, error }) {
   const cfg = bannerFor(status, device, error)
   return (
@@ -194,7 +196,9 @@ function bannerFor(status, device, error) {
         tone: 'border-emerald-200 bg-emerald-50 text-emerald-800',
         dot: 'bg-emerald-500',
         title: 'Iris device ready',
-        detail: device ? `${device.info?.Model} · ${device.info?.SerialNo}` : '',
+        detail: device?.model || device?.serial
+          ? `${device.model}${device.serial ? ' · ' + device.serial : ''}`
+          : '',
       }
     case 'capturing':
       return {
@@ -203,19 +207,12 @@ function bannerFor(status, device, error) {
         title: 'Look at the iris device…',
         detail: '',
       }
-    case 'no_device':
-      return {
-        tone: 'border-amber-200 bg-amber-50 text-amber-800',
-        dot: 'bg-amber-500',
-        title: 'Plug in the iris device',
-        detail: '',
-      }
     case 'service_down':
       return {
         tone: 'border-rose-200 bg-rose-50 text-rose-800',
         dot: 'bg-rose-500',
         title: 'Iris service not running',
-        detail: 'Ask IT to install mantra-iris-service',
+        detail: 'Ask IT to start MarvisAuthClientService on this laptop',
       }
     case 'error':
       return {
@@ -255,9 +252,9 @@ function ResultSummary({ r }) {
           : 'Iris did not match'}
       </p>
       <p className="text-xs mt-1 text-slate-600">
-        left q {r.leftQuality ?? '—'} · right q {r.rightQuality ?? '—'}
-        {(r.leftScore != null || r.rightScore != null) && (
-          <> · left s {r.leftScore ?? '—'} · right s {r.rightScore ?? '—'} · threshold {r.threshold}</>
+        quality {r.leftQuality ?? '—'}
+        {r.leftScore != null && (
+          <> · score {r.leftScore.toFixed(3)} · threshold {r.threshold}</>
         )}
       </p>
     </div>
