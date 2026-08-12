@@ -698,7 +698,8 @@ export default function ClientDashboard() {
                 </CardHeader>
                 <CardBody>
                   <IrisCapture
-                    matchThreshold={0.6}
+                    rollNo={candidate?.roll_no}
+                    matchThreshold={50}
                     onResult={(r) => {
                       setIrisResult(r)
                       if (step < 3) setStep(3)

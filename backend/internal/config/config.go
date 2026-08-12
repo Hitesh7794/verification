@@ -68,7 +68,19 @@ type Config struct {
 	// template; returns a similarity score. Same loopback-only deployment
 	// model as luxand. Empty string disables the endpoint cleanly so the
 	// backend still boots without the service running.
+	//
+	// NOTE: retained while TrustView is rolled out (see below); once the
+	// hosted matcher is confirmed in prod, both this and LuxandBase can
+	// go away.
 	FpMatchBase string // base URL, e.g. http://127.0.0.1:8050/fp/
+
+	// TrustView hosted compare API (v1.trustview.in). Single endpoint
+	// replaces the on-prem face + fingerprint matchers and the operator-
+	// laptop iris matcher. Token is per-deployment, expires — rotate via
+	// TRUSTVIEW_TOKEN. Empty token → the biometric compare handlers
+	// return 503 loudly instead of silently proxying broken calls.
+	TrustViewBaseURL string // default https://v1.trustview.in
+	TrustViewToken   string // Bearer token; empty = compare disabled
 
 	// Razorpay test-mode integration for the per-client wallet feature.
 	// Keys come from the Razorpay dashboard → Settings → API Keys (test
@@ -138,6 +150,8 @@ func Load() Config {
 		LuxandBase:                envOr("LUXAND_BASE", "http://127.0.0.1:8040/face/"),
 		FaceTemplateDir:           envOr("FACE_TEMPLATE_DIR", "face_templates"),
 		FpMatchBase:               envOr("FP_MATCH_BASE", "http://127.0.0.1:8050/fp/"),
+		TrustViewBaseURL:          envOr("TRUSTVIEW_BASE_URL", "https://v1.trustview.in"),
+		TrustViewToken:            envOr("TRUSTVIEW_TOKEN", ""),
 		RazorpayKeyID:             envOr("RAZORPAY_KEY_ID", ""),
 		RazorpayKeySecret:         envOr("RAZORPAY_KEY_SECRET", ""),
 		RazorpayWebhookSecret:     envOr("RAZORPAY_WEBHOOK_SECRET", ""),

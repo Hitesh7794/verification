@@ -1,29 +1,33 @@
 import { useEffect, useState } from 'react'
 import { Button } from '../ui/ui.jsx'
 import { iris, IrisError } from '../../lib/verify/iris.js'
+import { postIrisMatch } from '../../lib/api.js'
 
 // IrisCapture is the fallback used when fingerprint match fails.
-// Operator triggers a single-eye capture; if a gallery template is
-// supplied via props, we also run a 1:1 match server-side. Otherwise
-// the capture lands on the verifications row as audit-only.
+// Operator triggers a single-eye capture via the local Marvis daemon
+// (localhost:8031); the raw bitmap is then POSTed to the backend, which
+// forwards it to the TrustView hosted compare API for the actual 1:1
+// match. Threshold is TrustView's unified 0..100 scale (50 = threshold).
 //
-// Since the switch to Mantra's native Windows Marvis Auth Web SDK
-// (v1.4, replacing the WSL2 + Java fallback), the daemon captures a
-// single eye per invocation rather than left+right in one shot. We
-// keep the old result contract (leftQuality/rightQuality/etc.) so
-// Dashboard.jsx and the verifications table shape don't change — one
-// capture maps to the "left*" slots, "right*" stay null. If we later
-// decide to prompt for both eyes, run capture twice and merge.
+// Before the TrustView migration (Aug 2026), matching happened locally
+// on the operator laptop via /marvisauth/match. The move to server-side
+// compare lets us swap engines without touching the operator laptop.
+//
+// Iris was never enrolled server-side so the backend currently returns
+// `gallery_missing: true` for every roll — the UI treats that as
+// "audit-only capture", same UX as the previous no-gallery path.
+//
+// We keep the leftQuality/leftScore/leftBmp field names on the result
+// object so Dashboard.jsx's submit body + verifications.iris_left_*
+// columns don't need to change. Marvis SDK v1.4 captures one eye per
+// invocation — the "right*" slots stay null.
 //
 // Auto-heartbeat: polls /marvisauth/info every 2s to detect whether
-// the daemon is up. If it goes down mid-session we surface it before
-// the operator clicks and gets a cryptic error. Same discipline as
-// FingerprintCapture.
+// the local daemon is up.
 
 export default function IrisCapture({
-  galleryTemplate,          // base64 iris template (optional; enables match)
-  galleryFormat,            // numeric ImgFormat matching the gallery (default ISO)
-  matchThreshold = 0.6,     // score gate for "ok"; SDK scores are 0..1
+  rollNo,                   // REQUIRED — backend needs it for gallery lookup
+  matchThreshold = 50,      // unified 0..100 score gate (TrustView default)
   quality = 55,             // min capture quality (1..100), passed to /capture
   timeoutMs = 10000,        // wall-clock capture timeout
   onResult,                 // (result) => void
@@ -76,26 +80,34 @@ export default function IrisCapture({
     setResult(null)
     setStatus('capturing')
     try {
-      // Two shapes here depending on whether a gallery is supplied:
-      //   - gallery present → /match (captures + compares in one hop,
-      //     returns Score alongside Quality + BitmapData)
-      //   - no gallery      → /capture (audit-only, no Score)
-      let env
-      let matched = null // null = no match attempted
-      if (galleryTemplate) {
-        env = await iris.match({
-          galleryTemplate,
-          format: galleryFormat,
-          quality,
-          timeoutMs,
-        })
-        // Vendor sample surfaces Score + Status; we treat Status
-        // (their own boolean) as the primary signal, tightened by our
-        // own threshold gate for a defence-in-depth check.
-        const score = num(env.Score)
-        matched = !!env.Status && score != null && score >= matchThreshold
-      } else {
-        env = await iris.capture({ quality, timeoutMs })
+      // Step 1: capture locally via Marvis daemon on localhost:8031.
+      const cap = await iris.capture({ quality, timeoutMs })
+
+      // Step 2: forward the raw bitmap to the backend, which forwards
+      // to TrustView. If we don't have a rollNo (dev/preview mode)
+      // skip the compare and record capture as audit-only.
+      let matched = null // null = no compare attempted
+      let score = null
+      let engine = ''
+      let galleryMissing = true // default when we skip the POST
+      if (rollNo) {
+        try {
+          const resp = await postIrisMatch(rollNo, cap.BitmapData || '', {
+            serial: device?.serial || '',
+            model:  device?.model  || '',
+          })
+          galleryMissing = !!resp.gallery_missing
+          if (!galleryMissing) {
+            score = num(resp.score)
+            matched = !!resp.matched && score != null && score >= matchThreshold
+            engine = resp.engine || ''
+          }
+        } catch (e) {
+          // A compare failure shouldn't lose the operator's capture —
+          // fall through with matched=null so the row still records the
+          // audit evidence. Surface the error as a soft banner.
+          setError(e)
+        }
       }
 
       // Keep the old result-object contract so Dashboard.jsx's submit
@@ -105,14 +117,16 @@ export default function IrisCapture({
       const out = {
         ok: matched,
         captured: true,
+        galleryMissing,
+        engine,
         deviceSerial: device?.serial || '',
         deviceModel:  device?.model  || '',
-        leftQuality:  num(env.Quality),
+        leftQuality:  num(cap.Quality),
         rightQuality: null,
-        leftScore:    num(env.Score),
+        leftScore:    score,
         rightScore:   null,
         threshold:    matchThreshold,
-        leftBmp:      env.BitmapData || null,
+        leftBmp:      cap.BitmapData || null,
         rightBmp:     null,
       }
       setResult(out)

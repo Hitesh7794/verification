@@ -18,6 +18,7 @@ import (
 	"github.com/veni/neet-verification/internal/luxand"
 	"github.com/veni/neet-verification/internal/magiclink"
 	"github.com/veni/neet-verification/internal/razorpay"
+	"github.com/veni/neet-verification/internal/trustview"
 	"github.com/veni/neet-verification/internal/wallet"
 )
 
@@ -30,8 +31,9 @@ type Deps struct {
 
 type Server struct {
 	deps       Deps
-	luxand     *luxand.Client    // optional; nil disables /api/face-match cleanly
-	fpMatchCl  *fpmatch.Client   // optional; nil disables /api/fp-match cleanly
+	luxand     *luxand.Client    // optional; nil disables /api/face-match cleanly (kept as rollback path)
+	fpMatchCl  *fpmatch.Client   // optional; nil disables /api/fp-match cleanly  (kept as rollback path)
+	trustview  *trustview.Client // optional; nil = TRUSTVIEW_TOKEN empty, biometric compare handlers return 503
 	wallet     *wallet.Store     // optional; nil disables /api/wallet/* + candidate charge
 	razorpayCl *razorpay.Client  // optional; nil disables Razorpay deposit flow (admin_credit still works)
 
@@ -55,6 +57,15 @@ func NewServer(d Deps) *Server {
 	if d.Cfg.FpMatchBase != "" {
 		s.fpMatchCl = fpmatch.New(d.Cfg.FpMatchBase)
 	}
+	// TrustView hosted compare API — the new primary matcher for face,
+	// fingerprint, and iris. Client is safe to construct even without a
+	// token (Compare() preflights and returns KindNoToken cleanly); we
+	// wire it unconditionally so the handler can produce a nice 503
+	// with a specific error message instead of a nil-pointer panic.
+	s.trustview = trustview.New(trustview.Config{
+		BaseURL: d.Cfg.TrustViewBaseURL,
+		Token:   d.Cfg.TrustViewToken,
+	})
 	// Wallet store always wires up (it's just a thin DB wrapper); the
 	// candidate-charge middleware below short-circuits cleanly when
 	// the per-deployment fee is 0, so deployments that don't want the
@@ -155,6 +166,12 @@ func (s *Server) Router() http.Handler {
 		// stay wired below for anything still calling them.
 		r.Post("/api/candidates/{roll}/face-match", s.requireRole("client")(s.walletCharge(s.faceMatch)))
 		r.Post("/api/candidates/{roll}/fp-match",   s.requireRole("client")(s.fpMatch))
+		// Iris moved server-side with the TrustView migration — used to
+		// live entirely on the operator laptop against the Marvis daemon.
+		// No wallet charge here: the face-match on the same verification
+		// already covered the same-roll cache window, so iris is a free
+		// follow-on decision.
+		r.Post("/api/candidates/{roll}/iris-match", s.requireRole("client")(s.irisMatch))
 		// Legacy (kept for a release window; the new operator UI uses
 		// the URL-scoped routes above).
 		r.Post("/api/face-match", s.requireRole("client")(s.faceMatch))

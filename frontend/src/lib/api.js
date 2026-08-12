@@ -158,6 +158,26 @@ export async function postFpMatch(roll, probeBase64, vendor) {
   })
 }
 
+// Posts a captured iris probe (whatever the Marvis daemon returned via
+// AutoCapture — usually a base64 BMP) to the backend, which forwards it
+// to the TrustView hosted compare API. Replaces the previous local
+// /marvisauth/match call on the operator laptop (Aug 2026 migration).
+//
+// Returns {roll_no, matched, score?, threshold, engine?, gallery_missing,
+// device_serial?, device_model?}. When gallery_missing=true the operator
+// UI records the capture as audit-only — iris was never enrolled
+// server-side (see IRIS_NOTES.md).
+export async function postIrisMatch(roll, probeBase64, deviceMeta) {
+  return api(`/candidates/${encodeURIComponent(roll)}/iris-match`, {
+    method: 'POST',
+    body: {
+      probe_b64: probeBase64,
+      device_serial: deviceMeta?.serial || '',
+      device_model:  deviceMeta?.model  || '',
+    },
+  })
+}
+
 // Phase 3c — attempt counter for the "Nth attempt on this roll" chip.
 // Backend counts verifications for the caller's org over the past 30
 // days. Returns { roll_no, count, since, last_at? }. Non-fatal on

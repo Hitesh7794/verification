@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"encoding/base64"
 	"encoding/json"
-	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -17,62 +16,66 @@ import (
 	"github.com/veni/neet-verification/internal/config"
 	"github.com/veni/neet-verification/internal/data"
 	"github.com/veni/neet-verification/internal/db"
-	"github.com/veni/neet-verification/internal/luxand"
+	"github.com/veni/neet-verification/internal/trustview"
 )
 
-// fakeLuxandSvc spins up a real httptest server that mimics the
-// luxand-service envelopes. We feed it canned responses keyed by request
-// method so a single test can exercise extract + match in sequence.
-type fakeLuxandSvc struct {
+// fakeTrustViewSvc spins up an httptest server that speaks the TrustView
+// compare wire shape. We feed it a canned envelope so a single test can
+// drive multiple face-match calls with predictable results.
+//
+// Replaced fakeLuxandSvc as part of the Aug 2026 TrustView migration:
+// hosted matcher, no on-prem template extraction / caching step, no
+// LuxandBase config. The handler now sends raw gallery + probe JPEG
+// bytes end-to-end.
+type fakeTrustViewSvc struct {
 	mu sync.Mutex
 
 	// Behaviour knobs.
-	noFaceOnExtract bool
-	matchScore      float64
-	matchThreshold  float64
-	matchStatus     bool
+	nextStatus int          // HTTP status to reply with (default 200)
+	nextBody   any          // JSON body (compareOK or compareErr, marshalled)
+	nextCode   string       // stable slug for non-200 responses
+
+	// Match happy-path defaults (unified 0..100, 50 = threshold).
+	score   float64
+	matched bool
 
 	// Tracking.
-	extractCalls int
-	matchCalls   int
+	calls int
 }
 
-func (f *fakeLuxandSvc) handler() http.Handler {
+func (f *fakeTrustViewSvc) handler() http.Handler {
 	mux := http.NewServeMux()
-	mux.HandleFunc("/face/extract", func(w http.ResponseWriter, r *http.Request) {
+	mux.HandleFunc("/api/v1/ext/compare", func(w http.ResponseWriter, r *http.Request) {
 		f.mu.Lock()
-		f.extractCalls++
-		noFace := f.noFaceOnExtract
-		f.mu.Unlock()
-
+		defer f.mu.Unlock()
+		f.calls++
 		w.Header().Set("Content-Type", "application/json")
-		if noFace {
-			fmt.Fprint(w, `{"ErrorCode":"0","ErrorDescription":"face not detected","FaceFound":false}`)
+
+		if f.nextStatus != 0 && f.nextStatus != 200 {
+			w.WriteHeader(f.nextStatus)
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"error": "canned test error",
+				"code":  f.nextCode,
+			})
 			return
 		}
-		// 1040 zero bytes for the template.
-		tpl := make([]byte, 1040)
-		fmt.Fprintf(w,
-			`{"ErrorCode":"0","ErrorDescription":"OK","FaceFound":true,"Template":"%s"}`,
-			base64.StdEncoding.EncodeToString(tpl))
-	})
-	mux.HandleFunc("/face/match-image", func(w http.ResponseWriter, r *http.Request) {
-		f.mu.Lock()
-		f.matchCalls++
-		score := f.matchScore
-		thr := f.matchThreshold
-		st := f.matchStatus
-		f.mu.Unlock()
 
-		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprintf(w,
-			`{"ErrorCode":"0","ErrorDescription":"OK","FaceFound":true,"Score":%f,"Threshold":%f,"Status":%t}`,
-			score, thr, st)
+		body := f.nextBody
+		if body == nil {
+			body = map[string]any{
+				"matched":  f.matched,
+				"score":    f.score,
+				"modality": "face",
+				"engine":   "iiv",
+				"raw":      map[string]any{"similarity": 0.9},
+			}
+		}
+		_ = json.NewEncoder(w).Encode(body)
 	})
 	return mux
 }
 
-func newFaceTestServer(t *testing.T) (*Server, string, string, *fakeLuxandSvc, func()) {
+func newFaceTestServer(t *testing.T) (*Server, string, string, *fakeTrustViewSvc, func()) {
 	t.Helper()
 
 	tmp := t.TempDir()
@@ -83,7 +86,7 @@ func newFaceTestServer(t *testing.T) (*Server, string, string, *fakeLuxandSvc, f
 		}
 	}
 	roll := "10001"
-	// Pretend-JPEG with a recognisable byte pattern.
+	// Minimal valid-ish JPEG (the fake TrustView never actually decodes it).
 	if err := os.WriteFile(filepath.Join(root, "photo", roll+".jpg"),
 		[]byte{0xFF, 0xD8, 0xFF, 0xD9}, 0o644); err != nil {
 		t.Fatal(err)
@@ -110,24 +113,26 @@ func newFaceTestServer(t *testing.T) (*Server, string, string, *fakeLuxandSvc, f
 
 	jwt := auth.NewJWTService("test-secret", time.Hour)
 
-	fake := &fakeLuxandSvc{
-		matchScore:     0.82,
-		matchThreshold: 0.7,
-		matchStatus:    true,
+	fake := &fakeTrustViewSvc{
+		score:   85, // safely above threshold
+		matched: true,
 	}
 	httpSrv := httptest.NewServer(fake.handler())
 
 	cfg := config.Config{
-		HTTPAddr:                  ":0",
-		JWTSecret:                 "test-secret",
-		FPMatchThresholdDefault:   140,
-		ArtifactRetention:         "metadata",
-		ArtifactDir:               filepath.Join(tmp, "artifacts"),
-		LuxandBase:                httpSrv.URL + "/face/",
-		FaceTemplateDir:           filepath.Join(tmp, "face_templates"),
+		HTTPAddr:                ":0",
+		JWTSecret:               "test-secret",
+		FPMatchThresholdDefault: 140,
+		ArtifactRetention:       "metadata",
+		ArtifactDir:             filepath.Join(tmp, "artifacts"),
+		TrustViewBaseURL:        httpSrv.URL,
+		TrustViewToken:          "tvx_test_token",
 	}
 	s := &Server{deps: Deps{DB: d, Index: idx, JWT: jwt, Cfg: cfg}}
-	s.luxand = luxand.New(cfg.LuxandBase)
+	s.trustview = trustview.New(trustview.Config{
+		BaseURL: cfg.TrustViewBaseURL,
+		Token:   cfg.TrustViewToken,
+	})
 
 	var uid, orgID int64
 	if err := d.QueryRow(`SELECT id, org_id FROM users WHERE username='client'`).
@@ -171,54 +176,37 @@ func TestFaceMatchHappyPath(t *testing.T) {
 	if got["status"] != true {
 		t.Errorf("expected status true, got %v", got)
 	}
-	if got["score"].(float64) < 0.8 {
-		t.Errorf("score %v unexpected", got["score"])
+	if got["score"].(float64) < 50 {
+		t.Errorf("score %v below unified threshold", got["score"])
 	}
-	// First call extracts (gallery cache miss) + matches.
+	// Exactly one call to TrustView per face-match request now — no
+	// separate template-extract call.
 	fake.mu.Lock()
 	defer fake.mu.Unlock()
-	if fake.extractCalls != 1 || fake.matchCalls != 1 {
-		t.Errorf("expected 1 extract + 1 match, got %d / %d", fake.extractCalls, fake.matchCalls)
+	if fake.calls != 1 {
+		t.Errorf("expected 1 TrustView call, got %d", fake.calls)
 	}
 }
 
-func TestFaceMatchUsesGalleryCache(t *testing.T) {
+func TestFaceMatchNoFace(t *testing.T) {
 	s, tok, roll, fake, cleanup := newFaceTestServer(t)
 	defer cleanup()
-
-	makeReq := func() {
-		body, _ := json.Marshal(map[string]any{
-			"roll_no":   roll,
-			"image_b64": base64.StdEncoding.EncodeToString([]byte("fake")),
-		})
-		req := httptest.NewRequest("POST", "/api/face-match", bytes.NewReader(body))
-		req.Header.Set("Content-Type", "application/json")
-		req.Header.Set("Authorization", "Bearer "+tok)
-		rr := httptest.NewRecorder()
-		s.Router().ServeHTTP(rr, req)
-		if rr.Code != 200 {
-			t.Fatalf("status %d body %s", rr.Code, rr.Body)
-		}
-	}
-	makeReq()
-	makeReq()
-	makeReq()
-
-	// First call: 1 extract (cache miss) + 1 match.
-	// Subsequent calls: 0 extract + 1 match each.
 	fake.mu.Lock()
-	defer fake.mu.Unlock()
-	if fake.extractCalls != 1 {
-		t.Errorf("gallery extract should run once, got %d", fake.extractCalls)
-	}
-	if fake.matchCalls != 3 {
-		t.Errorf("expected 3 match calls, got %d", fake.matchCalls)
-	}
+	fake.nextStatus = 422
+	fake.nextCode = "no_face"
+	fake.mu.Unlock()
 
-	// And the .tpl file should be on disk.
-	tplPath := filepath.Join(s.deps.Cfg.FaceTemplateDir, roll+".tpl")
-	if _, err := os.Stat(tplPath); err != nil {
-		t.Errorf("cached gallery template not on disk: %v", err)
+	body, _ := json.Marshal(map[string]any{
+		"roll_no":   roll,
+		"image_b64": base64.StdEncoding.EncodeToString([]byte("x")),
+	})
+	req := httptest.NewRequest("POST", "/api/face-match", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rr := httptest.NewRecorder()
+	s.Router().ServeHTTP(rr, req)
+	if rr.Code != http.StatusUnprocessableEntity {
+		t.Errorf("expected 422 on no_face, got %d body %s", rr.Code, rr.Body)
 	}
 }
 
@@ -240,27 +228,10 @@ func TestFaceMatchUnknownCandidate(t *testing.T) {
 	}
 }
 
-func TestFaceMatchFaceMissingInEnrollment(t *testing.T) {
-	s, tok, roll, fake, cleanup := newFaceTestServer(t)
-	defer cleanup()
-	fake.mu.Lock()
-	fake.noFaceOnExtract = true
-	fake.mu.Unlock()
-
-	body, _ := json.Marshal(map[string]any{
-		"roll_no":   roll,
-		"image_b64": base64.StdEncoding.EncodeToString([]byte("x")),
-	})
-	req := httptest.NewRequest("POST", "/api/face-match", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+tok)
-	rr := httptest.NewRecorder()
-	s.Router().ServeHTTP(rr, req)
-	if rr.Code != http.StatusUnprocessableEntity {
-		t.Errorf("expected 422, got %d body %s", rr.Code, rr.Body)
-	}
-}
-
+// TestFaceTemplateEndpoint verifies the deprecated /face-template
+// endpoint returns 410 Gone (loud failure) instead of silently serving
+// stale cached bytes after the TrustView migration retired server-side
+// template extraction.
 func TestFaceTemplateEndpoint(t *testing.T) {
 	s, tok, roll, _, cleanup := newFaceTestServer(t)
 	defer cleanup()
@@ -270,13 +241,8 @@ func TestFaceTemplateEndpoint(t *testing.T) {
 	rr := httptest.NewRecorder()
 	s.Router().ServeHTTP(rr, req)
 
-	if rr.Code != 200 {
-		t.Fatalf("status %d body %s", rr.Code, rr.Body)
-	}
-	var got map[string]any
-	_ = json.Unmarshal(rr.Body.Bytes(), &got)
-	if got["size_bytes"].(float64) != 1040 {
-		t.Errorf("expected 1040-byte template, got %v", got["size_bytes"])
+	if rr.Code != http.StatusGone {
+		t.Fatalf("expected 410 Gone, got %d body %s", rr.Code, rr.Body)
 	}
 }
 

@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -12,7 +11,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/veni/neet-verification/internal/luxand"
+	"github.com/veni/neet-verification/internal/trustview"
 )
 
 // faceMatchReq is what the operator's browser POSTs after a webcam capture.
@@ -41,56 +40,32 @@ type faceMatchResp struct {
 	Status    bool    `json:"status"`
 }
 
-// getCandidateFaceTemplate exposes the cached/extracted face template
-// straight to the operator's browser. Lazy: if the template hasn't been
-// extracted from the candidate's enrolled photo yet, do it now and cache
-// to disk. After first hit, every operator's lookup of the same roll is
-// a single OS read of a 1040-byte file.
-//
-// Used today by /api/face-match (server-side); kept exposed so a future
-// frontend that wants to do its own matching (or pre-warming) can pull it.
+// getCandidateFaceTemplate used to lazy-extract a Luxand face template
+// from the enrolled photo and cache it as <FACE_TEMPLATE_DIR>/<roll>.tpl.
+// Deprecated with the TrustView migration — the hosted matcher works on
+// raw images end-to-end so no server-side template exists any more.
+// Returning 410 Gone (instead of silently serving stale cached bytes)
+// so any caller that hasn't updated fails loudly.
 func (s *Server) getCandidateFaceTemplate(w http.ResponseWriter, r *http.Request) {
-	roll := strings.TrimSpace(chi.URLParam(r, "roll"))
-	if roll == "" {
-		writeErr(w, http.StatusBadRequest, "missing roll")
-		return
-	}
-	tpl, err := s.galleryTemplate(r.Context(), roll)
-	switch {
-	case errors.Is(err, errCandidateMissing):
-		writeErr(w, http.StatusNotFound, "candidate not found")
-		return
-	case errors.Is(err, errPhotoMissing):
-		writeErr(w, http.StatusNotFound, "candidate has no enrolled photo")
-		return
-	case errors.Is(err, errFaceNotInPhoto):
-		// The enrolled photo is a real file but Luxand can't find a face
-		// in it. Loud and clear so the data-quality team can fix the photo.
-		writeErr(w, http.StatusUnprocessableEntity,
-			"no face detected in enrolled photo; cannot extract gallery template")
-		return
-	case err != nil:
-		writeErr(w, http.StatusBadGateway, err.Error())
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"roll_no":      roll,
-		"format":       "FSDK_FaceTemplate_v8",
-		"size_bytes":   len(tpl),
-		"template_b64": base64.StdEncoding.EncodeToString(tpl),
-	})
+	writeErr(w, http.StatusGone,
+		"face templates were removed with the TrustView migration; POST /api/candidates/{roll}/face-match with the probe image instead")
 }
 
 // faceMatch is the operator hot path. After the webcam capture, the
-// frontend POSTs the JPEG bytes here; we look up (or extract+cache) the
-// gallery template, forward both to luxand-service /face/match-image,
-// and return the score so the operator can decide.
+// frontend POSTs the JPEG bytes here; we read the candidate's enrolled
+// gallery photo from disk, base64 both images, forward them to the
+// TrustView hosted compare API, and return the unified 0..100 score.
+//
+// The wallet middleware already charged the org's wallet before we get
+// here (chargeable event = one face-match POST per roll, cached per
+// WALLET_SAME_ROLL_CACHE_MIN). The probe photo is persisted under the
+// caller-supplied idempotency key so createVerification can promote it
+// to the permanent path for the PDF receipt.
 //
 // We deliberately do NOT record the result in the verifications table
 // from this endpoint — this is just a read. The operator's
 // "Verified / Not verified" click is what writes the row, and the
-// frontend echoes the score back in that submit body. Keeps this
-// endpoint cheap to retry.
+// frontend echoes the score back in that submit body.
 func (s *Server) faceMatch(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 8<<20) // 8 MB cap on captured JPEG
 	var req faceMatchReq
@@ -98,7 +73,7 @@ func (s *Server) faceMatch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid body")
 		return
 	}
-	// Prefer roll from URL path (new URL-scoped route) so the wallet
+	// Prefer roll from URL path (URL-scoped route) so the wallet
 	// middleware saw the same value we're about to act on. Fall back
 	// to the body field for the legacy /api/face-match route.
 	roll := strings.TrimSpace(chi.URLParam(r, "roll"))
@@ -110,49 +85,39 @@ func (s *Server) faceMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	imgBytes, err := decodeDataURL(req.ImageB64)
+	probeBytes, err := decodeDataURL(req.ImageB64)
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "image_b64 invalid: "+err.Error())
 		return
 	}
-	mime := req.Mime
-	if mime == "" {
-		mime = "image/jpeg"
-	}
 
-	gallery, err := s.galleryTemplate(r.Context(), roll)
-	switch {
-	case errors.Is(err, errCandidateMissing):
+	// Read the enrolled gallery photo bytes directly — TrustView compares
+	// raw images end-to-end, so no template extraction step exists any
+	// more. Same candidate-index lookup galleryTemplate did before, just
+	// stopping at "raw file bytes" instead of "cached feature vector".
+	c, ok := s.deps.Index.Get(roll)
+	if !ok {
 		writeErr(w, http.StatusNotFound, "candidate not found")
 		return
-	case errors.Is(err, errPhotoMissing):
+	}
+	if !c.HasPhoto || c.PhotoPath == "" {
 		writeErr(w, http.StatusNotFound, "candidate has no enrolled photo")
 		return
-	case errors.Is(err, errFaceNotInPhoto):
-		writeErr(w, http.StatusUnprocessableEntity,
-			"no face detected in enrolled photo")
-		return
-	case err != nil:
-		writeErr(w, http.StatusBadGateway, err.Error())
+	}
+	galleryBytes, err := os.ReadFile(c.PhotoPath)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "read gallery photo: "+err.Error())
 		return
 	}
 
-	if s.luxand == nil {
-		writeErr(w, http.StatusServiceUnavailable, "luxand client not configured")
+	if s.trustview == nil {
+		writeErr(w, http.StatusServiceUnavailable, "trustview client not configured")
 		return
 	}
-	res, err := s.luxand.MatchImage(r.Context(), imgBytes, mime, gallery)
+	res, err := s.trustview.Compare(r.Context(),
+		trustview.Face, probeBytes, nil, galleryBytes, nil, nil)
 	if err != nil {
-		var serv *luxand.ErrService
-		var sdk *luxand.ErrSDK
-		switch {
-		case errors.As(err, &serv):
-			writeErr(w, http.StatusServiceUnavailable, "luxand-service unreachable")
-		case errors.As(err, &sdk):
-			writeErr(w, http.StatusBadGateway, "luxand "+sdk.Code+": "+sdk.Description)
-		default:
-			writeErr(w, http.StatusInternalServerError, err.Error())
-		}
+		writeTrustViewErr(w, err)
 		return
 	}
 
@@ -164,81 +129,28 @@ func (s *Server) faceMatch(w http.ResponseWriter, r *http.Request) {
 	if k := safeSlug(req.IdempotencyKey); k != "" && k != "file" {
 		tempDir := filepath.Join(s.deps.Cfg.ArtifactDir, "probes", "temp")
 		if err := os.MkdirAll(tempDir, 0o755); err == nil {
-			_ = os.WriteFile(filepath.Join(tempDir, k+".jpg"), imgBytes, 0o644)
+			_ = os.WriteFile(filepath.Join(tempDir, k+".jpg"), probeBytes, 0o644)
 		}
 	}
 
+	// TrustView folds "no face" into a 422 (handled by writeTrustViewErr
+	// above) so a 200 here always means a face WAS found. Keep FaceFound
+	// in the response for FE backward compat.
 	writeJSON(w, http.StatusOK, faceMatchResp{
 		RollNo:    roll,
-		FaceFound: res.FaceFound,
+		FaceFound: true,
 		Score:     res.Score,
-		Threshold: res.Threshold,
-		Status:    res.Status,
+		Threshold: 50, // TrustView unified: 50 = threshold, 100 = perfect
+		Status:    res.Matched,
 	})
 }
 
-// galleryTemplate returns the candidate's enrolled face template. If the
-// template hasn't been extracted yet, it reads the photo, asks
-// luxand-service to extract a template, writes it to disk, and returns
-// the bytes. After the first miss for a roll, every subsequent call is
-// just one os.ReadFile.
-//
-// Templates live at <FACE_TEMPLATE_DIR>/<roll>.tpl. Each is exactly 1040
-// bytes — the entire 2,847-candidate sample data set fits in ~3 MB.
-func (s *Server) galleryTemplate(ctx context.Context, roll string) ([]byte, error) {
-	c, ok := s.deps.Index.Get(roll)
-	if !ok {
-		return nil, errCandidateMissing
-	}
-	if !c.HasPhoto || c.PhotoPath == "" {
-		return nil, errPhotoMissing
-	}
-	cachePath := s.faceTemplatePath(roll)
-
-	// Cache hit?
-	if data, err := os.ReadFile(cachePath); err == nil {
-		return data, nil
-	}
-
-	// Cache miss → extract.
-	if s.luxand == nil {
-		return nil, errors.New("luxand client not configured; cannot extract face template")
-	}
-	photoBytes, err := os.ReadFile(c.PhotoPath)
-	if err != nil {
-		return nil, err
-	}
-	mime := "image/jpeg"
-	if strings.HasSuffix(strings.ToLower(c.PhotoPath), ".png") {
-		mime = "image/png"
-	}
-	tpl, err := s.luxand.ExtractTemplate(ctx, photoBytes, mime)
-	if err != nil {
-		return nil, err
-	}
-	if tpl == nil {
-		return nil, errFaceNotInPhoto
-	}
-
-	if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
-		return nil, err
-	}
-	// Write atomically: write to .tmp then rename, so a crashed extract
-	// never leaves a half-written file that future calls would happily
-	// hand to MatchFaces and produce a garbage score.
-	tmp := cachePath + ".tmp"
-	if err := os.WriteFile(tmp, tpl, 0o644); err != nil {
-		return nil, err
-	}
-	if err := os.Rename(tmp, cachePath); err != nil {
-		return nil, err
-	}
-	return tpl, nil
-}
-
-func (s *Server) faceTemplatePath(roll string) string {
-	return filepath.Join(s.deps.Cfg.FaceTemplateDir, roll+".tpl")
-}
+// galleryTemplate + faceTemplatePath + errFaceNotInPhoto retired with
+// the TrustView migration — the hosted matcher works on raw images
+// end-to-end so we no longer maintain an on-disk feature-vector cache
+// under FACE_TEMPLATE_DIR. Config value stays wired for backward
+// compat but nothing reads it any more; safe to delete after the
+// TrustView rollout is confirmed in production.
 
 // decodeDataURL accepts either a raw base64 string or a "data:image/jpeg
 // ;base64,XXX" data URL (which is what canvas.toDataURL emits) and
@@ -251,10 +163,10 @@ func decodeDataURL(s string) ([]byte, error) {
 	return base64.StdEncoding.DecodeString(s)
 }
 
-// Sentinel errors so callers can distinguish "no candidate" (404) from
-// "service unreachable" (503) from "photo has no detectable face" (422).
+// Sentinel errors — kept because verify_fp_handlers.go historically
+// used the same ones (only the "missing candidate" / "missing photo"
+// cases apply now that template extraction is gone).
 var (
 	errCandidateMissing = errors.New("candidate not found")
 	errPhotoMissing     = errors.New("candidate has no enrolled photo")
-	errFaceNotInPhoto   = errors.New("no face detected in enrolled photo")
 )

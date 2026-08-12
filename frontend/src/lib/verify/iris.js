@@ -115,32 +115,17 @@ export const iris = {
     return safeCall('getimage', { ImgFormat: format })
   },
 
-  // Capture-and-match in one round trip. The daemon captures a fresh
-  // iris and compares it against the supplied gallery template. Best
-  // choice for the operator flow — cheapest single-call verify.
+  // Local 1:1 match methods retired with the TrustView migration.
   //
-  // `galleryTemplate` is a base64 string (whatever /getimage returned
-  // at enrollment). `format` MUST match the format the gallery was
-  // stored in.
-  async match({ galleryTemplate, format = IMG_FORMAT.ISO, quality = 55, timeoutMs = 10000 }) {
-    return safeCall('match', {
-      TimeOut: timeoutMs,
-      Quality: quality,
-      GalleryTemplate: galleryTemplate,
-      ImgFormat: format,
-    })
-  },
-
-  // 1:1 verify between two already-captured templates. Used when
-  // both probe and gallery are already in hand (e.g. server-side
-  // matching or CSV-driven re-verification).
-  async verify({ probeTemplate, galleryTemplate, format = IMG_FORMAT.ISO }) {
-    return safeCall('verify', {
-      ProbTemplate: probeTemplate,
-      GalleryTemplate: galleryTemplate,
-      TmpFormat: format,
-    })
-  },
+  // Before Aug 2026 the operator laptop's Marvis daemon did the compare
+  // in-process, and the frontend called `iris.match({galleryTemplate})`
+  // or `iris.verify({probeTemplate, galleryTemplate})`. Now the backend
+  // owns comparison (POST /api/candidates/{roll}/iris-match), so the
+  // daemon here is capture-only. See IrisCapture.jsx for the new flow.
+  //
+  // If a caller genuinely needs local 1:1 verification (e.g. an offline
+  // kiosk mode), wire /marvisauth/verify directly here — the daemon
+  // still exposes it.
 
   // Release the device — call from a page unmount when we don't
   // expect further captures for a while. Idempotent on the SDK side.

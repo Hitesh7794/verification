@@ -19,9 +19,16 @@ type Candidate struct {
 	PhotoPath   string `json:"-"`
 	FpImagePath string `json:"-"`
 	IsoTplPath  string `json:"-"`
-	HasPhoto    bool   `json:"has_photo"`
-	HasFpImage  bool   `json:"has_fp_image"`
-	HasIsoTpl   bool   `json:"has_iso_template"`
+	// IrisBytesPath is the on-disk file with enrolled iris bytes for
+	// this roll. Format is whatever the enrollment tool captured —
+	// ISO/IEC 19794-6, K7, or raw BMP; TrustView's iris engine sniffs
+	// the format so we don't need to record it. HasIrisBytes is true
+	// iff a file was found under <center>/iris/<roll>.<ext>.
+	IrisBytesPath string `json:"-"`
+	HasPhoto      bool   `json:"has_photo"`
+	HasFpImage    bool   `json:"has_fp_image"`
+	HasIsoTpl     bool   `json:"has_iso_template"`
+	HasIrisBytes  bool   `json:"has_iris_bytes"`
 	// FpTemplateFormat is the wire format of the gallery template file
 	// (one of FMR_V2005, FMR_V2011, ANSI_V378, or unknown). Detected by
 	// peeking at the first bytes of the .iso file at index time so the
@@ -165,6 +172,7 @@ func scanCenter(idx *Index, base, orgCode, centerCode, centerName, examDate stri
 	photoDir := filepath.Join(base, "photo")
 	fpDir := filepath.Join(base, "fps")
 	isoDir := filepath.Join(base, "iso")
+	irisDir := filepath.Join(base, "iris")
 
 	entries, err := os.ReadDir(photoDir)
 	if err != nil {
@@ -195,8 +203,31 @@ func scanCenter(idx *Index, base, orgCode, centerCode, centerName, examDate stri
 			c.HasIsoTpl = true
 			c.FpTemplateFormat = detectTemplateFormat(isoPath)
 		}
+		// Iris — accept any of the vendor formats the Marvis daemon
+		// can emit via /marvisauth/getimage: ISO/IEC 19794-6 (.iso),
+		// Mantra's K7 (.k7), or raw BMP (.bmp). Whichever is found
+		// first wins; TrustView's iris engine sniffs the format so we
+		// don't need to record it. Enrollment tools should pick one
+		// format per exam to keep the on-disk tree clean.
+		if p := firstExisting(irisDir, roll, []string{".iso", ".k7", ".bmp"}); p != "" {
+			c.IrisBytesPath = p
+			c.HasIrisBytes = true
+		}
 		idx.byRoll[roll] = c
 	}
+}
+
+// firstExisting returns the first "<dir>/<roll><ext>" that exists on
+// disk, or "" if none of the candidate extensions match. Used to pick
+// up whichever iris format the enrollment tool happened to write out.
+func firstExisting(dir, base string, exts []string) string {
+	for _, ext := range exts {
+		p := filepath.Join(dir, base+ext)
+		if _, err := os.Stat(p); err == nil {
+			return p
+		}
+	}
+	return ""
 }
 
 // detectTemplateFormat inspects the magic bytes of a fingerprint template

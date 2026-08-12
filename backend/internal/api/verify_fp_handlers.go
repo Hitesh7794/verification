@@ -3,14 +3,13 @@ package api
 import (
 	"encoding/base64"
 	"encoding/json"
-	"errors"
 	"net/http"
 	"os"
 	"strings"
 
 	"github.com/go-chi/chi/v5"
 
-	"github.com/veni/neet-verification/internal/fpmatch"
+	"github.com/veni/neet-verification/internal/trustview"
 )
 
 // fpMatchReq is what the operator's browser POSTs after capturing a
@@ -40,24 +39,28 @@ type fpMatchReq struct {
 }
 
 // fpMatchResp echoes everything the dashboard needs to surface inline.
+// Score is TrustView's unified 0..100 (50 = threshold, 100 = perfect
+// match). Threshold is always 50 for this endpoint — the previous
+// SourceAFIS-native threshold (140) no longer applies.
 type fpMatchResp struct {
 	RollNo    string  `json:"roll_no"`
 	Score     float64 `json:"score"`
 	Threshold float64 `json:"threshold"`
 	Status    bool    `json:"status"`
 	Vendor    string  `json:"vendor,omitempty"`
+	Engine    string  `json:"engine,omitempty"` // e.g. "sourceafis" — echoed from TrustView
 }
 
 // fpMatch is the operator's hot path on the fingerprint step. The frontend
 // captures a probe via the local SDK (Mantra MorFin or ACPL Capture API),
 // then POSTs the probe + roll_no here. The backend reads the gallery
-// template from disk (same source as /api/candidates/{roll}/fp-template),
-// forwards probe + gallery to the loopback fp-match-service (SourceAFIS),
-// and returns the score.
+// ISO template from disk, base64s both, forwards to the TrustView hosted
+// compare API, and returns the unified 0..100 score.
 //
 // Mirrors the face-match endpoint's shape exactly — same auth (operator
-// JWT), same error taxonomy (404 candidate, 422 no template, 503 service
-// down, 502 SDK error), same idempotency property (pure read).
+// JWT), same error taxonomy via writeTrustViewErr, same idempotency
+// property (pure read; the operator's Verified/Denied click writes the
+// audit row).
 func (s *Server) fpMatch(w http.ResponseWriter, r *http.Request) {
 	r.Body = http.MaxBytesReader(w, r.Body, 256<<10) // 256 KB — probes are ~500 bytes; ample headroom
 	var req fpMatchReq
@@ -115,29 +118,27 @@ func (s *Server) fpMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	if s.fpMatchCl == nil {
-		writeErr(w, http.StatusServiceUnavailable, "fp-match client not configured")
+	if s.trustview == nil {
+		writeErr(w, http.StatusServiceUnavailable, "trustview client not configured")
 		return
 	}
-	res, err := s.fpMatchCl.Match(r.Context(), probe, gallery)
+	// Both probe and gallery are ISO/IEC 19794-2 FMR templates — our
+	// sample gallery bytes are FMR_V2005 and live MorFin captures come
+	// out the same. Tag both sides format="iso" so TrustView's SourceAFIS
+	// backend treats them as templates rather than trying to sniff.
+	iso := trustview.FormatIso
+	res, err := s.trustview.Compare(r.Context(),
+		trustview.Fingerprint, probe, &iso, gallery, &iso, nil)
 	if err != nil {
-		var serv *fpmatch.ErrService
-		var sdk *fpmatch.ErrSDK
-		switch {
-		case errors.As(err, &serv):
-			writeErr(w, http.StatusServiceUnavailable, "fp-match-service unreachable")
-		case errors.As(err, &sdk):
-			writeErr(w, http.StatusBadGateway, "fp-match "+sdk.Code+": "+sdk.Description)
-		default:
-			writeErr(w, http.StatusInternalServerError, err.Error())
-		}
+		writeTrustViewErr(w, err)
 		return
 	}
 	writeJSON(w, http.StatusOK, fpMatchResp{
 		RollNo:    roll,
 		Score:     res.Score,
-		Threshold: res.Threshold,
-		Status:    res.Status,
+		Threshold: 50, // TrustView unified: 50 = threshold
+		Status:    res.Matched,
 		Vendor:    strings.TrimSpace(req.FpVendor),
+		Engine:    res.Engine,
 	})
 }
