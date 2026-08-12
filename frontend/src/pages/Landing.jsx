@@ -4,21 +4,21 @@ import { Brand } from '../components/ui/brand.jsx'
 
 const portals = [
   {
-    to: '/client/login',
-    title: 'Client Portal',
-    desc: 'For center operators conducting on-site biometric verification of candidates.',
+    to: '/institute/operator/login',
+    title: 'Operator Portal',
+    desc: 'For centre operators conducting on-site biometric verification of candidates.',
     accent: 'bg-indigo-600',
   },
   {
     to: '/admin/login',
     title: 'Admin Portal',
-    desc: 'For exam organizations to monitor verification activity across centers.',
+    desc: 'For exam organisations to monitor verification activity across their exams.',
     accent: 'bg-emerald-600',
   },
   {
     to: '/superadmin/login',
     title: 'Superadmin Portal',
-    desc: 'Platform-wide oversight across organizations, centers and operators.',
+    desc: 'Platform-wide oversight across organisations, exams and operators.',
     accent: 'bg-slate-800',
   },
 ]

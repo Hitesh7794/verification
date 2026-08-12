@@ -59,7 +59,7 @@ export function AuthProvider({ children }) {
 
   // Cross-tab session sync, scoped to the current portal only. If the
   // admin signs in in another tab at /admin/login, our own admin tab
-  // wants to know. But if an operator signs in at /client/login, that
+  // wants to know. But if an operator signs in at /institute/operator/login, that
   // touches `nv_token_client` — irrelevant to an admin-scoped tab.
   useEffect(() => {
     function onStorage(e) {

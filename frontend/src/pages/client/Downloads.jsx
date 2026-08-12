@@ -3,7 +3,7 @@ import { Button, PageHeader } from '../../components/ui/ui.jsx'
 import DownloadsPanel from '../../components/DownloadsPanel.jsx'
 import { Link } from 'react-router-dom'
 
-// /client/downloads — operator's self-serve install page. Same download
+// /institute/operator/downloads — operator's self-serve install page. Same download
 // flow as /admin/downloads (shared DownloadsPanel); the only difference
 // is the surrounding chrome (no AdminTabs since the client portal has
 // no tab strip today, and a "Back to verification" link instead).
@@ -21,7 +21,7 @@ export default function ClientDownloads() {
         title="Operator client installer"
         subtitle="Use this to install the verification client on a new operator laptop. After install, sign in with the same credentials you used here."
         right={
-          <Link to="/client">
+          <Link to="/institute/operator">
             <Button variant="secondary">Back to verification</Button>
           </Link>
         }

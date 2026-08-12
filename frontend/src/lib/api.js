@@ -1,4 +1,4 @@
-import { clearStoredSession, getRoleScope, getStoredToken } from './authStorage.js'
+import { clearStoredSession, getRoleScope, getStoredToken, loginPathForScope } from './authStorage.js'
 
 const BASE = '/api'
 
@@ -33,7 +33,7 @@ function onUnauthorized() {
   if (scope) {
     clearStoredSession(scope)
   }
-  const loginPath = scope ? `/${scope}/login` : '/'
+  const loginPath = loginPathForScope(scope)
   // Use assign rather than React Router so any in-flight component
   // state (e.g. polling intervals) is hard-reset by the page reload —
   // safer than relying on every component to react cleanly.

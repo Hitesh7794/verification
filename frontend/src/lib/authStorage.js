@@ -7,17 +7,35 @@
 // same origin, one on /admin and one on /client, end up reading/writing
 // completely disjoint storage keys.
 //
-// Scope resolution rule: take the first path segment of window.location
-// (admin / client / superadmin). Everything else — landing page,
-// registration flow, magic-link landing — has no scope and therefore no
-// stored credentials, which is correct for those public surfaces.
+// Scope resolution rule: match the URL prefix to a role. The URL for
+// the operator changed from /client/* to /institute/operator/* — the
+// old prefix keeps redirecting so bookmarks work, and both map to the
+// same 'client' scope internally so localStorage keys (nv_token_client
+// etc.) survive the rename without kicking anyone out.
+//
+// Everything else — landing page, registration flow, magic-link
+// landing — has no scope and therefore no stored credentials, which
+// is correct for those public surfaces.
 
 export function getRoleScope(pathname) {
   const p = pathname || (typeof window !== 'undefined' ? window.location.pathname : '')
   if (p.startsWith('/admin')) return 'admin'
+  if (p.startsWith('/institute/operator')) return 'client'
   if (p.startsWith('/client')) return 'client'
   if (p.startsWith('/superadmin')) return 'superadmin'
   return null
+}
+
+// loginPathForScope returns the current login URL for a given scope.
+// Kept here (rather than derived as `/${scope}/login` at the call
+// site) because the operator's URL no longer matches its scope name.
+export function loginPathForScope(scope) {
+  switch (scope) {
+    case 'admin':      return '/admin/login'
+    case 'client':     return '/institute/operator/login'
+    case 'superadmin': return '/superadmin/login'
+    default:           return '/'
+  }
 }
 
 export function tokenKey(scope) {

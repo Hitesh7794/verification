@@ -101,16 +101,25 @@ export default function App() {
           role's path so getRoleScope() can find the right session in
           localStorage. The page itself enforces "must be logged in +
           must have the flag". */}
-      <Route path="/admin/force-password-change"      element={<ForcePasswordChange />} />
-      <Route path="/client/force-password-change"     element={<ForcePasswordChange />} />
-      <Route path="/superadmin/force-password-change" element={<ForcePasswordChange />} />
+      <Route path="/admin/force-password-change"                 element={<ForcePasswordChange />} />
+      <Route path="/institute/operator/force-password-change"    element={<ForcePasswordChange />} />
+      <Route path="/superadmin/force-password-change"            element={<ForcePasswordChange />} />
+
+      {/* Legacy /client/* → /institute/operator/* redirects. The old
+          URLs were unclear ("client" meant "operator at an institute",
+          not "customer"). Keep them redirecting so bookmarks + saved
+          desktop shortcuts on operator laptops don't 404. */}
+      <Route path="/client/login"                  element={<Navigate to="/institute/operator/login" replace />} />
+      <Route path="/client"                        element={<Navigate to="/institute/operator" replace />} />
+      <Route path="/client/downloads"              element={<Navigate to="/institute/operator/downloads" replace />} />
+      <Route path="/client/force-password-change"  element={<Navigate to="/institute/operator/force-password-change" replace />} />
 
       {/* VERIFY MODE — the original operator/admin/superadmin app */}
       {includes('verify') && (
         <>
-          <Route path="/client/login" element={<ClientLogin />} />
+          <Route path="/institute/operator/login" element={<ClientLogin />} />
           <Route
-            path="/client"
+            path="/institute/operator"
             element={
               <RequireRole role="client">
                 <ClientDashboard />
@@ -118,7 +127,7 @@ export default function App() {
             }
           />
           <Route
-            path="/client/downloads"
+            path="/institute/operator/downloads"
             element={
               <RequireRole role="client">
                 <ClientDownloads />
