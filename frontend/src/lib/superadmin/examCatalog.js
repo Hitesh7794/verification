@@ -43,7 +43,7 @@ export async function reopenClient(id) {
 export async function createExam(clientId, exam) {
   return api(`/superadmin/clients/${clientId}/exams`, {
     method: 'POST',
-    body: exam, // { name, exam_code, trustview_ref, verification_from, verification_to }
+    body: exam, // { name, exam_code, verification_from, verification_to }
   })
 }
 

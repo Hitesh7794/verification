@@ -382,7 +382,6 @@ function EditExamForm({ exam, onCancel, onSaved }) {
   const examTo = dateOnly(exam.verification_to)
 
   const [name, setName] = useState(exam.name)
-  const [trustview, setTrustview] = useState(exam.trustview_ref || '')
   const [from, setFrom] = useState(examFrom)
   const [to, setTo] = useState(examTo)
   const [saving, setSaving] = useState(false)
@@ -395,7 +394,6 @@ function EditExamForm({ exam, onCancel, onSaved }) {
     try {
       const patch = {}
       if (name !== exam.name) patch.name = name.trim()
-      if (trustview !== (exam.trustview_ref || '')) patch.trustview_ref = trustview.trim()
       if (from !== examFrom) patch.verification_from = from
       if (to !== examTo) patch.verification_to = to
       if (Object.keys(patch).length === 0) {
@@ -428,10 +426,6 @@ function EditExamForm({ exam, onCancel, onSaved }) {
               <Label>Verification to</Label>
               <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} required />
             </div>
-          </div>
-          <div>
-            <Label>TrustView reference</Label>
-            <Input value={trustview} onChange={(e) => setTrustview(e.target.value)} />
           </div>
           <p className="text-xs text-slate-500">Exam code cannot be changed after creation.</p>
           {err && (

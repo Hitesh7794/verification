@@ -260,12 +260,11 @@ function EmptyExams({ onCreate }) {
 // short story rather than a wall of fields:
 //   1. Identity           — what the exam is called
 //   2. Verification window — when it's active
-//   3. Candidate data     — TrustView ref + CSV upload
+//   3. Candidate data     — CSV upload
 
 function NewExamForm({ clientId, onCancel, onCreated }) {
   const [name, setName] = useState('')
   const [code, setCode] = useState('')
-  const [trustview, setTrustview] = useState('')
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
   const [saving, setSaving] = useState(false)
@@ -281,7 +280,6 @@ function NewExamForm({ clientId, onCancel, onCreated }) {
       const { id: examId } = await createExam(clientId, {
         name: name.trim(),
         exam_code: code.trim(),
-        trustview_ref: trustview.trim(),
         verification_from: from,
         verification_to: to,
       })
@@ -368,16 +366,8 @@ function NewExamForm({ clientId, onCancel, onCreated }) {
           </FormSection>
 
           {/* Section 3 — candidate data */}
-          <FormSection num="3" title="Candidate data" hint="Optional at creation time — you can wire TrustView and upload the CSV later.">
+          <FormSection num="3" title="Candidate data" hint="Optional at creation time — you can upload the CSV later.">
             <div className="space-y-4">
-              <div>
-                <Label>TrustView reference <span className="text-slate-400 font-normal">(optional)</span></Label>
-                <Input
-                  value={trustview}
-                  onChange={(e) => setTrustview(e.target.value)}
-                  placeholder="TrustView exam ID or URL"
-                />
-              </div>
               <div>
                 <Label>Candidate CSV <span className="text-slate-400 font-normal">(optional)</span></Label>
                 <CSVDropzone
