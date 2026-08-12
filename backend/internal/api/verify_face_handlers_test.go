@@ -129,14 +129,14 @@ func newFaceTestServer(t *testing.T) (*Server, string, string, *fakeLuxandSvc, f
 	s := &Server{deps: Deps{DB: d, Index: idx, JWT: jwt, Cfg: cfg}}
 	s.luxand = luxand.New(cfg.LuxandBase)
 
-	var uid, orgID, centerID int64
-	if err := d.QueryRow(`SELECT id, org_id, center_id FROM users WHERE username='client'`).
-		Scan(&uid, &orgID, &centerID); err != nil {
+	var uid, orgID int64
+	if err := d.QueryRow(`SELECT id, org_id FROM users WHERE username='client'`).
+		Scan(&uid, &orgID); err != nil {
 		t.Fatal(err)
 	}
 	tok, err := jwt.Issue(auth.Claims{
 		UserID: uid, Username: "client", Role: "client",
-		OrgID: &orgID, CenterID: &centerID,
+		OrgID: &orgID,
 	})
 	if err != nil {
 		t.Fatal(err)

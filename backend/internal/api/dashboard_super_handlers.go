@@ -2,10 +2,15 @@ package api
 
 import "net/http"
 
+// Superadmin dashboard. The legacy `centers` table (+ per-org centre
+// count + per-centre top-verifications view) was removed by migration
+// 021 — the "one centre per org" invariant it encoded is dead. In its
+// place: exam_centres, which is per-exam and populated via CSV upload.
+// If a per-exam-centre leaderboard is useful later, add it here.
+
 func (s *Server) superStats(w http.ResponseWriter, r *http.Request) {
-	var orgs, centers, users, total, verified, denied int
+	var orgs, users, total, verified, denied int
 	_ = s.deps.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM organizations`).Scan(&orgs)
-	_ = s.deps.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM centers`).Scan(&centers)
 	_ = s.deps.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM users`).Scan(&users)
 	_ = s.deps.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM verifications`).Scan(&total)
 	_ = s.deps.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM verifications WHERE status='verified'`).Scan(&verified)
@@ -13,7 +18,6 @@ func (s *Server) superStats(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"organizations": orgs,
-		"centers":       centers,
 		"users":         users,
 		"total":         total,
 		"verified":      verified,
@@ -25,7 +29,6 @@ func (s *Server) superStats(w http.ResponseWriter, r *http.Request) {
 func (s *Server) superOrganizations(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.deps.DB.QueryContext(r.Context(),
 		`SELECT o.id, o.code, o.name,
-		        (SELECT COUNT(*) FROM centers c WHERE c.org_id=o.id) AS centers,
 		        (SELECT COUNT(*) FROM verifications v WHERE v.org_id=o.id) AS total,
 		        (SELECT COUNT(*) FROM verifications v WHERE v.org_id=o.id AND v.status='verified') AS verified,
 		        (SELECT COUNT(*) FROM verifications v WHERE v.org_id=o.id AND v.status='denied')   AS denied
@@ -40,47 +43,23 @@ func (s *Server) superOrganizations(w http.ResponseWriter, r *http.Request) {
 	for rows.Next() {
 		var id int64
 		var code, name string
-		var centers, total, verified, denied int
-		if err := rows.Scan(&id, &code, &name, &centers, &total, &verified, &denied); err != nil {
+		var total, verified, denied int
+		if err := rows.Scan(&id, &code, &name, &total, &verified, &denied); err != nil {
 			continue
 		}
 		out = append(out, map[string]any{
 			"id": id, "code": code, "name": name,
-			"centers": centers, "total": total,
-			"verified": verified, "denied": denied,
+			"total": total, "verified": verified, "denied": denied,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
 }
 
+// superTopCenters was removed with the legacy `centers` table. Its
+// route (/api/superadmin/top-centers) still exists so old frontends
+// don't 404 hard — it now returns an empty array. Delete the route
+// entry in server.go once the last dashboard reference is confirmed
+// gone from every published bundle.
 func (s *Server) superTopCenters(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.deps.DB.QueryContext(r.Context(),
-		`SELECT c.id, c.name, o.code,
-		        COUNT(v.id) AS total,
-		        SUM(CASE WHEN v.status='verified' THEN 1 ELSE 0 END) AS verified
-		 FROM centers c
-		 JOIN organizations o ON o.id = c.org_id
-		 LEFT JOIN verifications v ON v.center_id = c.id
-		 GROUP BY c.id, c.name, o.code
-		 ORDER BY total DESC LIMIT 10`)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "db error")
-		return
-	}
-	defer rows.Close()
-
-	out := []map[string]any{}
-	for rows.Next() {
-		var id int64
-		var name, org string
-		var total, verified int
-		if err := rows.Scan(&id, &name, &org, &total, &verified); err != nil {
-			continue
-		}
-		out = append(out, map[string]any{
-			"id": id, "name": name, "org_code": org,
-			"total": total, "verified": verified,
-		})
-	}
-	writeJSON(w, http.StatusOK, out)
+	writeJSON(w, http.StatusOK, []any{})
 }

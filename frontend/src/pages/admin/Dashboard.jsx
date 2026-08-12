@@ -101,7 +101,7 @@ export default function AdminDashboard() {
     <AppShell title="Exam Administrator Portal" subtitle="Verification operations dashboard">
       <PageHeader
         title="Verification overview"
-        subtitle="Live activity across all centers under your organization."
+        subtitle="Live activity across the exams your organization is subscribed to."
       />
       <AdminTabs />
 
@@ -196,15 +196,12 @@ export default function AdminDashboard() {
 
         <Card className="self-start">
           <CardHeader>
-            <CardTitle>Top centers</CardTitle>
+            <CardTitle>Top exams</CardTitle>
           </CardHeader>
           <CardBody>
-            {/* The bar is scaled to the BUSIEST centre's volume, which is
-                the number printed beside it. It used to be scaled to
-                success rate while showing the total — so two centres at
-                94% both rendered near-full regardless of whether one had
-                done ten times the work of the other. A bar must encode
-                the number sitting next to it. */}
+            {/* Bar is scaled to the busiest exam's volume, which is the
+                number printed beside it — so relative activity across
+                exams reads at a glance. */}
             <div className="space-y-3">
               {(() => {
                 const top = byCenter.slice(0, 6)
@@ -481,9 +478,9 @@ function StatsRow({ stats, timeline }) {
         />
         <Tile label="All time" value={nf.format(total)} hint="verifications recorded" />
         <Tile
-          label="Centres"
-          value={nf.format(stats.centers || 0)}
-          hint="under your organization"
+          label="Exams"
+          value={nf.format(stats.exams || 0)}
+          hint="subscribed by your organization"
         />
       </div>
     </StatRow>

@@ -294,12 +294,9 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 	}
 	defer tx.Rollback()
 
-	// center_id is left NULL by design — the "centre" concept from the
-	// legacy model no longer scopes anything meaningful. Operators are
-	// scoped by their exam_ids assignment instead. Migration 017
-	// dropped the NOT NULL on users.center_id + verifications.center_id
-	// so this insert (and later verification writes) succeed with a
-	// NULL centre.
+	// Operators are scoped by their operator_exams entries (chosen from
+	// the org's subscribed exams). The legacy centre concept was removed
+	// in migration 021.
 	res, err := tx.ExecContext(r.Context(), `
 		INSERT INTO users(username, password_hash, role, org_id,
 		                  display_name, email, password_plaintext,

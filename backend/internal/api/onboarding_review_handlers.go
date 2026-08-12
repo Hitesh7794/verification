@@ -463,18 +463,10 @@ func (s *Server) superadminApproveApplication(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Each org gets exactly one centre — the college itself. We create
-	// it eagerly so operators can be bound to it on first invite,
-	// without ever exposing centre-management to the admin (one college
-	// = one centre is the product invariant). On re-approval of the
-	// same org (idempotent path) INSERT OR IGNORE keeps a single row.
-	if _, err := tx.ExecContext(r.Context(),
-		`INSERT OR IGNORE INTO centers(org_id, code, name) VALUES(?, 'MAIN', ?)`,
-		orgID, instName,
-	); err != nil {
-		writeErr(w, http.StatusInternalServerError, "centre insert: "+err.Error())
-		return
-	}
+	// (Legacy "MAIN" centre auto-create removed — the centres table +
+	// users.center_id + verifications.center_id are gone as of
+	// migration 021. Operator/verification scoping now runs entirely
+	// through exam_candidates/exam_centres/operator_exams.)
 
 	// Choose a username. We slugify the institution name + append the
 	// app ID so it stays unique even if two institutions happen to share
@@ -506,16 +498,6 @@ func (s *Server) superadminApproveApplication(w http.ResponseWriter, r *http.Req
 	}
 	userID, _ := res.LastInsertId()
 
-	// Look up the centre we just auto-created so the shared operator
-	// user binds to it. Same tx — guaranteed present.
-	var centerID int64
-	if err := tx.QueryRowContext(r.Context(),
-		`SELECT id FROM centers WHERE org_id = ? ORDER BY id ASC LIMIT 1`, orgID,
-	).Scan(&centerID); err != nil {
-		writeErr(w, http.StatusInternalServerError, "centre lookup: "+err.Error())
-		return
-	}
-
 	// Shared operator: one client-role user per org. Every operator
 	// machine at the institution logs in with this single credential.
 	// Username convention mirrors the admin's (slug + appID) with an
@@ -525,6 +507,8 @@ func (s *Server) superadminApproveApplication(w http.ResponseWriter, r *http.Req
 	// (for the admin to view in their dashboard) — the latter is the
 	// trade-off the customer accepted to avoid email-onboarding every
 	// operator. See migration_010_operator_plaintext.go.
+	//
+	// No center_id — that column was dropped in migration 021.
 	operatorUsername := slugifyUsername(instName) + "_" + strconv.FormatInt(appID, 10) + "_op"
 	operatorPassword := generateOperatorPassword()
 	operatorHash, err := bcrypt.GenerateFromPassword([]byte(operatorPassword), bcrypt.DefaultCost)
@@ -534,10 +518,10 @@ func (s *Server) superadminApproveApplication(w http.ResponseWriter, r *http.Req
 	}
 	if _, err := tx.ExecContext(r.Context(),
 		`INSERT INTO users(username, password_hash, password_plaintext, role,
-		                   org_id, center_id, display_name, activated_at)
-		 VALUES(?, ?, ?, 'client', ?, ?, ?, CURRENT_TIMESTAMP)`,
+		                   org_id, display_name, activated_at)
+		 VALUES(?, ?, ?, 'client', ?, ?, CURRENT_TIMESTAMP)`,
 		operatorUsername, string(operatorHash), operatorPassword,
-		orgID, centerID, "Centre Operator",
+		orgID, "Centre Operator",
 	); err != nil {
 		writeErr(w, http.StatusInternalServerError, "operator insert: "+err.Error())
 		return

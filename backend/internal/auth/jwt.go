@@ -12,7 +12,6 @@ type Claims struct {
 	Username string `json:"usr"`
 	Role     string `json:"role"`
 	OrgID    *int64 `json:"org,omitempty"`
-	CenterID *int64 `json:"ctr,omitempty"`
 	jwt.RegisteredClaims
 }
 

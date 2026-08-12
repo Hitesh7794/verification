@@ -217,9 +217,8 @@ func (s *Server) createVerification(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "operator missing org context")
 		return
 	}
-	// center_id is optional post-migration-017 — operators created via
-	// the Phase-2 flow (/api/admin/operators) don't get one and don't
-	// need one. Legacy operators still have their center_id honoured.
+	// (center_id column was dropped in migration 021; verifications
+	// are exam-scoped via exam_candidates/exam_centres now.)
 
 	// Cap the request body. The verifyReq struct is small JSON; anything
 	// over a few KB is a misconfigured client or an attack.
@@ -259,7 +258,7 @@ func (s *Server) createVerification(w http.ResponseWriter, r *http.Request) {
 
 	res, err := s.deps.DB.ExecContext(r.Context(),
 		`INSERT INTO verifications(
-			roll_no, org_id, center_id, operator_id,
+			roll_no, org_id, operator_id,
 			face_match, fp_match, status, note,
 			device_serial, device_model,
 			fp_vendor, fp_template_format, fp_quality, fp_nfiq, fp_match_score, fp_liveness,
@@ -267,8 +266,8 @@ func (s *Server) createVerification(w http.ResponseWriter, r *http.Request) {
 			face_match_score,
 			via, match_threshold, decision_ms, client_app_version,
 			idempotency_key
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
-		req.RollNo, *claims.OrgID, nullableInt64(claims.CenterID), claims.UserID,
+		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		req.RollNo, *claims.OrgID, claims.UserID,
 		boolInt(req.FaceMatch), boolInt(req.FpMatch), req.Status, nullable(req.Note),
 		nullable(req.DeviceSerial), nullable(req.DeviceModel),
 		nullable(req.FpVendor), nullable(req.FpTemplateFormat), nullableInt(req.FpQuality), nullableInt(req.FpNfiq),

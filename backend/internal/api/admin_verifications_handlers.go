@@ -64,17 +64,20 @@ func (s *Server) buildVerificationFilters(r *http.Request) (string, []any) {
 }
 
 type verificationRow struct {
-	ID           int64   `json:"id"`
-	RollNo       string  `json:"roll_no"`
-	Status       string  `json:"status"`
-	FaceMatch    bool    `json:"face_match"`
-	FpMatch      bool    `json:"fp_match"`
-	Via          string  `json:"via,omitempty"`
-	CenterName   string  `json:"center_name"`
-	OperatorName string  `json:"operator_name"`
-	CreatedAt    string  `json:"created_at"`
-	FpVendor     string  `json:"fp_vendor,omitempty"`
-	FpScore      *int    `json:"fp_match_score,omitempty"`
+	ID           int64    `json:"id"`
+	RollNo       string   `json:"roll_no"`
+	Status       string   `json:"status"`
+	FaceMatch    bool     `json:"face_match"`
+	FpMatch      bool     `json:"fp_match"`
+	Via          string   `json:"via,omitempty"`
+	// JSON key is still "center_name" for FE backward-compat; the
+	// value is now the exam name || " (" || exam_code || ")" so the
+	// history column stays meaningful after the centres table died.
+	CenterName   string   `json:"center_name"`
+	OperatorName string   `json:"operator_name"`
+	CreatedAt    string   `json:"created_at"`
+	FpVendor     string   `json:"fp_vendor,omitempty"`
+	FpScore      *int     `json:"fp_match_score,omitempty"`
 	FaceScore    *float64 `json:"face_match_score,omitempty"`
 }
 
@@ -98,10 +101,13 @@ func (s *Server) adminListVerifications(w http.ResponseWriter, r *http.Request) 
 
 	rows, err := s.deps.DB.QueryContext(r.Context(),
 		`SELECT v.id, v.roll_no, v.status, v.face_match, v.fp_match,
-		        COALESCE(v.via, ''), COALESCE(c.name, ''), u.display_name, v.created_at,
+		        COALESCE(v.via, ''),
+		        COALESCE(e.name || ' (' || e.exam_code || ')', ''),
+		        u.display_name, v.created_at,
 		        COALESCE(v.fp_vendor, ''), v.fp_match_score, v.face_match_score
 		 FROM verifications v
-		 LEFT JOIN centers c ON c.id = v.center_id
+		 LEFT JOIN exam_candidates ec ON ec.roll_no = v.roll_no
+		 LEFT JOIN exams e ON e.id = ec.exam_id
 		 JOIN users u ON u.id = v.operator_id`+
 			where+` ORDER BY v.id DESC LIMIT ?`, args...,
 	)
@@ -151,12 +157,15 @@ func (s *Server) adminExportVerificationsCSV(w http.ResponseWriter, r *http.Requ
 
 	rows, err := s.deps.DB.QueryContext(r.Context(),
 		`SELECT v.id, v.roll_no, v.status, v.face_match, v.fp_match,
-		        COALESCE(v.via, ''), COALESCE(c.name, ''), u.display_name, v.created_at,
+		        COALESCE(v.via, ''),
+		        COALESCE(e.name || ' (' || e.exam_code || ')', ''),
+		        u.display_name, v.created_at,
 		        COALESCE(v.fp_vendor, ''), v.fp_match_score, v.face_match_score,
 		        COALESCE(v.device_serial, ''), COALESCE(v.device_model, ''),
 		        v.decision_ms
 		 FROM verifications v
-		 LEFT JOIN centers c ON c.id = v.center_id
+		 LEFT JOIN exam_candidates ec ON ec.roll_no = v.roll_no
+		 LEFT JOIN exams e ON e.id = ec.exam_id
 		 JOIN users u ON u.id = v.operator_id`+
 			where+` ORDER BY v.id DESC LIMIT ?`, args...,
 	)

@@ -159,10 +159,9 @@ export default function SuperDashboard() {
           </StatShell>
         </StatCell>
 
-        <div className="lg:col-span-2 grid gap-5 grid-cols-2 sm:grid-cols-4">
+        <div className="lg:col-span-2 grid gap-5 grid-cols-2 sm:grid-cols-3">
           <Tile label="Verifications" value={nf.format(total)} />
           <Tile label="Organizations" value={stats?.organizations ?? '—'} />
-          <Tile label="Centres" value={stats?.centers ?? '—'} />
           <Tile label="Operators & staff" value={stats?.users ?? '—'} />
         </div>
       </StatRow>
@@ -304,7 +303,6 @@ export default function SuperDashboard() {
                 <tr>
                   <th className="text-left px-6 py-3 font-medium">Code</th>
                   <th className="text-left px-6 py-3 font-medium">Organization</th>
-                  <th className="text-right px-6 py-3 font-medium">Centres</th>
                   <th className="text-right px-6 py-3 font-medium">Verifications</th>
                   <th className="text-right px-6 py-3 font-medium">Verified</th>
                   <th className="text-right px-6 py-3 font-medium">Denied</th>
@@ -326,7 +324,6 @@ export default function SuperDashboard() {
                         </span>
                       </td>
                       <td className="px-6 py-3 font-medium text-slate-900">{o.name}</td>
-                      <td className="px-6 py-3 text-right text-slate-700 tabular-nums">{o.centers}</td>
                       <td className="px-6 py-3 text-right text-slate-700 tabular-nums">{nf.format(o.total)}</td>
                       <td className="px-6 py-3 text-right text-slate-700 tabular-nums">{nf.format(o.verified)}</td>
                       <td className="px-6 py-3 text-right text-slate-700 tabular-nums">{nf.format(o.denied)}</td>

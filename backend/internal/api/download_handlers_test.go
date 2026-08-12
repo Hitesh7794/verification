@@ -242,21 +242,18 @@ func TestDownloadsDownload_ClientRoleCanDownload(t *testing.T) {
 	payload := []byte("PK\x03\x04 operator bytes")
 	s, _, orgID, _ := downloadsServer(t, "VerificationPortalClient-1.0.0-windows.zip", payload)
 
-	// Seed a centre + client operator in the same org as the admin
-	// the helper created — that's the real-world topology (one org,
-	// one shared operator credential).
-	cres, _ := s.deps.DB.Exec(`INSERT INTO centers(org_id, code, name) VALUES(?, 'MAIN', 'Test Centre')`, orgID)
-	centerID, _ := cres.LastInsertId()
+	// Seed a client operator in the same org as the admin the helper
+	// created. Post migration 021 there's no centre column.
 	hash, _ := bcrypt.GenerateFromPassword([]byte("op"), bcrypt.MinCost)
 	ores, _ := s.deps.DB.Exec(
 		`INSERT INTO users(username, password_hash, password_plaintext, role,
-		                   org_id, center_id, display_name, activated_at)
-		 VALUES('op', ?, 'op', 'client', ?, ?, 'Centre Operator', CURRENT_TIMESTAMP)`,
-		string(hash), orgID, centerID,
+		                   org_id, display_name, activated_at)
+		 VALUES('op', ?, 'op', 'client', ?, 'Centre Operator', CURRENT_TIMESTAMP)`,
+		string(hash), orgID,
 	)
 	opID, _ := ores.LastInsertId()
 	cliTok, _ := s.deps.JWT.Issue(auth.Claims{
-		UserID: opID, Username: "op", Role: "client", OrgID: &orgID, CenterID: &centerID,
+		UserID: opID, Username: "op", Role: "client", OrgID: &orgID,
 	})
 
 	// Manifest as client — must succeed.

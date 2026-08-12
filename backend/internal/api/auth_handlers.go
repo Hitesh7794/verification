@@ -33,14 +33,13 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var (
-		id            int64
-		passHash      string
-		role          string
-		orgID         sql.NullInt64
-		centerID      sql.NullInt64
-		displayName   string
-		disabledAt    sql.NullTime
-		passChangeReq int
+		id             int64
+		passHash       string
+		role           string
+		orgID          sql.NullInt64
+		displayName    string
+		disabledAt     sql.NullTime
+		passChangeReq  int
 		actualUsername string
 	)
 	// The identifier can be either a username (case-sensitive) OR an
@@ -51,14 +50,14 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	identifier := strings.TrimSpace(req.Username)
 	emailLower := strings.ToLower(identifier)
 	err := s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT id, password_hash, role, org_id, center_id, display_name,
+		`SELECT id, password_hash, role, org_id, display_name,
 		        disabled_at, password_change_required, username
 		   FROM users
 		  WHERE username = ?
 		     OR (email = ? AND role IN ('admin','client'))
 		  LIMIT 1`,
 		identifier, emailLower,
-	).Scan(&id, &passHash, &role, &orgID, &centerID, &displayName,
+	).Scan(&id, &passHash, &role, &orgID, &displayName,
 		&disabledAt, &passChangeReq, &actualUsername)
 	if err == sql.ErrNoRows {
 		s.auditAnonymous(r, "login.failure", map[string]any{
@@ -97,10 +96,6 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		v := orgID.Int64
 		claims.OrgID = &v
 	}
-	if centerID.Valid {
-		v := centerID.Int64
-		claims.CenterID = &v
-	}
 	tok, err := s.deps.JWT.Issue(claims)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "token error")
@@ -117,7 +112,6 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 			"role":                     role,
 			"display_name":             displayName,
 			"org_id":                   claims.OrgID,
-			"center_id":                claims.CenterID,
 			"password_change_required": passChangeReq != 0,
 		},
 	})
@@ -237,7 +231,6 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		"role":                     c.Role,
 		"display_name":             displayName,
 		"org_id":                   c.OrgID,
-		"center_id":                c.CenterID,
 		"password_change_required": passChangeReq != 0,
 	})
 }

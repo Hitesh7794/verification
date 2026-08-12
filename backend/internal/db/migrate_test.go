@@ -100,13 +100,14 @@ func TestIdempotencyKeyUnique(t *testing.T) {
 
 	// Seed minimal rows so the FK paths exist (we only need the verifications
 	// table itself; the FKs are advisory for sqlite without ON conflict).
+	// The centers table + verifications.center_id column were removed by
+	// migration 021.
 	_, _ = d.Exec(`INSERT INTO organizations(code,name) VALUES('X','x')`)
-	_, _ = d.Exec(`INSERT INTO centers(org_id,code,name) VALUES(1,'C1','c')`)
 	_, _ = d.Exec(`INSERT INTO users(username,password_hash,role,display_name)
 		VALUES('u','x','client','u')`)
 
-	ins := `INSERT INTO verifications(roll_no,org_id,center_id,operator_id,status,idempotency_key)
-	        VALUES('1',1,1,1,'verified',?)`
+	ins := `INSERT INTO verifications(roll_no,org_id,operator_id,status,idempotency_key)
+	        VALUES('1',1,1,'verified',?)`
 
 	if _, err := d.Exec(ins, "abc"); err != nil {
 		t.Fatalf("first insert: %v", err)

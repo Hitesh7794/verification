@@ -4,7 +4,7 @@ export default function SuperLogin() {
   return (
     <LoginShell
       portalTitle="Platform Superadmin"
-      portalSubtitle="Cross-organization oversight: organizations, centers, operators and verification telemetry."
+      portalSubtitle="Cross-organization oversight: organizations, exams, operators and verification telemetry."
       expectedRole="superadmin"
       redirectTo="/superadmin"
       accent="slate"
