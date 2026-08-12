@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import AppShell from '../../components/shell/AppShell.jsx'
@@ -19,7 +19,6 @@ import {
   toggleExamVisibility,
   closeExam,
   reopenExam,
-  uploadCandidateCSV,
 } from '../../lib/superadmin/examCatalog.js'
 import { dateRange } from '../../lib/dates.js'
 
@@ -245,7 +244,8 @@ function EmptyExams({ onCreate }) {
       </div>
       <h3 className="text-base font-semibold text-slate-900">No exams under this client yet</h3>
       <p className="text-sm text-slate-500 mt-1 max-w-sm mx-auto">
-        Add an exam with its code, verification window, and candidate CSV.
+        Add an exam with its code and verification window. Candidates come
+        later, from the exam page.
       </p>
       <Button className="mt-5" onClick={onCreate}>
         <Icon.Plus className="h-4 w-4 mr-1.5" />
@@ -260,7 +260,13 @@ function EmptyExams({ onCreate }) {
 // short story rather than a wall of fields:
 //   1. Identity           — what the exam is called
 //   2. Verification window — when it's active
-//   3. Candidate data     — CSV upload
+//   3. Candidate data     — hint only; the roster + centres CSVs both
+//                           get uploaded from the exam page once the
+//                           exam exists (one place to do it, one place
+//                           to see validation errors + upload history).
+//                           The create endpoint is JSON-only and never
+//                           accepted a file. TrustView reference was
+//                           removed (integration still pending).
 
 function NewExamForm({ clientId, onCancel, onCreated }) {
   const [name, setName] = useState('')
@@ -269,8 +275,6 @@ function NewExamForm({ clientId, onCancel, onCreated }) {
   const [to, setTo] = useState('')
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
-  const [csvFile, setCsvFile] = useState(null)
-  const fileInputRef = useRef(null)
 
   async function onSubmit(e) {
     e.preventDefault()
@@ -283,16 +287,6 @@ function NewExamForm({ clientId, onCancel, onCreated }) {
         verification_from: from,
         verification_to: to,
       })
-      if (csvFile) {
-        try {
-          await uploadCandidateCSV(examId, csvFile)
-        } catch (uploadErr) {
-          const backend = uploadErr.body?.error ? `: ${uploadErr.body.error}` : ''
-          setErr(`Exam created — but CSV upload failed${backend}. You can retry from the exam page.`)
-          setTimeout(() => onCreated(examId), 2200)
-          return
-        }
-      }
       onCreated(examId)
     } catch (e) {
       const status = e.status ? ` (HTTP ${e.status})` : ''
@@ -316,7 +310,8 @@ function NewExamForm({ clientId, onCancel, onCreated }) {
           <div>
             <h3 className="text-base font-semibold text-slate-900">New exam</h3>
             <p className="text-xs text-slate-500 mt-0.5">
-              Add an exam under this client. You can skip the CSV now and upload it later.
+              Add an exam under this client. Upload the candidate roster from the
+              exam page once it exists.
             </p>
           </div>
         </div>
@@ -365,21 +360,13 @@ function NewExamForm({ clientId, onCancel, onCreated }) {
             </div>
           </FormSection>
 
-          {/* Section 3 — candidate data */}
-          <FormSection num="3" title="Candidate data" hint="Optional at creation time — you can upload the CSV later.">
-            <div className="space-y-4">
-              <div>
-                <Label>Candidate CSV <span className="text-slate-400 font-normal">(optional)</span></Label>
-                <CSVDropzone
-                  file={csvFile}
-                  onFile={setCsvFile}
-                  inputRef={fileInputRef}
-                />
-                <p className="text-[11px] text-slate-500 mt-1.5">
-                  Columns: <code className="text-slate-700">name</code>, <code className="text-slate-700">roll_no</code>,{' '}
-                  <code className="text-slate-700">verification_date</code>. Only passed candidates.
-                </p>
-              </div>
+          {/* Section 3 — candidate data.
+              Deliberately no form field. Uploads live on the exam page. */}
+          <FormSection num="3" title="Candidate data" hint="Uploaded from the exam page after the exam is created.">
+            <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2.5 text-xs text-slate-600">
+              After creating this exam, open it to upload the candidate roster
+              (name, roll_no + optional extras) and the centres CSV. Validation
+              errors and upload history live there too.
             </div>
           </FormSection>
 
@@ -392,7 +379,7 @@ function NewExamForm({ clientId, onCancel, onCreated }) {
           <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
             <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>
             <Button type="submit" disabled={saving || !canSubmit}>
-              {saving ? 'Saving…' : (csvFile ? 'Create exam & upload CSV' : 'Create exam')}
+              {saving ? 'Saving…' : 'Create exam'}
             </Button>
           </div>
         </form>
@@ -420,77 +407,3 @@ function FormSection({ num, title, hint, children }) {
   )
 }
 
-// CSVDropzone — bigger, friendlier upload area than the browser default.
-// Native file input is hidden and the surrounding div opens it. Shows
-// filename + size once a file's selected.
-function CSVDropzone({ file, onFile, inputRef }) {
-  const [dragging, setDragging] = useState(false)
-
-  function onDrop(e) {
-    e.preventDefault()
-    setDragging(false)
-    const f = e.dataTransfer.files?.[0]
-    if (f && (f.name.endsWith('.csv') || f.type === 'text/csv')) {
-      onFile(f)
-    }
-  }
-
-  return (
-    <div
-      onDragOver={(e) => { e.preventDefault(); setDragging(true) }}
-      onDragLeave={() => setDragging(false)}
-      onDrop={onDrop}
-      onClick={() => inputRef.current?.click()}
-      className={
-        'group cursor-pointer rounded-lg border-2 border-dashed px-4 py-6 text-center transition ' +
-        (dragging
-          ? 'border-indigo-400 bg-indigo-50/50'
-          : file
-          ? 'border-emerald-300 bg-emerald-50/40'
-          : 'border-slate-300 bg-slate-50/40 hover:border-slate-400 hover:bg-slate-50')
-      }
-    >
-      <input
-        ref={inputRef}
-        type="file"
-        accept=".csv,text/csv"
-        onChange={(e) => onFile(e.target.files?.[0] || null)}
-        className="hidden"
-      />
-      {file ? (
-        <div className="flex items-center justify-center gap-3">
-          <div className="h-9 w-9 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center">
-            <Icon.Check className="h-5 w-5" />
-          </div>
-          <div className="text-left">
-            <p className="text-sm font-medium text-slate-900 truncate max-w-[280px]">{file.name}</p>
-            <p className="text-xs text-slate-500">{formatBytes(file.size)}</p>
-          </div>
-          <button
-            type="button"
-            className="ml-3 text-xs text-slate-500 hover:text-rose-600 transition-colors"
-            onClick={(e) => { e.stopPropagation(); onFile(null) }}
-          >
-            Remove
-          </button>
-        </div>
-      ) : (
-        <>
-          <div className="mx-auto h-9 w-9 rounded-lg bg-white text-slate-400 group-hover:text-slate-600 flex items-center justify-center ring-1 ring-slate-200">
-            <Icon.Upload className="h-5 w-5" />
-          </div>
-          <p className="mt-2 text-sm text-slate-700">
-            <span className="font-medium text-indigo-600 hover:underline">Choose a file</span> or drag and drop
-          </p>
-          <p className="text-[11px] text-slate-500 mt-0.5">.csv up to 20 MB</p>
-        </>
-      )}
-    </div>
-  )
-}
-
-function formatBytes(n) {
-  if (n < 1024) return n + ' B'
-  if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'
-  return (n / (1024 * 1024)).toFixed(1) + ' MB'
-}
