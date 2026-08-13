@@ -40,6 +40,12 @@ type pdfBundle struct {
 	FpMatchScore     sql.NullInt64
 	IrisScore        sql.NullFloat64
 	MatchThreshold   sql.NullInt64
+	// Per-exam biometric requirements (migration 022). Drive which
+	// modality rows appear in the PDF result block + which modalities
+	// count toward the "verified by" list.
+	RequiresFace bool
+	RequiresFP   bool
+	RequiresIris bool
 	DeviceSerial     sql.NullString
 	DeviceModel      sql.NullString
 	FpVendor         sql.NullString
@@ -98,7 +104,9 @@ func (s *Server) verificationPDF(w http.ResponseWriter, r *http.Request) {
 		       COALESCE(e.exam_code, ''), COALESCE(e.name, ''),
 		       COALESCE(c.name, ''),
 		       ectr.centre_name, ectr.address, ectr.city, ectr.state, ectr.pincode,
-		       u.display_name
+		       u.display_name,
+		       COALESCE(e.requires_face, 1), COALESCE(e.requires_fp, 1),
+		       COALESCE(e.requires_iris, 0)
 		  FROM verifications v
 		  LEFT JOIN exam_candidates ec ON ec.roll_no    = v.roll_no
 		  LEFT JOIN exams           e  ON e.id          = ec.exam_id
@@ -140,6 +148,7 @@ func (s *Server) verificationPDF(w http.ResponseWriter, r *http.Request) {
 		&b.ExamCode, &b.ExamName, &b.ClientName,
 		&b.CentreName, &b.Address, &b.City, &b.State, &b.Pincode,
 		&b.OperatorName,
+		&b.RequiresFace, &b.RequiresFP, &b.RequiresIris,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeErr(w, http.StatusNotFound, "verification not found")
@@ -392,23 +401,53 @@ func drawResultBlock(pdf *gofpdf.Fpdf, b *pdfBundle) {
 	pdf.SetTextColor(15, 23, 42)
 	pdf.SetFont("Helvetica", "", 9)
 
-	rows := []struct{ k, v string }{
-		{"Via", capitalise(b.Via)},
-		{"Face match",
+	// Build the "Via" field dynamically:
+	//   - verified + at least one required biometric passed → join the
+	//     names of every required modality that PASSED (e.g. "Face +
+	//     Fingerprint + Iris"). This tells the reader exactly which
+	//     modalities produced the verified verdict.
+	//   - verified + no biometric passed → operator marked verified
+	//     manually (edge case; possible via the manual-override path).
+	//     Show "Manual".
+	//   - denied → "Verification failed" so the reader isn't left
+	//     wondering what the top-priority modality was.
+	irisPass := b.IrisScore.Valid && b.IrisScore.Float64 >= 50
+	var via string
+	if strings.EqualFold(b.Status, "verified") {
+		passed := []string{}
+		if b.RequiresFace && b.FaceMatch { passed = append(passed, "Face") }
+		if b.RequiresFP   && b.FpMatch   { passed = append(passed, "Fingerprint") }
+		if b.RequiresIris && irisPass    { passed = append(passed, "Iris") }
+		if len(passed) > 0 {
+			via = strings.Join(passed, " + ")
+		} else {
+			via = "Manual"
+		}
+	} else {
+		via = "Verification failed"
+	}
+
+	// Rows: Via always, then one row per REQUIRED modality only. An
+	// exam that doesn't require iris no longer shows an "Iris —" row.
+	// Same for face-only or fp-only exams.
+	rows := []struct{ k, v string }{{"Via", via}}
+	if b.RequiresFace {
+		rows = append(rows, struct{ k, v string }{
+			"Face match",
 			fmt.Sprintf("%s   (threshold %s)   %s",
 				fmtFloat(b.FaceMatchScore), fmtIntThreshold(b.MatchThreshold, true),
-				passFail(b.FaceMatch))},
-		{"Fingerprint",
+				passFail(b.FaceMatch)),
+		})
+	}
+	if b.RequiresFP {
+		rows = append(rows, struct{ k, v string }{
+			"Fingerprint",
 			fmt.Sprintf("%s   (threshold %s)   %s",
 				fmtInt(b.FpMatchScore), fmtIntThreshold(b.MatchThreshold, false),
-				passFail(b.FpMatch))},
+				passFail(b.FpMatch)),
+		})
 	}
-	// Iris only shows on the receipt when a compare actually ran (score
-	// is non-null). Threshold is fixed at 50 on the unified TrustView
-	// scale; a NULL iris_left_score means "captured for audit only" or
-	// "no iris component in this verification", both of which we hide.
-	if b.IrisScore.Valid {
-		irisPass := b.IrisScore.Float64 >= 50
+	if b.RequiresIris && b.IrisScore.Valid {
 		rows = append(rows, struct{ k, v string }{
 			"Iris",
 			fmt.Sprintf("%.0f   (threshold 50)   %s",

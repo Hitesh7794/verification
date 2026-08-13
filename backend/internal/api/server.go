@@ -185,6 +185,10 @@ func (s *Server) Router() http.Handler {
 		// uses /api/admin/wallet/credit for manual support credits.
 		r.Get("/api/wallet/config", s.requireRole("admin", "superadmin")(s.walletConfig))
 		r.Get("/api/wallet", s.requireRole("admin", "superadmin")(s.walletBalance))
+		// Lightweight summary — balance + fee only, no txn history.
+		// Client (operator) role allowed so the operator UI can render
+		// a live wallet pill.
+		r.Get("/api/wallet/summary", s.requireRole("client", "admin", "superadmin")(s.walletSummary))
 		r.Post("/api/wallet/order", s.requireRole("admin")(s.walletOrder))
 		r.Post("/api/wallet/verify-payment", s.requireRole("admin")(s.walletVerifyPayment))
 

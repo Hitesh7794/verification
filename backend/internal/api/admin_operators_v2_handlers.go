@@ -256,6 +256,21 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "email is not a valid address")
 		return
 	}
+	// Pre-check uniqueness (case-insensitive) to give a clean 409
+	// instead of a raw SQLite "UNIQUE constraint failed" error. The
+	// migration-023 index enforces this at the DB layer regardless
+	// (defense in depth against races).
+	var dupID int64
+	if err := s.deps.DB.QueryRowContext(r.Context(),
+		`SELECT id FROM users WHERE email IS NOT NULL AND LOWER(email) = LOWER(?) LIMIT 1`,
+		req.Email,
+	).Scan(&dupID); err == nil {
+		writeErr(w, http.StatusConflict, "a user with this email already exists")
+		return
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		writeErr(w, http.StatusInternalServerError, "email check: "+err.Error())
+		return
+	}
 	if strings.TrimSpace(req.ValidFrom) == "" || strings.TrimSpace(req.ValidTo) == "" {
 		writeErr(w, http.StatusBadRequest, "valid_from and valid_to are required (YYYY-MM-DD)")
 		return
@@ -421,6 +436,22 @@ func (s *Server) adminPatchOperator(w http.ResponseWriter, r *http.Request) {
 		}
 		if !isPlausibleEmail(e) {
 			writeErr(w, http.StatusBadRequest, "email is not a valid address")
+			return
+		}
+		// Reject if any OTHER user (excluding this operator) has the
+		// same email, case-insensitively. Prevents rewriting an
+		// operator's email to collide with an existing user; the
+		// unique index catches it at the DB layer too.
+		var dupID int64
+		err := tx.QueryRow(
+			`SELECT id FROM users WHERE email IS NOT NULL AND LOWER(email) = LOWER(?) AND id != ? LIMIT 1`,
+			e, id,
+		).Scan(&dupID)
+		if err == nil {
+			writeErr(w, http.StatusConflict, "a user with this email already exists")
+			return
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			writeErr(w, http.StatusInternalServerError, "email check: "+err.Error())
 			return
 		}
 		sets = append(sets, "email = ?")

@@ -22,6 +22,14 @@ export async function getWallet({ before } = {}) {
   return api('/wallet' + q)
 }
 
+// Lightweight wallet summary — balance + fee only, no transaction
+// history. Accessible to operators (client role), unlike the full
+// /api/wallet endpoint which is admin/superadmin only. Used by the
+// operator Dashboard's live-balance pill.
+export async function getWalletSummary() {
+  return api('/wallet/summary')
+}
+
 // Create a Razorpay order on the backend (which talks to api.razorpay.com).
 // Returns { razorpay_order_id, razorpay_key_id, amount_paise, currency }.
 export async function createWalletOrder(amountPaise) {

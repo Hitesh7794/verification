@@ -1,6 +1,7 @@
 package api
 
 import (
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -112,10 +113,83 @@ func (s *Server) resolveOrgID(w http.ResponseWriter, r *http.Request) (int64, bo
 			return 0, false
 		}
 		return n, true
+	case "client":
+		// Operators view only their own org's wallet balance -- never
+		// with an org_id override. Prevents cross-tenant enumeration
+		// even if a client token somehow reached this endpoint.
+		if claims.OrgID == nil {
+			writeErr(w, http.StatusForbidden, "operator without org context")
+			return 0, false
+		}
+		return *claims.OrgID, true
 	default:
 		writeErr(w, http.StatusForbidden, "forbidden")
 		return 0, false
 	}
+}
+
+// walletSummary is the operator-facing wallet endpoint. Returns the
+// operator's personal allocation (cap + spent) + the fee. Falls back
+// to org balance when the operator has no personal cap so the UI
+// always has SOMETHING meaningful to render.
+//
+// Admin + superadmin also get this shape but their cap is always null
+// (they don't consume the wallet themselves); the org balance is
+// what they care about anyway.
+type walletSummaryResp struct {
+	// Per-operator allocation. cap_paise=null means "no cap set --
+	// operator spends against the shared org wallet with no personal
+	// ceiling". spent_paise is this operator's lifetime total across
+	// every verification they've submitted.
+	CapPaise   *int `json:"cap_paise,omitempty"`
+	SpentPaise int  `json:"spent_paise"`
+	// Shared org wallet balance. The middleware charges against this
+	// on every face-match; it's the ultimate ceiling even for uncapped
+	// operators, so we always surface it.
+	OrgBalancePaise   int `json:"org_balance_paise"`
+	FeePerLookupPaise int `json:"fee_per_lookup_paise"`
+}
+
+func (s *Server) walletSummary(w http.ResponseWriter, r *http.Request) {
+	if s.wallet == nil {
+		writeErr(w, http.StatusServiceUnavailable, "wallet feature not enabled")
+		return
+	}
+	orgID, ok := s.resolveOrgID(w, r)
+	if !ok {
+		return
+	}
+	claims := claimsFrom(r)
+	// Load this user's cap + spent. Admin/superadmin rows may not have
+	// these (they don't spend), so we tolerate NULL cap + zero spent.
+	var (
+		cap   sql.NullInt64
+		spent int
+	)
+	if claims != nil && claims.UserID != 0 {
+		if err := s.deps.DB.QueryRowContext(r.Context(),
+			`SELECT spending_cap_paise, COALESCE(spent_paise, 0) FROM users WHERE id = ?`,
+			claims.UserID,
+		).Scan(&cap, &spent); err != nil && !errors.Is(err, sql.ErrNoRows) {
+			writeErr(w, http.StatusInternalServerError, "user read: "+err.Error())
+			return
+		}
+	}
+	bal, err := s.wallet.Balance(r.Context(), orgID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "balance: "+err.Error())
+		return
+	}
+	resp := walletSummaryResp{
+		SpentPaise:        spent,
+		OrgBalancePaise:   bal,
+		FeePerLookupPaise: s.deps.Cfg.WalletFeePerLookupPaise,
+	}
+	if cap.Valid {
+		v := int(cap.Int64)
+		resp.CapPaise = &v
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 func (s *Server) walletBalance(w http.ResponseWriter, r *http.Request) {

@@ -16,6 +16,7 @@ import FingerprintCapture from '../../components/verify/FingerprintCapture.jsx'
 import IrisCapture from '../../components/verify/IrisCapture.jsx'
 import FaceMatchPanel from '../../components/verify/FaceMatchPanel.jsx'
 import { api, fetchFPTemplate, fetchPhotoBlob, isWalletEmptyError, getCandidateAttempts, downloadVerificationPDF } from '../../lib/api.js'
+import { getWalletSummary, formatRupees } from '../../lib/wallet/wallet.js'
 
 // Generate an idempotency key per verification attempt so a network retry
 // of the submit doesn't create two rows. crypto.randomUUID is available in
@@ -212,6 +213,18 @@ export default function ClientDashboard() {
   // returns HTTP 402. Operators can't top up themselves — this is
   // surfaced as a passive banner directing them to their admin.
   const [walletEmpty, setWalletEmpty] = useState(false)
+
+  // Live wallet-balance pill in the page header. Fetched once on mount
+  // (no polling — the balance only moves when THIS operator submits a
+  // face-match, so we refresh right after each of those). null while
+  // loading; { balance_paise, fee_per_lookup_paise } once loaded.
+  const [wallet, setWallet] = useState(null)
+  useEffect(() => {
+    getWalletSummary().then(setWallet).catch(() => {})
+  }, [])
+  const refreshWallet = () => {
+    getWalletSummary().then(setWallet).catch(() => {})
+  }
 
   // ── Auto-decide + auto-submit ────────────────────────────────────
   // As soon as every enrolled modality has produced a result, we submit
@@ -491,43 +504,40 @@ export default function ClientDashboard() {
         title="New verification"
         subtitle="Enter the candidate roll number, capture face and fingerprint, then record the decision."
         right={
-          // Two right-slot buttons, mutually exclusive by verification step:
-          //
-          //   step === 0 (roll-search page)  → "Download installer"
-          //   step >  0 (mid-verification)   → "Start over"
-          //
-          // The Downloads link only shows on the search page so it doesn't
-          // distract operators mid-capture; that's also the moment when a
-          // fresh-laptop operator first lands here, so discoverability is
-          // unchanged. Styled to match the Start-over button visually so
-          // the slot doesn't shift in appearance between steps.
-          step === 0 ? (
-            <Link
-              to="/institute/operator/downloads"
-              title="Download the install bundle for a new operator laptop"
-              className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:ring-offset-1"
-            >
-              <svg
-                className="h-4 w-4 text-slate-500"
-                viewBox="0 0 24 24"
-                fill="none"
-                stroke="currentColor"
-                strokeWidth="2"
-                strokeLinecap="round"
-                strokeLinejoin="round"
-                aria-hidden="true"
+          // Header right slot: wallet pill always visible + a
+          // context-dependent action:
+          //   step === 0  → "Download installer"
+          //   step >  0   → "Start over"
+          <div className="flex items-center gap-3">
+            <WalletPill wallet={wallet} />
+            {step === 0 ? (
+              <Link
+                to="/institute/operator/downloads"
+                title="Download the install bundle for a new operator laptop"
+                className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:ring-offset-1"
               >
-                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
-                <polyline points="7 10 12 15 17 10" />
-                <line x1="12" y1="15" x2="12" y2="3" />
-              </svg>
-              Download installer
-            </Link>
-          ) : (
-            <Button variant="secondary" onClick={reset}>
-              Start over
-            </Button>
-          )
+                <svg
+                  className="h-4 w-4 text-slate-500"
+                  viewBox="0 0 24 24"
+                  fill="none"
+                  stroke="currentColor"
+                  strokeWidth="2"
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  aria-hidden="true"
+                >
+                  <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4" />
+                  <polyline points="7 10 12 15 17 10" />
+                  <line x1="12" y1="15" x2="12" y2="3" />
+                </svg>
+                Download installer
+              </Link>
+            ) : (
+              <Button variant="secondary" onClick={reset}>
+                Start over
+              </Button>
+            )}
+          </div>
         }
       />
 
@@ -552,9 +562,6 @@ export default function ClientDashboard() {
                   placeholder="e.g. 10001"
                   autoFocus
                 />
-                <p className="mt-1 text-xs text-slate-500">
-                  Try one of the seeded rolls (10001 – 10500).
-                </p>
               </div>
               {lookupErr && (
                 <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">
@@ -591,6 +598,10 @@ export default function ClientDashboard() {
                 setFaceResult(r)
                 setSnap(r?.snapshot ?? null)
                 if (step < 2) setStep(2)
+                // Face-match is the wallet-charged event; refresh the
+                // header pill so the operator sees the debited balance
+                // immediately without waiting for a page reload.
+                refreshWallet()
               }}
             />
           </CardBody>
@@ -796,5 +807,69 @@ export default function ClientDashboard() {
         </div>
       )}
     </AppShell>
+  )
+}
+
+// WalletPill — operator-scoped allocation chip in the header.
+//
+// Prefers the operator's PERSONAL allocation (cap - spent) when a cap
+// has been set by the admin. Falls back to the shared org wallet
+// balance when the operator is uncapped -- the admin can still see
+// the shared pool that way.
+//
+// Color states based on remaining lookups (remaining / fee):
+//   >= 100 lookups   → slate (plenty of runway)
+//   30 - 99 lookups  → amber (heads-up)
+//   <  30 lookups    → rose (ask admin to raise the cap or top up)
+function WalletPill({ wallet }) {
+  if (!wallet) {
+    return (
+      <span className="inline-flex items-center gap-1.5 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-sm text-slate-500">
+        <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M21 12V7H5a2 2 0 0 1 0-4h14v4" /><path d="M3 5v14a2 2 0 0 0 2 2h16v-5" /><path d="M18 12a2 2 0 0 0 0 4h4v-4Z" />
+        </svg>
+        Wallet…
+      </span>
+    )
+  }
+  const fee = wallet.fee_per_lookup_paise || 100
+  const capPaise = wallet.cap_paise
+  const spent = wallet.spent_paise || 0
+  const orgBal = wallet.org_balance_paise || 0
+
+  // Per-op mode when the admin set a cap; otherwise fall back to the
+  // shared-wallet view.
+  const capped = typeof capPaise === 'number' && capPaise > 0
+  const remaining = capped ? Math.max(0, capPaise - spent) : orgBal
+  const lookupsLeft = Math.floor(remaining / Math.max(fee, 1))
+  const label = capped ? 'Your allocation' : 'Shared wallet'
+
+  let tone = 'slate'
+  if (lookupsLeft < 30) tone = 'rose'
+  else if (lookupsLeft < 100) tone = 'amber'
+  const toneClass = {
+    slate: 'border-slate-200 bg-slate-50 text-slate-700',
+    amber: 'border-amber-300 bg-amber-50 text-amber-900',
+    rose:  'border-rose-300 bg-rose-50 text-rose-900',
+  }[tone]
+  const iconTone = { slate: 'text-slate-500', amber: 'text-amber-600', rose: 'text-rose-600' }[tone]
+
+  const title = capped
+    ? (lookupsLeft > 0
+        ? `${label}: ${formatRupees(remaining)} left of ${formatRupees(capPaise)} (spent ${formatRupees(spent)}) · ~${lookupsLeft} lookups at ${formatRupees(fee)} each. Ask your admin to raise your cap if this runs low.`
+        : `You've used your entire ${formatRupees(capPaise)} allocation. Ask your admin to raise your cap before running more verifications.`)
+    : (lookupsLeft > 0
+        ? `No personal cap set — spending against the shared org wallet (${formatRupees(orgBal)}). Ask your admin to set your own allocation for tighter control.`
+        : `Org wallet empty. Ask your admin to top up before running more verifications.`)
+
+  return (
+    <span className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-sm font-medium ${toneClass}`} title={title}>
+      <svg className={`h-4 w-4 ${iconTone}`} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+        <path d="M21 12V7H5a2 2 0 0 1 0-4h14v4" /><path d="M3 5v14a2 2 0 0 0 2 2h16v-5" /><path d="M18 12a2 2 0 0 0 0 4h4v-4Z" />
+      </svg>
+      <span className="text-xs opacity-70">{label}</span>
+      <span>{formatRupees(remaining)}</span>
+      <span className="text-xs opacity-75">· {lookupsLeft} left</span>
+    </span>
   )
 }
