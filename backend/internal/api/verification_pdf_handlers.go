@@ -38,6 +38,7 @@ type pdfBundle struct {
 	FpMatch          bool
 	FaceMatchScore   sql.NullFloat64
 	FpMatchScore     sql.NullInt64
+	IrisScore        sql.NullFloat64
 	MatchThreshold   sql.NullInt64
 	DeviceSerial     sql.NullString
 	DeviceModel      sql.NullString
@@ -86,7 +87,8 @@ func (s *Server) verificationPDF(w http.ResponseWriter, r *http.Request) {
 	// still renders — just without the address block.
 	query := `
 		SELECT v.id, v.status, COALESCE(v.via, ''), v.face_match, v.fp_match,
-		       v.face_match_score, v.fp_match_score, v.match_threshold,
+		       v.face_match_score, v.fp_match_score, v.iris_left_score,
+		       v.match_threshold,
 		       v.device_serial, v.device_model, v.fp_vendor, v.created_at,
 		       v.probe_photo_path,
 		       v.roll_no,
@@ -129,7 +131,7 @@ func (s *Server) verificationPDF(w http.ResponseWriter, r *http.Request) {
 	var b pdfBundle
 	err = s.deps.DB.QueryRowContext(r.Context(), query, args...).Scan(
 		&b.VerificationID, &b.Status, &b.Via, &b.FaceMatch, &b.FpMatch,
-		&b.FaceMatchScore, &b.FpMatchScore, &b.MatchThreshold,
+		&b.FaceMatchScore, &b.FpMatchScore, &b.IrisScore, &b.MatchThreshold,
 		&b.DeviceSerial, &b.DeviceModel, &b.FpVendor, &b.CreatedAt,
 		&b.ProbePhotoPath,
 		&b.RollNo, &b.CandName,
@@ -400,11 +402,25 @@ func drawResultBlock(pdf *gofpdf.Fpdf, b *pdfBundle) {
 			fmt.Sprintf("%s   (threshold %s)   %s",
 				fmtInt(b.FpMatchScore), fmtIntThreshold(b.MatchThreshold, false),
 				passFail(b.FpMatch))},
-		{"Time", b.CreatedAt.In(indiaTZ).Format("2006-01-02 15:04:05 IST")},
-		{"Operator", nullstr(b.OperatorName)},
-		{"Device", strings.TrimSpace(
-			nullstr(b.FpVendor) + "  " + nullstr(b.DeviceModel) + "  " + nullstr(b.DeviceSerial))},
 	}
+	// Iris only shows on the receipt when a compare actually ran (score
+	// is non-null). Threshold is fixed at 50 on the unified TrustView
+	// scale; a NULL iris_left_score means "captured for audit only" or
+	// "no iris component in this verification", both of which we hide.
+	if b.IrisScore.Valid {
+		irisPass := b.IrisScore.Float64 >= 50
+		rows = append(rows, struct{ k, v string }{
+			"Iris",
+			fmt.Sprintf("%.0f   (threshold 50)   %s",
+				b.IrisScore.Float64, passFail(irisPass)),
+		})
+	}
+	rows = append(rows,
+		struct{ k, v string }{"Time", b.CreatedAt.In(indiaTZ).Format("2006-01-02 15:04:05 IST")},
+		struct{ k, v string }{"Operator", nullstr(b.OperatorName)},
+		struct{ k, v string }{"Device", strings.TrimSpace(
+			nullstr(b.FpVendor) + "  " + nullstr(b.DeviceModel) + "  " + nullstr(b.DeviceSerial))},
+	)
 	for _, r := range rows {
 		if strings.TrimSpace(r.v) == "" {
 			r.v = "—"

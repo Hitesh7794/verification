@@ -83,8 +83,15 @@ func main() {
 		Handler:           srv.Router(),
 		ReadHeaderTimeout: 5 * time.Second,
 		ReadTimeout:       15 * time.Second,
-		WriteTimeout:      30 * time.Second,
-		IdleTimeout:       120 * time.Second,
+		// WriteTimeout is the deadline for the ENTIRE response write,
+		// not just headers. 30 min accommodates the ~370 MB operator
+		// install bundle over slow connections (e.g. college Wi-Fi at
+		// 1-2 MB/s = 3-6 min). JSON API endpoints all respond in <1s
+		// so they're never affected. Caddy fronts the server and has
+		// its own request+response timeouts + slow-loris protection,
+		// so a long stdlib WriteTimeout is not an exposure.
+		WriteTimeout: 30 * time.Minute,
+		IdleTimeout:  120 * time.Second,
 	}
 
 	go func() {

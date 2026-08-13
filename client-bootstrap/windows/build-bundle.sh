@@ -31,6 +31,17 @@ NSSM_EXE="${NSSM_EXE:-${ROOT}/client-bootstrap/windows/tools/nssm.exe}"
 # for the download source. Falls back to skipping the iris payload if
 # absent so fingerprint-only builds still succeed.
 MARVIS_EXE="${MARVIS_EXE:-${ROOT}/client-bootstrap/windows/vendor/MarvisAuthClientService.exe}"
+# IriTech / Mantra IriShield (MIS100V2) USB driver installer. Mantra's
+# MYUSB driver only covers their fingerprint devices (VID 2C0F);
+# IriShield uses IriTech's USB stack (VID 1F63) which needs this
+# separate installer. Optional — if absent, install.ps1 warns and
+# falls back to "install the driver manually" instructions.
+MIS100V2_DRIVER_EXE="${MIS100V2_DRIVER_EXE:-${ROOT}/client-bootstrap/windows/vendor/MIS100V2_Driver.exe}"
+# Mantra MorFin fingerprint USB driver installer. Newest version wins;
+# install.ps1 globs MorFinDriver_*.exe so any 1.x version is picked up.
+# Optional — an already-deployed laptop with the driver in the Windows
+# driver store doesn't need a re-install.
+MORFIN_DRIVER_EXE="${MORFIN_DRIVER_EXE:-$(ls "${ROOT}/client-bootstrap/windows/vendor/"MorFinDriver_*.exe 2>/dev/null | sort -Vr | head -n1)}"
 # Startek/ACPL Capture API package — vendor-supplied tree containing the
 # MSI, the VC++ redist, and demo HTML test pages. Optional: if absent, the
 # bundle still builds, install.ps1 just skips the Startek phase.
@@ -100,6 +111,18 @@ rm -rf "$OUT" && mkdir -p "$OUT/morfin/certs" "$OUT/vendor" "$OUT/tools" "$OUT/s
 cp "$MORFIN_JAR" "$OUT/morfin/"
 [ -d "$CERT_DIR" ] && cp "$CERT_DIR"/*.crt "$OUT/morfin/certs/" || true
 
+# Windows-side: MorFin USB fingerprint driver installer. install.ps1
+# looks for MorFinDriver_*.exe in the morfin/ dir and runs it silently
+# on first install; skipped if the driver is already in Windows'
+# driver store. Optional — if absent, install.ps1 warns and assumes
+# a prior install left the driver in place.
+if [ -n "${MORFIN_DRIVER_EXE:-}" ] && [ -f "$MORFIN_DRIVER_EXE" ]; then
+    cp "$MORFIN_DRIVER_EXE" "$OUT/morfin/$(basename "$MORFIN_DRIVER_EXE")"
+    echo "  staged MorFin driver: $(basename "$MORFIN_DRIVER_EXE") ($(du -h "$MORFIN_DRIVER_EXE" | cut -f1))"
+else
+    echo "  ⚠ MorFinDriver_*.exe not found under vendor/ (driver install will be skipped on fresh laptops)" >&2
+fi
+
 # Windows-side: bundled JRE (private, used only by the MorFin service).
 # We extract into a temp dir, then move the single top-level "jdk-...-jre/"
 # folder to morfin/jre/ — install.ps1 expects bin/java.exe at exactly
@@ -126,6 +149,19 @@ if [ -f "$MARVIS_EXE" ]; then
     echo "  staged Marvis iris installer: $(du -h "$MARVIS_EXE" | cut -f1)"
 else
     echo "  ⚠ MarvisAuthClientService.exe not found at $MARVIS_EXE (iris phase will be skipped on install)" >&2
+    echo "     See client-bootstrap/windows/vendor/README.md for the download source." >&2
+fi
+
+# Windows-side: IriShield / MIS100V2 USB driver installer.
+# Ships alongside the Marvis service installer so first-time operator
+# laptops get the driver + service in one pass. Also optional — an
+# already-deployed laptop that just needs a service upgrade doesn't
+# need it.
+if [ -f "$MIS100V2_DRIVER_EXE" ]; then
+    cp "$MIS100V2_DRIVER_EXE" "$OUT/vendor/MIS100V2_Driver.exe"
+    echo "  staged IriShield driver: $(du -h "$MIS100V2_DRIVER_EXE" | cut -f1)"
+else
+    echo "  ⚠ MIS100V2_Driver.exe not found at $MIS100V2_DRIVER_EXE (iris driver install will be skipped)" >&2
     echo "     See client-bootstrap/windows/vendor/README.md for the download source." >&2
 fi
 
@@ -179,6 +215,9 @@ Install in an *elevated* PowerShell (Run as Administrator):
   .\install.ps1 -PortalUrl https://your-portal-url
 
 What this installs:
+  - IriShield / MIS100V2 driver  (IriTech USB driver for VID 1F63, must
+                                  be installed before the Marvis service
+                                  registers or the scanner reports -1307)
   - Marvis Auth Client Service   (Mantra iris daemon, native Windows
                                   service, port 8031, self-registered
                                   by MarvisAuthClientService.exe)

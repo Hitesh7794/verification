@@ -52,6 +52,8 @@ import (
 	"github.com/go-chi/chi/v5"
 )
 
+func boolToInt(b bool) int { if b { return 1 }; return 0 }
+
 // ── config ────────────────────────────────────────────────────────────
 
 const (
@@ -88,6 +90,9 @@ type examRow struct {
 	CandidateCount    int64      `json:"candidate_count"`
 	CreatedAt         time.Time  `json:"created_at"`
 	UpdatedAt         time.Time  `json:"updated_at"`
+	RequiresFace      bool       `json:"requires_face"`
+	RequiresFP        bool       `json:"requires_fp"`
+	RequiresIris      bool       `json:"requires_iris"`
 }
 
 type candidateRow struct {
@@ -257,6 +262,11 @@ type createExamReq struct {
 	TrustviewRef     string `json:"trustview_ref"`
 	VerificationFrom string `json:"verification_from"` // YYYY-MM-DD
 	VerificationTo   string `json:"verification_to"`
+	// Per-exam biometric requirements. Omit any to accept the defaults
+	// (face + fp on, iris off). At least one must be true.
+	RequiresFace *bool `json:"requires_face,omitempty"`
+	RequiresFP   *bool `json:"requires_fp,omitempty"`
+	RequiresIris *bool `json:"requires_iris,omitempty"`
 }
 
 func (s *Server) superadminCreateExam(w http.ResponseWriter, r *http.Request) {
@@ -303,12 +313,27 @@ func (s *Server) superadminCreateExam(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "verification_from must be <= verification_to")
 		return
 	}
+	// Modality flags. Defaults match the migration-022 defaults; caller
+	// can override any/all. At least one must end up true.
+	rFace := true
+	rFP := true
+	rIris := false
+	if req.RequiresFace != nil { rFace = *req.RequiresFace }
+	if req.RequiresFP   != nil { rFP   = *req.RequiresFP }
+	if req.RequiresIris != nil { rIris = *req.RequiresIris }
+	if !rFace && !rFP && !rIris {
+		writeErr(w, http.StatusBadRequest, "at least one biometric must be required (face, fp, or iris)")
+		return
+	}
+
 	res, err := s.deps.DB.ExecContext(r.Context(), `
 		INSERT INTO exams(client_id, name, exam_code, trustview_ref,
-		                  verification_from, verification_to)
-		VALUES(?, ?, ?, ?, ?, ?)`,
+		                  verification_from, verification_to,
+		                  requires_face, requires_fp, requires_iris)
+		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		clientID, name, code, nullable(strings.TrimSpace(req.TrustviewRef)),
-		from, to)
+		from, to,
+		boolToInt(rFace), boolToInt(rFP), boolToInt(rIris))
 	if err != nil {
 		if strings.Contains(err.Error(), "UNIQUE constraint failed: exams.exam_code") {
 			writeErr(w, http.StatusConflict,
@@ -352,6 +377,9 @@ type patchExamReq struct {
 	TrustviewRef     *string `json:"trustview_ref,omitempty"`
 	VerificationFrom *string `json:"verification_from,omitempty"`
 	VerificationTo   *string `json:"verification_to,omitempty"`
+	RequiresFace     *bool   `json:"requires_face,omitempty"`
+	RequiresFP       *bool   `json:"requires_fp,omitempty"`
+	RequiresIris     *bool   `json:"requires_iris,omitempty"`
 }
 
 func (s *Server) superadminPatchExam(w http.ResponseWriter, r *http.Request) {
@@ -397,6 +425,35 @@ func (s *Server) superadminPatchExam(w http.ResponseWriter, r *http.Request) {
 		}
 		sets = append(sets, "verification_to = ?")
 		args = append(args, t)
+	}
+	// Per-exam modality toggles. If any modality bit was passed, we
+	// validate the final set (post-update) still has at least one
+	// biometric required -- fetch the current row to compute.
+	if req.RequiresFace != nil || req.RequiresFP != nil || req.RequiresIris != nil {
+		var curFace, curFP, curIris bool
+		if err := s.deps.DB.QueryRowContext(r.Context(),
+			`SELECT requires_face, requires_fp, requires_iris FROM exams WHERE id = ?`, id,
+		).Scan(&curFace, &curFP, &curIris); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeErr(w, http.StatusNotFound, "exam not found")
+				return
+			}
+			writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
+			return
+		}
+		newFace := curFace
+		newFP := curFP
+		newIris := curIris
+		if req.RequiresFace != nil { newFace = *req.RequiresFace }
+		if req.RequiresFP   != nil { newFP   = *req.RequiresFP }
+		if req.RequiresIris != nil { newIris = *req.RequiresIris }
+		if !newFace && !newFP && !newIris {
+			writeErr(w, http.StatusBadRequest, "at least one biometric must be required (face, fp, or iris)")
+			return
+		}
+		if req.RequiresFace != nil { sets = append(sets, "requires_face = ?"); args = append(args, boolToInt(newFace)) }
+		if req.RequiresFP   != nil { sets = append(sets, "requires_fp = ?");   args = append(args, boolToInt(newFP))   }
+		if req.RequiresIris != nil { sets = append(sets, "requires_iris = ?"); args = append(args, boolToInt(newIris)) }
 	}
 	if len(sets) == 0 {
 		writeErr(w, http.StatusBadRequest, "nothing to update")
@@ -725,21 +782,28 @@ func (s *Server) loadExam(ctx context.Context, id int64) (*examRow, error) {
 	var visible, closed int
 	var closedAt sql.NullTime
 	var trustview sql.NullString
+	var reqFace, reqFP, reqIris int
 	err := s.deps.DB.QueryRowContext(ctx, `
 		SELECT e.id, e.client_id, c.name, e.name, e.exam_code, e.trustview_ref,
 		       e.verification_from, e.verification_to, e.visible, e.closed,
 		       e.closed_at, e.created_at, e.updated_at,
+		       e.requires_face, e.requires_fp, e.requires_iris,
 		       (SELECT COUNT(*) FROM exam_candidates ec WHERE ec.exam_id = e.id)
 		FROM exams e JOIN clients c ON c.id = e.client_id
 		WHERE e.id = ?`, id).Scan(
 		&e.ID, &e.ClientID, &e.ClientName, &e.Name, &e.ExamCode, &trustview,
 		&e.VerificationFrom, &e.VerificationTo, &visible, &closed,
-		&closedAt, &e.CreatedAt, &e.UpdatedAt, &e.CandidateCount)
+		&closedAt, &e.CreatedAt, &e.UpdatedAt,
+		&reqFace, &reqFP, &reqIris,
+		&e.CandidateCount)
 	if err != nil {
 		return nil, err
 	}
 	e.Visible = visible == 1
 	e.Closed = closed == 1
+	e.RequiresFace = reqFace == 1
+	e.RequiresFP = reqFP == 1
+	e.RequiresIris = reqIris == 1
 	if closedAt.Valid {
 		e.ClosedAt = &closedAt.Time
 	}
@@ -754,6 +818,7 @@ func (s *Server) listExamsForClient(ctx context.Context, clientID int64) ([]exam
 		SELECT e.id, e.client_id, e.name, e.exam_code, e.trustview_ref,
 		       e.verification_from, e.verification_to, e.visible, e.closed,
 		       e.closed_at, e.created_at, e.updated_at,
+		       e.requires_face, e.requires_fp, e.requires_iris,
 		       (SELECT COUNT(*) FROM exam_candidates ec WHERE ec.exam_id = e.id)
 		FROM exams e WHERE e.client_id = ?
 		ORDER BY e.created_at DESC`, clientID)
@@ -765,15 +830,21 @@ func (s *Server) listExamsForClient(ctx context.Context, clientID int64) ([]exam
 	for rows.Next() {
 		var e examRow
 		var visible, closed int
+		var reqFace, reqFP, reqIris int
 		var closedAt sql.NullTime
 		var trustview sql.NullString
 		if err := rows.Scan(&e.ID, &e.ClientID, &e.Name, &e.ExamCode, &trustview,
 			&e.VerificationFrom, &e.VerificationTo, &visible, &closed,
-			&closedAt, &e.CreatedAt, &e.UpdatedAt, &e.CandidateCount); err != nil {
+			&closedAt, &e.CreatedAt, &e.UpdatedAt,
+			&reqFace, &reqFP, &reqIris,
+			&e.CandidateCount); err != nil {
 			return nil, err
 		}
 		e.Visible = visible == 1
 		e.Closed = closed == 1
+		e.RequiresFace = reqFace == 1
+		e.RequiresFP = reqFP == 1
+		e.RequiresIris = reqIris == 1
 		if closedAt.Valid {
 			e.ClosedAt = &closedAt.Time
 		}

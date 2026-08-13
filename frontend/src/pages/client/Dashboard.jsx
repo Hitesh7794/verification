@@ -214,30 +214,39 @@ export default function ClientDashboard() {
   const [walletEmpty, setWalletEmpty] = useState(false)
 
   // ── Auto-decide + auto-submit ────────────────────────────────────
-  // Face-first flow: as soon as we have enough signal to decide, we
-  // submit the verification automatically — no manual button.
+  // As soon as every enrolled modality has produced a result, we submit
+  // the verification automatically — no manual button.
   //
-  //   • Candidate has a fingerprint template → wait for BOTH face and
-  //     fingerprint. Both must PASS for "verified" (strict AND).
-  //   • Candidate has only face → face alone decides.
+  //   • Face is always required (already gates enrolment lookup).
+  //   • Fingerprint is required when the candidate has an ISO template.
+  //   • Iris is required when the candidate has iris bytes enrolled.
+  //   • Every required modality must PASS for "verified" (strict AND).
   //
   // Guarded by `result` and `submitting` so it fires exactly once per
   // verification flow. `reset()` clears result and puts us back to
   // step 0, ready for the next candidate.
   useEffect(() => {
     if (result || submitting) return
-    if (!candidate || !faceResult) return
-    const needsFP = !!candidate.has_iso_template
-    if (needsFP && !fpResult) return
-    const facePass = !!(faceResult && faceResult.ok === true)
-    const fpPass   = !!(fpResult   && fpResult.ok   === true)
-    const finalStatus = needsFP
-      ? (facePass && fpPass ? 'verified' : 'denied')
-      : (facePass ? 'verified' : 'denied')
+    if (!candidate) return
+    // Gating rule (migration 022): a modality is "needed" only if the
+    // EXAM requires it AND the candidate actually has enrolment for
+    // it. If either is false, the panel is hidden + not gated on.
+    // Face defaults to required for safety (existing behaviour + the
+    // wallet-charged event), so exam.requires_face missing = true.
+    const needsFace = candidate.requires_face !== false && !!candidate.has_photo
+    const needsFP   = !!candidate.requires_fp   && !!candidate.has_iso_template
+    const needsIris = !!candidate.requires_iris && !!candidate.has_iris_bytes
+    if (needsFace && !faceResult) return
+    if (needsFP   && !fpResult)   return
+    if (needsIris && !irisResult) return
+    const facePass = !needsFace || (faceResult && faceResult.ok === true)
+    const fpPass   = !needsFP   || (fpResult   && fpResult.ok   === true)
+    const irisPass = !needsIris || (irisResult && irisResult.ok === true)
+    const finalStatus = facePass && fpPass && irisPass ? 'verified' : 'denied'
     if (step < 3) setStep(3)
     submitVerification(finalStatus)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [candidate, faceResult, fpResult, result, submitting])
+  }, [candidate, faceResult, fpResult, irisResult, result, submitting])
 
   // Persist whenever the meaningful state changes, so an unexpected
   // refresh doesn't lose the operator's in-flight verification.
@@ -642,7 +651,7 @@ export default function ClientDashboard() {
 
           <div className="lg:col-span-2 space-y-6">
 
-            {step >= 2 && (
+            {step >= 2 && !!candidate?.requires_fp && !!candidate?.has_iso_template && (
               <Card>
                 <CardHeader>
                   <CardTitle>Step 3 — Fingerprint scan</CardTitle>
@@ -679,7 +688,7 @@ export default function ClientDashboard() {
                 on file) and the operator opts in. The sample data has no iris
                 templates, so this is capture-for-audit; if/when iris gallery
                 is enrolled, the matcher kicks in automatically. */}
-            {step >= 2 && fpResult && fpResult.ok === false && !showIris && (
+            {step >= 2 && fpResult && fpResult.ok === false && !showIris && !(candidate?.requires_iris && candidate?.has_iris_bytes) && (
               <Card>
                 <CardBody>
                   <p className="text-sm text-slate-700">
@@ -691,10 +700,12 @@ export default function ClientDashboard() {
                 </CardBody>
               </Card>
             )}
-            {showIris && (
+            {(showIris || (step >= 2 && candidate?.requires_iris && candidate?.has_iris_bytes)) && (
               <Card>
                 <CardHeader>
-                  <CardTitle>Iris fallback</CardTitle>
+                  <CardTitle>
+                    {candidate?.requires_iris && candidate?.has_iris_bytes ? 'Iris capture' : 'Iris fallback'}
+                  </CardTitle>
                 </CardHeader>
                 <CardBody>
                   <IrisCapture
@@ -739,6 +750,9 @@ export default function ClientDashboard() {
                         )}
                         {fpResult && (
                           <div>Fingerprint: <b className={fpResult.ok ? 'text-emerald-700' : 'text-rose-700'}>{fpResult.ok ? 'PASS' : 'FAIL'}</b></div>
+                        )}
+                        {irisResult && !irisResult.galleryMissing && (
+                          <div>Iris: <b className={irisResult.ok ? 'text-emerald-700' : 'text-rose-700'}>{irisResult.ok ? 'PASS' : 'FAIL'}</b></div>
                         )}
                       </div>
                       <div className="mt-3 flex flex-wrap items-center gap-2">

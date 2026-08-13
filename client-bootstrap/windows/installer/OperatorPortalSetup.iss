@@ -37,7 +37,14 @@
 #define AppShortName   "VerificationPortal"
 #define AppVersion     "1.0.0"
 #define AppPublisher   "Verification Portal"
-#define AppContact     "https://your-portal-host/"
+
+; Portal URL is baked in at build time -- this .exe knows exactly which
+; portal the operator laptop should connect to. Override at compile time
+; with:  iscc /DPortalUrl=https://staging.example.com OperatorPortalSetup.iss
+#ifndef PortalUrl
+  #define PortalUrl "https://verifyportal.13-127-17-248.nip.io"
+#endif
+#define AppContact     PortalUrl
 
 ; Bundle staging dir, relative to this .iss file location.
 ; build-bundle.sh populates this; the [Files] section reads from it.
@@ -77,16 +84,18 @@ SolidCompression=yes
 PrivilegesRequired=admin
 PrivilegesRequiredOverridesAllowed=dialog
 
-; 64-bit only — the MorFin daemon's native DLLs are x64. The .NET-
+; 64-bit only -- the MorFin daemon's native DLLs are x64. The .NET-
 ; framework era 32-bit Windows world is irrelevant for Windows 10+
 ; operator laptops, but we explicitly refuse to install on x86.
-ArchitecturesAllowed=x64
-ArchitecturesInstallIn64BitMode=x64
+; x64compatible covers native x64 + ARM64 machines running x64 binaries
+; via emulation (Windows 11 ARM), which is the Inno Setup 6.3+ preferred
+; identifier (replaces the deprecated bare "x64").
+ArchitecturesAllowed=x64compatible
+ArchitecturesInstallIn64BitMode=x64compatible
 
 ; Modern wizard chrome; the legacy style looks like a Windows XP install
 ; and would undermine trust.
 WizardStyle=modern
-WizardResizable=yes
 
 ; License page: backs the [Files] copy of license.txt — operators have
 ; to scroll through and click Accept before they can proceed. Standard
@@ -133,7 +142,7 @@ Name: "fingerprint"; Description: "Mantra MorFin fingerprint daemon (required)";
   Types: full compact custom; Flags: fixed
 Name: "startek"; Description: "Startek FM220U / AST300 capture API (extra fingerprint hardware)"; \
   Types: full
-Name: "iris"; Description: "Marvis iris service (requires WSL2 + extra ~10 min, may need reboot)"; \
+Name: "iris"; Description: "Marvis iris service + IriShield / MIS100V2 USB driver (native Windows, no WSL)"; \
   Types: full
 
 ; -----------------------------------------------------------------------
@@ -147,28 +156,30 @@ Name: "iris"; Description: "Marvis iris service (requires WSL2 + extra ~10 min, 
 [Files]
 ; Common to all installs.
 Source: "{#BundleDir}\install.ps1";    DestDir: "{app}"; Flags: ignoreversion
+Source: "{#BundleDir}\uninstall.ps1";  DestDir: "{app}"; Flags: ignoreversion
 Source: "{#BundleDir}\README.txt";     DestDir: "{app}"; Flags: ignoreversion
 
 ; Fingerprint daemon (forced):
 ;   morfin/morfinauth-client-service-1.0.0.0.jar
 ;   morfin/MorFinDriver_1.4.1.1.exe
 ;   morfin/certs/*.crt
-;   morfin/jre/      ← bundled Adoptium JRE 17 (added earlier today)
+;   morfin/jre/      -- bundled Adoptium JRE 17
 ;   tools/nssm.exe
 Source: "{#BundleDir}\morfin\*";       DestDir: "{app}\morfin"; \
   Components: fingerprint; Flags: ignoreversion recursesubdirs createallsubdirs
 Source: "{#BundleDir}\tools\*";        DestDir: "{app}\tools"; \
   Components: fingerprint; Flags: ignoreversion recursesubdirs
 
-; Startek payload — only if the operator picked the component.
+; Startek payload -- only if the operator picked the component.
 Source: "{#BundleDir}\startek\*";      DestDir: "{app}\startek"; \
   Components: startek; Flags: ignoreversion recursesubdirs
 
-; Iris payload (WSL .deb + bash setup script).
-Source: "{#BundleDir}\iris-wsl\*";     DestDir: "{app}\iris-wsl"; \
+; Iris payload -- Marvis Auth Client Service (native Windows daemon on
+; localhost:8031) AND the IriShield / MIS100V2 USB driver (VID 1F63).
+; Both live under vendor/ and install.ps1 runs the driver first, then
+; the service. The old WSL2 .deb + wsl-iris-setup.sh path is retired.
+Source: "{#BundleDir}\vendor\*";       DestDir: "{app}\vendor"; \
   Components: iris; Flags: ignoreversion recursesubdirs
-Source: "{#BundleDir}\wsl-iris-setup.sh"; DestDir: "{app}"; \
-  Components: iris; Flags: ignoreversion
 
 ; -----------------------------------------------------------------------
 ; Run section — fires AFTER files are copied. We invoke install.ps1
@@ -180,17 +191,22 @@ Source: "{#BundleDir}\wsl-iris-setup.sh"; DestDir: "{app}"; \
 ; install.ps1 finishing so the progress bar reflects real progress.
 ; -----------------------------------------------------------------------
 [Run]
+; install.ps1 does the real work -- driver install, service registration,
+; certificate imports, homepage policy, shortcuts. Runs visibly in a new
+; console window (not hidden) so operators watch progress rather than
+; staring at a stuck-looking wizard for 5-10 min. waituntilterminated
+; blocks the wizard's Finish page until the script exits, so no one
+; clicks the shortcut before services are up.
 Filename: "powershell.exe"; \
-  Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\install.ps1"" -PortalUrl ""{code:GetPortalUrl}"" -InstallRoot ""{app}""{code:GetSkipFlags}"; \
+  Parameters: "-NoProfile -ExecutionPolicy Bypass -File ""{app}\install.ps1"" -PortalUrl ""{#PortalUrl}"" -InstallRoot ""{app}""{code:GetSkipFlags}"; \
   WorkingDir: "{app}"; \
-  StatusMsg: "Configuring fingerprint daemon, certificates, browser homepage, and shortcuts..."; \
-  Flags: runhidden waituntilterminated
+  StatusMsg: "Installing biometric drivers + services (5-10 min, watch the PowerShell window)..."; \
+  Flags: waituntilterminated
 
 ; Post-install: offer to open the portal in the operator's default browser.
-; They can untick this on the Finish page if they want to install other
-; software first. shellexec lets Windows resolve the URL via the user's
-; default browser; nowait so the installer's Finish page closes cleanly.
-Filename: "{code:GetPortalUrl}"; \
+; Baked URL -- no code-hook needed. Operator can untick this on the Finish
+; page if they want to install other software first.
+Filename: "{#PortalUrl}"; \
   Description: "Open the Verification Portal in your browser"; \
   Flags: postinstall shellexec nowait skipifsilent
 
@@ -208,7 +224,8 @@ Filename: "{code:GetPortalUrl}"; \
 [UninstallRun]
 Filename: "powershell.exe"; \
   Parameters: "-NoProfile -ExecutionPolicy Bypass -Command ""Stop-Service MorfinAuthClientService -Force -ErrorAction SilentlyContinue; & '{app}\tools\nssm.exe' remove MorfinAuthClientService confirm"""; \
-  Flags: runhidden waituntilterminated
+  Flags: runhidden waituntilterminated; \
+  RunOnceId: "stop_morfin_service"
 
 ; -----------------------------------------------------------------------
 ; UninstallDelete — files install.ps1 created at runtime that aren't
@@ -219,66 +236,19 @@ Filename: "powershell.exe"; \
 Type: filesandordirs; Name: "{app}\logs"
 
 ; -----------------------------------------------------------------------
-; Custom Pascal code: portal-URL input page + skip-flag derivation.
-;
-; The portal URL is the single piece of info this wizard collects that
-; isn't on a built-in Inno Setup page. We insert an input page right
-; after the License page so the operator sees the "what do you want
-; this to point at?" question early.
+; Custom Pascal code: skip-flag derivation from component checkboxes.
+; Portal URL is baked in at compile time (#define PortalUrl above) so
+; no input page -- operators can install without knowing the URL.
 ; -----------------------------------------------------------------------
 [Code]
-var
-  UrlPage: TInputQueryWizardPage;
-
-procedure InitializeWizard;
-begin
-  UrlPage := CreateInputQueryPage(wpLicense,
-    'Portal URL',
-    'Where is your institution''s Verification Portal hosted?',
-    'Enter the full URL of your portal (including https://). The installer will set this as the browser homepage and create a Desktop shortcut pointing at it.');
-  UrlPage.Add('Portal URL:', False);
-  UrlPage.Values[0] := 'https://';
-end;
-
-function NextButtonClick(CurPageID: Integer): Boolean;
-var
-  Url: String;
-  Lower: String;
-begin
-  Result := True;
-  if CurPageID = UrlPage.ID then
-  begin
-    Url := Trim(UrlPage.Values[0]);
-    UrlPage.Values[0] := Url; // strip any accidental whitespace
-    Lower := Lowercase(Url);
-    if (Copy(Lower, 1, 7) <> 'http://') and (Copy(Lower, 1, 8) <> 'https://') then
-    begin
-      MsgBox('The portal URL must start with http:// or https://.', mbError, MB_OK);
-      Result := False;
-      Exit;
-    end;
-    if Length(Url) < 10 then
-    begin
-      MsgBox('The portal URL looks too short to be valid. Double-check it with your administrator.', mbError, MB_OK);
-      Result := False;
-      Exit;
-    end;
-  end;
-end;
-
-function GetPortalUrl(Param: String): String;
-begin
-  Result := UrlPage.Values[0];
-end;
-
 function GetSkipFlags(Param: String): String;
 begin
   // Returns a string with leading space, e.g. " -SkipIris -SkipStartek".
   // install.ps1 expects whatever-isn't-selected to be skipped. If a
   // component is selected, we DON'T pass the corresponding -Skip flag.
   Result := '';
-  if not IsComponentSelected('iris') then
+  if not WizardIsComponentSelected('iris') then
     Result := Result + ' -SkipIris';
-  if not IsComponentSelected('startek') then
+  if not WizardIsComponentSelected('startek') then
     Result := Result + ' -SkipStartek';
 end;

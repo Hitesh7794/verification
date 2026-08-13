@@ -4,6 +4,7 @@ import (
 	"context"
 	"database/sql"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -97,7 +98,7 @@ func (s *Server) Router() http.Handler {
 	r.Use(chimw.RequestID)
 	r.Use(chimw.RealIP)
 	r.Use(chimw.Recoverer)
-	r.Use(chimw.Timeout(30 * time.Second))
+	r.Use(skipTimeoutFor(chimw.Timeout(30*time.Second), "/api/downloads/"))
 	// CORS allowlist comes from config (ALLOWED_ORIGINS env). When unset
 	// we fall back to the Vite dev server URLs so a fresh `go run` against
 	// `npm run dev` Just Works. In production main.go enforces that
@@ -283,6 +284,28 @@ func (s *Server) Router() http.Handler {
 	})
 
 	return r
+}
+
+// skipTimeoutFor lets a middleware apply globally EXCEPT for a set of
+// URL-path prefixes. Used to keep the 30s request-timeout guard on all
+// JSON endpoints while letting the operator-bundle download (~300 MB
+// streamed via http.ServeContent) run for as long as the client needs.
+// Without this, chi.Timeout wraps the ResponseWriter and cuts off the
+// stream mid-flight, which the reverse proxy sees as an unexpected
+// EOF and the browser reports as ERR_HTTP2_PROTOCOL_ERROR.
+func skipTimeoutFor(mw func(http.Handler) http.Handler, prefixes ...string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		wrapped := mw(next)
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			for _, p := range prefixes {
+				if strings.HasPrefix(r.URL.Path, p) {
+					next.ServeHTTP(w, r)
+					return
+				}
+			}
+			wrapped.ServeHTTP(w, r)
+		})
+	}
 }
 
 func (s *Server) health(w http.ResponseWriter, r *http.Request) {

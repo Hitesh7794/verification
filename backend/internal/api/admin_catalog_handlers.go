@@ -301,6 +301,13 @@ func (s *Server) adminUnsubscribe(w http.ResponseWriter, r *http.Request) {
 //
 // Returns a user-facing error string when the constraints don't hold.
 func (s *Server) setOperatorExams(tx *sql.Tx, orgID, userID int64, examIDs []int64) error {
+	// Enforce one-exam-per-operator (migration 022 also has a UNIQUE
+	// index so the DB catches it if this validator is bypassed, but
+	// checking here gives a clean 4xx instead of a raw SQLite error).
+	if len(examIDs) > 1 {
+		return errors.New("an operator can be assigned to only one exam")
+	}
+
 	// Sanity: user belongs to org.
 	var uOrg sql.NullInt64
 	if err := tx.QueryRow(`SELECT org_id FROM users WHERE id = ?`, userID).Scan(&uOrg); err != nil {

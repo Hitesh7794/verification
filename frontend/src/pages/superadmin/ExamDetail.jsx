@@ -160,13 +160,21 @@ export default function ExamDetail() {
         <PageHeader
           title={exam.name}
           subtitle={
-            <span className="inline-flex items-center gap-2">
+            <span className="inline-flex items-center gap-2 flex-wrap">
               <code className="text-xs bg-slate-100 px-1.5 py-0.5 rounded text-slate-700">{exam.exam_code}</code>
               <span className="text-slate-400">·</span>
               <span>{dateRange(exam.verification_from, exam.verification_to)}</span>
               <span className="text-slate-400">·</span>
               {exam.visible ? <Pill tone="emerald" dot>Listed</Pill> : <Pill tone="slate" dot>Unlisted</Pill>}
               {exam.closed && <Pill tone="amber" dot>Ended</Pill>}
+              <span className="text-slate-400">·</span>
+              <span className="text-xs text-slate-600">
+                Requires: {[
+                  exam.requires_face !== false && 'Face',
+                  exam.requires_fp   !== false && 'Fingerprint',
+                  exam.requires_iris && 'Iris',
+                ].filter(Boolean).join(' + ') || '—'}
+              </span>
             </span>
           }
           right={
@@ -402,6 +410,9 @@ function EditExamForm({ exam, onCancel, onSaved }) {
   const [name, setName] = useState(exam.name)
   const [from, setFrom] = useState(examFrom)
   const [to, setTo] = useState(examTo)
+  const [reqFace, setReqFace] = useState(exam.requires_face !== false)
+  const [reqFP,   setReqFP]   = useState(exam.requires_fp   !== false)
+  const [reqIris, setReqIris] = useState(!!exam.requires_iris)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
@@ -410,10 +421,18 @@ function EditExamForm({ exam, onCancel, onSaved }) {
     setSaving(true)
     setErr('')
     try {
+      if (!reqFace && !reqFP && !reqIris) {
+        setErr('Pick at least one biometric to require for this exam.')
+        setSaving(false)
+        return
+      }
       const patch = {}
       if (name !== exam.name) patch.name = name.trim()
       if (from !== examFrom) patch.verification_from = from
       if (to !== examTo) patch.verification_to = to
+      if (reqFace !== (exam.requires_face !== false)) patch.requires_face = reqFace
+      if (reqFP   !== (exam.requires_fp   !== false)) patch.requires_fp   = reqFP
+      if (reqIris !== !!exam.requires_iris)           patch.requires_iris = reqIris
       if (Object.keys(patch).length === 0) {
         onCancel()
         return
@@ -443,6 +462,27 @@ function EditExamForm({ exam, onCancel, onSaved }) {
             <div>
               <Label>Verification to</Label>
               <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} required />
+            </div>
+          </div>
+          <div>
+            <Label>Biometrics required for verification</Label>
+            <p className="text-xs text-slate-500 mb-2">
+              Operators only see capture panels for the biometrics ticked here.
+              At least one must be selected.
+            </p>
+            <div className="flex flex-wrap gap-4">
+              <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" checked={reqFace} onChange={(e) => setReqFace(e.target.checked)} />
+                Face
+              </label>
+              <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" checked={reqFP} onChange={(e) => setReqFP(e.target.checked)} />
+                Fingerprint
+              </label>
+              <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" checked={reqIris} onChange={(e) => setReqIris(e.target.checked)} />
+                Iris
+              </label>
             </div>
           </div>
           <p className="text-xs text-slate-500">Exam code cannot be changed after creation.</p>

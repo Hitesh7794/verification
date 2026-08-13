@@ -320,7 +320,7 @@ export default function Operators() {
 // `auto` too — so an absolute panel would be clipped or would spawn a
 // scrollbar instead of floating over the row. Growing the row is the
 // behaviour that actually works in both places this form is used.
-function ExamMultiSelect({ subs, value, onChange }) {
+function ExamMultiSelect({ subs, value, onChange, single = false }) {
   const [open, setOpen] = useState(false)
   const boxRef = useRef(null)
 
@@ -344,12 +344,20 @@ function ExamMultiSelect({ subs, value, onChange }) {
   const selected = subs.filter((s) => value.includes(s.exam_id))
   const allSelected = subs.length > 0 && selected.length === subs.length
 
-  const toggle = (id) =>
-    onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id])
+  // single mode: clicking any exam replaces the selection with just that
+  // exam (one operator = one exam per policy migrated in 022). Clicking
+  // the already-selected exam clears the assignment.
+  const toggle = (id) => {
+    if (single) {
+      onChange(value.includes(id) ? [] : [id])
+    } else {
+      onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id])
+    }
+  }
 
   const summary =
     selected.length === 0
-      ? 'No exams assigned'
+      ? (single ? 'No exam assigned' : 'No exams assigned')
       : selected.length === 1
       ? selected[0].exam_code
       : `${selected.length} exams assigned`
@@ -377,18 +385,24 @@ function ExamMultiSelect({ subs, value, onChange }) {
         <div className="mt-1 rounded-lg border border-slate-200 bg-white shadow-lg overflow-hidden">
           <div className="flex items-center justify-between gap-2 border-b border-slate-100 bg-slate-50 px-3 py-2">
             <span className="text-[11px] font-medium uppercase tracking-wider text-slate-500">
-              {selected.length} of {subs.length} selected
+              {single
+                ? (selected.length ? 'Assigned' : 'Pick one exam')
+                : `${selected.length} of ${subs.length} selected`}
             </span>
             <div className="flex gap-1">
-              <button
-                type="button"
-                className="text-xs font-medium text-indigo-600 hover:underline disabled:text-slate-400 disabled:no-underline"
-                disabled={allSelected}
-                onClick={() => onChange(subs.map((s) => s.exam_id))}
-              >
-                Select all
-              </button>
-              <span className="text-slate-300">·</span>
+              {!single && (
+                <>
+                  <button
+                    type="button"
+                    className="text-xs font-medium text-indigo-600 hover:underline disabled:text-slate-400 disabled:no-underline"
+                    disabled={allSelected}
+                    onClick={() => onChange(subs.map((s) => s.exam_id))}
+                  >
+                    Select all
+                  </button>
+                  <span className="text-slate-300">·</span>
+                </>
+              )}
               <button
                 type="button"
                 className="text-xs font-medium text-indigo-600 hover:underline disabled:text-slate-400 disabled:no-underline"
@@ -400,7 +414,7 @@ function ExamMultiSelect({ subs, value, onChange }) {
             </div>
           </div>
 
-          <div className="max-h-56 overflow-y-auto py-1" role="listbox" aria-multiselectable="true">
+          <div className="max-h-56 overflow-y-auto py-1" role="listbox" aria-multiselectable={!single}>
             {subs.map((s) => {
               const checked = value.includes(s.exam_id)
               return (
@@ -603,7 +617,7 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
             Subscribe to at least one exam from the Exam catalog first.
           </p>
         ) : (
-          <ExamMultiSelect subs={subs} value={examIds} onChange={setExamIds} />
+          <ExamMultiSelect subs={subs} value={examIds} onChange={setExamIds} single />
         )}
       </div>
 

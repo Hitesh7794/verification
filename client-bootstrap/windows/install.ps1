@@ -126,6 +126,65 @@ or download a fresh OperatorPortalSetup bundle from the admin portal.
 # The bundle builder stages it at ./vendor/MarvisAuthClientService.exe;
 # if missing, we warn and skip so fingerprint-only builds still work.
 
+function Install-IrisDriver {
+    # IriTech IriShield / Mantra MIS100V2 uses VID 1F63 on USB. Mantra's
+    # own MYUSB driver (installed via their fingerprint SDK) does NOT
+    # cover this VID -- new operator laptops therefore show the device
+    # with Status: Error in Device Manager until this vendor .exe runs.
+    #
+    # We call this BEFORE Install-MarvisIris so the USB stack is in
+    # place when the service starts and enumerates hardware. Idempotent:
+    # if a healthy VID_1F63 device is already present, we skip.
+    $installer = Join-Path $PSScriptRoot 'vendor\MIS100V2_Driver.exe'
+    if (-not (Test-Path $installer)) {
+        Write-Warning @"
+IriShield / MIS100V2 driver installer not found at:
+  $installer
+
+If this is a fresh operator laptop and iris hardware is plugged in,
+the Marvis service will start but the scanner will report -1307
+(no hardware). Options:
+  1. Drop MIS100V2_Driver.exe into vendor/ and re-run this script, or
+  2. Install the driver manually from IriTech
+     (https://www.iritech.com/support/downloads), or
+  3. Re-run with -SkipIris if this laptop has no iris hardware.
+"@
+        return
+    }
+
+    # Skip if the driver already claimed the device successfully.
+    $dev = Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue |
+           Where-Object { $_.InstanceId -like '*VID_1F63*' } |
+           Select-Object -First 1
+    if ($dev -and $dev.Status -eq 'OK') {
+        Write-Host "[OK] IriShield driver already installed (device $($dev.Status))"
+        return
+    }
+
+    Write-Host "-> installing IriShield / MIS100V2 driver (silent /S attempt)"
+    # NSIS-style silent first. Vendor NSIS installers respect /S and
+    # bootstrap the driver via pnputil under the hood.
+    $p = Start-Process -FilePath $installer -ArgumentList '/S' -Wait -PassThru
+    if ($p.ExitCode -ne 0) {
+        Write-Warning "  Silent install returned exit $($p.ExitCode). Opening interactively -- click through Next > Install > Finish."
+        Start-Process -FilePath $installer -Verb RunAs -Wait | Out-Null
+    }
+
+    # Verify: at least one VID_1F63 device present + OK. Device does not
+    # need to be plugged in RIGHT NOW for the driver install to succeed --
+    # Windows caches the .inf so first plug-in later Just Works. So we
+    # only warn (not throw) if there's no device visible.
+    Start-Sleep -Seconds 2
+    $dev = Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue |
+           Where-Object { $_.InstanceId -like '*VID_1F63*' } |
+           Select-Object -First 1
+    if ($dev) {
+        Write-Host "[OK] IriShield driver installed ($($dev.FriendlyName): $($dev.Status))"
+    } else {
+        Write-Host "[OK] IriShield driver installed (no device plugged in right now -- .inf cached; first plug-in will bind)"
+    }
+}
+
 function Install-MarvisIris {
     $installer = Join-Path $PSScriptRoot 'vendor\MarvisAuthClientService.exe'
     if (-not (Test-Path $installer)) {
@@ -621,10 +680,13 @@ if (Test-Path (Join-Path $PSScriptRoot 'startek')) {
 # --- iris (native Windows service, Marvis Auth Web SDK 1.4) ---------------
 if (-not $SkipIris) {
     Write-Host ""
+    Write-Host "=== Iris driver -- IriShield / MIS100V2 (IriTech VID 1F63) ==="
+    Install-IrisDriver         # USB driver -- must run before the service registers
+    Write-Host ""
     Write-Host "=== Iris daemon -- Marvis Auth (Windows native) ==="
     Install-MarvisIris
 } else {
-    Write-Host "-> -SkipIris set; iris service NOT installed"
+    Write-Host "-> -SkipIris set; iris driver + service NOT installed"
 }
 
 # --- fingerprint (Windows native, Mantra MorFin) ---------------------------

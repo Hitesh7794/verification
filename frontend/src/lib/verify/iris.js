@@ -100,11 +100,84 @@ export const iris = {
   // score (1..100) the SDK will accept before returning. `timeoutMs`
   // is the wall-clock ceiling. Returns { BitmapData (base64 BMP),
   // Quality, ErrorCode }.
+  //
+  // Capture strategy (post multiple SDK-quirk iterations):
+  //
+  // The Marvis daemon accumulates internal state across /info + /uninit
+  // calls -- even calling /info once per component mount was enough to
+  // drift the SDK into a -2014 "Device Already Initialized" state
+  // after ~5-10 verifications. Only a Windows service restart clears
+  // it fully; from the API we can only retry with escalating hard
+  // resets.
+  //
+  // The recovery ladder below is deliberately aggressive:
+  //   1. Try /capture (fast path — device already in a good state)
+  //   2. On -2014: uninit + wait + capture (skip /info; /capture
+  //      auto-inits from DISCONNECTED so we avoid the double-init
+  //      that pollutes SDK state)
+  //   3. Still -2014: longer wait + uninit + info + capture
+  //   4. Still -2014: give up with a clear "Restart Marvis service"
+  //      message the operator can act on
+  //   5. On -1309 "not initialized": /info + retry (rare — only
+  //      happens if the device was disconnected mid-flow)
   async capture({ quality = 55, timeoutMs = 10000 } = {}) {
-    return safeCall('capture', {
-      TimeOut: timeoutMs,
-      Quality: quality,
-    })
+    const args = { TimeOut: timeoutMs, Quality: quality }
+    // eslint-disable-next-line no-console
+    const trace = (...m) => console.info('[iris]', ...m)
+    trace('capture: attempt 1 (direct)')
+    try {
+      return await safeCall('capture', args)
+    } catch (e) {
+      if (!(e instanceof IrisError)) throw e
+      const desc = e.description || ''
+      trace('capture: attempt 1 failed', e.code, desc)
+      if (/not.*initial/i.test(desc)) {
+        trace('recover: info -> capture')
+        try { await safeCall('info') } catch (x) { trace('info err', x?.description) }
+        return await safeCall('capture', args)
+      }
+      if (/already.*initial/i.test(desc)) {
+        // Attempt 2: uninit + short wait + retry (no /info -- let
+        // /capture auto-init from a clean DISCONNECTED state).
+        trace('recover: uninit -> wait 500ms -> capture (attempt 2)')
+        try { await safeCall('uninit') } catch (x) { trace('uninit err', x?.description) }
+        await new Promise((r) => setTimeout(r, 500))
+        try {
+          return await safeCall('capture', args)
+        } catch (e2) {
+          if (!(e2 instanceof IrisError) || !/already.*initial/i.test(e2.description || '')) {
+            throw e2
+          }
+          trace('capture: attempt 2 failed', e2.code, e2.description)
+        }
+        // Attempt 3: longer wait + uninit + info + capture.
+        trace('recover: uninit -> wait 1500ms -> info -> capture (attempt 3)')
+        try { await safeCall('uninit') } catch (x) { trace('uninit err', x?.description) }
+        await new Promise((r) => setTimeout(r, 1500))
+        try { await safeCall('info') } catch (x) { trace('info err', x?.description) }
+        try {
+          return await safeCall('capture', args)
+        } catch (e3) {
+          throw new IrisError(
+            'device',
+            e3 instanceof IrisError ? e3.code : e.code,
+            'Iris device is stuck. In an admin PowerShell run: Restart-Service *marvis* -- then try again.',
+          )
+        }
+      }
+      throw e
+    }
+  },
+
+  // Manual escape hatch for the "Reset device" button. Forces a full
+  // state cycle: uninit -> wait -> info. Same operations the retry
+  // ladder does, but exposed as a button the operator can press
+  // BEFORE they hit -2014 (proactive reset) or if the retry ladder
+  // couldn't recover.
+  async reset() {
+    try { await safeCall('uninit') } catch { /* best-effort */ }
+    await new Promise((r) => setTimeout(r, 500))
+    return safeCall('info') // may throw -- caller handles
   },
 
   // Fetch the LAST captured image in a specific template format. Call

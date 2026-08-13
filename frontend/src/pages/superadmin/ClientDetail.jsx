@@ -295,6 +295,9 @@ function NewExamForm({ clientId, onCancel, onCreated }) {
   const [code, setCode] = useState('')
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
+  const [reqFace, setReqFace] = useState(true)
+  const [reqFP,   setReqFP]   = useState(true)
+  const [reqIris, setReqIris] = useState(false)
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
@@ -303,11 +306,19 @@ function NewExamForm({ clientId, onCancel, onCreated }) {
     setSaving(true)
     setErr('')
     try {
+      if (!reqFace && !reqFP && !reqIris) {
+        setErr('Pick at least one biometric to require for this exam.')
+        setSaving(false)
+        return
+      }
       const { id: examId } = await createExam(clientId, {
         name: name.trim(),
         exam_code: code.trim(),
         verification_from: from,
         verification_to: to,
+        requires_face: reqFace,
+        requires_fp: reqFP,
+        requires_iris: reqIris,
       })
       onCreated(examId)
     } catch (e) {
@@ -319,7 +330,7 @@ function NewExamForm({ clientId, onCancel, onCreated }) {
     }
   }
 
-  const canSubmit = name.trim() && code.trim() && from && to
+  const canSubmit = name.trim() && code.trim() && from && to && (reqFace || reqFP || reqIris)
 
   return (
     <div className="mb-6 rounded-xl bg-white ring-1 ring-slate-200 shadow-sm overflow-hidden">
@@ -382,9 +393,27 @@ function NewExamForm({ clientId, onCancel, onCreated }) {
             </div>
           </FormSection>
 
-          {/* Section 3 — candidate data.
+          {/* Section 3 — biometric requirements */}
+          <FormSection num="3" title="Biometrics" hint="Which biometrics the operator must capture for a candidate to be verified. At least one required.">
+            <div className="flex flex-wrap gap-4">
+              <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" checked={reqFace} onChange={(e) => setReqFace(e.target.checked)} />
+                Face
+              </label>
+              <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" checked={reqFP} onChange={(e) => setReqFP(e.target.checked)} />
+                Fingerprint
+              </label>
+              <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                <input type="checkbox" checked={reqIris} onChange={(e) => setReqIris(e.target.checked)} />
+                Iris
+              </label>
+            </div>
+          </FormSection>
+
+          {/* Section 4 — candidate data.
               Deliberately no form field. Uploads live on the exam page. */}
-          <FormSection num="3" title="Candidate data" hint="Uploaded from the exam page after the exam is created.">
+          <FormSection num="4" title="Candidate data" hint="Uploaded from the exam page after the exam is created.">
             <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2.5 text-xs text-slate-600">
               After creating this exam, open it to upload the candidate roster
               (name, roll_no + optional extras) and the centres CSV. Validation

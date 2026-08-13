@@ -111,9 +111,16 @@ func (s *Server) getCandidate(w http.ResponseWriter, r *http.Request) {
 		"has_photo":          hasFS && fsRow.HasPhoto,
 		"has_fp_image":       hasFS && fsRow.HasFpImage,
 		"has_iso_template":   hasFS && fsRow.HasIsoTpl,
+		"has_iris_bytes":     hasFS && fsRow.HasIrisBytes,
 		"fp_template_format": func() string { if hasFS { return fsRow.FpTemplateFormat }; return "" }(),
 		"photo_url":          "/api/candidates/" + roll + "/photo",
 		"fp_template_url":    "/api/candidates/" + roll + "/fp-template",
+		// Per-exam requirements (migration 022). Frontend renders only
+		// panels for modalities the exam requires AND the candidate has
+		// enrolment for.
+		"requires_face": ec.RequiresFace,
+		"requires_fp":   ec.RequiresFP,
+		"requires_iris": ec.RequiresIris,
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
@@ -611,6 +618,15 @@ type examCandidateRow struct {
 	Gender         string
 	ShiftName      string
 	CentreCode     string
+
+	// Per-exam modality flags (migration 022). Tell the operator UI
+	// which capture panels to show + which must pass for "verified".
+	// Frontend AND-s these with per-candidate has_* flags: an exam
+	// requiring iris still hides the iris panel for a candidate that
+	// has no iris bytes enrolled (silent downgrade -- user's choice).
+	RequiresFace bool
+	RequiresFP   bool
+	RequiresIris bool
 }
 
 // lookupExamCandidate finds a candidate the caller is allowed to see.
@@ -643,7 +659,8 @@ func (s *Server) lookupExamCandidate(r *http.Request, claims *authClaims, roll s
 		       ec.roll_no, ec.name, COALESCE(ec.verification_date, ''),
 		       COALESCE(ec.registration_id, ''), COALESCE(ec.father_name, ''),
 		       COALESCE(ec.dob, ''),             COALESCE(ec.gender, ''),
-		       COALESCE(ec.shift_name, ''),      COALESCE(ec.centre_code, '')
+		       COALESCE(ec.shift_name, ''),      COALESCE(ec.centre_code, ''),
+		       e.requires_face, e.requires_fp, e.requires_iris
 		  FROM exam_candidates ec
 		  JOIN exams   e ON e.id = ec.exam_id
 		  JOIN clients c ON c.id = e.client_id
@@ -689,6 +706,7 @@ func (s *Server) lookupExamCandidate(r *http.Request, claims *authClaims, roll s
 		&out.RollNo, &out.Name, &out.VerificationDate,
 		&out.RegistrationID, &out.FatherName, &out.DOB,
 		&out.Gender, &out.ShiftName, &out.CentreCode,
+		&out.RequiresFace, &out.RequiresFP, &out.RequiresIris,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil

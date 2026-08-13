@@ -8,6 +8,17 @@ TECH_LEAD_QUESTIONS.md
 # See client-bootstrap/windows/vendor/README.md for the download link.
 client-bootstrap/windows/vendor/MarvisAuthClientService*.exe
 
+# IriTech / Mantra IriShield (MIS100V2) USB driver installer. Vendor
+# .exe, ~90 MB. Same rules as the Marvis SDK — not redistributable via
+# git; drop into vendor/ before build. Covers VID 1F63 PID F001 which
+# Mantra's MYUSB driver does NOT install.
+client-bootstrap/windows/vendor/MIS100V2_Driver*.exe
+
+# Mantra MorFin fingerprint USB driver installer. Vendor .exe, ~19 MB
+# (v1.5.0.0). Same rules — not redistributable, drop into vendor/
+# before build. Covers Mantra fp devices (VID 2C0F).
+client-bootstrap/windows/vendor/MorFinDriver*.exe
+
 # Luxand SDK + license: never commit. Vendor terms forbid redistribution
 # of the SDK; the license key is per-deployment and confidential.
 Luxand_FaceSDK_Linux_8_3/

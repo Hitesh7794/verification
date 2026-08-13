@@ -38,41 +38,39 @@ export default function IrisCapture({
   const [result, setResult] = useState(null)
   const [error, setError] = useState(null)
 
-  // Heartbeat — every 2s, ping /marvisauth/info to check the daemon
-  // is alive. Vendor SDK auto-inits the attached device on first
-  // capture, so there's no explicit init/connected-list to call.
+  // NO mount /info -- every /info call the SDK accumulates as
+  // internal state, and after ~5-10 verifications the daemon starts
+  // returning -2014 "Device Already Initialized" on the next capture.
+  // /capture auto-inits from a clean state, so we let the SDK manage
+  // its own lifecycle and only touch it when the operator clicks
+  // Capture (or Reset). Trade-off: we can't display device serial /
+  // model until AFTER first capture (or the operator hits Reset).
   useEffect(() => {
-    let alive = true
-    let timer
-    async function tick() {
-      if (!alive) return
-      try {
-        const env = await iris.getInfo()
-        if (!alive) return
-        setDevice({
-          model:  env.Model  || env.DeviceModel  || '',
-          serial: env.SerialNo || env.SerialNumber || '',
-        })
-        // Only flip to 'ready' when idle — never trample 'capturing'.
-        setStatus((s) => (s === 'capturing' ? s : 'ready'))
-      } catch (e) {
-        if (!alive) return
-        if (e instanceof IrisError && e.kind === 'service') {
-          setStatus('service_down')
-          setDevice(null)
-        } else {
-          setStatus('error')
-          setError(e)
-        }
-      }
-      timer = setTimeout(tick, 2000)
-    }
-    tick()
+    setStatus('ready')
     return () => {
-      alive = false
-      if (timer) clearTimeout(timer)
+      // Best-effort release on unmount so a page nav doesn't leave
+      // the device holding state across tabs.
+      iris.uninit().catch(() => {})
     }
   }, [])
+
+  // Manual "Reset iris device" button handler. Runs uninit + info
+  // via iris.reset(); surfaces success or a helpful error banner.
+  async function onReset() {
+    setError(null)
+    setStatus('capturing')
+    try {
+      const env = await iris.reset()
+      setDevice({
+        model:  env?.Model  || env?.DeviceModel  || '',
+        serial: env?.SerialNo || env?.SerialNumber || '',
+      })
+      setStatus('ready')
+    } catch (e) {
+      setStatus('error')
+      setError(e)
+    }
+  }
 
   async function onCapture() {
     setBusy(true)
@@ -178,6 +176,14 @@ export default function IrisCapture({
             {busy ? 'Capturing iris…' : 'Capture iris'}
           </Button>
         )}
+        <Button
+          variant="secondary"
+          onClick={onReset}
+          disabled={busy}
+          title="Force-release the iris device -- click this if you see 'Device Already Initialized' errors"
+        >
+          Reset device
+        </Button>
       </div>
     </div>
   )
