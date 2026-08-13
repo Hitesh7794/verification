@@ -29,7 +29,7 @@ export default function IrisCapture({
   rollNo,                   // REQUIRED — backend needs it for gallery lookup
   matchThreshold = 50,      // unified 0..100 score gate (TrustView default)
   quality = 55,             // min capture quality (1..100), passed to /capture
-  timeoutMs = 10000,        // wall-clock capture timeout
+  timeoutSec = 15,          // capture timeout in seconds (Marvis SDK unit)
   onResult,                 // (result) => void
 }) {
   const [status, setStatus] = useState('checking') // checking|service_down|ready|capturing|error
@@ -79,7 +79,7 @@ export default function IrisCapture({
     setStatus('capturing')
     try {
       // Step 1: capture locally via Marvis daemon on localhost:8031.
-      const cap = await iris.capture({ quality, timeoutMs })
+      const cap = await iris.capture({ quality, timeoutSec })
 
       // Step 2: forward the raw bitmap to the backend, which forwards
       // to TrustView. If we don't have a rollNo (dev/preview mode)

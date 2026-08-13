@@ -11,7 +11,12 @@ import "net/http"
 func (s *Server) superStats(w http.ResponseWriter, r *http.Request) {
 	var orgs, users, total, verified, denied int
 	_ = s.deps.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM organizations`).Scan(&orgs)
-	_ = s.deps.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM users`).Scan(&users)
+	// Exclude super + ops from the "Operators & Staff" count -- those
+	// are system-baked accounts, not real tenant users, and their
+	// presence made the widget read "2" on a freshly-wiped DB.
+	_ = s.deps.DB.QueryRowContext(r.Context(),
+		`SELECT COUNT(*) FROM users WHERE role NOT IN ('superadmin', 'ops_admin')`,
+	).Scan(&users)
 	_ = s.deps.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM verifications`).Scan(&total)
 	_ = s.deps.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM verifications WHERE status='verified'`).Scan(&verified)
 	_ = s.deps.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM verifications WHERE status='denied'`).Scan(&denied)

@@ -120,8 +120,15 @@ export const iris = {
   //      message the operator can act on
   //   5. On -1309 "not initialized": /info + retry (rare — only
   //      happens if the device was disconnected mid-flow)
-  async capture({ quality = 55, timeoutMs = 10000 } = {}) {
-    const args = { TimeOut: timeoutMs, Quality: quality }
+  //
+  // TimeOut is in SECONDS per the Marvis SDK spec (vendor sample HTML
+  // defaults to 15, valid range 10-60, 0 = unlimited). Earlier default
+  // was 10000 with a millisecond-shaped name -- which the daemon read
+  // as 10000 seconds = effectively no timeout, letting hung captures
+  // stall the operator UI. 15s matches the vendor demo tuning and
+  // matches operator patience.
+  async capture({ quality = 55, timeoutSec = 15 } = {}) {
+    const args = { TimeOut: timeoutSec, Quality: quality }
     // eslint-disable-next-line no-console
     const trace = (...m) => console.info('[iris]', ...m)
     trace('capture: attempt 1 (direct)')

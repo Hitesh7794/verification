@@ -152,12 +152,21 @@ the Marvis service will start but the scanner will report -1307
         return
     }
 
-    # Skip if the driver already claimed the device successfully.
+    # Skip if the driver already claimed the device successfully. Two
+    # VIDs to check because Mantra ships MIS100V2 units under either
+    # VID_1F63 (raw IriTech) or VID_2C0F (Mantra-rebadged, same driver
+    # stack as their fingerprint devices -- installed as part of the
+    # MorFin driver package earlier in this script).
     $dev = Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue |
-           Where-Object { $_.InstanceId -like '*VID_1F63*' } |
+           Where-Object {
+               $_.InstanceId -like '*VID_1F63*' -or
+               ($_.InstanceId -like '*VID_2C0F&PID_2100*') -or
+               $_.FriendlyName -like '*IRIS*' -or
+               $_.FriendlyName -like '*MIS100*'
+           } |
            Select-Object -First 1
     if ($dev -and $dev.Status -eq 'OK') {
-        Write-Host "[OK] IriShield driver already installed (device $($dev.Status))"
+        Write-Host "[OK] IriShield driver already installed ($($dev.FriendlyName), $($dev.Status))"
         return
     }
 
@@ -170,13 +179,20 @@ the Marvis service will start but the scanner will report -1307
         Start-Process -FilePath $installer -Verb RunAs -Wait | Out-Null
     }
 
-    # Verify: at least one VID_1F63 device present + OK. Device does not
-    # need to be plugged in RIGHT NOW for the driver install to succeed --
-    # Windows caches the .inf so first plug-in later Just Works. So we
-    # only warn (not throw) if there's no device visible.
+    # Verify: at least one iris device present + OK. Mantra rebadges
+    # the MIS100V2 under either VID_1F63 (raw IriTech) or VID_2C0F
+    # (their own vendor ID, PID_2100), so we accept either. Device
+    # does not need to be plugged in RIGHT NOW for the driver install
+    # to succeed -- Windows caches the .inf so first plug-in later
+    # Just Works. So we only warn (not throw) if none visible.
     Start-Sleep -Seconds 2
     $dev = Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue |
-           Where-Object { $_.InstanceId -like '*VID_1F63*' } |
+           Where-Object {
+               $_.InstanceId -like '*VID_1F63*' -or
+               $_.InstanceId -like '*VID_2C0F&PID_2100*' -or
+               $_.FriendlyName -like '*IRIS*' -or
+               $_.FriendlyName -like '*MIS100*'
+           } |
            Select-Object -First 1
     if ($dev) {
         Write-Host "[OK] IriShield driver installed ($($dev.FriendlyName): $($dev.Status))"
@@ -668,13 +684,27 @@ New-Item -ItemType Directory -Force -Path $InstallRoot | Out-Null
 New-Item -ItemType Directory -Force -Path (Join-Path $InstallRoot 'logs') | Out-Null
 
 Write-Host "-> staging bundle into $InstallRoot"
-Copy-Item -Recurse -Force (Join-Path $PSScriptRoot 'morfin') $InstallRoot
-Copy-Item -Recurse -Force (Join-Path $PSScriptRoot 'tools')  $InstallRoot
-# Startek payload is optional in the bundle (it's only staged when the
-# build host had Setup_ACPL_L1_API/ available). Copy if present; the
-# Install-StartekCaptureApi function below tolerates missing payloads.
-if (Test-Path (Join-Path $PSScriptRoot 'startek')) {
-    Copy-Item -Recurse -Force (Join-Path $PSScriptRoot 'startek') $InstallRoot
+# When the Inno Setup .exe wrapper extracts the payload, $PSScriptRoot
+# is ALREADY $InstallRoot (both are C:\Program Files\VerificationPortal
+# by default). Copy-Item onto itself throws "Cannot overwrite the item
+# with itself", which used to leave the wizard mid-install with services
+# unregistered. Skip the copy when source == destination.
+$stagingSameAsInstall = $false
+try {
+    $stagingSameAsInstall = ((Resolve-Path $PSScriptRoot).Path -eq (Resolve-Path $InstallRoot).Path)
+} catch { $stagingSameAsInstall = $false }
+
+if ($stagingSameAsInstall) {
+    Write-Host "  (already in place -- Inno Setup extracted here; skipping copy)"
+} else {
+    Copy-Item -Recurse -Force (Join-Path $PSScriptRoot 'morfin') $InstallRoot
+    Copy-Item -Recurse -Force (Join-Path $PSScriptRoot 'tools')  $InstallRoot
+    # Startek payload is optional in the bundle (it's only staged when the
+    # build host had Setup_ACPL_L1_API/ available). Copy if present; the
+    # Install-StartekCaptureApi function below tolerates missing payloads.
+    if (Test-Path (Join-Path $PSScriptRoot 'startek')) {
+        Copy-Item -Recurse -Force (Join-Path $PSScriptRoot 'startek') $InstallRoot
+    }
 }
 
 # --- iris (native Windows service, Marvis Auth Web SDK 1.4) ---------------

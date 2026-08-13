@@ -617,7 +617,14 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
             Subscribe to at least one exam from the Exam catalog first.
           </p>
         ) : (
-          <ExamMultiSelect subs={subs} value={examIds} onChange={setExamIds} single />
+          <>
+            <ExamMultiSelect subs={subs} value={examIds} onChange={setExamIds} single />
+            {examIds.length === 0 && (
+              <p className="mt-1 text-xs text-rose-600">
+                Assigning one exam is required.
+              </p>
+            )}
+          </>
         )}
       </div>
 
@@ -629,7 +636,7 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
 
       <div className="flex justify-end gap-2">
         <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>
-        <Button type="submit" disabled={saving}>
+        <Button type="submit" disabled={saving || examIds.length === 0}>
           {saving ? 'Saving…' : (isEdit ? 'Save changes' : 'Create operator')}
         </Button>
       </div>

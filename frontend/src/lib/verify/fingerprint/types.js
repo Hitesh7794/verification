@@ -37,9 +37,13 @@ export const Vendor = Object.freeze({
 // is the source of truth; the number here is the frontend-side fallback
 // when the backend's response doesn't carry a threshold (e.g. dev-mode
 // without fp-match-service running).
+// Unified TrustView 0-100 scale after the 2026-08 migration. Backend
+// decides pass/fail against 50; the frontend display just mirrors it
+// so score/threshold reads consistently. Old SourceAFIS-native
+// thresholds (40 for Mantra + Startek) are retired.
 export const DefaultThresholds = Object.freeze({
-  [Vendor.Mantra]: 40,
-  [Vendor.Startek]: 40,
+  [Vendor.Mantra]: 50,
+  [Vendor.Startek]: 50,
 })
 
 // Friendly labels for the device-status banner.

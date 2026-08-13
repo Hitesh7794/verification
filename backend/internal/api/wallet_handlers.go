@@ -148,6 +148,14 @@ type walletSummaryResp struct {
 	// operators, so we always surface it.
 	OrgBalancePaise   int `json:"org_balance_paise"`
 	FeePerLookupPaise int `json:"fee_per_lookup_paise"`
+	// Operator's assigned exam (client role only). Frontend uses this
+	// to switch between the roll-lookup card and a "no exam assigned"
+	// banner instead of subjecting the operator to silent 404s on
+	// every lookup. Fields are all zero-valued for admin/superadmin
+	// (who don't have an assigned exam concept).
+	AssignedExamID   int64  `json:"assigned_exam_id,omitempty"`
+	AssignedExamCode string `json:"assigned_exam_code,omitempty"`
+	AssignedExamName string `json:"assigned_exam_name,omitempty"`
 }
 
 func (s *Server) walletSummary(w http.ResponseWriter, r *http.Request) {
@@ -188,6 +196,30 @@ func (s *Server) walletSummary(w http.ResponseWriter, r *http.Request) {
 	if cap.Valid {
 		v := int(cap.Int64)
 		resp.CapPaise = &v
+	}
+	// Look up the operator's assigned exam (client role only). Empty
+	// result -> no exam assigned; frontend renders the "ask your
+	// admin" banner. Ignore any error -- the wallet fields are more
+	// important than this hint, and admin/superadmin skip this
+	// section entirely.
+	if claims != nil && claims.Role == "client" && claims.UserID != 0 {
+		var (
+			eid  sql.NullInt64
+			code sql.NullString
+			name sql.NullString
+		)
+		_ = s.deps.DB.QueryRowContext(r.Context(), `
+			SELECT e.id, e.exam_code, e.name
+			  FROM operator_exams oe
+			  JOIN exams e ON e.id = oe.exam_id
+			 WHERE oe.user_id = ?
+			 LIMIT 1
+		`, claims.UserID).Scan(&eid, &code, &name)
+		if eid.Valid {
+			resp.AssignedExamID = eid.Int64
+			resp.AssignedExamCode = code.String
+			resp.AssignedExamName = name.String
+		}
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

@@ -17,15 +17,12 @@ type loginReq struct {
 }
 
 func (s *Server) login(w http.ResponseWriter, r *http.Request) {
-	// Per-IP rate limit to blunt credential stuffing. 10 attempts per
-	// 15 minutes; rejected callers see 429 with a generic message.
-	// Loopback IPs are exempted (shouldRateLimit) so tests + local
-	// development don't trip the limiter.
-	ip := clientIP(r)
-	if shouldRateLimit(ip) && !globalLoginLimiter.allow(ip) {
-		writeErr(w, http.StatusTooManyRequests, "too many sign-in attempts; try again in a few minutes")
-		return
-	}
+	// Per-IP login rate limiter disabled per operator request -- the
+	// limit was tripping demo + password-reset loops from public IPs.
+	// Credential stuffing defence is now down to bcrypt cost + password
+	// strength; if this becomes an issue in real deployments, restore
+	// the guard from git or gate it on a role-agnostic soft threshold
+	// (e.g. 100 attempts / 15 min) instead of the earlier 10 / 15 min.
 
 	var req loginReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {

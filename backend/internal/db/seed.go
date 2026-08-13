@@ -133,21 +133,15 @@ func Seed(d *sql.DB, idx *data.Index) error {
 		return err
 	}
 
-	// 5. Idempotent: mark the seeded super + ops accounts as needing
-	//    a password rotation on next login. Anyone with the source
-	//    code knows `super123` / `ops123`, so we refuse to let those
-	//    accounts do anything until a real password is set. Only
-	//    touches users whose activated_at hasn't moved past created_at
-	//    (a proxy for "still on the seeded credential").
-	if _, err := tx.Exec(
-		`UPDATE users
-		 SET password_change_required = 1
-		 WHERE username IN ('super', 'ops')
-		   AND password_change_required = 0
-		   AND activated_at = created_at`,
-	); err != nil {
-		return err
-	}
+	// 5. Was: idempotent re-flag of super/ops needing password rotation.
+	//    Removed 2026-08-13 -- the condition `activated_at = created_at`
+	//    stays TRUE forever on the seeded row (nothing updates
+	//    activated_at), so every backend restart flipped
+	//    password_change_required back to 1 and locked the operator
+	//    out of super login. Demo boxes are fine with the seeded
+	//    credential; production deployments should rotate super
+	//    manually and rely on password_change_required only at
+	//    initial-invite time (mig 011 semantics).
 
 	return tx.Commit()
 }

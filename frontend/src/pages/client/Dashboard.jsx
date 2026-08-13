@@ -547,7 +547,31 @@ export default function ClientDashboard() {
         </CardBody>
       </Card>
 
-      {step === 0 && (
+      {/* No exam assigned to this operator — replace the roll input card
+          with a persistent instruction banner. Zero-exam operators would
+          otherwise get 404 "no data" on every lookup with no clue why. */}
+      {step === 0 && wallet && !wallet.assigned_exam_id && (
+        <Card className="border-amber-200 bg-amber-50">
+          <CardBody>
+            <div className="flex items-start gap-3">
+              <svg className="h-6 w-6 text-amber-600 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M10.29 3.86 1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0Z" />
+                <line x1="12" y1="9" x2="12" y2="13" />
+                <line x1="12" y1="17" x2="12.01" y2="17" />
+              </svg>
+              <div>
+                <p className="text-base font-semibold text-amber-900">No exam assigned to your account</p>
+                <p className="mt-1 text-sm text-amber-800">
+                  Your admin hasn't assigned you an exam yet. Ask your admin to
+                  assign one before you can look up and verify candidates.
+                </p>
+              </div>
+            </div>
+          </CardBody>
+        </Card>
+      )}
+
+      {step === 0 && (!wallet || wallet.assigned_exam_id) && (
         <Card>
           <CardHeader>
             <CardTitle>Step 1 — Roll number</CardTitle>
