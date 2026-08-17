@@ -714,10 +714,11 @@ export default function ClientDashboard() {
                       galleryTemplate={gallery.template_b64}
                       galleryFormat={gallery.format}
                       // matchThreshold left unset on purpose: registry
-                      // provides the per-vendor default (Mantra 140,
-                      // Startek 40 — SourceAFIS 1-in-1000 FMR). Pass an
-                      // explicit number here only for one-off overrides
-                      // during calibration.
+                      // provides the per-vendor default (both Mantra +
+                      // Startek = 50 on the unified TrustView 0-100
+                      // scale; 50 is the pass threshold end-to-end).
+                      // Pass an explicit number here only for one-off
+                      // calibration overrides.
                       onResult={(r) => {
                         setFpResult(r)
                         if (step < 3) setStep(3)
