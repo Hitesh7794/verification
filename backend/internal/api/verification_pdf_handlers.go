@@ -244,28 +244,1112 @@ func tr(s string) string {
 
 func renderVerificationPDF(b *pdfBundle, galleryPath, probePath string) ([]byte, error) {
 	pdf := gofpdf.New("P", "mm", "A4", "")
-	pdf.SetMargins(10, 10, 10)
-	pdf.SetAutoPageBreak(false, 10)
+	pdf.SetMargins(0, 0, 0)
+	pdf.SetAutoPageBreak(false, 0)
 	pdfTR = pdf.UnicodeTranslatorFromDescriptor("")
 	pdf.AddPage()
 
-	// Admit-card style but softer: single thin outer frame, more
-	// breathing room between sections, restrained typography weight.
-	drawOuterFrame(pdf)
-	drawHeaderBand(pdf, b)
-	drawTitleStrip(pdf, b)
-	drawCandidateAndPhotoBlock(pdf, b, galleryPath, probePath)
-	drawExamCentreBlock(pdf, b)
-	drawVerificationResultBlock(pdf, b)
-	drawBiometricsTable(pdf, b)
-	drawRecordedByBlock(pdf, b)
-	drawFooter(pdf, b)
+	// Admit-card layout: outer page border, clean centered header,
+	// title strip, boxed grid with photo panel on the right, per-
+	// modality biometric pass/fail rows, verdict summary strip, and
+	// a "biometrically verified by" footer.
+	drawPageBorder(pdf)
+	drawAdmitHeader(pdf, b)
+	drawAdmitTitleStrip(pdf, b)
+	bottomY := drawAdmitBody(pdf, b, galleryPath, probePath)
+	drawAdmitFooter(pdf, b, bottomY+4)
 
 	var buf bytes.Buffer
 	if err := pdf.Output(&buf); err != nil {
 		return nil, err
 	}
 	return buf.Bytes(), nil
+}
+
+// drawPageBorder — a single thick slate frame around the whole A4
+// page. One bold line, no inner hairline. Gives the slip a solid
+// framed-certificate presence without doubling.
+func drawPageBorder(pdf *gofpdf.Fpdf) {
+	pdf.SetDrawColor(15, 23, 42)
+	pdf.SetLineWidth(1.2)
+	pdf.Rect(6, 6, 198, 285, "D")
+}
+
+// ── v3 renderer (UPTET-style admit card, English-only) ───────────────
+
+// drawAdmitTopBar — thin red-bordered notice band. UPTET reference uses
+// this for "e-KYC required at exam centre"; we use it for the verified /
+// failed outcome (green tint for pass, red tint for fail).
+func drawAdmitTopBar(pdf *gofpdf.Fpdf, b *pdfBundle) {
+	verified := strings.EqualFold(b.Status, "verified")
+	if verified {
+		pdf.SetDrawColor(220, 38, 38) // red border matches ref
+		pdf.SetTextColor(220, 38, 38)
+	} else {
+		pdf.SetDrawColor(220, 38, 38)
+		pdf.SetTextColor(220, 38, 38)
+	}
+	pdf.SetLineWidth(0.4)
+	pdf.Rect(8, 6, 194, 9, "D")
+
+	msg := "BIOMETRIC VERIFICATION SUCCESSFUL"
+	if !verified {
+		msg = "BIOMETRIC VERIFICATION FAILED"
+	}
+	pdf.SetFont("Helvetica", "B", 10)
+	pdf.SetXY(8, 7.5)
+	pdf.CellFormat(194, 6, tr(msg), "", 0, "C", false, 0, "")
+	pdf.SetTextColor(15, 23, 42)
+}
+
+// drawAdmitHeader — single-cell bordered header. Client name centered
+// large + subtitle small underneath. No seal, no side boxes.
+func drawAdmitHeader(pdf *gofpdf.Fpdf, b *pdfBundle) {
+	const (
+		y = 10.0
+		h = 24.0
+	)
+	// Outer border only
+	pdf.SetDrawColor(15, 23, 42)
+	pdf.SetLineWidth(0.4)
+	pdf.Rect(8, y, 194, h, "D")
+
+	client := strings.ToUpper(strings.TrimSpace(b.ClientName))
+	if client == "" {
+		client = "PORTAL"
+	}
+
+	// Client name centered -- Times Bold for a formal official-document feel.
+	pdf.SetFont("Times", "B", 22)
+	pdf.SetTextColor(15, 23, 42)
+	pdf.SetXY(8, y+4)
+	pdf.CellFormat(194, 8, tr(client), "", 0, "C", false, 0, "")
+
+	// Subtitle centered underneath.
+	pdf.SetFont("Times", "", 12)
+	pdf.SetTextColor(71, 85, 105)
+	pdf.SetXY(8, y+14)
+	pdf.CellFormat(194, 6, tr("Biometric Verification Authority"), "", 0, "C", false, 0, "")
+
+	pdf.SetTextColor(15, 23, 42)
+}
+
+// drawAdmitTitleStrip — bold centred title + subtitle underneath. Times
+// serif for gravitas.
+func drawAdmitTitleStrip(pdf *gofpdf.Fpdf, b *pdfBundle) {
+	const y = 38.0
+	pdf.SetTextColor(15, 23, 42)
+	pdf.SetFont("Times", "B", 16)
+	pdf.SetXY(8, y)
+	title := fmt.Sprintf("Biometric Verification Slip - %s", strings.TrimSpace(b.ExamCode))
+	pdf.CellFormat(194, 7, tr(title), "", 0, "C", false, 0, "")
+
+	pdf.SetFont("Times", "", 12)
+	pdf.SetTextColor(71, 85, 105)
+	pdf.SetXY(8, y+8)
+	sub := strings.TrimSpace(b.ExamName)
+	if sub == "" {
+		sub = "Post-verification receipt"
+	}
+	pdf.CellFormat(194, 6, tr(sub), "", 0, "C", false, 0, "")
+	pdf.SetTextColor(15, 23, 42)
+}
+
+// drawAdmitBody — the boxed grid. Two sections stacked: Candidate
+// Personal Details + Examination/Centre Details. Right panel spans both
+// for the two photo slots + operator signature. Returns bottom Y.
+func drawAdmitBody(pdf *gofpdf.Fpdf, b *pdfBundle, galleryPath, probePath string) float64 {
+	top := 56.0
+	// Grid geometry: outer rect 194 wide split at 148 (left cells) and
+	// 46 (right photo column). Cells inside the left area are 74 wide
+	// paired horizontally. Cell height bumped so bigger fonts fit
+	// without cramping label + value.
+	const (
+		x0       = 8.0
+		width    = 194.0
+		leftW    = 148.0
+		leftCol  = 74.0
+		cellH    = 14.0
+	)
+
+	// Section 1 title strip.
+	drawSectionStrip(pdf, x0, top, width, "Candidate's Personal Details")
+	rowY := top + 8
+
+	fields1 := [][2]string{
+		{"Registration ID", nullstr(b.RegistrationID)},
+		{"Roll Number",     b.RollNo},
+		{"Candidate's Name", b.CandName},
+		{"Date of Birth",   formatDOB(nullstr(b.DOB))},
+		{"Father's Name",   nullstr(b.FatherName)},
+		{"Gender",          formatGender(nullstr(b.Gender))},
+	}
+	rowY = drawGridPairs(pdf, x0, rowY, leftW, cellH, fields1)
+
+	// Section 2 title strip.
+	drawSectionStrip(pdf, x0, rowY, width, "Examination Centre Details")
+	rowY += 8
+
+	centreLine := nullstr(b.CentreName)
+	code := nullstr(b.CentreCode)
+	addr := strings.TrimSpace(nullstr(b.Address))
+	locality := strings.TrimSpace(nullstr(b.City) + ", " + nullstr(b.State) + " " + nullstr(b.Pincode))
+	locality = strings.TrimSpace(strings.Trim(locality, ", "))
+	fields2 := [][2]string{
+		{"Centre Code",   code},
+		{"Exam Code",     b.ExamCode},
+		{"Centre Name",   centreLine},
+		{"Exam Name",     b.ExamName},
+		{"Centre Address", addr + ifNonEmpty(", ", locality)},
+		{"Verified At",   b.CreatedAt.In(indiaTZ).Format("02 Jan 2006 · 15:04 IST")},
+	}
+	rowY = drawGridPairs(pdf, x0, rowY, leftW, cellH, fields2)
+
+	// Right-side photo panel spans the whole body. Header strip on top,
+	// then two photo slots stacked.
+	rightX := x0 + leftW
+	rightW := width - leftW
+	panelBottom := rowY
+	drawRightPhotoPanel(pdf, rightX, top, rightW, panelBottom-top, galleryPath, probePath)
+
+	// Per-modality biometric result section (only for required modalities).
+	rowY += 3
+	rowY = drawBiometricDetailsSection(pdf, b, x0, rowY, width)
+
+	// Overall verdict banner.
+	rowY += 3
+	rowY = drawBiometricSummaryStrip(pdf, b, x0, rowY, width)
+
+	return rowY
+}
+
+// drawBiometricDetailsSection — the per-modality PASSED / NOT PASSED
+// rows. One row per required modality, coloured verdict on the right,
+// small caps label on the left.
+func drawBiometricDetailsSection(pdf *gofpdf.Fpdf, b *pdfBundle, x, y, w float64) float64 {
+	drawSectionStrip(pdf, x, y, w, "Biometric Modality Results")
+	y += 8
+
+	irisPass := b.IrisScore.Valid && b.IrisScore.Float64 >= 50
+	rows := []struct {
+		label   string
+		passed  bool
+		present bool
+	}{
+		{"Face Recognition",  b.FaceMatch, b.RequiresFace},
+		{"Fingerprint Match", b.FpMatch,   b.RequiresFP},
+		{"Iris Match",        irisPass,    b.RequiresIris},
+	}
+
+	rowH := 10.0
+	visibleRows := 0
+	for _, r := range rows {
+		if r.present {
+			visibleRows++
+		}
+	}
+	if visibleRows == 0 {
+		visibleRows = 1
+	}
+
+	// Outer border for the whole details block.
+	pdf.SetDrawColor(15, 23, 42)
+	pdf.SetLineWidth(0.3)
+	pdf.Rect(x, y, w, rowH*float64(visibleRows), "D")
+
+	cur := y
+	first := true
+	for _, r := range rows {
+		if !r.present {
+			continue
+		}
+		if !first {
+			// Row divider
+			pdf.SetDrawColor(203, 213, 225)
+			pdf.SetLineWidth(0.2)
+			pdf.Line(x, cur, x+w, cur)
+		}
+		first = false
+
+		// Left: label
+		pdf.SetTextColor(15, 23, 42)
+		pdf.SetFont("Helvetica", "B", 12)
+		pdf.SetXY(x+4, cur+2.5)
+		pdf.CellFormat(w-60, 5, tr(r.label), "", 0, "L", false, 0, "")
+
+		// Right: coloured verdict pill area
+		verdict := "PASSED"
+		fillR, fillG, fillB := 220, 252, 231 // emerald-100
+		textR, textG, textB := 21, 128, 61   // emerald-700
+		borderR, borderG, borderB := 34, 197, 94 // emerald-500
+		if !r.passed {
+			verdict = "NOT PASSED"
+			fillR, fillG, fillB = 254, 226, 226 // red-100
+			textR, textG, textB = 153, 27, 27   // red-800
+			borderR, borderG, borderB = 239, 68, 68 // red-500
+		}
+		pillW := 40.0
+		pillH := 6.5
+		pillX := x + w - pillW - 4
+		pillY := cur + (rowH-pillH)/2
+		pdf.SetFillColor(fillR, fillG, fillB)
+		pdf.SetDrawColor(borderR, borderG, borderB)
+		pdf.SetLineWidth(0.3)
+		pdf.RoundedRect(pillX, pillY, pillW, pillH, 1.5, "1234", "FD")
+		pdf.SetTextColor(textR, textG, textB)
+		pdf.SetFont("Helvetica", "B", 11)
+		pdf.SetXY(pillX, pillY+0.9)
+		pdf.CellFormat(pillW, 5, tr(verdict), "", 0, "C", false, 0, "")
+
+		cur += rowH
+	}
+
+	if visibleRows == 1 && rows[0].present == false && rows[1].present == false && rows[2].present == false {
+		// Empty state (no required modalities -- edge case).
+		pdf.SetFont("Helvetica", "I", 10)
+		pdf.SetTextColor(148, 163, 184)
+		pdf.SetXY(x+4, y+2.5)
+		pdf.CellFormat(w-8, 5, tr("No biometric modalities required for this exam."), "", 0, "L", false, 0, "")
+	}
+
+	pdf.SetTextColor(15, 23, 42)
+	return y + rowH*float64(visibleRows)
+}
+
+func ifNonEmpty(sep, s string) string {
+	if s == "" { return "" }
+	return sep + s
+}
+
+func drawSectionStrip(pdf *gofpdf.Fpdf, x, y, w float64, title string) {
+	pdf.SetFillColor(226, 232, 240)  // slate-200
+	pdf.SetDrawColor(15, 23, 42)
+	pdf.SetLineWidth(0.3)
+	pdf.Rect(x, y, w, 8, "FD")
+	pdf.SetTextColor(15, 23, 42)
+	pdf.SetFont("Times", "B", 12)
+	pdf.SetXY(x+3, y+1.8)
+	pdf.CellFormat(w-6, 5, tr(title), "", 0, "L", false, 0, "")
+}
+
+// drawGridPairs renders a 2-column grid of label/value pairs, each in
+// its own bordered cell (label bold top, value below). Returns bottom Y.
+func drawGridPairs(pdf *gofpdf.Fpdf, x, y, w, cellH float64, pairs [][2]string) float64 {
+	colW := w / 2
+	pdf.SetDrawColor(15, 23, 42)
+	pdf.SetLineWidth(0.3)
+	for i := 0; i < len(pairs); i += 2 {
+		// Left cell
+		drawGridCell(pdf, x, y, colW, cellH, pairs[i][0], pairs[i][1])
+		// Right cell (if exists)
+		if i+1 < len(pairs) {
+			drawGridCell(pdf, x+colW, y, colW, cellH, pairs[i+1][0], pairs[i+1][1])
+		}
+		y += cellH
+	}
+	return y
+}
+
+func drawGridCell(pdf *gofpdf.Fpdf, x, y, w, h float64, label, value string) {
+	pdf.SetDrawColor(15, 23, 42)
+	pdf.SetLineWidth(0.3)
+	pdf.Rect(x, y, w, h, "D")
+
+	// Label (bold small caps look) -- slate-500 muted grey.
+	pdf.SetTextColor(100, 116, 139)
+	pdf.SetFont("Helvetica", "B", 9.5)
+	pdf.SetXY(x+2, y+1.6)
+	pdf.CellFormat(w-4, 4, tr(label), "", 0, "L", false, 0, "")
+
+	// Value (bold, bigger, dark) -- the emphasis.
+	val := strings.TrimSpace(value)
+	if val == "" { val = "-" }
+	// Char budget approx: (w-4) mm / (12pt * 0.20 mm/char).
+	maxChars := int((w - 4) / (12.0 * 0.19))
+	if maxChars < 6 { maxChars = 6 }
+	if len(val) > maxChars {
+		val = val[:maxChars-1] + "-"
+	}
+	pdf.SetTextColor(15, 23, 42)
+	pdf.SetFont("Helvetica", "B", 12)
+	pdf.SetXY(x+2, y+7)
+	pdf.CellFormat(w-4, 6, tr(val), "", 0, "L", false, 0, "")
+}
+
+// drawRightPhotoPanel — right column, spans the full body height,
+// holds enrolled + captured photos stacked with a shared header.
+// Slots share their internal border edge (single hairline separator
+// between them) so there's no dead gap. Photos use center-crop fill
+// so passport-style portraits fill their slot completely.
+func drawRightPhotoPanel(pdf *gofpdf.Fpdf, x, y, w, h float64, galleryPath, probePath string) {
+	const headerH = 7.0
+
+	// Outer panel border.
+	pdf.SetDrawColor(15, 23, 42)
+	pdf.SetLineWidth(0.3)
+	pdf.Rect(x, y, w, h, "D")
+
+	// Header strip (filled slate).
+	pdf.SetFillColor(226, 232, 240)
+	pdf.Rect(x, y, w, headerH, "F")
+	pdf.Line(x, y+headerH, x+w, y+headerH)
+	pdf.SetTextColor(15, 23, 42)
+	pdf.SetFont("Helvetica", "B", 11)
+	pdf.SetXY(x, y+1.8)
+	pdf.CellFormat(w, 4, tr("Photo & Capture"), "", 0, "C", false, 0, "")
+
+	// Divide remaining vertical space in half exactly. No inset --
+	// slots share the panel's outer border on their outer edges, and
+	// the horizontal divider between them is the panel's own line.
+	slotH := (h - headerH) / 2
+	slot1Y := y + headerH
+	slot2Y := slot1Y + slotH
+
+	// Single-line divider between the two slots.
+	drawInsetPhoto(pdf, x, slot1Y, w, slotH, "ENROLLED", galleryPath)
+	drawInsetPhoto(pdf, x, slot2Y, w, slotH, "CAPTURED", probePath)
+
+	// Redraw the horizontal divider crisply between the slots
+	// (drawInsetPhoto's own bottom border for slot 1 already handles it).
+}
+
+// drawInsetPhoto renders one photo slot: bordered box + image
+// (center-crop fill, clipped to the photo area) + a labeled caption
+// strip at the bottom. Center-crop = the image is scaled UP so it
+// covers the whole photo area, then any overflow is clipped by the
+// PDF clip path. This is what web `object-fit: cover` does; it means
+// portrait photos in a landscape slot show a portrait-oriented crop
+// with no empty side margins.
+func drawInsetPhoto(pdf *gofpdf.Fpdf, x, y, w, h float64, caption, path string) {
+	const captionH = 5.5
+
+	// Outer border of the whole slot.
+	pdf.SetDrawColor(15, 23, 42)
+	pdf.SetLineWidth(0.3)
+	pdf.Rect(x, y, w, h, "D")
+
+	// Photo area = slot minus the caption strip.
+	imgAreaX := x
+	imgAreaY := y
+	imgAreaW := w
+	imgAreaH := h - captionH
+
+	if path != "" {
+		tp := "JPG"
+		if strings.HasSuffix(strings.ToLower(path), ".png") {
+			tp = "PNG"
+		}
+		info := pdf.RegisterImageOptions(path,
+			gofpdf.ImageOptions{ImageType: tp, ReadDpi: false})
+		if info != nil {
+			natW := info.Width()
+			natH := info.Height()
+			// Center-crop fill: pick the LARGER scale so the image
+			// covers the whole area, and let the clip rect chop the
+			// overflow. This eliminates letterbox bars.
+			scale := imgAreaW / natW
+			if natH*scale < imgAreaH {
+				scale = imgAreaH / natH
+			}
+			drawW := natW * scale
+			drawH := natH * scale
+			// Center the (potentially larger) image inside the slot.
+			drawX := imgAreaX + (imgAreaW-drawW)/2
+			drawY := imgAreaY + (imgAreaH-drawH)/2
+			// Clip to the photo area so overflow doesn't spill out.
+			pdf.ClipRect(imgAreaX, imgAreaY, imgAreaW, imgAreaH, false)
+			pdf.ImageOptions(path, drawX, drawY, drawW, drawH, false,
+				gofpdf.ImageOptions{ImageType: tp, ReadDpi: false}, 0, "")
+			pdf.ClipEnd()
+		}
+	} else {
+		pdf.SetFont("Helvetica", "I", 10)
+		pdf.SetTextColor(148, 163, 184)
+		pdf.SetXY(x, imgAreaY+imgAreaH/2-2)
+		pdf.CellFormat(w, 4, tr("[no photo]"), "", 0, "C", false, 0, "")
+	}
+
+	// Caption strip at the bottom of the slot.
+	pdf.SetFillColor(226, 232, 240)
+	pdf.Rect(x, y+h-captionH, w, captionH, "F")
+	pdf.SetTextColor(15, 23, 42)
+	pdf.SetFont("Helvetica", "B", 9)
+	pdf.SetXY(x, y+h-captionH+0.9)
+	pdf.CellFormat(w, 3, tr(caption), "", 0, "C", false, 0, "")
+}
+
+// drawBiometricSummaryStrip — bordered box replacing the reference's
+// bilingual "instructions" paragraph. Reads:
+//   "Biometric verification recorded via Face + Fingerprint + Iris on <TS>.
+//    Match confirmed. This is an official electronically-generated slip."
+func drawBiometricSummaryStrip(pdf *gofpdf.Fpdf, b *pdfBundle, x, y, w float64) float64 {
+	verified := strings.EqualFold(b.Status, "verified")
+	irisPass := b.IrisScore.Valid && b.IrisScore.Float64 >= 50
+	passed := []string{}
+	if b.RequiresFace && b.FaceMatch { passed = append(passed, "Face") }
+	if b.RequiresFP   && b.FpMatch   { passed = append(passed, "Fingerprint") }
+	if b.RequiresIris && irisPass    { passed = append(passed, "Iris") }
+	via := "manual override"
+	if len(passed) > 0 {
+		via = strings.Join(passed, " + ")
+	}
+	ts := b.CreatedAt.In(indiaTZ).Format("02 Jan 2006 at 15:04 IST")
+
+	h := 22.0
+
+	// Full-width light-green (or light-red) background fill instead of
+	// a side stripe. Border in the same darker tone so the box has an
+	// unambiguous identity as pass/fail.
+	if verified {
+		pdf.SetFillColor(220, 252, 231) // emerald-100 background
+		pdf.SetDrawColor(22, 163, 74)   // emerald-600 border
+	} else {
+		pdf.SetFillColor(254, 226, 226) // red-100 background
+		pdf.SetDrawColor(220, 38, 38)   // red-600 border
+	}
+	pdf.SetLineWidth(0.3)
+	pdf.Rect(x, y, w, h, "FD")
+
+	// Heading (Times bold for gravitas).
+	if verified {
+		pdf.SetTextColor(21, 128, 61) // emerald-700
+	} else {
+		pdf.SetTextColor(153, 27, 27) // red-800
+	}
+	pdf.SetFont("Times", "B", 14)
+	pdf.SetXY(x+3, y+2.5)
+	head := "BIOMETRIC MATCH CONFIRMED"
+	if !verified {
+		head = "BIOMETRIC MATCH FAILED"
+	}
+	pdf.CellFormat(w-6, 6, tr(head), "", 0, "L", false, 0, "")
+
+	// Sentence.
+	pdf.SetTextColor(15, 23, 42)
+	pdf.SetFont("Helvetica", "B", 11)
+	pdf.SetXY(x+3, y+10)
+	verb := "recorded"
+	if verified {
+		verb = "successfully recorded"
+	} else {
+		verb = "attempted"
+	}
+	sentence := fmt.Sprintf("Verification %s via %s on %s.", verb, via, ts)
+	pdf.CellFormat(w-6, 5, tr(sentence), "", 0, "L", false, 0, "")
+
+	// Small subtitle.
+	pdf.SetTextColor(71, 85, 105)
+	pdf.SetFont("Helvetica", "I", 9.5)
+	pdf.SetXY(x+3, y+16)
+	pdf.CellFormat(w-6, 4, tr("This is an official electronically-generated biometric verification slip."), "", 0, "L", false, 0, "")
+
+	pdf.SetTextColor(15, 23, 42)
+	return y + h
+}
+
+// drawAdmitFooter — instead of wet-signature boxes: one strip that
+// names the operator + device + generation timestamp.
+func drawAdmitFooter(pdf *gofpdf.Fpdf, b *pdfBundle, y float64) {
+	x := 8.0
+	w := 194.0
+	h := 22.0
+	pdf.SetDrawColor(15, 23, 42)
+	pdf.SetLineWidth(0.3)
+	pdf.Rect(x, y, w, h, "D")
+
+	// Divider into 2 columns
+	pdf.Line(x+w/2, y, x+w/2, y+h)
+
+	// Left cell -- "Biometrically verified by"
+	pdf.SetTextColor(100, 116, 139)
+	pdf.SetFont("Times", "B", 10)
+	pdf.SetXY(x+3, y+2)
+	pdf.CellFormat(w/2-6, 5, tr("BIOMETRICALLY VERIFIED BY"), "", 0, "L", false, 0, "")
+	op := nullstr(b.OperatorName)
+	if op == "" { op = "-" }
+	pdf.SetTextColor(15, 23, 42)
+	pdf.SetFont("Helvetica", "B", 13)
+	pdf.SetXY(x+3, y+9)
+	pdf.CellFormat(w/2-6, 6, tr(op), "", 0, "L", false, 0, "")
+	device := strings.TrimSpace(strings.Join(filterEmpty(
+		nullstr(b.FpVendor), nullstr(b.DeviceModel), nullstr(b.DeviceSerial),
+	), " - "))
+	if device == "" { device = "no device metadata" }
+	pdf.SetFont("Helvetica", "B", 10)
+	pdf.SetTextColor(71, 85, 105)
+	pdf.SetXY(x+3, y+16)
+	pdf.CellFormat(w/2-6, 4, tr("Device: "+device), "", 0, "L", false, 0, "")
+
+	// Right cell -- "Generated"
+	pdf.SetTextColor(100, 116, 139)
+	pdf.SetFont("Times", "B", 10)
+	pdf.SetXY(x+w/2+3, y+2)
+	pdf.CellFormat(w/2-6, 5, tr("DOCUMENT GENERATED"), "", 0, "L", false, 0, "")
+	pdf.SetTextColor(15, 23, 42)
+	pdf.SetFont("Helvetica", "B", 13)
+	pdf.SetXY(x+w/2+3, y+9)
+	pdf.CellFormat(w/2-6, 6, tr(time.Now().In(indiaTZ).Format("02 Jan 2006, 15:04 IST")), "", 0, "L", false, 0, "")
+	pdf.SetFont("Helvetica", "B", 10)
+	pdf.SetTextColor(71, 85, 105)
+	pdf.SetXY(x+w/2+3, y+16)
+	pdf.CellFormat(w/2-6, 4, tr(fmt.Sprintf("Verification ID: #%d", b.VerificationID)), "", 0, "L", false, 0, "")
+
+	pdf.SetTextColor(15, 23, 42)
+}
+
+// ── v2 renderer (matches biometric_verification_slip_v2.pdf) ──────────
+
+// drawHeaderBandV2 — navy band across the top edge with a rounded
+// white pill on the left holding the client name abbreviation, the
+// full client name in caps + exam-name subline centred over the band,
+// and a "BIOMETRIC SLIP" rounded pill on the far right. Bottom of
+// the band is a subtle indigo accent stripe.
+func drawHeaderBandV2(pdf *gofpdf.Fpdf, b *pdfBundle) {
+	// Full-width navy band.
+	pdf.SetFillColor(30, 58, 138) // indigo-800
+	pdf.Rect(0, 0, 210, 24, "F")
+	// Thin lighter stripe under the band to give it a "layered" feel.
+	pdf.SetFillColor(219, 234, 254) // blue-100
+	pdf.Rect(0, 24, 210, 1.2, "F")
+
+	// Client pill (white, rounded, on the left). Set the font BEFORE
+	// measuring text -- gofpdf's GetStringWidth panics if no font is
+	// active on the page yet.
+	client := strings.ToUpper(strings.TrimSpace(b.ClientName))
+	if client == "" {
+		client = "PORTAL"
+	}
+	// Abbreviate to 5 chars for the pill text (matches ref).
+	pillText := client
+	if len(pillText) > 5 {
+		pillText = pillText[:5]
+	}
+	pdf.SetFont("Helvetica", "B", 10)
+	pillW := pdf.GetStringWidth(pillText) + 8
+	if pillW < 20 {
+		pillW = 20
+	}
+	pdf.SetFillColor(255, 255, 255)
+	pdf.RoundedRect(8, 7, pillW, 10, 2, "1234", "F")
+	pdf.SetTextColor(30, 58, 138)
+	pdf.SetFont("Helvetica", "B", 10)
+	pdf.SetXY(8, 7)
+	pdf.CellFormat(pillW, 10, tr(pillText), "", 0, "C", false, 0, "")
+
+	// Full client name to the right of the pill.
+	pdf.SetTextColor(255, 255, 255)
+	pdf.SetFont("Helvetica", "B", 13)
+	pdf.SetXY(8+pillW+4, 6)
+	pdf.CellFormat(140, 6, tr(client), "", 0, "L", false, 0, "")
+
+	// Exam name subline under the client name.
+	sub := strings.TrimSpace(b.ExamName)
+	if sub == "" {
+		sub = strings.TrimSpace(b.ExamCode)
+	}
+	pdf.SetTextColor(191, 219, 254) // blue-200
+	pdf.SetFont("Helvetica", "", 9)
+	pdf.SetXY(8+pillW+4, 13)
+	pdf.CellFormat(140, 5, tr(sub), "", 0, "L", false, 0, "")
+
+	// "BIOMETRIC SLIP" pill on the far right.
+	rightPill := "BIOMETRIC SLIP"
+	pdf.SetFont("Helvetica", "B", 8)
+	rightW := pdf.GetStringWidth(rightPill) + 8
+	pdf.SetFillColor(37, 99, 235) // blue-600
+	pdf.RoundedRect(202-rightW, 8, rightW, 8, 2, "1234", "F")
+	pdf.SetTextColor(255, 255, 255)
+	pdf.SetFont("Helvetica", "B", 8)
+	pdf.SetXY(202-rightW, 8)
+	pdf.CellFormat(rightW, 8, tr(rightPill), "", 0, "C", false, 0, "")
+
+	pdf.SetTextColor(15, 23, 42)
+}
+
+// drawVerdictBanner — full-width bordered card with a coloured left
+// stripe. Left side: verdict title + one-line description. Right side:
+// a rounded pill with the verdict text. Returns the bottom Y of the
+// banner so the next section can position itself.
+func drawVerdictBanner(pdf *gofpdf.Fpdf, b *pdfBundle, top float64) float64 {
+	const (
+		x = 8.0
+		w = 194.0
+		h = 22.0
+	)
+	verified := strings.EqualFold(b.Status, "verified")
+
+	var stripeR, stripeG, stripeB int
+	var bgR, bgG, bgB int
+	var textR, textG, textB int
+	var pillR, pillG, pillBB int
+	title := "BIOMETRIC VERIFICATION SUCCESSFUL"
+	subtitle := ""
+	pillText := "✓ VERIFIED"
+
+	// Compute which modalities passed for the subtitle description.
+	irisPass := b.IrisScore.Valid && b.IrisScore.Float64 >= 50
+	passed := []string{}
+	if b.RequiresFace && b.FaceMatch { passed = append(passed, "Face") }
+	if b.RequiresFP   && b.FpMatch   { passed = append(passed, "Fingerprint") }
+	if b.RequiresIris && irisPass    { passed = append(passed, "Iris") }
+
+	if verified {
+		stripeR, stripeG, stripeB = 22, 163, 74     // emerald-600
+		bgR, bgG, bgB = 240, 253, 244                // emerald-50
+		textR, textG, textB = 21, 128, 61            // emerald-700
+		pillR, pillG, pillBB = 22, 163, 74           // emerald-600 pill
+		if len(passed) > 0 {
+			subtitle = strings.Join(passed, " + ") + " authentication matched with candidate profile."
+		} else {
+			subtitle = "Verification recorded manually by the operator."
+		}
+	} else {
+		stripeR, stripeG, stripeB = 220, 38, 38      // red-600
+		bgR, bgG, bgB = 254, 242, 242                // red-50
+		textR, textG, textB = 153, 27, 27            // red-800
+		pillR, pillG, pillBB = 220, 38, 38           // red-600 pill
+		title = "BIOMETRIC VERIFICATION FAILED"
+		subtitle = "One or more biometric modalities did not match the enrolled profile."
+		pillText = "✗ NOT VERIFIED"
+	}
+
+	// Body background + hairline border.
+	pdf.SetFillColor(bgR, bgG, bgB)
+	pdf.SetDrawColor(226, 232, 240)
+	pdf.SetLineWidth(0.2)
+	pdf.RoundedRect(x, top, w, h, 1.5, "1234", "FD")
+	// Left colour stripe.
+	pdf.SetFillColor(stripeR, stripeG, stripeB)
+	pdf.Rect(x, top, 2.5, h, "F")
+
+	// Title (bold) + subtitle (slate) on the left.
+	pdf.SetTextColor(textR, textG, textB)
+	pdf.SetFont("Helvetica", "B", 11)
+	pdf.SetXY(x+7, top+4)
+	pdf.CellFormat(120, 5, tr(title), "", 0, "L", false, 0, "")
+
+	pdf.SetTextColor(71, 85, 105)
+	pdf.SetFont("Helvetica", "", 9)
+	pdf.SetXY(x+7, top+11)
+	pdf.CellFormat(130, 5, tr(subtitle), "", 0, "L", false, 0, "")
+
+	// Verdict pill on the far right.
+	pdf.SetFont("Helvetica", "B", 10)
+	pillW := pdf.GetStringWidth(pillText) + 10
+	pdf.SetFillColor(pillR, pillG, pillBB)
+	pdf.RoundedRect(x+w-pillW-5, top+6, pillW, 10, 2, "1234", "F")
+	pdf.SetTextColor(255, 255, 255)
+	pdf.SetFont("Helvetica", "B", 10)
+	pdf.SetXY(x+w-pillW-5, top+6)
+	pdf.CellFormat(pillW, 10, tr(pillText), "", 0, "C", false, 0, "")
+
+	pdf.SetTextColor(15, 23, 42)
+	return top + h
+}
+
+// drawInfoColumn — left column (2/3 width). Stacks Candidate Profile,
+// Examination Centre Details, Biometric Session Summary as three
+// separate rounded cards. Returns the bottom Y of the tallest card.
+func drawInfoColumn(pdf *gofpdf.Fpdf, b *pdfBundle, top float64) float64 {
+	const (
+		x = 8.0
+		w = 122.0
+	)
+	y := top
+
+	// ── CANDIDATE PROFILE ──
+	profile := []struct{ label, value string }{
+		{"CANDIDATE NAME",   b.CandName},
+		{"ROLL NUMBER",      b.RollNo},
+		{"REGISTRATION NO.", nullstr(b.RegistrationID)},
+		{"FATHER'S NAME",    nullstr(b.FatherName)},
+		{"DATE OF BIRTH",    formatDOB(nullstr(b.DOB))},
+		{"GENDER",           formatGender(nullstr(b.Gender))},
+		{"EXAM SESSION",     buildExamSession(nullstr(b.ShiftName), b.ExamCode)},
+	}
+	y = drawCard(pdf, x, y, w, "CANDIDATE PROFILE", func(cx, cy float64) float64 {
+		return drawFieldGrid(pdf, cx, cy, w, profile)
+	})
+
+	// ── EXAMINATION CENTRE DETAILS ──
+	y += 4
+	centreLine := nullstr(b.CentreName)
+	code := nullstr(b.CentreCode)
+	if code != "" {
+		if centreLine != "" {
+			centreLine += " (" + code + ")"
+		} else {
+			centreLine = "Code: " + code
+		}
+	}
+	if centreLine == "" { centreLine = "—" }
+	addr := strings.TrimSpace(nullstr(b.Address))
+	locality := strings.TrimSpace(nullstr(b.City) + ", " + nullstr(b.State) + " " + nullstr(b.Pincode))
+	locality = strings.TrimSpace(strings.Trim(locality, ", "))
+	fullAddr := addr
+	if locality != "" {
+		if fullAddr != "" {
+			fullAddr = addr + ", " + locality
+		} else {
+			fullAddr = locality
+		}
+	}
+	if fullAddr == "" { fullAddr = "address on record" }
+	centreFields := []struct{ label, value string }{
+		{"CENTRE NAME",   centreLine},
+		{"VENUE ADDRESS", fullAddr},
+	}
+	y = drawCard(pdf, x, y, w, "EXAMINATION CENTRE DETAILS", func(cx, cy float64) float64 {
+		return drawFieldGrid(pdf, cx, cy, w, centreFields)
+	})
+
+	// ── BIOMETRIC SESSION SUMMARY ──
+	y += 4
+	irisPass := b.IrisScore.Valid && b.IrisScore.Float64 >= 50
+	passed := []string{}
+	if b.RequiresFace && b.FaceMatch { passed = append(passed, "Face Recognition") }
+	if b.RequiresFP   && b.FpMatch   { passed = append(passed, "Fingerprint") }
+	if b.RequiresIris && irisPass    { passed = append(passed, "Iris") }
+	verified := strings.EqualFold(b.Status, "verified")
+	method := "—"
+	if len(passed) > 0 {
+		method = strings.Join(passed, " + ")
+	} else if !verified {
+		method = "Attempted (no modality matched)"
+	} else {
+		method = "Manual override"
+	}
+	statusText := "PASSED (Match Confirmed)"
+	if !verified {
+		statusText = "FAILED (No Match)"
+	}
+	bioFields := []struct{ label, value string }{
+		{"VERIFICATION METHOD", method},
+		{"MATCH STATUS",        statusText},
+		{"TIMESTAMP",           b.CreatedAt.In(indiaTZ).Format("02 Jan 2006 · 15:04:05 IST")},
+	}
+	y = drawCardColored(pdf, x, y, w, "BIOMETRIC SESSION SUMMARY", func(cx, cy float64) float64 {
+		return drawFieldGridColored(pdf, cx, cy, w, bioFields, verified)
+	})
+
+	return y
+}
+
+// drawPhotoColumn — right column (1/3 width). Enrolled photo card
+// then verification-capture card, each with its own section-title
+// strip. Returns bottom Y.
+func drawPhotoColumn(pdf *gofpdf.Fpdf, b *pdfBundle, top float64, galleryPath, probePath string) float64 {
+	const (
+		x = 132.0
+		w = 70.0
+		photoH = 45.0
+	)
+	y := top
+	y = drawPhotoCard(pdf, x, y, w, photoH, "ENROLLED PHOTOGRAPH", "[ Enrolled Photo ]", galleryPath)
+	y += 4
+	y = drawPhotoCard(pdf, x, y, w, photoH, "VERIFICATION CAPTURE", "[ Live Capture ]", probePath)
+	_ = b
+	return y
+}
+
+// drawCard renders a rounded-border section card with a title strip at
+// the top and delegates the body to bodyDraw. Returns the bottom Y of
+// the card (including the border).
+func drawCard(pdf *gofpdf.Fpdf, x, y, w float64, title string, bodyDraw func(cx, cy float64) float64) float64 {
+	const (
+		titleH = 8.0
+		bodyPad = 4.0
+	)
+	// Title strip (light bg).
+	pdf.SetFillColor(248, 250, 252)
+	pdf.SetDrawColor(226, 232, 240)
+	pdf.SetLineWidth(0.2)
+	// Draw an outer rounded rect with the title strip filled at top --
+	// we do it in two passes so the border can be a single rounded rect.
+	// Trick: draw the light strip as a plain rect first, then draw the
+	// rounded outline over the whole card.
+	// Estimate body height by rendering body into scratch coords first
+	// won't work with gofpdf; instead we use a two-step approach: draw
+	// body, then compute the total, then overlay the border.
+	// Simpler: draw title strip, draw body, compute end Y, draw border.
+
+	// Title text
+	pdf.SetTextColor(51, 65, 85) // slate-700
+	pdf.SetFont("Helvetica", "B", 8)
+	pdf.SetXY(x+3, y+2)
+	pdf.CellFormat(w-6, 4, tr(title), "", 0, "L", false, 0, "")
+
+	// Divider under the title.
+	pdf.SetDrawColor(226, 232, 240)
+	pdf.Line(x, y+titleH, x+w, y+titleH)
+
+	// Body
+	endY := bodyDraw(x+bodyPad, y+titleH+bodyPad)
+
+	// Border around the whole card.
+	pdf.SetDrawColor(203, 213, 225)
+	pdf.SetLineWidth(0.3)
+	pdf.RoundedRect(x, y, w, endY-y+bodyPad, 2, "1234", "D")
+
+	return endY + bodyPad
+}
+
+// drawCardColored is drawCard with a subtle blue tint on the title
+// strip (used for the "Biometric Session Summary" card to match ref).
+func drawCardColored(pdf *gofpdf.Fpdf, x, y, w float64, title string, bodyDraw func(cx, cy float64) float64) float64 {
+	const (
+		titleH = 8.0
+		bodyPad = 4.0
+	)
+	// Blue-tinted title strip.
+	pdf.SetFillColor(239, 246, 255) // blue-50
+	pdf.Rect(x, y, w, titleH, "F")
+
+	pdf.SetTextColor(30, 58, 138)
+	pdf.SetFont("Helvetica", "B", 8)
+	pdf.SetXY(x+3, y+2)
+	pdf.CellFormat(w-6, 4, tr(title), "", 0, "L", false, 0, "")
+
+	pdf.SetDrawColor(191, 219, 254)
+	pdf.Line(x, y+titleH, x+w, y+titleH)
+
+	endY := bodyDraw(x+bodyPad, y+titleH+bodyPad)
+
+	pdf.SetDrawColor(191, 219, 254) // blue-200 border
+	pdf.SetLineWidth(0.3)
+	pdf.RoundedRect(x, y, w, endY-y+bodyPad, 2, "1234", "D")
+
+	return endY + bodyPad
+}
+
+// drawFieldGrid renders label:value rows. Label is small-caps slate-500,
+// value is bold slate-900. Returns bottom Y (relative to where it
+// finished drawing).
+func drawFieldGrid(pdf *gofpdf.Fpdf, x, y, w float64, fields []struct{ label, value string }) float64 {
+	const (
+		labelW = 42.0
+		rowH   = 7.0
+	)
+	for _, f := range fields {
+		val := strings.TrimSpace(f.value)
+		if val == "" { val = "—" }
+		// Label
+		pdf.SetXY(x, y+1.4)
+		pdf.SetFont("Helvetica", "B", 7.5)
+		pdf.SetTextColor(100, 116, 139)
+		pdf.CellFormat(labelW, 4, tr(f.label), "", 0, "L", false, 0, "")
+		// Value
+		pdf.SetXY(x+labelW, y+1.2)
+		pdf.SetFont("Helvetica", "B", 9.5)
+		pdf.SetTextColor(15, 23, 42)
+		pdf.CellFormat(w-labelW-8, 4, tr(val), "", 0, "L", false, 0, "")
+		y += rowH
+	}
+	return y
+}
+
+// drawFieldGridColored — same as drawFieldGrid but the MATCH STATUS
+// value renders in emerald/rose depending on the verified flag. Used
+// only by the biometric summary card.
+func drawFieldGridColored(pdf *gofpdf.Fpdf, x, y, w float64, fields []struct{ label, value string }, verified bool) float64 {
+	const (
+		labelW = 42.0
+		rowH   = 7.0
+	)
+	for _, f := range fields {
+		val := strings.TrimSpace(f.value)
+		if val == "" { val = "—" }
+		// Label
+		pdf.SetXY(x, y+1.4)
+		pdf.SetFont("Helvetica", "B", 7.5)
+		pdf.SetTextColor(100, 116, 139)
+		pdf.CellFormat(labelW, 4, tr(f.label), "", 0, "L", false, 0, "")
+		// Value -- colour MATCH STATUS row
+		pdf.SetXY(x+labelW, y+1.2)
+		pdf.SetFont("Helvetica", "B", 9.5)
+		if strings.EqualFold(f.label, "MATCH STATUS") {
+			if verified {
+				pdf.SetTextColor(21, 128, 61)
+			} else {
+				pdf.SetTextColor(153, 27, 27)
+			}
+		} else {
+			pdf.SetTextColor(15, 23, 42)
+		}
+		pdf.CellFormat(w-labelW-8, 4, tr(val), "", 0, "L", false, 0, "")
+		y += rowH
+	}
+	return y
+}
+
+// drawPhotoCard renders one photo section (title + dashed-border photo
+// slot with the actual image, or a placeholder if missing). Returns
+// bottom Y.
+func drawPhotoCard(pdf *gofpdf.Fpdf, x, y, w, photoH float64, title, placeholder, path string) float64 {
+	// Title strip
+	pdf.SetFillColor(248, 250, 252)
+	pdf.SetDrawColor(226, 232, 240)
+	pdf.SetLineWidth(0.2)
+	pdf.Rect(x, y, w, 8, "F")
+	pdf.SetTextColor(51, 65, 85)
+	pdf.SetFont("Helvetica", "B", 8)
+	pdf.SetXY(x+3, y+2)
+	pdf.CellFormat(w-6, 4, tr(title), "", 0, "L", false, 0, "")
+
+	// Divider
+	pdf.Line(x, y+8, x+w, y+8)
+
+	// Photo slot (dashed border)
+	slotY := y + 12
+	slotX := x + 4
+	slotW := w - 8
+	slotH := photoH
+	// Draw dashed border by hand (gofpdf lacks a dashed style helper).
+	pdf.SetDrawColor(203, 213, 225)
+	pdf.SetLineWidth(0.3)
+	drawDashedRect(pdf, slotX, slotY, slotW, slotH, 1.2, 1.0)
+
+	if path != "" {
+		tp := "JPG"
+		if strings.HasSuffix(strings.ToLower(path), ".png") {
+			tp = "PNG"
+		}
+		pdf.ImageOptions(path, slotX+1, slotY+1, slotW-2, slotH-2, false,
+			gofpdf.ImageOptions{ImageType: tp, ReadDpi: false}, 0, "")
+	} else {
+		pdf.SetFont("Helvetica", "", 8)
+		pdf.SetTextColor(148, 163, 184)
+		pdf.SetXY(slotX, slotY+slotH/2-2)
+		pdf.CellFormat(slotW, 4, tr(placeholder), "", 0, "C", false, 0, "")
+	}
+
+	bottom := slotY + slotH + 4
+
+	// Card outer border
+	pdf.SetDrawColor(203, 213, 225)
+	pdf.SetLineWidth(0.3)
+	pdf.RoundedRect(x, y, w, bottom-y, 2, "1234", "D")
+
+	pdf.SetTextColor(15, 23, 42)
+	return bottom
+}
+
+// drawDashedRect draws a dashed rectangle by stroking short segments
+// manually. dash = dash length in mm, gap = gap length in mm.
+func drawDashedRect(pdf *gofpdf.Fpdf, x, y, w, h, dash, gap float64) {
+	// Top
+	for cx := x; cx < x+w; cx += dash + gap {
+		e := cx + dash
+		if e > x+w { e = x + w }
+		pdf.Line(cx, y, e, y)
+	}
+	// Bottom
+	for cx := x; cx < x+w; cx += dash + gap {
+		e := cx + dash
+		if e > x+w { e = x + w }
+		pdf.Line(cx, y+h, e, y+h)
+	}
+	// Left
+	for cy := y; cy < y+h; cy += dash + gap {
+		e := cy + dash
+		if e > y+h { e = y + h }
+		pdf.Line(x, cy, x, e)
+	}
+	// Right
+	for cy := y; cy < y+h; cy += dash + gap {
+		e := cy + dash
+		if e > y+h { e = y + h }
+		pdf.Line(x+w, cy, x+w, e)
+	}
+}
+
+// drawAuditFooter — navy-tinted card at the bottom with 4 fields in a
+// 2x2 grid + a small italic disclaimer beneath the card.
+func drawAuditFooter(pdf *gofpdf.Fpdf, b *pdfBundle, top float64) {
+	const (
+		x = 8.0
+		w = 194.0
+	)
+	// Title strip
+	pdf.SetFillColor(239, 246, 255)
+	pdf.Rect(x, top, w, 8, "F")
+	pdf.SetDrawColor(191, 219, 254)
+	pdf.Line(x, top+8, x+w, top+8)
+	pdf.SetTextColor(30, 58, 138)
+	pdf.SetFont("Helvetica", "B", 8)
+	pdf.SetXY(x+3, top+2)
+	pdf.CellFormat(w-6, 4, tr("SYSTEM AUDIT & DEVICE METADATA"), "", 0, "L", false, 0, "")
+
+	// Body (2x2 grid)
+	op := nullstr(b.OperatorName)
+	if op == "" { op = "—" }
+	device := strings.TrimSpace(strings.Join(filterEmpty(
+		nullstr(b.DeviceModel), nullstr(b.DeviceSerial),
+	), " (ID: "))
+	if device != "" && strings.Contains(device, " (ID: ") {
+		device += ")"
+	}
+	if device == "" { device = "—" }
+	genTs := time.Now().In(indiaTZ).Format("02 Jan 2006, 15:04 IST")
+
+	pdf.SetTextColor(71, 85, 105)
+	pdf.SetFont("Helvetica", "", 8)
+
+	// Left column labels
+	pdf.SetXY(x+4, top+12)
+	pdf.CellFormat(30, 4, tr("Operator Name:"), "", 0, "L", false, 0, "")
+	pdf.SetXY(x+4, top+18)
+	pdf.CellFormat(30, 4, tr("Capture Device:"), "", 0, "L", false, 0, "")
+
+	// Left column values
+	pdf.SetTextColor(15, 23, 42)
+	pdf.SetFont("Helvetica", "B", 9)
+	pdf.SetXY(x+34, top+11.7)
+	pdf.CellFormat(70, 4, tr(op+"  "+strings.ToLower(nullstr(b.FpVendor))), "", 0, "L", false, 0, "")
+	pdf.SetXY(x+34, top+17.7)
+	pdf.CellFormat(70, 4, tr(device), "", 0, "L", false, 0, "")
+
+	// Right column labels
+	pdf.SetTextColor(71, 85, 105)
+	pdf.SetFont("Helvetica", "", 8)
+	pdf.SetXY(x+w-90, top+12)
+	pdf.CellFormat(35, 4, tr("Verification ID:"), "", 0, "R", false, 0, "")
+	pdf.SetXY(x+w-90, top+18)
+	pdf.CellFormat(35, 4, tr("Generated Timestamp:"), "", 0, "R", false, 0, "")
+
+	// Right column values
+	pdf.SetTextColor(30, 58, 138)
+	pdf.SetFont("Helvetica", "B", 9)
+	pdf.SetXY(x+w-52, top+11.7)
+	pdf.CellFormat(50, 4, tr(fmt.Sprintf("#%d", b.VerificationID)), "", 0, "R", false, 0, "")
+	pdf.SetXY(x+w-52, top+17.7)
+	pdf.CellFormat(50, 4, tr(genTs), "", 0, "R", false, 0, "")
+
+	// Card border
+	cardH := 24.0
+	pdf.SetDrawColor(191, 219, 254)
+	pdf.SetLineWidth(0.3)
+	pdf.RoundedRect(x, top, w, cardH, 2, "1234", "D")
+
+	// Disclaimer under the card
+	pdf.SetTextColor(148, 163, 184)
+	pdf.SetFont("Helvetica", "I", 8)
+	pdf.SetXY(x, top+cardH+3)
+	examLabel := strings.TrimSpace(b.ExamName)
+	if examLabel == "" { examLabel = "the examination session" }
+	disclaimer := "This is an electronically generated official verification slip. Valid for " + examLabel + "."
+	pdf.CellFormat(w, 4, tr(disclaimer), "", 0, "C", false, 0, "")
+	pdf.SetTextColor(15, 23, 42)
+}
+
+// buildExamSession — "SHIFT1 (Code: NEET1)" per the reference.
+func buildExamSession(shift, code string) string {
+	shift = strings.TrimSpace(shift)
+	code = strings.TrimSpace(code)
+	if shift == "" && code == "" { return "" }
+	if shift == "" { return "(Code: " + code + ")" }
+	if code == "" { return shift }
+	return shift + " (Code: " + code + ")"
 }
 
 // drawOuterFrame — a single hairline in slate-300 so the page reads
