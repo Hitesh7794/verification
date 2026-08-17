@@ -178,6 +178,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/api/face-match", s.requireRole("client")(s.faceMatch))
 		r.Post("/api/fp-match",   s.requireRole("client")(s.fpMatch))
 		r.Post("/api/verifications", s.requireRole("client")(s.createVerification))
+		r.Patch("/api/verifications/{id}", s.requireRole("client")(s.patchVerification))
 		r.Post("/api/verifications/{id}/artifacts", s.requireRole("client")(s.uploadArtifact))
 
 		// Wallet — admin sees own org, superadmin sees any org via ?org_id=N.

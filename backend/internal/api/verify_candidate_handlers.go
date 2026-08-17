@@ -12,6 +12,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -355,6 +356,171 @@ func (s *Server) promoteProbePhoto(idemKey string, verificationID int64) string 
 		return ""
 	}
 	return permPath
+}
+
+// patchVerification -- recapture flow.
+//
+// The auto-submit useEffect on the operator dashboard fires as soon as
+// every required modality has produced a result (pass OR fail). When
+// the operator then recaptures a modality (e.g. fp failed the first
+// time, they retry and it passes), we can't re-run POST because that
+// would either duplicate the row or 200-replay via idempotency. So
+// the frontend fires PATCH on the existing verification.id, we
+// overwrite the biometric flags + scores + recompute status/via
+// server-side, and the audit_log gets the before-after diff so
+// investigators can see the flip.
+//
+// Wallet: not re-charged. Original face-match debit is the only
+// charged event; recaptures of the fp/iris modalities are already
+// free, and recapturing face doesn't fire the wallet middleware on
+// this endpoint at all (no walletCharge wrapper).
+//
+// Auth: client role, own rows only. Same scope as POST.
+func (s *Server) patchVerification(w http.ResponseWriter, r *http.Request) {
+	claims := claimsFrom(r)
+	if claims == nil || claims.UserID == 0 {
+		writeErr(w, http.StatusUnauthorized, "missing token")
+		return
+	}
+	idStr := chi.URLParam(r, "id")
+	id, err := strconv.ParseInt(idStr, 10, 64)
+	if err != nil || id <= 0 {
+		writeErr(w, http.StatusBadRequest, "invalid verification id")
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, 64<<10)
+	var req verifyReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+
+	// Load the current row to (a) scope-check the operator owns it and
+	// (b) build the before-after audit diff.
+	var (
+		curStatus   string
+		curFace     int
+		curFp       int
+		curIrisScore sql.NullFloat64
+		curVia      sql.NullString
+		curOperator int64
+	)
+	err = s.deps.DB.QueryRowContext(r.Context(),
+		`SELECT status, face_match, fp_match, iris_left_score, via, operator_id
+		   FROM verifications WHERE id = ?`, id,
+	).Scan(&curStatus, &curFace, &curFp, &curIrisScore, &curVia, &curOperator)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeErr(w, http.StatusNotFound, "verification not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
+		return
+	}
+	if curOperator != claims.UserID {
+		writeErr(w, http.StatusForbidden, "not your verification")
+		return
+	}
+
+	// Recompute status server-side from the modality flags. Frontend
+	// still sends its own req.Status but we trust the flags -- the
+	// whole point of PATCH is that recapture may have flipped verdict.
+	irisPass := req.IrisLeftScore != nil && *req.IrisLeftScore >= 50
+	// Load the exam requires_* flags for this verification's roll so
+	// we know which modalities count toward the AND-gate.
+	var reqFace, reqFP, reqIris int
+	_ = s.deps.DB.QueryRowContext(r.Context(),
+		`SELECT COALESCE(e.requires_face,1), COALESCE(e.requires_fp,1), COALESCE(e.requires_iris,0)
+		   FROM verifications v
+		   JOIN exam_candidates ec ON ec.roll_no = v.roll_no
+		   JOIN exams e ON e.id = ec.exam_id
+		  WHERE v.id = ? LIMIT 1`, id,
+	).Scan(&reqFace, &reqFP, &reqIris)
+	facePass := reqFace == 0 || req.FaceMatch
+	fpPassFlag := reqFP == 0 || req.FpMatch
+	irisPassFlag := reqIris == 0 || irisPass
+	newStatus := "denied"
+	if facePass && fpPassFlag && irisPassFlag {
+		newStatus = "verified"
+	}
+	// Compute the new "via" list the same way the PDF does.
+	passed := []string{}
+	if reqFace == 1 && req.FaceMatch { passed = append(passed, "fingerprint") } // placeholder -- overwritten below
+	passed = passed[:0]
+	if reqFace == 1 && req.FaceMatch { passed = append(passed, "face") }
+	if reqFP   == 1 && req.FpMatch   { passed = append(passed, "fingerprint") }
+	if reqIris == 1 && irisPass      { passed = append(passed, "iris") }
+	newVia := "manual"
+	if newStatus == "verified" && len(passed) > 0 {
+		newVia = strings.Join(passed, "+")
+	}
+
+	// Atomic UPDATE. Fields that require optional-null semantics use
+	// nullable helpers so a missing PATCH field doesn't zero the DB.
+	_, err = s.deps.DB.ExecContext(r.Context(),
+		`UPDATE verifications
+		    SET face_match         = ?,
+		        fp_match           = ?,
+		        status             = ?,
+		        via                = ?,
+		        face_match_score   = COALESCE(?, face_match_score),
+		        fp_match_score     = COALESCE(?, fp_match_score),
+		        fp_quality         = COALESCE(?, fp_quality),
+		        fp_nfiq            = COALESCE(?, fp_nfiq),
+		        fp_liveness        = COALESCE(?, fp_liveness),
+		        iris_left_score    = COALESCE(?, iris_left_score),
+		        iris_right_score   = COALESCE(?, iris_right_score),
+		        iris_left_quality  = COALESCE(?, iris_left_quality),
+		        iris_right_quality = COALESCE(?, iris_right_quality),
+		        match_threshold    = COALESCE(?, match_threshold),
+		        decision_ms        = COALESCE(?, decision_ms)
+		  WHERE id = ?`,
+		boolInt(req.FaceMatch), boolInt(req.FpMatch), newStatus, newVia,
+		nullableFloat(req.FaceMatchScore), nullableInt(req.FpMatchScore),
+		nullableInt(req.FpQuality), nullableInt(req.FpNfiq), nullableInt(req.FpLiveness),
+		nullableFloat(req.IrisLeftScore), nullableFloat(req.IrisRightScore),
+		nullableInt(req.IrisLeftQuality), nullableInt(req.IrisRightQuality),
+		nullableInt(req.MatchThreshold), nullableInt(req.DecisionMs),
+		id,
+	)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db update: "+err.Error())
+		return
+	}
+
+	// Audit the transition so investigators can trace pass<->fail flips.
+	s.auditFromRequest(r, "verification.patched", "verification", id, map[string]any{
+		"before": map[string]any{
+			"status":     curStatus,
+			"face_match": curFace == 1,
+			"fp_match":   curFp == 1,
+			"iris_score": nullableFloatVal(curIrisScore),
+			"via":        curVia.String,
+		},
+		"after": map[string]any{
+			"status":     newStatus,
+			"face_match": req.FaceMatch,
+			"fp_match":   req.FpMatch,
+			"iris_score": nullableFloatValPtr(req.IrisLeftScore),
+			"via":        newVia,
+		},
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":     id,
+		"status": newStatus,
+		"via":    newVia,
+	})
+}
+
+func nullableFloatVal(n sql.NullFloat64) any {
+	if !n.Valid { return nil }
+	return n.Float64
+}
+func nullableFloatValPtr(p *float64) any {
+	if p == nil { return nil }
+	return *p
 }
 
 // findByIdempotencyKey looks up a previously-recorded verification by the

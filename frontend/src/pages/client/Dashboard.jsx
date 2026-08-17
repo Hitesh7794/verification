@@ -239,7 +239,11 @@ export default function ClientDashboard() {
   // verification flow. `reset()` clears result and puts us back to
   // step 0, ready for the next candidate.
   useEffect(() => {
-    if (result || submitting) return
+    // Only guard against a re-entrant fire while a request is in
+    // flight. Once the initial submission returns, subsequent
+    // recaptures should PATCH the existing row -- submitVerification
+    // routes internally based on whether verificationId is set.
+    if (submitting) return
     if (!candidate) return
     // Gating rule (migration 022): a modality is "needed" only if the
     // EXAM requires it AND the candidate actually has enrolment for
@@ -259,7 +263,7 @@ export default function ClientDashboard() {
     if (step < 3) setStep(3)
     submitVerification(finalStatus)
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [candidate, faceResult, fpResult, irisResult, result, submitting])
+  }, [candidate, faceResult, fpResult, irisResult, submitting])
 
   // Persist whenever the meaningful state changes, so an unexpected
   // refresh doesn't lose the operator's in-flight verification.
@@ -439,10 +443,22 @@ export default function ClientDashboard() {
         body.face_match_score = faceResult.score
       }
 
-      const created = await api('/verifications', { method: 'POST', body })
-      if (created && created.id) setVerificationId(created.id)
-      setResult(status)
-      // Flow is complete — discard the persisted state so a refresh
+      // First submission = POST (creates the row + charges the wallet
+      // if not already charged by face-match). Any subsequent submission
+      // in the SAME verification session (verificationId set) is a PATCH
+      // that overwrites the biometric flags + recomputes status/via
+      // server-side. Wallet is not re-charged on PATCH.
+      let saved
+      if (verificationId) {
+        saved = await api(`/verifications/${verificationId}`, { method: 'PATCH', body })
+      } else {
+        saved = await api('/verifications', { method: 'POST', body })
+        if (saved && saved.id) setVerificationId(saved.id)
+      }
+      // Use the server-computed status (PATCH may have flipped it based
+      // on the fresh biometric flags), not the frontend's guess.
+      setResult(saved?.status || status)
+      // Flow is complete -- discard the persisted state so a refresh
       // lands the operator on a clean Step 1 ready for the next
       // candidate, not on an old completed verification.
       clearPersistedState()
