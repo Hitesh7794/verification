@@ -1,15 +1,14 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import AppShell from '../../components/shell/AppShell.jsx'
-import SuperTabs from '../../components/shell/SuperTabs.jsx'
+import SuperShell, { PageHead } from '../../components/shell/SuperShell.jsx'
+import ConfirmDialog from '../../components/shell/ConfirmDialog.jsx'
 import {
   Button,
   Card,
   CardBody,
   Input,
   Label,
-  PageHeader,
 } from '../../components/ui/ui.jsx'
 import { Icon, Pill } from '../../components/ui/extras.jsx'
 import { FadeIn } from '../../components/ui/motion.jsx'
@@ -19,6 +18,8 @@ import {
   toggleExamVisibility,
   closeExam,
   reopenExam,
+  deleteClient,
+  deleteExam,
 } from '../../lib/superadmin/examCatalog.js'
 import { dateRange } from '../../lib/dates.js'
 
@@ -33,6 +34,10 @@ export default function ClientDetail() {
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [creating, setCreating] = useState(false)
+
+  // Confirm-dialog state. `dlg` is null when closed, or an object
+  // { kind, title, body, confirmLabel, tone, onConfirm } when open.
+  const [dlg, setDlg] = useState(null)
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -54,26 +59,47 @@ export default function ClientDetail() {
     await toggleExamVisibility(examId)
     await refresh()
   }
-  async function onClose(examId) {
-    if (!confirm('End this exam? New verifications against it will be blocked. Existing data is preserved and you can reopen it later.')) return
-    await closeExam(examId)
-    await refresh()
+  function askClose(examId, examName) {
+    setDlg({
+      title:        `End "${examName}"?`,
+      body:         'New verifications against this exam will be blocked.\nExisting data is preserved — you can reopen it later.',
+      confirmLabel: 'End exam',
+      tone:         'warn',
+      onConfirm:    async () => { await closeExam(examId); await refresh(); setDlg(null) },
+    })
   }
   async function onReopen(examId) {
     await reopenExam(examId)
     await refresh()
   }
+  function askDeleteExam(examId, examName) {
+    setDlg({
+      title:        `Delete "${examName}"?`,
+      body:         'This is permanent. Only allowed if no verifications reference candidates in this exam.\n\nUse "End" instead if you want to close the exam while preserving its data.',
+      confirmLabel: 'Delete exam',
+      tone:         'danger',
+      onConfirm:    async () => { await deleteExam(examId); await refresh(); setDlg(null) },
+    })
+  }
+  function askDeleteClient() {
+    setDlg({
+      title:        `Delete "${client.name}"?`,
+      body:         'This is permanent. Only allowed if the client has no exams.\n\nUse "End" instead if you want to close the client while preserving its data.',
+      confirmLabel: 'Delete client',
+      tone:         'danger',
+      onConfirm:    async () => { await deleteClient(id); nav('/superadmin/clients') },
+    })
+  }
 
   if (loading) {
-    return <AppShell><SuperTabs /><div className="p-12 text-center text-sm text-slate-500">Loading…</div></AppShell>
+    return <SuperShell><div className="p-12 text-center text-sm text-slate-500">Loading…</div></SuperShell>
   }
   if (!client) {
     return (
-      <AppShell>
-        <SuperTabs />
-        <PageHeader title="Client not found" />
+      <SuperShell>
+        <PageHead eyebrow="Client" title="Client not found" />
         <Link to="/superadmin/clients" className="text-indigo-600 hover:underline text-sm">← Back to clients</Link>
-      </AppShell>
+      </SuperShell>
     )
   }
 
@@ -81,8 +107,7 @@ export default function ClientDetail() {
   const openExams = exams.filter(e => !e.closed).length
 
   return (
-    <AppShell>
-      <SuperTabs />
+    <SuperShell>
       <FadeIn>
         <div className="mb-3">
           <Link to="/superadmin/clients" className="inline-flex items-center gap-1 text-xs font-medium text-slate-500 hover:text-slate-800 transition-colors">
@@ -94,12 +119,12 @@ export default function ClientDetail() {
         {/* Client hero — avatar chip + name + status chips + a small
             stat strip. More visual weight than a bare PageHeader row,
             so the page has a clear "you're inside this client" anchor. */}
-        <div className="mb-8 rounded-xl bg-white ring-1 ring-slate-200 overflow-hidden">
-          <div className="h-1 bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500" />
+        <div className="mb-8 rounded-xl bg-warm-surface ring-1 ring-warm overflow-hidden">
+          <div className="h-1 bg-stone-900" />
           <div className="p-5 sm:p-6">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="flex items-start gap-4 min-w-0">
-                <div className="h-12 w-12 rounded-xl bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+                <div className="h-12 w-12 rounded-xl bg-stone-100 text-stone-800 flex items-center justify-center shrink-0">
                   <Icon.Building className="h-6 w-6" />
                 </div>
                 <div className="min-w-0">
@@ -116,10 +141,16 @@ export default function ClientDetail() {
                   </div>
                 </div>
               </div>
-              <Button onClick={() => setCreating(v => !v)}>
-                <Icon.Plus className="h-4 w-4 mr-1.5" />
-                {creating ? 'Cancel' : 'New exam'}
-              </Button>
+              <div className="flex items-center gap-2">
+                <Button variant="danger" onClick={askDeleteClient}>
+                  <Icon.Trash className="h-4 w-4 mr-1.5" />
+                  Delete
+                </Button>
+                <Button onClick={() => setCreating(v => !v)}>
+                  <Icon.Plus className="h-4 w-4 mr-1.5" />
+                  {creating ? 'Cancel' : 'New exam'}
+                </Button>
+              </div>
             </div>
 
             <div className="mt-5 pt-5 border-t border-slate-100 grid grid-cols-3 gap-6 text-sm">
@@ -207,9 +238,9 @@ export default function ClientDetail() {
                           </div>
                         </td>
                         <td className="px-5 py-3.5">
-                          <div className="flex justify-end gap-1">
+                          <div className="flex justify-end gap-1.5">
                             <Button
-                              variant="ghost"
+                              variant="secondary"
                               size="sm"
                               onClick={() => onToggleVisibility(e.id)}
                               title={e.visible
@@ -220,7 +251,7 @@ export default function ClientDetail() {
                             </Button>
                             {e.closed
                               ? <Button
-                                  variant="ghost"
+                                  variant="secondary"
                                   size="sm"
                                   onClick={() => onReopen(e.id)}
                                   title="Allow new verifications against this exam again"
@@ -228,16 +259,25 @@ export default function ClientDetail() {
                                   Reopen
                                 </Button>
                               : <Button
-                                  variant="ghost"
+                                  variant="secondary"
                                   size="sm"
-                                  onClick={() => onClose(e.id)}
+                                  onClick={() => askClose(e.id, e.name)}
                                   title="Stop accepting new verifications (existing data preserved, reversible)"
                                 >
                                   End
                                 </Button>}
+                            <Button
+                              variant="secondary"
+                              size="sm"
+                              onClick={() => askDeleteExam(e.id, e.name)}
+                              title="Permanently delete — only allowed if no verifications reference this exam's candidates"
+                              className="!text-rose-700 !border-rose-200 hover:!bg-rose-50 hover:!border-rose-300"
+                            >
+                              Delete
+                            </Button>
                             <Link
                               to={`/superadmin/exams/${e.id}`}
-                              className="inline-flex items-center px-2.5 py-1.5 text-xs font-medium rounded-md text-indigo-600 hover:bg-indigo-50 transition-colors"
+                              className="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-lg bg-stone-900 text-white hover:bg-stone-800 transition-colors"
                               title="Open this exam's detail page to upload CSVs, edit fields, and see verifications"
                             >
                               Manage
@@ -254,7 +294,17 @@ export default function ClientDetail() {
           </CardBody>
         </Card>
       </FadeIn>
-    </AppShell>
+
+      <ConfirmDialog
+        open={!!dlg}
+        onCancel={() => setDlg(null)}
+        onConfirm={dlg?.onConfirm || (() => {})}
+        title={dlg?.title}
+        body={dlg?.body}
+        confirmLabel={dlg?.confirmLabel}
+        tone={dlg?.tone}
+      />
+    </SuperShell>
   )
 }
 
@@ -333,11 +383,11 @@ function NewExamForm({ clientId, onCancel, onCreated }) {
   const canSubmit = name.trim() && code.trim() && from && to && (reqFace || reqFP || reqIris)
 
   return (
-    <div className="mb-6 rounded-xl bg-white ring-1 ring-slate-200 shadow-sm overflow-hidden">
-      <div className="h-1 bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500" />
+    <div className="mb-6 rounded-xl bg-warm-surface ring-1 ring-warm shadow-sm overflow-hidden">
+      <div className="h-1 bg-stone-900" />
       <div className="p-5 sm:p-6">
         <div className="flex items-start gap-3 mb-6">
-          <div className="h-9 w-9 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+          <div className="h-9 w-9 rounded-lg bg-stone-100 text-stone-800 flex items-center justify-center shrink-0">
             <Icon.FileText className="h-5 w-5" />
           </div>
           <div>

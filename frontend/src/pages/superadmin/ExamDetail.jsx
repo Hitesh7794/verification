@@ -1,7 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
-import AppShell from '../../components/shell/AppShell.jsx'
-import SuperTabs from '../../components/shell/SuperTabs.jsx'
+import { Link, useNavigate, useParams } from 'react-router-dom'
+import SuperShell, { PageHead } from '../../components/shell/SuperShell.jsx'
+import ConfirmDialog from '../../components/shell/ConfirmDialog.jsx'
 import {
   Button,
   Card,
@@ -10,7 +10,6 @@ import {
   CardTitle,
   Input,
   Label,
-  PageHeader,
 } from '../../components/ui/ui.jsx'
 import { Icon, Pill } from '../../components/ui/extras.jsx'
 import { FadeIn } from '../../components/ui/motion.jsx'
@@ -20,6 +19,7 @@ import {
   toggleExamVisibility,
   closeExam,
   reopenExam,
+  deleteExam,
   listCandidates,
   uploadCandidateCSV,
   downloadRawCSV,
@@ -32,6 +32,7 @@ import { dateOnly, dateRange } from '../../lib/dates.js'
 // download links, inline visibility + close buttons.
 export default function ExamDetail() {
   const { id } = useParams()
+  const nav = useNavigate()
   const [exam, setExam] = useState(null)
   const [uploads, setUploads] = useState([])
   const [candidates, setCandidates] = useState([])
@@ -48,6 +49,9 @@ export default function ExamDetail() {
   const [centresUploading, setCentresUploading] = useState(false)
   const [centresUploadInfo, setCentresUploadInfo] = useState(null) // {ok, msg} | null
   const [centresUploadErrs, setCentresUploadErrs] = useState(null)
+
+  // Confirm-dialog state — null when closed.
+  const [dlg, setDlg] = useState(null)
 
   const refreshExam = useCallback(async () => {
     try {
@@ -121,27 +125,40 @@ export default function ExamDetail() {
     await toggleExamVisibility(id)
     await refreshExam()
   }
-  async function onClose() {
-    if (!confirm('End this exam? New verifications will be blocked. Existing data is preserved and you can reopen it later.')) return
-    await closeExam(id)
-    await refreshExam()
+  function askClose() {
+    setDlg({
+      title:        `End "${exam.name}"?`,
+      body:         'New verifications will be blocked.\nExisting data is preserved — you can reopen it later.',
+      confirmLabel: 'End exam',
+      tone:         'warn',
+      onConfirm:    async () => { await closeExam(id); await refreshExam(); setDlg(null) },
+    })
   }
   async function onReopen() {
     await reopenExam(id)
     await refreshExam()
   }
+  function askDelete() {
+    setDlg({
+      title:        `Delete "${exam.name}"?`,
+      body:         'This is permanent. Only allowed if no verifications reference candidates in this exam.\n\nDeleting will also remove all its candidates, centres, CSV uploads, and operator assignments.\n\nUse "End" instead if you want to close it while preserving data.',
+      confirmLabel: 'Delete exam',
+      tone:         'danger',
+      onConfirm:    async () => { await deleteExam(id); nav(`/superadmin/clients/${exam.client_id}`) },
+    })
+  }
 
   if (loading) {
-    return <AppShell><div className="p-10 text-center text-sm text-slate-500">Loading…</div></AppShell>
+    return <SuperShell><div className="p-10 text-center text-sm text-slate-500">Loading…</div></SuperShell>
   }
   if (!exam) {
     return (
-      <AppShell>
-        <PageHeader title="Exam not found" />
+      <SuperShell>
+        <PageHead eyebrow="Exam" title="Exam not found" />
         <Link to="/superadmin/clients" className="text-indigo-600 hover:underline text-sm">
           ← Back to clients
         </Link>
-      </AppShell>
+      </SuperShell>
     )
   }
 
@@ -149,15 +166,15 @@ export default function ExamDetail() {
   const currentPage = Math.floor(offset / PAGE) + 1
 
   return (
-    <AppShell>
-      <SuperTabs />
+    <SuperShell>
       <FadeIn>
         <div className="mb-2">
           <Link to={`/superadmin/clients/${exam.client_id}`} className="text-xs text-slate-500 hover:text-slate-700">
             ← {exam.client_name}
           </Link>
         </div>
-        <PageHeader
+        <PageHead
+          eyebrow="Exam"
           title={exam.name}
           subtitle={
             <span className="inline-flex items-center gap-2 flex-wrap">
@@ -179,11 +196,11 @@ export default function ExamDetail() {
           }
           right={
             <div className="flex gap-2">
-              <Button variant="ghost" onClick={() => setEditing(v => !v)}>
+              <Button variant="secondary" onClick={() => setEditing(v => !v)}>
                 {editing ? 'Cancel' : 'Edit'}
               </Button>
               <Button
-                variant="ghost"
+                variant="secondary"
                 onClick={onToggleVisibility}
                 title={exam.visible
                   ? 'Remove from the catalog admins subscribe from (reversible)'
@@ -193,19 +210,27 @@ export default function ExamDetail() {
               </Button>
               {exam.closed
                 ? <Button
-                    variant="ghost"
+                    variant="secondary"
                     onClick={onReopen}
                     title="Allow new verifications against this exam again"
                   >
                     Reopen
                   </Button>
                 : <Button
-                    variant="ghost"
-                    onClick={onClose}
+                    variant="secondary"
+                    onClick={askClose}
                     title="Stop accepting new verifications (existing data preserved, reversible)"
                   >
                     End
                   </Button>}
+              <Button
+                variant="secondary"
+                onClick={askDelete}
+                title="Permanently delete this exam — only allowed if no verifications reference its candidates"
+                className="!text-rose-700 !border-rose-200 hover:!bg-rose-50 hover:!border-rose-300"
+              >
+                Delete
+              </Button>
             </div>
           }
         />
@@ -389,7 +414,17 @@ export default function ExamDetail() {
           </CardBody>
         </Card>
       </FadeIn>
-    </AppShell>
+
+      <ConfirmDialog
+        open={!!dlg}
+        onCancel={() => setDlg(null)}
+        onConfirm={dlg?.onConfirm || (() => {})}
+        title={dlg?.title}
+        body={dlg?.body}
+        confirmLabel={dlg?.confirmLabel}
+        tone={dlg?.tone}
+      />
+    </SuperShell>
   )
 }
 

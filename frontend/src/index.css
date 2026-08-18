@@ -7,14 +7,43 @@
   --color-brand-600: #4f46e5;
   --color-brand-700: #4338ca;
   --color-brand-900: #312e81;
+
+  /* Executive palette used by the superadmin surfaces. Navy base,
+     indigo accent, slate greys, emerald/amber/rose for status. */
+  --color-ink-950: #020617;
+  --color-ink-900: #0f172a;
+  --color-ink-800: #1e293b;
+  --color-ink-700: #334155;
+
+  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system,
+               "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo,
+               Consolas, monospace;
 }
 
 html, body, #root { height: 100%; }
 
 body {
-  font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+  font-family: var(--font-sans);
+  background-color: #FBF7F0; /* warm parchment — the superadmin surface tone */
+  /* Inter's tabular-nums + stylistic sets look sharper on dashboards. */
+  font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01", "ss03";
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
 }
+
+/* Superadmin warm palette tokens — applied via arbitrary tailwind
+   values (bg-[#FBF7F0], border-[#EDE4D3]) or via these utility classes. */
+.bg-warm-page { background-color: #FBF7F0; }        /* page canvas */
+.bg-warm-surface { background-color: #FFFDF8; }     /* card surface, slightly warm white */
+.bg-warm-tint { background-color: #F5EEDF; }        /* highlighted band / hero underlay */
+.border-warm { border-color: #EDE4D3; }             /* hairline warm border */
+.border-warm-strong { border-color: #D8CBB0; }      /* accented warm border */
+.text-warm-accent { color: #B45309; }               /* amber-700 rust accent */
+
+/* Utility class for numeric fields (stat tiles, tables, charts).
+   Applied via className="font-mono" or directly for tabular columns. */
+.tabular-nums { font-variant-numeric: tabular-nums; }
 
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 6px; }

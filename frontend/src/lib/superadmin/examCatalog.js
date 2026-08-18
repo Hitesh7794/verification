@@ -38,6 +38,10 @@ export async function reopenClient(id) {
   return api(`/superadmin/clients/${id}/reopen`, { method: 'POST' })
 }
 
+export async function deleteClient(id) {
+  return api(`/superadmin/clients/${id}`, { method: 'DELETE' })
+}
+
 // ── Exams ─────────────────────────────────────────────────────────────
 
 export async function createExam(clientId, exam) {
@@ -65,6 +69,10 @@ export async function closeExam(id) {
 
 export async function reopenExam(id) {
   return api(`/superadmin/exams/${id}/reopen`, { method: 'POST' })
+}
+
+export async function deleteExam(id) {
+  return api(`/superadmin/exams/${id}`, { method: 'DELETE' })
 }
 
 // ── Candidates + CSV upload ───────────────────────────────────────────

@@ -1,15 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import AppShell from '../../components/shell/AppShell.jsx'
-import SuperTabs from '../../components/shell/SuperTabs.jsx'
+import SuperShell, { PageHead } from '../../components/shell/SuperShell.jsx'
 import {
   Button,
   Card,
   CardBody,
   Input,
   Label,
-  PageHeader,
 } from '../../components/ui/ui.jsx'
 import { Icon, Pill, Skeleton } from '../../components/ui/extras.jsx'
 import { FadeIn } from '../../components/ui/motion.jsx'
@@ -111,10 +109,10 @@ export default function Clients() {
   const totalExams = clients.reduce((s, c) => s + (c.exam_count || 0), 0)
 
   return (
-    <AppShell>
-      <SuperTabs />
+    <SuperShell>
       <FadeIn>
-        <PageHeader
+        <PageHead
+          eyebrow="Directory"
           title="Clients"
           subtitle="Exam-conducting bodies. Each client owns its exams."
           right={
@@ -153,11 +151,11 @@ export default function Clients() {
               transition={{ duration: 0.18, ease: 'easeOut' }}
               className="overflow-hidden"
             >
-              <div className="mb-6 rounded-xl bg-white ring-1 ring-slate-200 shadow-sm overflow-hidden">
-                <div className="h-1 bg-gradient-to-r from-indigo-500 via-violet-500 to-fuchsia-500" />
+              <div className="mb-6 rounded-xl bg-warm-surface ring-1 ring-warm shadow-sm overflow-hidden">
+                <div className="h-1 bg-stone-900" />
                 <div className="p-5 sm:p-6">
                   <div className="flex items-start gap-3 mb-5">
-                    <div className="h-9 w-9 rounded-lg bg-indigo-50 text-indigo-600 flex items-center justify-center shrink-0">
+                    <div className="h-9 w-9 rounded-lg bg-stone-100 text-stone-800 flex items-center justify-center shrink-0">
                       <Icon.Building className="h-5 w-5" />
                     </div>
                     <div>
@@ -277,9 +275,9 @@ export default function Clients() {
                               </Button>
                             </div>
                           ) : (
-                            <div className="flex justify-end gap-1">
+                            <div className="flex justify-end gap-1.5">
                               <Button
-                                variant="ghost"
+                                variant="secondary"
                                 size="sm"
                                 disabled={busyId === c.id}
                                 onClick={() => onToggleVisibility(c)}
@@ -291,7 +289,7 @@ export default function Clients() {
                               </Button>
                               {c.closed ? (
                                 <Button
-                                  variant="ghost"
+                                  variant="secondary"
                                   size="sm"
                                   disabled={busyId === c.id}
                                   onClick={() => onReopen(c)}
@@ -301,7 +299,7 @@ export default function Clients() {
                                 </Button>
                               ) : (
                                 <Button
-                                  variant="ghost"
+                                  variant="secondary"
                                   size="sm"
                                   disabled={busyId === c.id}
                                   onClick={() => setConfirmingId(c.id)}
@@ -312,7 +310,7 @@ export default function Clients() {
                               )}
                               <Link
                                 to={`/superadmin/clients/${c.id}`}
-                                className="inline-flex items-center px-2.5 py-1.5 text-xs font-medium rounded-md text-indigo-600 hover:bg-indigo-50 transition-colors"
+                                className="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-lg bg-stone-900 text-white hover:bg-stone-800 transition-colors"
                                 title="Open this client's detail page to see and manage its exams"
                               >
                                 Manage
@@ -330,7 +328,7 @@ export default function Clients() {
           </CardBody>
         </Card>
       </FadeIn>
-    </AppShell>
+    </SuperShell>
   )
 }
 

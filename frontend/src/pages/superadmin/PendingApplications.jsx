@@ -1,14 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import AppShell from '../../components/shell/AppShell.jsx'
-import SuperTabs from '../../components/shell/SuperTabs.jsx'
+import SuperShell, { PageHead } from '../../components/shell/SuperShell.jsx'
+import { StatCard as XStatCard } from '../../components/shell/SuperUI.jsx'
 import {
   Button,
   Card,
   CardBody,
   Input,
-  PageHeader,
 } from '../../components/ui/ui.jsx'
 import { Icon, Pill, StatTile } from '../../components/ui/extras.jsx'
 import { FadeIn, StaggerList, StaggerItem } from '../../components/ui/motion.jsx'
@@ -87,15 +86,15 @@ export default function PendingApplications() {
   const showingTo = Math.min(offset + PAGE_SIZE, total)
 
   return (
-    <AppShell>
-      <SuperTabs />
-      <PageHeader
+    <SuperShell>
+      <PageHead
+        eyebrow="Applications"
         title="Institution registrations"
-        subtitle="Review and approve institution onboarding applications."
+        subtitle="Review, approve, or reject institutions applying to onboard onto the platform."
         right={
           <button
             onClick={() => { setLoading(true); load() }}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50"
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
           >
             <Icon.Refresh className="h-4 w-4" />
             Refresh
@@ -325,7 +324,7 @@ export default function PendingApplications() {
           </div>
         </div>
       )}
-    </AppShell>
+    </SuperShell>
   )
 }
 
