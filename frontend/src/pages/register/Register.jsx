@@ -312,6 +312,12 @@ export default function Register() {
 
   function update(field, value) {
     setForm((f) => ({ ...f, [field]: value }))
+    if (field === 'head_email' && value !== form.head_email) {
+      setEmailOtpToken('')
+    }
+    if (field === 'head_mobile' && value !== form.head_mobile) {
+      setMobileOtpToken('')
+    }
     // Live-correct: only re-run the rule for a field that is ALREADY
     // showing an error, so the message disappears the instant the value
     // becomes valid. Fields with no error stay quiet while typing —
@@ -396,7 +402,14 @@ export default function Register() {
       }
       setStep(S_DOCUMENTS)
     } catch (err) {
-      setTopError(err.message)
+      const msg = err.message || 'Registration failed'
+      setTopError(msg)
+      if (msg.toLowerCase().includes('email verification')) {
+        setEmailOtpToken('')
+      }
+      if (msg.toLowerCase().includes('mobile verification')) {
+        setMobileOtpToken('')
+      }
     } finally {
       setSubmitting(false)
     }
