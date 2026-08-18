@@ -10,6 +10,8 @@ import {
 } from '../../components/ui/ui.jsx'
 import { Icon, Pill } from '../../components/ui/extras.jsx'
 import { FadeIn } from '../../components/ui/motion.jsx'
+import OtpVerificationField from '../../components/ui/OtpVerificationField.jsx'
+import { sendEmailOTP, verifyEmailOTP } from '../../lib/otp/api.js'
 import {
   listOperators,
   createOperator,
@@ -500,13 +502,19 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
   const [password, setPassword] = useState('')
   const [showPw, setShowPw] = useState(false)
   const [displayName, setDisplayName] = useState(operator?.display_name || '')
-  const [email, setEmail] = useState(operator?.email || '')
+  const initialEmail = (operator?.email || '').trim().toLowerCase()
+  const [email, setEmail] = useState(initialEmail)
+  const [emailOtpToken, setEmailOtpToken] = useState('')
   const [capRupees, setCapRupees] = useState(operator?.spending_cap_paise ? String(operator.spending_cap_paise / 100) : '')
   const [validFrom, setValidFrom] = useState(operator?.valid_from || '')
   const [validTo, setValidTo] = useState(operator?.valid_to || '')
   const [examIds, setExamIds] = useState(operator?.assigned_exam_ids || [])
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
+
+  const isEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
+  const emailUnchanged = isEdit && Boolean(initialEmail) && email.trim().toLowerCase() === initialEmail
+  const isEmailVerified = emailUnchanged || Boolean(emailOtpToken)
 
   async function onSubmit(e) {
     e.preventDefault()
@@ -515,9 +523,17 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
     try {
       const capPaise = capRupees.trim() ? Math.round(Number(capRupees) * 100) : null
       if (isEdit) {
+        if (!isEmailVerified) {
+          setErr('Please verify the operator email with OTP before saving.')
+          setSaving(false)
+          return
+        }
         const patch = { exam_ids: examIds }
         if (displayName !== operator.display_name) patch.display_name = displayName
-        if (email !== (operator.email || '')) patch.email = email
+        if (email.trim().toLowerCase() !== initialEmail) {
+          patch.email = email.trim()
+          patch.email_otp_token = emailOtpToken
+        }
         if (password.trim()) patch.password = password
         if (validFrom !== (operator.valid_from || '')) patch.valid_from = validFrom
         if (validTo !== (operator.valid_to || '')) patch.valid_to = validTo
@@ -525,11 +541,17 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
         else if (capPaise !== null && capPaise !== operator.spending_cap_paise) patch.spending_cap_paise = capPaise
         await patchOperator(operator.id, patch)
       } else {
+        if (!isEmailVerified) {
+          setErr('Please verify the operator email with OTP before creating.')
+          setSaving(false)
+          return
+        }
         await createOperator({
           username: username.trim(),
           password,
           display_name: displayName.trim() || username.trim(),
           email: email.trim() || undefined,
+          email_otp_token: emailOtpToken,
           spending_cap_paise: capPaise,
           valid_from: validFrom || undefined,
           valid_to: validTo || undefined,
@@ -559,18 +581,29 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
           <Label>Display name</Label>
           <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
         </div>
-        <div>
-          <Label>Email</Label>
-          <Input
+        <div className="sm:col-span-2">
+          <OtpVerificationField
+            label="Email"
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="operator@college.edu"
             required
+            isVerified={isEmailVerified}
+            onVerified={(token) => {
+              setEmailOtpToken(token)
+              setErr('')
+            }}
+            onResetVerification={() => {
+              setEmailOtpToken('')
+            }}
+            sendOtpFn={() => sendEmailOTP(email.trim(), 'operator_creation')}
+            verifyOtpFn={(code) => verifyEmailOTP(email.trim(), code, 'operator_creation')}
+            canSendOtp={isEmailValid && !emailUnchanged}
           />
-          {!isEdit && (
+          {!isEmailVerified && (
             <p className="text-[11px] text-slate-500 mt-1">
-              The operator will get an email with their username, password, and login link.
+              Verify operator's email with OTP. Enter email and click <strong>Send OTP</strong> to verify.
             </p>
           )}
         </div>
@@ -659,7 +692,7 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
 
       <div className="flex justify-end gap-2">
         <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>
-        <Button type="submit" disabled={saving || examIds.length === 0}>
+        <Button type="submit" disabled={saving || examIds.length === 0 || !isEmailVerified}>
           {saving ? 'Saving…' : (isEdit ? 'Save changes' : 'Create operator')}
         </Button>
       </div>
