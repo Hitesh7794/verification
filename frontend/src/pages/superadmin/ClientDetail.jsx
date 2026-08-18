@@ -20,6 +20,10 @@ import {
   reopenExam,
   deleteClient,
   deleteExam,
+  setClientPortal,
+  listClientReviewers,
+  createClientReviewer,
+  deleteClientReviewer,
 } from '../../lib/superadmin/examCatalog.js'
 import { dateRange } from '../../lib/dates.js'
 
@@ -176,6 +180,8 @@ export default function ClientDetail() {
           </div>
         )}
 
+        <ReviewPortalPanel client={client} onChanged={refresh} />
+
         <AnimatePresence initial={false}>
           {creating && (
             <motion.div
@@ -306,6 +312,396 @@ export default function ClientDetail() {
       />
     </SuperShell>
   )
+}
+
+// ── Reviewer portal panel ───────────────────────────────────────────
+//
+// Two responsibilities in one card:
+//   1. Toggle whether this client shows up in the register form's
+//      public dropdown (portal_enabled on the clients row).
+//   2. Manage the reviewer users who log into /client/* to approve
+//      or reject applications routed here.
+//
+// The plaintext password for a newly-created reviewer is echoed ONCE
+// by the API and shown here with an obvious copy affordance — this
+// account isn't in the operator plaintext table, so if the superadmin
+// misses it, the only remedy is to delete + recreate the reviewer.
+
+function ReviewPortalPanel({ client, onChanged }) {
+  const [portalOn, setPortalOn] = useState(!!client.portal_enabled)
+  const [toggling, setToggling] = useState(false)
+  const [reviewers, setReviewers] = useState([])
+  const [loading, setLoading] = useState(true)
+  const [err, setErr] = useState('')
+  const [showAdd, setShowAdd] = useState(false)
+  // Plaintext echo for the reviewer just created — cleared on the next
+  // action so it never lingers past the moment the superadmin needs it.
+  const [freshCred, setFreshCred] = useState(null)
+  const [confirm, setConfirm] = useState(null)
+
+  useEffect(() => { setPortalOn(!!client.portal_enabled) }, [client.portal_enabled])
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setErr('')
+    try {
+      const rows = await listClientReviewers(client.id)
+      setReviewers(rows || [])
+    } catch (e) {
+      setErr(e.message || 'Could not load reviewers')
+    } finally {
+      setLoading(false)
+    }
+  }, [client.id])
+
+  useEffect(() => { load() }, [load])
+
+  async function onToggle() {
+    setToggling(true)
+    setErr('')
+    const next = !portalOn
+    // Optimistic — flip immediately so the switch feels tactile; roll
+    // back on failure. Skipping this made the click read as "did the
+    // click even land?" during the network round-trip.
+    setPortalOn(next)
+    try {
+      await setClientPortal(client.id, next)
+      await onChanged?.()
+    } catch (e) {
+      setPortalOn(!next)
+      setErr(e.message || 'Could not update portal setting')
+    } finally {
+      setToggling(false)
+    }
+  }
+
+  async function onCreated(row) {
+    setFreshCred({ username: row.username, password: row.password })
+    setShowAdd(false)
+    await load()
+  }
+
+  function askDelete(row) {
+    setConfirm({
+      title:        `Remove reviewer "${row.username}"?`,
+      body:         `${row.display_name} will no longer be able to sign in and review applications for ${client.name}. Existing decisions they made are preserved.`,
+      confirmLabel: 'Remove reviewer',
+      tone:         'danger',
+      onConfirm:    async () => {
+        try {
+          await deleteClientReviewer(client.id, row.id)
+          setConfirm(null)
+          await load()
+        } catch (e) {
+          setErr(e.message || 'Could not remove reviewer')
+          setConfirm(null)
+        }
+      },
+    })
+  }
+
+  return (
+    <>
+      <div className="mb-8 rounded-xl bg-white ring-1 ring-warm overflow-hidden">
+        {/* Header row — inline toggle so the primary decision is visible
+            before you scroll into reviewer details. */}
+        <div className="px-5 sm:px-6 py-4 flex items-start justify-between gap-4 border-b border-slate-100">
+          <div className="flex items-start gap-3 min-w-0">
+            <div className="h-10 w-10 rounded-xl bg-stone-100 text-stone-800 flex items-center justify-center shrink-0">
+              <Icon.ShieldCheck className="h-5 w-5" />
+            </div>
+            <div className="min-w-0">
+              <h2 className="text-base font-semibold text-slate-900">Review portal</h2>
+              <p className="text-xs text-slate-500 mt-0.5">
+                When enabled, institutions can register directly to this client. Reviewers
+                below sign in at <span className="font-mono text-slate-700">/client/login</span> to
+                approve or reject KYC.
+              </p>
+            </div>
+          </div>
+          <PortalToggle on={portalOn} onToggle={onToggle} disabled={toggling} />
+        </div>
+
+        {err && (
+          <div role="alert" className="mx-5 sm:mx-6 mt-4 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-700">
+            {err}
+          </div>
+        )}
+
+        <div className="px-5 sm:px-6 py-5">
+          <div className="flex items-baseline justify-between gap-2 mb-3">
+            <div>
+              <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Reviewer accounts</p>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {loading ? 'Loading…' : `${reviewers.length} account${reviewers.length === 1 ? '' : 's'}`}
+              </p>
+            </div>
+            <Button size="sm" onClick={() => setShowAdd((v) => !v)}>
+              <Icon.Plus className="h-3.5 w-3.5 mr-1" />
+              {showAdd ? 'Cancel' : 'Add reviewer'}
+            </Button>
+          </div>
+
+          {freshCred && (
+            <FreshCredentialBanner
+              username={freshCred.username}
+              password={freshCred.password}
+              onDismiss={() => setFreshCred(null)}
+            />
+          )}
+
+          <AnimatePresence initial={false}>
+            {showAdd && (
+              <motion.div
+                initial={{ opacity: 0, y: -6, height: 0 }}
+                animate={{ opacity: 1, y: 0, height: 'auto' }}
+                exit={{ opacity: 0, y: -6, height: 0 }}
+                transition={{ duration: 0.18, ease: 'easeOut' }}
+                className="overflow-hidden"
+              >
+                <AddReviewerForm
+                  clientId={client.id}
+                  onCancel={() => setShowAdd(false)}
+                  onCreated={onCreated}
+                />
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {!loading && reviewers.length === 0 && !showAdd && (
+            <div className="rounded-lg border border-dashed border-slate-200 bg-slate-50/60 px-4 py-6 text-center">
+              <p className="text-sm text-slate-600">No reviewers yet.</p>
+              <p className="text-xs text-slate-500 mt-1">
+                Add at least one so this client can act on the applications it receives.
+              </p>
+            </div>
+          )}
+
+          {reviewers.length > 0 && (
+            <div className="overflow-x-auto rounded-lg ring-1 ring-slate-200">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="bg-slate-50/70 text-left text-[11px] uppercase tracking-wider text-slate-500">
+                    <th className="px-4 py-2.5">Username</th>
+                    <th className="px-4 py-2.5">Display name</th>
+                    <th className="px-4 py-2.5">Email</th>
+                    <th className="px-4 py-2.5">Added</th>
+                    <th className="px-4 py-2.5 text-right">Actions</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {reviewers.map((rv) => (
+                    <tr key={rv.id} className="border-t border-slate-100">
+                      <td className="px-4 py-2.5 font-mono text-xs text-slate-900">{rv.username}</td>
+                      <td className="px-4 py-2.5 text-slate-800">{rv.display_name}</td>
+                      <td className="px-4 py-2.5 text-slate-600">{rv.email || <span className="text-slate-400">—</span>}</td>
+                      <td className="px-4 py-2.5 text-xs text-slate-500 tabular-nums whitespace-nowrap">
+                        {formatShortDate(rv.created_at)}
+                      </td>
+                      <td className="px-4 py-2.5 text-right">
+                        <Button
+                          variant="secondary"
+                          size="sm"
+                          onClick={() => askDelete(rv)}
+                          className="!text-rose-700 !border-rose-200 hover:!bg-rose-50 hover:!border-rose-300"
+                        >
+                          Remove
+                        </Button>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      </div>
+
+      <ConfirmDialog
+        open={!!confirm}
+        onCancel={() => setConfirm(null)}
+        onConfirm={confirm?.onConfirm || (() => {})}
+        title={confirm?.title}
+        body={confirm?.body}
+        confirmLabel={confirm?.confirmLabel}
+        tone={confirm?.tone}
+      />
+    </>
+  )
+}
+
+// Small toggle switch. Kept local — the shell doesn't have a shared
+// switch primitive yet, and this is the only place it's used.
+function PortalToggle({ on, onToggle, disabled }) {
+  return (
+    <button
+      type="button"
+      onClick={disabled ? undefined : onToggle}
+      aria-pressed={on}
+      className={
+        'relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors ' +
+        (on ? 'bg-emerald-600' : 'bg-slate-300') +
+        (disabled ? ' opacity-60 cursor-wait' : ' cursor-pointer')
+      }
+      title={on ? 'Enabled — this client shows up on the register form' : 'Disabled — hidden from the register form'}
+    >
+      <span
+        className={
+          'inline-block h-5 w-5 rounded-full bg-white shadow transform transition-transform ' +
+          (on ? 'translate-x-6' : 'translate-x-1')
+        }
+      />
+      <span className="sr-only">{on ? 'Disable portal' : 'Enable portal'}</span>
+    </button>
+  )
+}
+
+function AddReviewerForm({ clientId, onCancel, onCreated }) {
+  const [username, setUsername] = useState('')
+  const [displayName, setDisplayName] = useState('')
+  const [email, setEmail] = useState('')
+  const [password, setPassword] = useState('')
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
+
+  async function submit(e) {
+    e.preventDefault()
+    setSaving(true)
+    setErr('')
+    try {
+      const row = await createClientReviewer(clientId, {
+        username: username.trim(),
+        display_name: displayName.trim(),
+        email: email.trim(),
+        password,
+      })
+      onCreated(row)
+    } catch (ex) {
+      setErr(ex.message || 'Could not create reviewer')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form
+      onSubmit={submit}
+      className="mb-4 rounded-lg border border-slate-200 bg-slate-50/60 p-4"
+    >
+      <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+        <div>
+          <Label>Username <span className="text-rose-600">*</span></Label>
+          <Input
+            value={username}
+            onChange={(e) => setUsername(e.target.value)}
+            placeholder="nta_reviewer_1"
+            autoComplete="off"
+            required
+          />
+        </div>
+        <div>
+          <Label>Display name <span className="text-rose-600">*</span></Label>
+          <Input
+            value={displayName}
+            onChange={(e) => setDisplayName(e.target.value)}
+            placeholder="NTA Onboarding Team"
+            required
+          />
+        </div>
+        <div>
+          <Label>Email</Label>
+          <Input
+            type="email"
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="onboarding@nta.ac.in"
+            autoComplete="off"
+          />
+        </div>
+        <div>
+          <Label>Password <span className="text-rose-600">*</span></Label>
+          <Input
+            type="text"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            placeholder="At least 8 characters"
+            autoComplete="new-password"
+            required
+          />
+          <p className="text-[11px] text-slate-500 mt-1">
+            Shown once after creation so you can hand it over. Not retrievable later.
+          </p>
+        </div>
+      </div>
+      {err && (
+        <div role="alert" className="mt-3 rounded-md bg-rose-50 border border-rose-200 px-3 py-1.5 text-xs text-rose-700">
+          {err}
+        </div>
+      )}
+      <div className="mt-4 flex items-center justify-end gap-2">
+        <Button type="button" variant="secondary" size="sm" onClick={onCancel} disabled={saving}>
+          Cancel
+        </Button>
+        <Button type="submit" size="sm" disabled={saving}>
+          {saving ? 'Creating…' : 'Create reviewer'}
+        </Button>
+      </div>
+    </form>
+  )
+}
+
+function FreshCredentialBanner({ username, password, onDismiss }) {
+  const [copied, setCopied] = useState(false)
+  function copy() {
+    try {
+      navigator.clipboard.writeText(`Username: ${username}\nPassword: ${password}`)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 1500)
+    } catch {}
+  }
+  return (
+    <div className="mb-4 rounded-lg border border-amber-200 bg-amber-50 px-4 py-3">
+      <div className="flex items-start justify-between gap-3">
+        <div className="min-w-0">
+          <p className="text-xs font-semibold uppercase tracking-wider text-amber-800">
+            Save this now
+          </p>
+          <p className="text-xs text-amber-900 mt-1">
+            This password is shown once. Hand it to the reviewer before dismissing.
+          </p>
+          <div className="mt-2 grid grid-cols-1 sm:grid-cols-2 gap-2 text-sm">
+            <div className="rounded-md bg-white ring-1 ring-amber-200 px-3 py-2">
+              <p className="text-[10px] uppercase tracking-wider text-slate-500">Username</p>
+              <p className="font-mono text-slate-900 mt-0.5 truncate">{username}</p>
+            </div>
+            <div className="rounded-md bg-white ring-1 ring-amber-200 px-3 py-2">
+              <p className="text-[10px] uppercase tracking-wider text-slate-500">Password</p>
+              <p className="font-mono text-slate-900 mt-0.5 truncate">{password}</p>
+            </div>
+          </div>
+        </div>
+        <div className="flex flex-col gap-1.5 shrink-0">
+          <Button size="sm" onClick={copy}>
+            {copied ? 'Copied' : 'Copy'}
+          </Button>
+          <Button size="sm" variant="secondary" onClick={onDismiss}>
+            Dismiss
+          </Button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+function formatShortDate(iso) {
+  if (!iso) return ''
+  try {
+    return new Date(iso).toLocaleDateString('en-IN', {
+      day: '2-digit', month: 'short', year: 'numeric',
+    })
+  } catch {
+    return String(iso).slice(0, 10)
+  }
 }
 
 function EmptyExams({ onCreate }) {

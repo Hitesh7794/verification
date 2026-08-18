@@ -12,6 +12,11 @@ type Claims struct {
 	Username string `json:"usr"`
 	Role     string `json:"role"`
 	OrgID    *int64 `json:"org,omitempty"`
+	// ClientID scopes the client-reviewer role: a user with
+	// role='client_reviewer' can only see + act on applications where
+	// institution_applications.client_id matches this. Unset for every
+	// other role.
+	ClientID *int64 `json:"cli,omitempty"`
 	jwt.RegisteredClaims
 }
 

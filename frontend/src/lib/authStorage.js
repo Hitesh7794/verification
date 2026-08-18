@@ -21,6 +21,11 @@ export function getRoleScope(pathname) {
   const p = pathname || (typeof window !== 'undefined' ? window.location.pathname : '')
   if (p.startsWith('/admin')) return 'admin'
   if (p.startsWith('/institute/operator')) return 'client'
+  // /client/* is a legacy redirect for the operator surface — kept so
+  // bookmarks still work. The reviewer portal deliberately does NOT
+  // use /client/* to avoid overloading a URL that already means
+  // "operator" in every user's mental model.
+  if (p.startsWith('/reviewer')) return 'reviewer'
   if (p.startsWith('/client')) return 'client'
   if (p.startsWith('/superadmin')) return 'superadmin'
   return null
@@ -33,6 +38,7 @@ export function loginPathForScope(scope) {
   switch (scope) {
     case 'admin':      return '/admin/login'
     case 'client':     return '/institute/operator/login'
+    case 'reviewer':   return '/reviewer/login'
     case 'superadmin': return '/superadmin/login'
     default:           return '/'
   }

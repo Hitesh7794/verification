@@ -42,6 +42,40 @@ export async function deleteClient(id) {
   return api(`/superadmin/clients/${id}`, { method: 'DELETE' })
 }
 
+// ── Per-client review portal (portal_enabled + reviewer users) ───────
+//
+// Flip portal_enabled to surface the client in /api/clients/public,
+// which is what the register form's dropdown reads. Reviewer users are
+// role='client_reviewer' — they log in through the same /api/auth/login,
+// and their JWT carries this client_id so every application scoped
+// endpoint filters to it server-side.
+
+export async function setClientPortal(id, enabled) {
+  return api(`/superadmin/clients/${id}/portal`, {
+    method: 'POST',
+    body: { enabled },
+  })
+}
+
+export async function listClientReviewers(id) {
+  const { reviewers } = await api(`/superadmin/clients/${id}/reviewers`)
+  return reviewers
+}
+
+// Returns the created reviewer row. The `password` field is echoed
+// ONCE in this response — surface it in the UI immediately with a
+// "copy" affordance because no endpoint re-reads it later.
+export async function createClientReviewer(id, payload) {
+  return api(`/superadmin/clients/${id}/reviewers`, {
+    method: 'POST',
+    body: payload, // { username, password, display_name, email }
+  })
+}
+
+export async function deleteClientReviewer(id, uid) {
+  return api(`/superadmin/clients/${id}/reviewers/${uid}`, { method: 'DELETE' })
+}
+
 // ── Exams ─────────────────────────────────────────────────────────────
 
 export async function createExam(clientId, exam) {

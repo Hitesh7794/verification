@@ -119,6 +119,12 @@ func (s *Server) Router() http.Handler {
 	r.Post("/api/register/{id}/submit", s.registerSubmit)
 	r.Get("/api/register/{id}", s.registerStatus)
 
+	// ----- public: which clients accept KYC -----
+	// Feeds the register form's exam-board dropdown. Filters to clients
+	// where portal_enabled AND visible AND not closed so we never route
+	// a KYC to a board that can't act on it.
+	r.Get("/api/clients/public", s.publicListClients)
+
 	// ----- public set-password landing -----
 	// Backs the magic-link the head clicks after approval.
 	r.Get("/api/set-password/verify", s.setPasswordVerify)
@@ -239,6 +245,25 @@ func (s *Server) Router() http.Handler {
 		r.Post("/api/superadmin/applications/{id}/approve", s.requireRole("superadmin", "ops_admin")(s.superadminApproveApplication))
 		r.Post("/api/superadmin/applications/{id}/reject", s.requireRole("superadmin", "ops_admin")(s.superadminRejectApplication))
 		r.Post("/api/superadmin/applications/{id}/resend-admin-link", s.requireRole("superadmin", "ops_admin")(s.superadminResendAdminLink))
+
+		// ── Client-reviewer portal (per-client KYC inbox)
+		// A client_reviewer user's JWT carries their client_id; every
+		// handler below is scoped to that id server-side. Superadmin
+		// keeps using /api/superadmin/applications/*, which sees every
+		// row regardless of client_id.
+		r.Get("/api/client/me",                              s.requireRole("client_reviewer")(s.clientReviewerMe))
+		r.Get("/api/client/applications",                    s.requireRole("client_reviewer")(s.clientListApplications))
+		r.Get("/api/client/applications/{id}",               s.requireRole("client_reviewer")(s.clientGetApplication))
+		r.Get("/api/client/applications/{id}/docs/{doc_id}", s.requireRole("client_reviewer")(s.clientDownloadDoc))
+		r.Post("/api/client/applications/{id}/approve",      s.requireRole("client_reviewer")(s.clientApproveApplication))
+		r.Post("/api/client/applications/{id}/reject",       s.requireRole("client_reviewer")(s.clientRejectApplication))
+
+		// Superadmin management of the per-client portal — enable/disable
+		// the client's inbox and CRUD the reviewer users that log into it.
+		r.Post("/api/superadmin/clients/{id}/portal",              s.requireRole("superadmin")(s.superadminSetClientPortal))
+		r.Get("/api/superadmin/clients/{id}/reviewers",            s.requireRole("superadmin")(s.superadminListReviewers))
+		r.Post("/api/superadmin/clients/{id}/reviewers",           s.requireRole("superadmin")(s.superadminCreateReviewer))
+		r.Delete("/api/superadmin/clients/{id}/reviewers/{uid}",   s.requireRole("superadmin")(s.superadminDeleteReviewer))
 
 		// ── Exam catalog (Phase 1: superadmin creates clients + exams + candidates)
 		// Everything under this prefix is superadmin-only.

@@ -16,10 +16,11 @@ import { Icon } from '../ui/icons.jsx'
 // call sites don't need to change.
 
 const ROLE_LABEL = {
-  client:     'Operator',
-  admin:      'Administrator',
-  superadmin: 'Superadmin',
-  ops_admin:  'Operations',
+  client:          'Operator',
+  admin:           'Administrator',
+  superadmin:      'Superadmin',
+  ops_admin:       'Operations',
+  client_reviewer: 'Review portal',
 }
 
 export default function LoginShell({

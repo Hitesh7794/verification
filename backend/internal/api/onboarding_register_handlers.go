@@ -285,6 +285,16 @@ type registerInitReq struct {
 	HeadEmail       string `json:"head_email"`
 	HeadMobile      string `json:"head_mobile"`
 
+	// Optional — routes this KYC to a specific client's inbox
+	// (e.g. NTA reviews its own applications from /client/*). When
+	// omitted or 0, the application lands in the legacy superadmin
+	// queue (null client_id) and only superadmins can act on it.
+	//
+	// Server-side we verify the ID exists AND the client has
+	// portal_enabled=true, else 400 — we don't want the register form
+	// silently routing to a client that can't review.
+	ClientID int64 `json:"client_id,omitempty"`
+
 	// Honeypot: legitimate UI never fills this. Bots that submit every
 	// field they see will. If non-empty we silently 200 (so the bot
 	// thinks it succeeded and doesn't try harder) but skip the insert.
@@ -328,6 +338,22 @@ func (s *Server) registerInit(w http.ResponseWriter, r *http.Request) {
 	if err := validateInit(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	// Optional client_id — verify the referenced client is real +
+	// portal-enabled before we bind the application to it. Rejecting
+	// here beats letting a request slip through with a bogus id that
+	// no reviewer can act on.
+	if req.ClientID > 0 {
+		var portalOn bool
+		err := s.deps.DB.QueryRowContext(r.Context(),
+			`SELECT portal_enabled FROM clients
+			  WHERE id = $1 AND visible = 1 AND closed = 0`, req.ClientID,
+		).Scan(&portalOn)
+		if err != nil || !portalOn {
+			writeErr(w, http.StatusBadRequest, "selected exam board is not accepting new registrations")
+			return
+		}
 	}
 
 	// Re-application: if an application exists for this AISHE code and
@@ -452,6 +478,10 @@ func (s *Server) registerInit(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var appID int64
+	var clientIDArg any
+	if req.ClientID > 0 {
+		clientIDArg = req.ClientID
+	}
 	if err := tx.QueryRowContext(r.Context(), `INSERT INTO institution_applications(
 		status,
 		institution_name, institution_type, tier, aishe_code, pan,
@@ -459,8 +489,8 @@ func (s *Server) registerInit(w http.ResponseWriter, r *http.Request) {
 		address_line1, address_line2, city, district, state, pin_code,
 		approx_student_count, expected_centres,
 		head_name, head_designation, head_email, head_mobile,
-		submitter_ip
-	) VALUES('draft', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+		submitter_ip, client_id
+	) VALUES('draft', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21)
 	RETURNING id`,
 		strings.TrimSpace(req.InstitutionName), req.InstitutionType,
 		nullable(req.Tier), nullable(req.AisheCode), nullable(strings.ToUpper(strings.TrimSpace(req.PAN))),
@@ -471,7 +501,7 @@ func (s *Server) registerInit(w http.ResponseWriter, r *http.Request) {
 		nullInt(req.ApproxStudentCount), maxInt(req.ExpectedCentres, 1),
 		strings.TrimSpace(req.HeadName), strings.TrimSpace(req.HeadDesignation),
 		strings.ToLower(strings.TrimSpace(req.HeadEmail)), strings.TrimSpace(req.HeadMobile),
-		ip,
+		ip, clientIDArg,
 	).Scan(&appID); err != nil {
 		writeErr(w, http.StatusInternalServerError, "db insert: "+err.Error())
 		return

@@ -21,6 +21,10 @@ import SuperClients from './pages/superadmin/Clients.jsx'
 import SuperClientDetail from './pages/superadmin/ClientDetail.jsx'
 import SuperExamDetail from './pages/superadmin/ExamDetail.jsx'
 
+import ReviewerLogin from './pages/reviewer/Login.jsx'
+import ReviewerDashboard from './pages/reviewer/Dashboard.jsx'
+import ReviewerApplicationDetail from './pages/reviewer/ApplicationDetail.jsx'
+
 import Register from './pages/register/Register.jsx'
 import SetPassword from './pages/register/SetPassword.jsx'
 import ForcePasswordChange from './pages/ForcePasswordChange.jsx'
@@ -50,7 +54,14 @@ function RequireRole({ role, children }) {
   if (!user) {
     // Pick a sensible login URL for the role we're protecting. For
     // multi-role routes, use the first role's login page.
-    const loginPath = `/${allowed[0] === 'ops_admin' ? 'admin' : allowed[0]}/login`
+    // client_reviewer lives at /reviewer/* — not /client_reviewer/*
+    // which would be an ugly URL and collide with the operator's
+    // legacy /client redirect.
+    const first = allowed[0]
+    const scopeSeg = first === 'ops_admin' ? 'admin'
+      : first === 'client_reviewer' ? 'reviewer'
+      : first
+    const loginPath = `/${scopeSeg}/login`
     return <Navigate to={loginPath} replace />
   }
   if (!allowed.includes(user.role)) {
@@ -104,6 +115,7 @@ export default function App() {
       <Route path="/admin/force-password-change"                 element={<ForcePasswordChange />} />
       <Route path="/institute/operator/force-password-change"    element={<ForcePasswordChange />} />
       <Route path="/superadmin/force-password-change"            element={<ForcePasswordChange />} />
+      <Route path="/reviewer/force-password-change"              element={<ForcePasswordChange />} />
 
       {/* Legacy /client/* → /institute/operator/* redirects. The old
           URLs were unclear ("client" meant "operator at an institute",
@@ -199,6 +211,29 @@ export default function App() {
           <Route
             path="/superadmin/exams/:id"
             element={<RequireRole role="superadmin"><SuperExamDetail /></RequireRole>}
+          />
+
+          {/* Client-reviewer portal — a per-tenant KYC inbox. Reviewers
+              are provisioned by superadmin (see ClientDetail) and log
+              in here to approve/reject applications routed to their
+              client. Distinct URL space from /client/* (which is a
+              legacy redirect for the operator role). */}
+          <Route path="/reviewer/login" element={<ReviewerLogin />} />
+          <Route
+            path="/reviewer"
+            element={
+              <RequireRole role="client_reviewer">
+                <ReviewerDashboard />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/reviewer/applications/:id"
+            element={
+              <RequireRole role="client_reviewer">
+                <ReviewerApplicationDetail />
+              </RequireRole>
+            }
           />
         </>
       )}

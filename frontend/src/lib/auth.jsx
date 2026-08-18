@@ -89,8 +89,19 @@ export function AuthProvider({ children }) {
         body: { username, password },
         auth: false,
       })
-      const responseScope = res.user?.role === 'ops_admin' ? 'admin' : res.user?.role
-      if (responseScope === 'admin' || responseScope === 'client' || responseScope === 'superadmin') {
+      // Map backend role → URL scope. `client_reviewer` gets its own
+      // scope (`reviewer`) so its session doesn't collide with the
+      // operator (`client`) surface on the same origin.
+      const responseScope =
+        res.user?.role === 'ops_admin' ? 'admin' :
+        res.user?.role === 'client_reviewer' ? 'reviewer' :
+        res.user?.role
+      if (
+        responseScope === 'admin' ||
+        responseScope === 'client' ||
+        responseScope === 'reviewer' ||
+        responseScope === 'superadmin'
+      ) {
         setStoredSession(responseScope, res.token, res.user)
       }
       setTick((t) => t + 1)

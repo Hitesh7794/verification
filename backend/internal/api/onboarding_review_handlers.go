@@ -15,7 +15,6 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
-	"golang.org/x/crypto/bcrypt"
 
 	"github.com/veni/neet-verification/internal/email"
 	"github.com/veni/neet-verification/internal/magiclink"
@@ -381,220 +380,46 @@ func (s *Server) superadminApproveApplication(w http.ResponseWriter, r *http.Req
 	var req approveReq
 	_ = json.NewDecoder(r.Body).Decode(&req) // optional body
 
-	tx, err := s.deps.DB.BeginTx(r.Context(), nil)
+	// scope=nil → superadmin sees every application regardless of
+	// client_id (both legacy null-scoped rows and client-scoped ones).
+	out, err := s.approveApplication(r, appID, claims.UserID, nil, req.Note)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "db begin")
+		code, msg := mapReviewErrorToHTTP(err)
+		writeErr(w, code, msg)
 		return
-	}
-	defer tx.Rollback()
-
-	// Atomically claim the application as approved BEFORE doing any
-	// other work. Two concurrent approvals would otherwise both read
-	// status='pending', both proceed, and both create user/operator
-	// rows; the second would see UNIQUE failures on some inserts but
-	// might leave half-created state. Using UPDATE ... WHERE status=
-	// 'pending' guarantees exactly one transaction can transition the
-	// row out of 'pending'; the loser gets affected=0 and bails.
-	res0, err := tx.ExecContext(r.Context(),
-		`UPDATE institution_applications
-		 SET status = 'approved',
-		     reviewed_by_user_id = $1,
-		     reviewed_at = CURRENT_TIMESTAMP,
-		     review_note = $2,
-		     updated_at = CURRENT_TIMESTAMP
-		 WHERE id = $3 AND status = 'pending'`,
-		claims.UserID, nullable(req.Note), appID,
-	)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "app claim: "+err.Error())
-		return
-	}
-	affected, _ := res0.RowsAffected()
-	if affected == 0 {
-		// Either the row doesn't exist or it isn't pending anymore.
-		// Read current state to give the caller a precise message.
-		var status string
-		err := tx.QueryRowContext(r.Context(),
-			`SELECT status FROM institution_applications WHERE id = $1`, appID,
-		).Scan(&status)
-		if errors.Is(err, sql.ErrNoRows) {
-			writeErr(w, http.StatusNotFound, "application not found")
-			return
-		}
-		writeErr(w, http.StatusConflict, fmt.Sprintf("application is %s, only pending applications can be approved", status))
-		return
-	}
-
-	// Now read the rest of the columns we need to provision the org.
-	// We already own the row's state transition; concurrent readers
-	// will see status='approved' and skip.
-	var (
-		instName, headName, headEmail, headDesignation string
-		aishe                                          sql.NullString
-	)
-	err = tx.QueryRowContext(r.Context(),
-		`SELECT institution_name, head_name, head_email, head_designation, aishe_code
-		 FROM institution_applications WHERE id = $1`, appID,
-	).Scan(&instName, &headName, &headEmail, &headDesignation, &aishe)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "db read")
-		return
-	}
-
-	// Choose an org code. Prefer AISHE code (always unique); fall back
-	// to a synthetic code derived from the application ID.
-	orgCode := "APP_" + strconv.FormatInt(appID, 10)
-	if aishe.Valid && aishe.String != "" {
-		orgCode = "AISHE_" + aishe.String
-	}
-
-	// Insert organization (or find existing — orgs.code is UNIQUE).
-	var orgID int64
-	if _, err := tx.ExecContext(r.Context(),
-		`INSERT INTO organizations(code, name) VALUES($1, $2) ON CONFLICT (code) DO NOTHING`,
-		orgCode, instName,
-	); err != nil {
-		writeErr(w, http.StatusInternalServerError, "org insert: "+err.Error())
-		return
-	}
-	if err := tx.QueryRowContext(r.Context(),
-		`SELECT id FROM organizations WHERE code = $1`, orgCode,
-	).Scan(&orgID); err != nil {
-		writeErr(w, http.StatusInternalServerError, "org read: "+err.Error())
-		return
-	}
-
-	// (Legacy "MAIN" centre auto-create removed — the centres table +
-	// users.center_id + verifications.center_id are gone as of
-	// migration 021. Operator/verification scoping now runs entirely
-	// through exam_candidates/exam_centres/operator_exams.)
-
-	// Choose a username. We slugify the institution name + append the
-	// app ID so it stays unique even if two institutions happen to share
-	// a name (e.g., multiple "St. Joseph's").
-	username := slugifyUsername(instName) + "_" + strconv.FormatInt(appID, 10)
-
-	// Insert the admin user with a *placeholder* bcrypt of random data.
-	// They can't sign in until they set their own password via the
-	// magic link — the placeholder is for the NOT NULL constraint only.
-	placeholder, err := bcrypt.GenerateFromPassword([]byte("placeholder-"+username), bcrypt.MinCost)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "bcrypt: "+err.Error())
-		return
-	}
-	// Copy the KYC head_email onto the users row so the admin can
-	// sign in with either their username or the email they used to
-	// register (see auth_handlers.login — accepts both for admin +
-	// client roles). Case-normalised to match how email login queries.
-	adminEmail := strings.ToLower(strings.TrimSpace(headEmail))
-	var userID int64
-	if err := tx.QueryRowContext(r.Context(),
-		`INSERT INTO users(username, password_hash, role, org_id, display_name, email)
-		 VALUES($1, $2, 'admin', $3, $4, $5)
-		 RETURNING id`,
-		username, string(placeholder), orgID, headName+" ("+headDesignation+")",
-		nullable(adminEmail),
-	).Scan(&userID); err != nil {
-		writeErr(w, http.StatusInternalServerError, "user insert: "+err.Error())
-		return
-	}
-
-	// Shared operator: one client-role user per org. Every operator
-	// machine at the institution logs in with this single credential.
-	// Username convention mirrors the admin's (slug + appID) with an
-	// "_op" suffix so two institutions can never collide and the admin
-	// dashboard can find it by convention. Password is randomly
-	// generated and stored BOTH as bcrypt (for auth) and plaintext
-	// (for the admin to view in their dashboard) — the latter is the
-	// trade-off the customer accepted to avoid email-onboarding every
-	// operator. See migration_010_operator_plaintext.go.
-	//
-	// No center_id — that column was dropped in migration 021.
-	operatorUsername := slugifyUsername(instName) + "_" + strconv.FormatInt(appID, 10) + "_op"
-	operatorPassword := generateOperatorPassword()
-	operatorHash, err := bcrypt.GenerateFromPassword([]byte(operatorPassword), bcrypt.DefaultCost)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "operator bcrypt: "+err.Error())
-		return
-	}
-	if _, err := tx.ExecContext(r.Context(),
-		`INSERT INTO users(username, password_hash, password_plaintext, role,
-		                   org_id, display_name, activated_at)
-		 VALUES($1, $2, $3, 'client', $4, $5, CURRENT_TIMESTAMP)`,
-		operatorUsername, string(operatorHash), operatorPassword,
-		orgID, "Centre Operator",
-	); err != nil {
-		writeErr(w, http.StatusInternalServerError, "operator insert: "+err.Error())
-		return
-	}
-
-	// Application status was already transitioned at the top of this
-	// handler as part of the atomic race-prevention update; no second
-	// UPDATE needed here. Commit the tx so the magic-link store sees
-	// the new user row.
-	if err := tx.Commit(); err != nil {
-		writeErr(w, http.StatusInternalServerError, "db commit: "+err.Error())
-		return
-	}
-
-	token, err := s.magicLinks.Generate(r.Context(), userID, magiclink.PurposeSetPassword, 0)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "magic link: "+err.Error())
-		return
-	}
-	linkURL := s.buildMagicLinkURL(r, token)
-
-	// Send the email. Failure here is logged but NOT fatal — the
-	// superadmin can re-trigger from the UI later (a "resend magic
-	// link" button is on the roadmap; for now, the response carries
-	// the URL so the operator can copy-paste it).
-	if s.emailer != nil {
-		body := buildApprovalEmail(instName, headName, username, linkURL, req.Note)
-		if err := s.emailer.Send(r.Context(), email.Message{
-			To:      headEmail,
-			Subject: "Your institution has been approved — set your portal password",
-			Body:    body,
-		}); err != nil {
-			// Non-fatal: the magic_link_url is in the JSON response
-			// already, so the superadmin can copy it manually if the
-			// email never lands.
-			log.Printf("emailer.Send approval to %s: %v", headEmail, err)
-		}
 	}
 
 	s.auditFromRequest(r, "application.approve", "application", appID, map[string]any{
-		"org_id":           orgID,
-		"institution_name": instName,
-		"admin_user_id":    userID,
+		"org_id":           out.OrgID,
+		"institution_name": out.InstitutionName,
+		"admin_user_id":    out.AdminUserID,
+		"actor":            "superadmin",
 	})
 	writeJSON(w, http.StatusOK, approveResp{
-		ApplicationID:    appID,
-		OrgID:            orgID,
-		AdminUserID:      userID,
-		AdminUsername:    username,
-		MagicLinkURL:     linkURL,
-		OperatorUsername: operatorUsername,
-		OperatorPassword: operatorPassword,
+		ApplicationID:    out.ApplicationID,
+		OrgID:            out.OrgID,
+		AdminUserID:      out.AdminUserID,
+		AdminUsername:    out.AdminUsername,
+		MagicLinkURL:     out.MagicLinkURL,
+		OperatorUsername: out.OperatorUsername,
+		OperatorPassword: out.OperatorPassword,
 	})
 }
 
 // ----- POST /api/superadmin/applications/{id}/resend-admin-link -----
 //
-// If the superadmin's first-time approval response was lost (closed
-// the dialog before copying the magic link, email failed to deliver,
-// admin lost the email), this re-issues a fresh link for the admin
-// that was created at approval time. Any previously-issued unused
-// links for the admin are invalidated so only the most recent one
-// works. Rejected if the admin has already activated — they should
-// just sign in or use forgot-password (which doesn't exist yet but
-// is the next step from here).
+// If the superadmin's first-time approval response was lost, this
+// re-issues a fresh magic link for the admin that was created at
+// approval time. Any previously-issued unused links for the admin are
+// invalidated so only the most recent one works. Rejected if the admin
+// has already activated.
 
 type resendAdminLinkResp struct {
 	ApplicationID int64  `json:"application_id"`
 	AdminUserID   int64  `json:"admin_user_id"`
 	AdminUsername string `json:"admin_username"`
 	MagicLinkURL  string `json:"magic_link_url"`
-	EmailDelivery string `json:"email_delivery"` // "sent" | "console" | "failed" | "skipped"
+	EmailDelivery string `json:"email_delivery"`
 }
 
 func (s *Server) superadminResendAdminLink(w http.ResponseWriter, r *http.Request) {
@@ -717,50 +542,16 @@ func (s *Server) superadminRejectApplication(w http.ResponseWriter, r *http.Requ
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
 	var req rejectReq
 	_ = json.NewDecoder(r.Body).Decode(&req)
-	if strings.TrimSpace(req.Note) == "" {
-		writeErr(w, http.StatusBadRequest, "rejection note required")
-		return
-	}
 
-	var status, instName, headName, headEmail string
-	err = s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT status, institution_name, head_name, head_email
-		 FROM institution_applications WHERE id = $1`, appID,
-	).Scan(&status, &instName, &headName, &headEmail)
-	if errors.Is(err, sql.ErrNoRows) {
-		writeErr(w, http.StatusNotFound, "application not found")
+	// scope=nil → superadmin can reject any application.
+	if err := s.rejectApplication(r.Context(), appID, claims.UserID, nil, req.Note); err != nil {
+		code, msg := mapReviewErrorToHTTP(err)
+		writeErr(w, code, msg)
 		return
 	}
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "db read")
-		return
-	}
-	if status != "pending" {
-		writeErr(w, http.StatusConflict, fmt.Sprintf("application is %s, only pending applications can be rejected", status))
-		return
-	}
-	if _, err := s.deps.DB.ExecContext(r.Context(),
-		`UPDATE institution_applications
-		 SET status = 'rejected', reviewed_by_user_id = $1, reviewed_at = CURRENT_TIMESTAMP,
-		     review_note = $2, updated_at = CURRENT_TIMESTAMP
-		 WHERE id = $3`,
-		claims.UserID, strings.TrimSpace(req.Note), appID,
-	); err != nil {
-		writeErr(w, http.StatusInternalServerError, "db update")
-		return
-	}
-
-	if s.emailer != nil {
-		body := buildRejectionEmail(instName, headName, req.Note)
-		if err := s.emailer.Send(r.Context(), email.Message{
-			To:      headEmail,
-			Subject: "Update on your portal registration",
-			Body:    body,
-		}); err != nil {
-			log.Printf("emailer.Send rejection to %s: %v", headEmail, err)
-		}
-	}
-
+	s.auditFromRequest(r, "application.reject", "application", appID, map[string]any{
+		"actor": "superadmin",
+	})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"application_id": appID,
 		"status":         "rejected",

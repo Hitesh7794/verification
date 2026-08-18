@@ -34,27 +34,28 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		passHash       string
 		role           string
 		orgID          sql.NullInt64
+		clientID       sql.NullInt64
 		displayName    string
 		disabledAt     sql.NullTime
 		passChangeReq  int
 		actualUsername string
 	)
 	// The identifier can be either a username (case-sensitive) OR an
-	// email (case-insensitive, admin/client roles only). Superadmin
-	// stays username-only — that account has no email on file by
-	// design. The DB stores emails lowercase, so we normalise the
-	// email side of the OR to match.
+	// email (case-insensitive, admin/client/client_reviewer roles).
+	// Superadmin stays username-only — that account has no email on
+	// file by design. The DB stores emails lowercase, so we normalise
+	// the email side of the OR to match.
 	identifier := strings.TrimSpace(req.Username)
 	emailLower := strings.ToLower(identifier)
 	err := s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT id, password_hash, role, org_id, display_name,
+		`SELECT id, password_hash, role, org_id, client_id, display_name,
 		        disabled_at, password_change_required, username
 		   FROM users
 		  WHERE username = $1
-		     OR (email = $2 AND role IN ('admin','client'))
+		     OR (email = $2 AND role IN ('admin','client','client_reviewer'))
 		  LIMIT 1`,
 		identifier, emailLower,
-	).Scan(&id, &passHash, &role, &orgID, &displayName,
+	).Scan(&id, &passHash, &role, &orgID, &clientID, &displayName,
 		&disabledAt, &passChangeReq, &actualUsername)
 	if err == sql.ErrNoRows {
 		s.auditAnonymous(r, "login.failure", map[string]any{
@@ -93,6 +94,10 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		v := orgID.Int64
 		claims.OrgID = &v
 	}
+	if clientID.Valid {
+		v := clientID.Int64
+		claims.ClientID = &v
+	}
 	tok, err := s.deps.JWT.Issue(claims)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "token error")
@@ -109,6 +114,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 			"role":                     role,
 			"display_name":             displayName,
 			"org_id":                   claims.OrgID,
+			"client_id":                claims.ClientID,
 			"password_change_required": passChangeReq != 0,
 		},
 	})
@@ -228,6 +234,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		"role":                     c.Role,
 		"display_name":             displayName,
 		"org_id":                   c.OrgID,
+		"client_id":                c.ClientID,
 		"password_change_required": passChangeReq != 0,
 	})
 }

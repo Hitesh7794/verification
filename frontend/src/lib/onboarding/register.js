@@ -30,6 +30,14 @@ async function call(path, opts = {}) {
   return body
 }
 
+// List of exam boards (clients) currently accepting KYC via their own
+// review portal. Register form uses this to render the "Which exam
+// board should review your application?" dropdown. Public — no auth.
+// Filtered server-side to portal_enabled AND visible AND not closed.
+export async function listPublicClients() {
+  return call('/clients/public')
+}
+
 // Step 1+2: submit the form data.
 export async function registerInit(formData) {
   return call('/register/init', {

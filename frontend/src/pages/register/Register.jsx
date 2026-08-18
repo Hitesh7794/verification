@@ -25,6 +25,7 @@ import {
   uploadDoc,
   deleteDoc,
   submitApplication,
+  listPublicClients,
   loadDraft,
   saveDraft,
   clearDraft,
@@ -212,6 +213,11 @@ const STEP_FIELDS = [
 ]
 
 const EMPTY_FORM = {
+  // Which exam board (client) will review this KYC. Optional — when
+  // omitted the application lands in the legacy superadmin queue.
+  // Prefilled from ?client_id= in the URL so a client can hand out
+  // their own dedicated registration link.
+  client_id: '',
   institution_name: '',
   institution_type: 'college',
   aishe_code: '',
@@ -243,6 +249,12 @@ export default function Register() {
   const [errors, setErrors] = useState({})
   const [submitting, setSubmitting] = useState(false)
   const [topError, setTopError] = useState('')
+  // Exam boards currently accepting KYC via their own review portal.
+  // Loaded once on mount; the register form shows this as a dropdown
+  // in step 0. Empty list → dropdown hides entirely (system falls back
+  // to the legacy superadmin queue).
+  const [publicClients, setPublicClients] = useState([])
+  const [clientsLoaded, setClientsLoaded] = useState(false)
 
   // Restore draft on mount.
   useEffect(() => {
@@ -253,6 +265,34 @@ export default function Register() {
       setApplicationId(d.applicationId ?? null)
       setUploaded(d.uploaded ?? {})
     }
+    // Prefill client_id from URL (?client_id=42). Wins over any draft
+    // value — if the visitor arrived through a client-specific link,
+    // that intent is fresher than whatever was stashed in localStorage.
+    try {
+      const q = new URLSearchParams(window.location.search)
+      const cid = q.get('client_id')
+      if (cid && /^\d+$/.test(cid)) {
+        setForm((f) => ({ ...f, client_id: cid }))
+      }
+    } catch {}
+  }, [])
+
+  // Load the public client list once. Failures are non-fatal — we just
+  // hide the dropdown and route the application to the superadmin queue.
+  useEffect(() => {
+    let cancelled = false
+    listPublicClients()
+      .then((res) => {
+        if (cancelled) return
+        setPublicClients(Array.isArray(res?.clients) ? res.clients : [])
+        setClientsLoaded(true)
+      })
+      .catch(() => {
+        if (cancelled) return
+        setPublicClients([])
+        setClientsLoaded(true)
+      })
+    return () => { cancelled = true }
   }, [])
 
   useEffect(() => {
@@ -321,8 +361,13 @@ export default function Register() {
           year_established: Number(form.year_established) || 0,
           approx_student_count: Number(form.approx_student_count) || 0,
           expected_centres: Number(form.expected_centres) || 1,
+          // Backend expects an int (or omit). Empty-string picker value
+          // → drop the key entirely so the app lands in the legacy
+          // superadmin queue rather than 400'ing on a NaN.
+          client_id: form.client_id ? Number(form.client_id) : undefined,
         }
         delete payload.affiliation_body_other // internal-only field
+        if (!payload.client_id) delete payload.client_id
         const res = await registerInit(payload)
         setApplicationId(res.application_id)
       }
@@ -556,6 +601,8 @@ export default function Register() {
                       errors={errors}
                       update={update}
                       onBlurField={validateOnBlur}
+                      publicClients={publicClients}
+                      clientsLoaded={clientsLoaded}
                       onNext={() => {
                         if (validateStep(S_INSTITUTION)) setStep(S_ADDRESS)
                       }}
@@ -671,7 +718,16 @@ function StepSidebar({ step }) {
 
 // ─── Step 0 ────────────────────────────────────────────────────────────
 
-function Step0({ form, errors, update, onBlurField, onNext }) {
+function Step0({ form, errors, update, onBlurField, onNext, publicClients = [], clientsLoaded = false }) {
+  // The dropdown only shows up once we've heard back from the server AND
+  // there's at least one enabled client. If the list is empty we hide the
+  // control entirely rather than showing "— None available —"; the
+  // application will fall back to the superadmin queue silently.
+  const showClientPicker = clientsLoaded && publicClients.length > 0
+  const selectedClient = publicClients.find(
+    (c) => String(c.id) === String(form.client_id),
+  )
+
   return (
     <AestheticCard>
       {/* Header — generous padding so the chip + title don't feel
@@ -692,6 +748,49 @@ function Step0({ form, errors, update, onBlurField, onNext }) {
           Separated by a subtle labelled divider so the eye doesn't
           read everything as one undifferentiated grid. */}
       <div className="px-7 py-7 space-y-7">
+        {showClientPicker && (
+          // Reviewer picker. First thing on the form because it frames
+          // the whole flow — the chosen board's team is who'll read the
+          // uploaded docs and approve/reject. Kept in an amber-tinted
+          // panel so it's visually distinct from the indigo card body
+          // without competing for hierarchy with the primary CTA.
+          <div className="rounded-xl border border-amber-100 bg-amber-50/60 px-5 py-4">
+            <div className="flex items-start gap-3">
+              <span className="mt-0.5 h-8 w-8 rounded-lg bg-white text-amber-700 flex items-center justify-center shrink-0 ring-1 ring-amber-200">
+                <Icon.ShieldCheck className="h-4 w-4" />
+              </span>
+              <div className="min-w-0 flex-1">
+                <div className="flex items-baseline justify-between gap-2">
+                  <Label className="!mb-0">Exam board reviewer</Label>
+                  <span className="text-[11px] uppercase tracking-wide text-amber-700/80">
+                    Optional
+                  </span>
+                </div>
+                <p className="text-xs text-slate-600 mt-1">
+                  Route this KYC to a specific board. If left blank, the
+                  platform's onboarding team reviews it.
+                </p>
+                <div className="mt-2.5">
+                  <Select
+                    value={form.client_id}
+                    onChange={(e) => update('client_id', e.target.value)}
+                    options={[
+                      { value: '', label: '— Platform onboarding team —' },
+                      ...publicClients.map((c) => ({ value: String(c.id), label: c.name })),
+                    ]}
+                  />
+                </div>
+                {selectedClient && (
+                  <p className="mt-2 text-xs text-amber-900">
+                    <span className="font-medium">{selectedClient.name}</span> will
+                    review your documents and issue admin credentials on approval.
+                  </p>
+                )}
+              </div>
+            </div>
+          </div>
+        )}
+
         <div>
           <Label>
             Type <span className="text-rose-600 ml-0.5">*</span>
