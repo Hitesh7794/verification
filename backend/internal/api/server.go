@@ -16,7 +16,9 @@ import (
 	"github.com/veni/neet-verification/internal/data"
 	"github.com/veni/neet-verification/internal/email"
 	"github.com/veni/neet-verification/internal/magiclink"
+	"github.com/veni/neet-verification/internal/otp"
 	"github.com/veni/neet-verification/internal/razorpay"
+	"github.com/veni/neet-verification/internal/sms"
 	"github.com/veni/neet-verification/internal/trustview"
 	"github.com/veni/neet-verification/internal/wallet"
 )
@@ -39,6 +41,8 @@ type Server struct {
 	// can be swapped for SMTP later via the constructor.
 	magicLinks *magiclink.Store
 	emailer    email.Sender
+	smsSender  sms.Sender
+	otpStore   *otp.Store
 }
 
 // NewServer wires the API. External clients (TrustView, Razorpay) are
@@ -79,6 +83,23 @@ func NewServer(d Deps) *Server {
 	} else {
 		s.emailer = email.NewConsoleSender()
 	}
+
+	// SMS sender for OTP delivery. AuthKey.io when key is provided, else ConsoleSender.
+	if d.Cfg.AuthKeySMSKey != "" {
+		s.smsSender = sms.NewAuthKeySender(sms.AuthKeyConfig{
+			BaseURL:     d.Cfg.AuthKeySMSURL,
+			AuthKey:     d.Cfg.AuthKeySMSKey,
+			SID:         d.Cfg.AuthKeySMSSID,
+			Company:     d.Cfg.AuthKeySMSCompany,
+			CountryCode: d.Cfg.AuthKeySMSCountryCode,
+		})
+	} else {
+		s.smsSender = sms.NewConsoleSender()
+	}
+
+	// OTP store initialized with JWT secret for HMAC proof signing
+	s.otpStore = otp.NewStore(d.Cfg.JWTSecret)
+
 	return s
 }
 
@@ -108,6 +129,12 @@ func (s *Server) Router() http.Handler {
 	r.Get("/api/health", s.health)
 	r.Get("/api/readyz", s.readyz)
 	r.Post("/api/auth/login", s.login)
+
+	// ----- public OTP verification endpoints -----
+	r.Post("/api/otp/send-email", s.sendEmailOTP)
+	r.Post("/api/otp/verify-email", s.verifyEmailOTP)
+	r.Post("/api/otp/send-sms", s.sendSmsOTP)
+	r.Post("/api/otp/verify-sms", s.verifySmsOTP)
 
 	// ----- public institution-registration endpoints -----
 	// These are intentionally unauthenticated — anyone with the form

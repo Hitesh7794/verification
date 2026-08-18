@@ -127,3 +127,6 @@ MorFinDriver_*.exe
 
 # Claude Code session workspaces (local scratch)
 .claude/
+
+# Production DB snapshots pulled for local inspection — real PII, never commit
+backend/_prod_snapshot/

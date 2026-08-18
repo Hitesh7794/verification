@@ -115,6 +115,13 @@ type Config struct {
 	SMTPUser string
 	SMTPPass string // Gmail App Password / SES SMTP secret / etc — NOT a regular login password
 	SMTPFrom string // RFC-5322 From header, e.g. `Verification Portal <noreply@example.com>`
+
+	// Outbound SMS via AuthKey.io
+	AuthKeySMSKey         string
+	AuthKeySMSSID         string
+	AuthKeySMSCompany     string
+	AuthKeySMSCountryCode string
+	AuthKeySMSURL         string
 }
 
 func Load() Config {
@@ -143,6 +150,11 @@ func Load() Config {
 		SMTPUser:                  envOr("SMTP_USER", ""),
 		SMTPPass:                  envOr("SMTP_PASS", ""),
 		SMTPFrom:                  envOr("SMTP_FROM", ""),
+		AuthKeySMSKey:             envOr("AUTHKEY_SMS_KEY", "877f65eb773cee5d"),
+		AuthKeySMSSID:             envOr("AUTHKEY_SMS_SID", "44529"),
+		AuthKeySMSCompany:         envOr("AUTHKEY_SMS_COMPANY", "seQRview"),
+		AuthKeySMSCountryCode:     envOr("AUTHKEY_SMS_COUNTRY_CODE", "91"),
+		AuthKeySMSURL:             envOr("AUTHKEY_SMS_URL", "https://api.authkey.io/request"),
 	}
 }
 

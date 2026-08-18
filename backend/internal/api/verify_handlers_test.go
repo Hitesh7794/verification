@@ -67,7 +67,7 @@ func testServer(t *testing.T) (s *Server, token, roll string, cleanup func()) {
 	jwt := auth.NewJWTService("test-secret", time.Hour)
 	cfg := config.Config{
 		HTTPAddr:                ":0",
-		DBPath:                  "",
+		DatabaseURL:             "",
 		JWTSecret:               "test-secret",
 		ArtifactRetention:       "metadata",
 		ArtifactDir:             filepath.Join(tmp, "artifacts"),
