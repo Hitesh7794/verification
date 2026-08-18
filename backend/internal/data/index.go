@@ -63,14 +63,43 @@ func NewEmptyIndex() *Index {
 	return &Index{byRoll: map[string]*Candidate{}, centers: map[string]CenterInfo{}}
 }
 
-func (i *Index) CandidateCount() int { return len(i.byRoll) }
-func (i *Index) CenterCount() int    { return len(i.centers) }
+func (i *Index) CandidateCount() int {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return len(i.byRoll)
+}
+
+func (i *Index) CenterCount() int {
+	i.mu.RLock()
+	defer i.mu.RUnlock()
+	return len(i.centers)
+}
 
 func (i *Index) Get(roll string) (*Candidate, bool) {
 	i.mu.RLock()
 	defer i.mu.RUnlock()
 	c, ok := i.byRoll[roll]
 	return c, ok
+}
+
+// Refresh rebuilds the index from disk and atomically swaps the
+// internal maps. Called from the biometric-upload handler so newly-
+// uploaded files become visible without a service restart, and
+// exposed on POST /api/superadmin/reindex for a manual full re-scan.
+//
+// Safe to call concurrently with reads — Get() holds an RLock; this
+// method builds a fresh index off to the side, then swaps under a
+// Write lock in one shot so no query ever sees a half-built state.
+func (i *Index) Refresh(root string) error {
+	fresh, err := LoadIndex(root)
+	if err != nil {
+		return err
+	}
+	i.mu.Lock()
+	i.byRoll = fresh.byRoll
+	i.centers = fresh.centers
+	i.mu.Unlock()
+	return nil
 }
 
 // Centers returns the list of all centers discovered on disk, sorted by
@@ -130,6 +159,12 @@ func LoadIndex(root string) (*Index, error) {
 			continue
 		}
 		orgCode := org.Name()
+		// Skip our own reserved bucket for superadmin-uploaded
+		// biometrics — those are keyed by exam_id, not org_code, and
+		// get scanned by scanUploaded() below.
+		if orgCode == "uploaded" {
+			continue
+		}
 		dates, err := os.ReadDir(filepath.Join(root, orgCode))
 		if err != nil {
 			continue
@@ -165,7 +200,104 @@ func LoadIndex(root string) (*Index, error) {
 			}
 		}
 	}
+	// Second pass — superadmin-uploaded biometrics live under
+	// <root>/uploaded/<exam_id>/{photo,fps,iso,iris}/<roll>.<ext>.
+	// These don't fit the org/date/center hierarchy (they're keyed by
+	// exam_id) so they're scanned separately and merged into byRoll
+	// without registering a synthetic "center" entry.
+	scanUploaded(idx, filepath.Join(root, "uploaded"))
 	return idx, nil
+}
+
+// scanUploaded walks <uploadedRoot>/<exam_id>/{photo,fps,iso,iris}/
+// and adds entries to the index keyed by roll number. An uploaded
+// candidate that already exists in the legacy tree is OVERWRITTEN
+// (uploaded is more recent by definition), preserving the legacy
+// center context if present.
+func scanUploaded(idx *Index, uploadedRoot string) {
+	entries, err := os.ReadDir(uploadedRoot)
+	if err != nil {
+		return
+	}
+	for _, e := range entries {
+		if !e.IsDir() {
+			continue
+		}
+		examID := e.Name()
+		base := filepath.Join(uploadedRoot, examID)
+		photoDir := filepath.Join(base, "photo")
+		fpDir := filepath.Join(base, "fps")
+		isoDir := filepath.Join(base, "iso")
+		irisDir := filepath.Join(base, "iris")
+
+		// Photos drive candidate discovery — same shape as scanCenter.
+		photos, err := os.ReadDir(photoDir)
+		if err == nil {
+			for _, p := range photos {
+				if p.IsDir() {
+					continue
+				}
+				roll := strings.TrimSuffix(p.Name(), filepath.Ext(p.Name()))
+				c := idx.byRoll[roll]
+				if c == nil {
+					c = &Candidate{RollNo: roll, OrgCode: "uploaded", CenterCode: examID}
+					idx.byRoll[roll] = c
+				}
+				c.PhotoPath = filepath.Join(photoDir, p.Name())
+				c.HasPhoto = true
+			}
+		}
+		// FP + iris — these can also be uploaded independently for a
+		// candidate whose photo was seeded from the legacy tree.
+		// Iterate directory entries so we find whatever's on disk
+		// regardless of extension.
+		if fps, err := os.ReadDir(fpDir); err == nil {
+			for _, p := range fps {
+				if p.IsDir() {
+					continue
+				}
+				roll := strings.TrimSuffix(p.Name(), filepath.Ext(p.Name()))
+				c := idx.byRoll[roll]
+				if c == nil {
+					c = &Candidate{RollNo: roll, OrgCode: "uploaded", CenterCode: examID}
+					idx.byRoll[roll] = c
+				}
+				c.FpImagePath = filepath.Join(fpDir, p.Name())
+				c.HasFpImage = true
+			}
+		}
+		if isos, err := os.ReadDir(isoDir); err == nil {
+			for _, p := range isos {
+				if p.IsDir() {
+					continue
+				}
+				roll := strings.TrimSuffix(p.Name(), filepath.Ext(p.Name()))
+				c := idx.byRoll[roll]
+				if c == nil {
+					c = &Candidate{RollNo: roll, OrgCode: "uploaded", CenterCode: examID}
+					idx.byRoll[roll] = c
+				}
+				c.IsoTplPath = filepath.Join(isoDir, p.Name())
+				c.HasIsoTpl = true
+				c.FpTemplateFormat = detectTemplateFormat(c.IsoTplPath)
+			}
+		}
+		if iriss, err := os.ReadDir(irisDir); err == nil {
+			for _, p := range iriss {
+				if p.IsDir() {
+					continue
+				}
+				roll := strings.TrimSuffix(p.Name(), filepath.Ext(p.Name()))
+				c := idx.byRoll[roll]
+				if c == nil {
+					c = &Candidate{RollNo: roll, OrgCode: "uploaded", CenterCode: examID}
+					idx.byRoll[roll] = c
+				}
+				c.IrisBytesPath = filepath.Join(irisDir, p.Name())
+				c.HasIrisBytes = true
+			}
+		}
+	}
 }
 
 func scanCenter(idx *Index, base, orgCode, centerCode, centerName, examDate string) {

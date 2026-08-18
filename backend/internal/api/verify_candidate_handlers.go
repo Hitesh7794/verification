@@ -821,11 +821,14 @@ func (s *Server) lookupExamCandidate(r *http.Request, claims *authClaims, roll s
 		query string
 		args  []any
 	)
+	// verification_date + dob are Postgres DATE columns; casting to text
+	// so COALESCE can fall back to '' without a type mismatch (SQLite
+	// was permissive here, Postgres is not).
 	base := `
 		SELECT ec.id, ec.exam_id, e.exam_code, e.name, e.client_id, c.name,
-		       ec.roll_no, ec.name, COALESCE(ec.verification_date, ''),
+		       ec.roll_no, ec.name, COALESCE(ec.verification_date::text, ''),
 		       COALESCE(ec.registration_id, ''), COALESCE(ec.father_name, ''),
-		       COALESCE(ec.dob, ''),             COALESCE(ec.gender, ''),
+		       COALESCE(ec.dob::text, ''),       COALESCE(ec.gender, ''),
 		       COALESCE(ec.shift_name, ''),      COALESCE(ec.centre_code, ''),
 		       e.requires_face, e.requires_fp, e.requires_iris
 		  FROM exam_candidates ec
@@ -841,7 +844,7 @@ func (s *Server) lookupExamCandidate(r *http.Request, claims *authClaims, roll s
 		query = base + `
 		  AND EXISTS (
 		    SELECT 1 FROM operator_exams oe
-		     WHERE oe.exam_id = ec.exam_id AND oe.user_id = $1
+		     WHERE oe.exam_id = ec.exam_id AND oe.user_id = $2
 		  )
 		LIMIT 1`
 		args = []any{roll, claims.UserID}
@@ -853,7 +856,7 @@ func (s *Server) lookupExamCandidate(r *http.Request, claims *authClaims, roll s
 		query = base + `
 		  AND EXISTS (
 		    SELECT 1 FROM organization_exam_subscriptions s
-		     WHERE s.exam_id = ec.exam_id AND s.org_id = $1
+		     WHERE s.exam_id = ec.exam_id AND s.org_id = $2
 		  )
 		LIMIT 1`
 		args = []any{roll, *claims.OrgID}

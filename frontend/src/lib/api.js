@@ -57,7 +57,12 @@ export class ApiError extends Error {
 }
 
 export async function api(path, { method = 'GET', body, auth = true } = {}) {
-  const headers = { 'Content-Type': 'application/json' }
+  // FormData bodies (file uploads) skip the JSON content-type so the
+  // browser can set its own multipart boundary. Plain-object bodies
+  // get JSON.stringify + application/json as before.
+  const isFormData = typeof FormData !== 'undefined' && body instanceof FormData
+  const headers = {}
+  if (!isFormData) headers['Content-Type'] = 'application/json'
   if (auth) {
     const t = getToken()
     if (t) headers.Authorization = `Bearer ${t}`
@@ -65,7 +70,7 @@ export async function api(path, { method = 'GET', body, auth = true } = {}) {
   const res = await fetch(BASE + path, {
     method,
     headers,
-    body: body ? JSON.stringify(body) : undefined,
+    body: isFormData ? body : (body ? JSON.stringify(body) : undefined),
   })
   if (!res.ok) {
     let msg = res.statusText

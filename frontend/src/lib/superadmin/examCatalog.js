@@ -75,6 +75,28 @@ export async function deleteExam(id) {
   return api(`/superadmin/exams/${id}`, { method: 'DELETE' })
 }
 
+// ── Biometrics — per-exam completeness + per-candidate upload ───────
+
+// Completeness cross-check between the exam's Postgres roster and
+// the on-disk biometric index. Returns totals + a per-candidate list
+// so the UI can render both the summary strip and the per-row dots.
+export async function getExamCompleteness(examId) {
+  return api(`/superadmin/exams/${examId}/completeness`)
+}
+
+// Upload one biometric file (photo / fp_image / fp_template / iris)
+// for one candidate. Backend writes to DATA_DIR/uploaded/<exam>/… and
+// refreshes the in-memory index so the file is queryable immediately.
+export async function uploadBiometric(examId, roll, kind, file) {
+  const fd = new FormData()
+  fd.append('kind', kind)
+  fd.append('file', file)
+  return api(`/superadmin/exams/${examId}/candidates/${encodeURIComponent(roll)}/biometric`, {
+    method: 'POST',
+    body: fd,
+  })
+}
+
 // ── Candidates + CSV upload ───────────────────────────────────────────
 
 export async function listCandidates(examId, { limit = 100, offset = 0 } = {}) {

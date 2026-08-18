@@ -23,6 +23,8 @@ import {
   listCandidates,
   uploadCandidateCSV,
   downloadRawCSV,
+  getExamCompleteness,
+  uploadBiometric,
 } from '../../lib/superadmin/examCatalog.js'
 import { uploadExamCSV } from '../../lib/api.js'
 import { dateOnly, dateRange } from '../../lib/dates.js'
@@ -53,6 +55,20 @@ export default function ExamDetail() {
   // Confirm-dialog state — null when closed.
   const [dlg, setDlg] = useState(null)
 
+  // Biometrics completeness + per-candidate has-photo/fp/iris lookup.
+  // `bioByRoll` is a map keyed by roll_no for O(1) row rendering.
+  const [completeness, setCompleteness] = useState(null)
+  const bioByRoll = completeness?.per_candidate
+    ? Object.fromEntries(completeness.per_candidate.map((c) => [c.roll, c]))
+    : {}
+  // Biometric-upload modal state: null when closed, or the candidate row
+  // when open.
+  const [bioTarget, setBioTarget] = useState(null)
+
+  const refreshCompleteness = useCallback(async () => {
+    try { setCompleteness(await getExamCompleteness(id)) } catch { /* silent */ }
+  }, [id])
+
   const refreshExam = useCallback(async () => {
     try {
       const { exam, uploads } = await getExam(id)
@@ -75,8 +91,9 @@ export default function ExamDetail() {
 
   useEffect(() => {
     setLoading(true)
-    Promise.all([refreshExam(), refreshCandidates()]).finally(() => setLoading(false))
-  }, [refreshExam, refreshCandidates])
+    Promise.all([refreshExam(), refreshCandidates(), refreshCompleteness()])
+      .finally(() => setLoading(false))
+  }, [refreshExam, refreshCandidates, refreshCompleteness])
 
   async function onCSVUpload(file) {
     if (!file) return
@@ -369,6 +386,31 @@ export default function ExamDetail() {
           </Card>
         )}
 
+        {/* Biometrics completeness — a small band above the candidates
+            table so the superadmin sees at-a-glance how much of the
+            enrolment data has photos/FP/iris uploaded. */}
+        {completeness && completeness.total > 0 && (
+          <div className="mb-4 rounded-xl border border-warm bg-warm-surface p-4 shadow-sm">
+            <div className="flex items-baseline justify-between flex-wrap gap-3 mb-3">
+              <div>
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-warm-accent">
+                  Biometric enrolment
+                </p>
+                <p className="text-sm text-stone-600 mt-0.5">
+                  {completeness.total.toLocaleString()} candidate{completeness.total === 1 ? '' : 's'} enrolled ·
+                  {' '}files under <code className="text-xs bg-stone-100 px-1 py-0.5 rounded">data/uploaded/{id}/</code>
+                </p>
+              </div>
+            </div>
+            <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
+              <BioMetric label="Photo"       have={completeness.with_photo}       total={completeness.total} />
+              <BioMetric label="FP image"    have={completeness.with_fp_image}    total={completeness.total} />
+              <BioMetric label="FP template" have={completeness.with_fp_template} total={completeness.total} />
+              <BioMetric label="Iris"        have={completeness.with_iris}        total={completeness.total} />
+            </div>
+          </div>
+        )}
+
         {/* Candidates table */}
         <Card>
           <CardBody className="p-0">
@@ -397,16 +439,34 @@ export default function ExamDetail() {
                       <th className="px-4 py-2.5">Roll no.</th>
                       <th className="px-4 py-2.5">Name</th>
                       <th className="px-4 py-2.5">Verification date</th>
+                      <th className="px-4 py-2.5">Biometrics</th>
+                      <th className="px-4 py-2.5 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
-                    {candidates.map((c) => (
-                      <tr key={c.id} className="border-b border-slate-100 last:border-none hover:bg-slate-50/60">
-                        <td className="px-4 py-3 font-mono text-xs text-slate-700 tabular-nums">{c.roll_no}</td>
-                        <td className="px-4 py-3 text-slate-900">{c.name}</td>
-                        <td className="px-4 py-3 text-xs text-slate-500 tabular-nums">{dateOnly(c.verification_date) || '—'}</td>
-                      </tr>
-                    ))}
+                    {candidates.map((c) => {
+                      const bio = bioByRoll[c.roll_no] || {}
+                      return (
+                        <tr key={c.id} className="border-b border-slate-100 last:border-none hover:bg-slate-50/60">
+                          <td className="px-4 py-3 font-mono text-xs text-slate-700 tabular-nums">{c.roll_no}</td>
+                          <td className="px-4 py-3 text-slate-900">{c.name}</td>
+                          <td className="px-4 py-3 text-xs text-slate-500 tabular-nums">{dateOnly(c.verification_date) || '—'}</td>
+                          <td className="px-4 py-3">
+                            <div className="inline-flex items-center gap-2">
+                              <BioDot label="Photo"       ok={bio.has_photo} />
+                              <BioDot label="FP image"    ok={bio.has_fp_image} />
+                              <BioDot label="FP template" ok={bio.has_fp_template} />
+                              <BioDot label="Iris"        ok={bio.has_iris} />
+                            </div>
+                          </td>
+                          <td className="px-4 py-3 text-right">
+                            <Button variant="secondary" size="sm" onClick={() => setBioTarget(c)}>
+                              Upload
+                            </Button>
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -424,7 +484,160 @@ export default function ExamDetail() {
         confirmLabel={dlg?.confirmLabel}
         tone={dlg?.tone}
       />
+
+      <BiometricUploadModal
+        open={!!bioTarget}
+        examId={id}
+        candidate={bioTarget}
+        currentStatus={bioTarget ? (bioByRoll[bioTarget.roll_no] || {}) : {}}
+        onClose={() => setBioTarget(null)}
+        onUploaded={async () => { await refreshCompleteness() }}
+      />
     </SuperShell>
+  )
+}
+
+// ── Biometrics helpers ───────────────────────────────────────────────
+
+// BioMetric — one summary card in the biometric-completeness strip.
+// Renders "312 / 500" + a slim progress bar. Colour goes amber when
+// completion is under 80% so the eye lands on gaps.
+function BioMetric({ label, have, total }) {
+  const pct = total ? (have / total) * 100 : 0
+  const complete = pct >= 100
+  const low = pct < 80 && !complete
+  return (
+    <div className="rounded-lg border border-warm bg-[#FBF7F0] px-4 py-3">
+      <p className="text-[10px] font-semibold uppercase tracking-widest text-stone-500 mb-1">{label}</p>
+      <p className="text-xl font-semibold text-ink-900 tabular-nums leading-none">
+        {have.toLocaleString('en-IN')} <span className="text-xs font-normal text-stone-400">/ {total.toLocaleString('en-IN')}</span>
+      </p>
+      <div className="mt-2 h-1 rounded-full bg-stone-200 overflow-hidden">
+        <div
+          className={`h-full rounded-full transition-all duration-700 ease-out ${complete ? 'bg-emerald-600' : low ? 'bg-amber-600' : 'bg-stone-700'}`}
+          style={{ width: `${Math.min(100, pct)}%` }}
+        />
+      </div>
+    </div>
+  )
+}
+
+// BioDot — a single per-biometric status dot in the candidate row.
+// Filled = present, hollow-outline = missing. Tooltip on hover.
+function BioDot({ label, ok }) {
+  return (
+    <span
+      title={`${label}: ${ok ? 'uploaded' : 'missing'}`}
+      className={`inline-block h-2 w-2 rounded-full ${ok ? 'bg-emerald-600' : 'bg-transparent border border-stone-300'}`}
+      aria-label={`${label} ${ok ? 'uploaded' : 'missing'}`}
+    />
+  )
+}
+
+// BiometricUploadModal — one modal for uploading any of the four
+// biometric kinds for one candidate. Uses the ConfirmDialog visual
+// pattern (backdrop + spring modal) but is its own component because
+// the body is a form, not a plain message.
+function BiometricUploadModal({ open, examId, candidate, currentStatus, onClose, onUploaded }) {
+  const [uploadingKind, setUploadingKind] = useState(null)
+  const [err, setErr] = useState('')
+
+  if (!open || !candidate) return null
+
+  async function handleUpload(kind, file) {
+    if (!file) return
+    setUploadingKind(kind)
+    setErr('')
+    try {
+      await uploadBiometric(examId, candidate.roll_no, kind, file)
+      await onUploaded()
+    } catch (e) {
+      setErr(e.message || 'Upload failed')
+    } finally {
+      setUploadingKind(null)
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[100] flex items-center justify-center p-4">
+      <div
+        className="absolute inset-0 bg-stone-900/40 backdrop-blur-sm"
+        onClick={() => uploadingKind == null && onClose()}
+      />
+      <div className="relative w-full max-w-lg rounded-2xl bg-warm-surface border border-warm shadow-2xl overflow-hidden">
+        <div className="px-6 py-5 border-b border-warm">
+          <p className="text-[11px] font-semibold uppercase tracking-widest text-warm-accent mb-1">
+            Upload biometrics
+          </p>
+          <h3 className="text-base font-semibold text-ink-900">
+            {candidate.name} <span className="text-stone-500 font-mono text-sm">· {candidate.roll_no}</span>
+          </h3>
+        </div>
+        <div className="p-6 space-y-4">
+          <BioUploadRow label="Photo"        kind="photo"       accept=".jpg,.jpeg,.png"       have={currentStatus.has_photo}       busy={uploadingKind === 'photo'}       onFile={(f) => handleUpload('photo', f)} />
+          <BioUploadRow label="FP image"     kind="fp_image"    accept=".jpg,.jpeg,.png,.bmp"  have={currentStatus.has_fp_image}    busy={uploadingKind === 'fp_image'}    onFile={(f) => handleUpload('fp_image', f)} />
+          <BioUploadRow label="FP template"  kind="fp_template" accept=".iso,.dat,.bin"        have={currentStatus.has_fp_template} busy={uploadingKind === 'fp_template'} onFile={(f) => handleUpload('fp_template', f)} />
+          <BioUploadRow label="Iris"         kind="iris"        accept=".iso,.k7,.bmp"         have={currentStatus.has_iris}        busy={uploadingKind === 'iris'}        onFile={(f) => handleUpload('iris', f)} />
+
+          {err && (
+            <div role="alert" className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-700">
+              {err}
+            </div>
+          )}
+        </div>
+        <div className="flex items-center justify-end gap-2 px-6 py-3 bg-[#FBF7F0] border-t border-warm">
+          <button
+            type="button"
+            onClick={onClose}
+            disabled={uploadingKind != null}
+            className="inline-flex items-center px-4 py-2 text-sm font-medium rounded-lg text-stone-700 hover:bg-stone-100 focus:outline-none focus:ring-2 focus:ring-stone-300 disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  )
+}
+
+// One row inside the modal — label + status dot + "Choose file" button.
+// The <input type=file> is hidden and triggered by clicking the button
+// so we get consistent button chrome instead of the browser default.
+function BioUploadRow({ label, kind, accept, have, busy, onFile }) {
+  const inputId = `bio-upload-${kind}`
+  return (
+    <div className="flex items-center justify-between gap-3 py-2 border-b border-warm last:border-none">
+      <div className="flex items-center gap-2.5 min-w-0">
+        <span
+          className={`inline-block h-2 w-2 rounded-full shrink-0 ${have ? 'bg-emerald-600' : 'bg-transparent border border-stone-300'}`}
+          aria-hidden="true"
+        />
+        <div className="min-w-0">
+          <p className="text-sm font-medium text-ink-900">{label}</p>
+          <p className="text-[11px] text-stone-500">
+            {have ? 'Uploaded — new file replaces it' : 'Not uploaded yet'}
+            <span className="mx-1 text-stone-300">·</span>
+            <span className="text-stone-400">{accept}</span>
+          </p>
+        </div>
+      </div>
+      <div className="shrink-0">
+        <input
+          id={inputId}
+          type="file"
+          accept={accept}
+          disabled={busy}
+          onChange={(e) => onFile(e.target.files?.[0])}
+          className="hidden"
+        />
+        <label
+          htmlFor={inputId}
+          className={`inline-flex items-center px-3 py-1.5 text-xs font-medium rounded-md border border-warm-strong bg-white text-stone-800 hover:bg-stone-50 cursor-pointer transition-colors ${busy ? 'opacity-60 cursor-not-allowed' : ''}`}
+        >
+          {busy ? 'Uploading…' : (have ? 'Replace' : 'Choose file')}
+        </label>
+      </div>
+    </div>
   )
 }
 

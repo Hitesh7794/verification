@@ -261,6 +261,9 @@ func (s *Server) Router() http.Handler {
 
 		r.Post("/api/superadmin/exams/{id}/candidates",                s.requireRole("superadmin")(s.superadminUploadExamCSV))
 		r.Get("/api/superadmin/exams/{id}/candidates",                 s.requireRole("superadmin")(s.superadminListCandidates))
+		r.Get("/api/superadmin/exams/{id}/completeness",               s.requireRole("superadmin")(s.superadminExamCompleteness))
+		r.Post("/api/superadmin/exams/{id}/candidates/{roll}/biometric", s.requireRole("superadmin")(s.superadminUploadBiometric))
+		r.Post("/api/superadmin/reindex",                              s.requireRole("superadmin")(s.superadminReindex))
 		r.Get("/api/superadmin/exams/{id}/uploads",                    s.requireRole("superadmin")(s.superadminListUploads))
 		r.Get("/api/superadmin/uploads/{upload_id}/raw",               s.requireRole("superadmin")(s.superadminDownloadRawCSV))
 
