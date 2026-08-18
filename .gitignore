@@ -124,3 +124,6 @@ backend/artifacts/institution_docs/
 
 # Vendor Windows binaries — not redistributable
 MorFinDriver_*.exe
+
+# Claude Code session workspaces (local scratch)
+.claude/
