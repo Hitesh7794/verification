@@ -65,15 +65,16 @@ const (
 // ── DTOs ──────────────────────────────────────────────────────────────
 
 type clientRow struct {
-	ID        int64      `json:"id"`
-	Name      string     `json:"name"`
-	Notes     string     `json:"notes,omitempty"`
-	Visible   bool       `json:"visible"`
-	Closed    bool       `json:"closed"`
-	ClosedAt  *time.Time `json:"closed_at,omitempty"`
-	ExamCount int64      `json:"exam_count"`
-	CreatedAt time.Time  `json:"created_at"`
-	UpdatedAt time.Time  `json:"updated_at"`
+	ID            int64      `json:"id"`
+	Name          string     `json:"name"`
+	Notes         string     `json:"notes,omitempty"`
+	Visible       bool       `json:"visible"`
+	Closed        bool       `json:"closed"`
+	PortalEnabled bool       `json:"portal_enabled"`
+	ClosedAt      *time.Time `json:"closed_at,omitempty"`
+	ExamCount     int64      `json:"exam_count"`
+	CreatedAt     time.Time  `json:"created_at"`
+	UpdatedAt     time.Time  `json:"updated_at"`
 }
 
 type examRow struct {
@@ -849,10 +850,11 @@ func (s *Server) loadClient(ctx context.Context, id int64) (*clientRow, error) {
 	var closedAt sql.NullTime
 	err := s.deps.DB.QueryRowContext(ctx, db.Q(`
 		SELECT c.id, c.name, COALESCE(c.notes,''),
-		       c.visible, c.closed, c.closed_at, c.created_at, c.updated_at,
+		       c.visible, c.closed, c.portal_enabled,
+		       c.closed_at, c.created_at, c.updated_at,
 		       (SELECT COUNT(*) FROM exams e WHERE e.client_id = c.id) AS exam_count
 		FROM clients c WHERE c.id = $1`), id).Scan(
-		&c.ID, &c.Name, &c.Notes, &visible, &closed,
+		&c.ID, &c.Name, &c.Notes, &visible, &closed, &c.PortalEnabled,
 		&closedAt, &c.CreatedAt, &c.UpdatedAt, &c.ExamCount)
 	if err != nil {
 		return nil, err

@@ -412,14 +412,28 @@ function ReviewPortalPanel({ client, onChanged }) {
             </div>
             <div className="min-w-0">
               <h2 className="text-base font-semibold text-slate-900">Review portal</h2>
-              <p className="text-xs text-slate-500 mt-0.5">
-                When enabled, institutions can register directly to this client. Reviewers
-                below sign in at <span className="font-mono text-slate-700">/client/login</span> to
-                approve or reject KYC.
+              <p className="text-xs text-slate-600 mt-1 leading-relaxed">
+                Off by default — the platform's onboarding team reviews every KYC.
+                Turn it <span className="font-semibold text-stone-900">on</span> to
+                let <span className="font-semibold text-stone-900">{client.name}</span> appear
+                in the register form's exam-board dropdown, route new applications
+                to reviewer accounts you create below, and let those reviewers sign
+                in at <a href="/reviewer/login" className="font-mono text-stone-800 underline">/reviewer/login</a> to
+                approve or reject KYC without needing superadmin access.
               </p>
             </div>
           </div>
-          <PortalToggle on={portalOn} onToggle={onToggle} disabled={toggling} />
+          <div className="flex flex-col items-end gap-1 shrink-0">
+            <PortalToggle on={portalOn} onToggle={onToggle} disabled={toggling} />
+            <span
+              className={
+                'text-[11px] font-semibold uppercase tracking-wider ' +
+                (portalOn ? 'text-emerald-700' : 'text-slate-500')
+              }
+            >
+              {toggling ? 'Saving…' : portalOn ? 'Enabled' : 'Disabled'}
+            </span>
+          </div>
         </div>
 
         {err && (
@@ -539,15 +553,17 @@ function PortalToggle({ on, onToggle, disabled }) {
       onClick={disabled ? undefined : onToggle}
       aria-pressed={on}
       className={
-        'relative inline-flex h-7 w-12 shrink-0 items-center rounded-full transition-colors ' +
-        (on ? 'bg-emerald-600' : 'bg-slate-300') +
+        'relative inline-flex h-7 w-12 shrink-0 items-center rounded-full ring-1 transition-colors focus:outline-none focus:ring-2 focus:ring-stone-400 focus:ring-offset-1 ' +
+        (on
+          ? 'bg-emerald-600 ring-emerald-700'
+          : 'bg-slate-200 ring-slate-300 hover:bg-slate-300') +
         (disabled ? ' opacity-60 cursor-wait' : ' cursor-pointer')
       }
       title={on ? 'Enabled — this client shows up on the register form' : 'Disabled — hidden from the register form'}
     >
       <span
         className={
-          'inline-block h-5 w-5 rounded-full bg-white shadow transform transition-transform ' +
+          'inline-block h-5 w-5 rounded-full bg-white shadow-md transform transition-transform duration-150 ease-out ' +
           (on ? 'translate-x-6' : 'translate-x-1')
         }
       />
