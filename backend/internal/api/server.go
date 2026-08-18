@@ -15,8 +15,6 @@ import (
 	"github.com/veni/neet-verification/internal/config"
 	"github.com/veni/neet-verification/internal/data"
 	"github.com/veni/neet-verification/internal/email"
-	"github.com/veni/neet-verification/internal/fpmatch"
-	"github.com/veni/neet-verification/internal/luxand"
 	"github.com/veni/neet-verification/internal/magiclink"
 	"github.com/veni/neet-verification/internal/razorpay"
 	"github.com/veni/neet-verification/internal/trustview"
@@ -32,8 +30,6 @@ type Deps struct {
 
 type Server struct {
 	deps       Deps
-	luxand     *luxand.Client    // optional; nil disables /api/face-match cleanly (kept as rollback path)
-	fpMatchCl  *fpmatch.Client   // optional; nil disables /api/fp-match cleanly  (kept as rollback path)
 	trustview  *trustview.Client // optional; nil = TRUSTVIEW_TOKEN empty, biometric compare handlers return 503
 	wallet     *wallet.Store     // optional; nil disables /api/wallet/* + candidate charge
 	razorpayCl *razorpay.Client  // optional; nil disables Razorpay deposit flow (admin_credit still works)
@@ -45,19 +41,13 @@ type Server struct {
 	emailer    email.Sender
 }
 
-// NewServer wires the API. The luxand + fp-match + razorpay clients are
-// constructed lazily here so the server can boot before any external
-// service is reachable — those endpoints fail with 503 until the service
-// is up, but the rest of the API stays available. This is what lets the
-// backend run on a dev laptop without all the auxiliary services yet.
+// NewServer wires the API. External clients (TrustView, Razorpay) are
+// constructed lazily here so the server can boot before those services
+// are reachable — dependent endpoints fail with 503 until the service
+// is up, but the rest of the API stays available. This is what lets
+// the backend run on a dev laptop without all the auxiliary services.
 func NewServer(d Deps) *Server {
 	s := &Server{deps: d}
-	if d.Cfg.LuxandBase != "" {
-		s.luxand = luxand.New(d.Cfg.LuxandBase)
-	}
-	if d.Cfg.FpMatchBase != "" {
-		s.fpMatchCl = fpmatch.New(d.Cfg.FpMatchBase)
-	}
 	// TrustView hosted compare API — the new primary matcher for face,
 	// fingerprint, and iris. Client is safe to construct even without a
 	// token (Compare() preflights and returns KindNoToken cleanly); we
@@ -259,6 +249,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/api/superadmin/clients/{id}/visibility",              s.requireRole("superadmin")(s.superadminToggleClientVisibility))
 		r.Post("/api/superadmin/clients/{id}/close",                   s.requireRole("superadmin")(s.superadminCloseClient))
 		r.Post("/api/superadmin/clients/{id}/reopen",                  s.requireRole("superadmin")(s.superadminReopenClient))
+		r.Delete("/api/superadmin/clients/{id}",                       s.requireRole("superadmin")(s.superadminDeleteClient))
 
 		r.Post("/api/superadmin/clients/{id}/exams",                   s.requireRole("superadmin")(s.superadminCreateExam))
 		r.Get("/api/superadmin/exams/{id}",                            s.requireRole("superadmin")(s.superadminGetExam))
@@ -266,6 +257,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/api/superadmin/exams/{id}/visibility",                s.requireRole("superadmin")(s.superadminToggleExamVisibility))
 		r.Post("/api/superadmin/exams/{id}/close",                     s.requireRole("superadmin")(s.superadminCloseExam))
 		r.Post("/api/superadmin/exams/{id}/reopen",                    s.requireRole("superadmin")(s.superadminReopenExam))
+		r.Delete("/api/superadmin/exams/{id}",                         s.requireRole("superadmin")(s.superadminDeleteExam))
 
 		r.Post("/api/superadmin/exams/{id}/candidates",                s.requireRole("superadmin")(s.superadminUploadExamCSV))
 		r.Get("/api/superadmin/exams/{id}/candidates",                 s.requireRole("superadmin")(s.superadminListCandidates))

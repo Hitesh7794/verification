@@ -50,6 +50,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/veni/neet-verification/internal/db"
 )
 
 func boolToInt(b bool) int { if b { return 1 }; return 0 }
@@ -132,13 +133,14 @@ func (s *Server) superadminCreateClient(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	notes := strings.TrimSpace(req.Notes)
-	res, err := s.deps.DB.ExecContext(r.Context(),
-		`INSERT INTO clients(name, notes) VALUES(?, ?)`, name, nullable(notes))
-	if err != nil {
+	var id int64
+	if err := s.deps.DB.QueryRowContext(r.Context(),
+		`INSERT INTO clients(name, notes) VALUES($1, $2) RETURNING id`,
+		name, nullable(notes),
+	).Scan(&id); err != nil {
 		writeErr(w, http.StatusInternalServerError, "db insert: "+err.Error())
 		return
 	}
-	id, _ := res.LastInsertId()
 	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "name": name})
 }
 
@@ -235,7 +237,7 @@ func (s *Server) superadminPatchClient(w http.ResponseWriter, r *http.Request) {
 	sets = append(sets, "updated_at = CURRENT_TIMESTAMP")
 	args = append(args, id)
 	if _, err := s.deps.DB.ExecContext(r.Context(),
-		"UPDATE clients SET "+strings.Join(sets, ", ")+" WHERE id = ?", args...); err != nil {
+		db.Q("UPDATE clients SET "+strings.Join(sets, ", ")+" WHERE id = ?"), args...); err != nil {
 		writeErr(w, http.StatusInternalServerError, "db update: "+err.Error())
 		return
 	}
@@ -252,6 +254,46 @@ func (s *Server) superadminCloseClient(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) superadminReopenClient(w http.ResponseWriter, r *http.Request) {
 	s.setCloseFlag(w, r, "clients", false)
+}
+
+// DELETE /api/superadmin/clients/{id}
+//
+// Hard-deletes a client row. Refuses if the client still has exams —
+// "End" (close) is the reversible action for shutting down a client;
+// delete is only for wiping a genuinely-empty test client. The exams
+// FK is intentionally not ON DELETE CASCADE so this can't nuke a
+// client's whole history in one click.
+func (s *Server) superadminDeleteClient(w http.ResponseWriter, r *http.Request) {
+	id, err := parseInt64(chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	var examCount int
+	if err := s.deps.DB.QueryRowContext(r.Context(),
+		`SELECT COUNT(*) FROM exams WHERE client_id = $1`, id,
+	).Scan(&examCount); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db count: "+err.Error())
+		return
+	}
+	if examCount > 0 {
+		writeErr(w, http.StatusConflict, fmt.Sprintf(
+			"cannot delete client — it still has %d exam(s). Delete the exams first, or use End to close the client.",
+			examCount))
+		return
+	}
+	res, err := s.deps.DB.ExecContext(r.Context(),
+		`DELETE FROM clients WHERE id = $1`, id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db delete: "+err.Error())
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		writeErr(w, http.StatusNotFound, "client not found")
+		return
+	}
+	s.auditFromRequest(r, "client.delete", "client", id, nil)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ── EXAMS ─────────────────────────────────────────────────────────────
@@ -326,16 +368,17 @@ func (s *Server) superadminCreateExam(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := s.deps.DB.ExecContext(r.Context(), `
+	var id int64
+	if err := s.deps.DB.QueryRowContext(r.Context(), `
 		INSERT INTO exams(client_id, name, exam_code, trustview_ref,
 		                  verification_from, verification_to,
 		                  requires_face, requires_fp, requires_iris)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING id`,
 		clientID, name, code, nullable(strings.TrimSpace(req.TrustviewRef)),
 		from, to,
-		boolToInt(rFace), boolToInt(rFP), boolToInt(rIris))
-	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint failed: exams.exam_code") {
+		boolToInt(rFace), boolToInt(rFP), boolToInt(rIris)).Scan(&id); err != nil {
+		if isUniqueViolation(err) && strings.Contains(strings.ToLower(err.Error()), "exam_code") {
 			writeErr(w, http.StatusConflict,
 				"exam_code already used by another exam; pick a different code")
 			return
@@ -343,7 +386,6 @@ func (s *Server) superadminCreateExam(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "db insert: "+err.Error())
 		return
 	}
-	id, _ := res.LastInsertId()
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id": id, "name": name, "exam_code": code,
 	})
@@ -432,7 +474,7 @@ func (s *Server) superadminPatchExam(w http.ResponseWriter, r *http.Request) {
 	if req.RequiresFace != nil || req.RequiresFP != nil || req.RequiresIris != nil {
 		var curFace, curFP, curIris bool
 		if err := s.deps.DB.QueryRowContext(r.Context(),
-			`SELECT requires_face, requires_fp, requires_iris FROM exams WHERE id = ?`, id,
+			`SELECT requires_face, requires_fp, requires_iris FROM exams WHERE id = $1`, id,
 		).Scan(&curFace, &curFP, &curIris); err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
 				writeErr(w, http.StatusNotFound, "exam not found")
@@ -462,7 +504,7 @@ func (s *Server) superadminPatchExam(w http.ResponseWriter, r *http.Request) {
 	sets = append(sets, "updated_at = CURRENT_TIMESTAMP")
 	args = append(args, id)
 	if _, err := s.deps.DB.ExecContext(r.Context(),
-		"UPDATE exams SET "+strings.Join(sets, ", ")+" WHERE id = ?", args...); err != nil {
+		db.Q("UPDATE exams SET "+strings.Join(sets, ", ")+" WHERE id = ?"), args...); err != nil {
 		if strings.Contains(err.Error(), "CHECK constraint failed") {
 			writeErr(w, http.StatusBadRequest, "verification_from must be <= verification_to")
 			return
@@ -483,6 +525,52 @@ func (s *Server) superadminCloseExam(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) superadminReopenExam(w http.ResponseWriter, r *http.Request) {
 	s.setCloseFlag(w, r, "exams", false)
+}
+
+// DELETE /api/superadmin/exams/{id}
+//
+// Hard-deletes an exam. Refuses if any verification row references a
+// candidate in this exam — those are financial + audit records and
+// mustn't be silently orphaned. If the exam is clean of verifications,
+// the delete cascades to exam_candidates, exam_centres, exam_csv_uploads,
+// organization_exam_subscriptions, and operator_exams via their FKs.
+func (s *Server) superadminDeleteExam(w http.ResponseWriter, r *http.Request) {
+	id, err := parseInt64(chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	// verifications don't have an FK on exam_id — the link is via the
+	// candidate roll. So we count verifications whose roll matches any
+	// candidate in this exam.
+	var verCount int
+	if err := s.deps.DB.QueryRowContext(r.Context(), `
+		SELECT COUNT(*)
+		  FROM verifications v
+		  JOIN exam_candidates ec ON ec.roll_no = v.roll_no
+		 WHERE ec.exam_id = $1
+	`, id).Scan(&verCount); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db count: "+err.Error())
+		return
+	}
+	if verCount > 0 {
+		writeErr(w, http.StatusConflict, fmt.Sprintf(
+			"cannot delete exam — %d verification(s) reference candidates in this exam. Use End to close it instead (existing data preserved).",
+			verCount))
+		return
+	}
+	res, err := s.deps.DB.ExecContext(r.Context(),
+		`DELETE FROM exams WHERE id = $1`, id)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db delete: "+err.Error())
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		writeErr(w, http.StatusNotFound, "exam not found")
+		return
+	}
+	s.auditFromRequest(r, "exam.delete", "exam", id, nil)
+	w.WriteHeader(http.StatusNoContent)
 }
 
 // ── CSV UPLOAD + CANDIDATES ───────────────────────────────────────────
@@ -594,7 +682,7 @@ func (s *Server) superadminUploadExamCSV(w http.ResponseWriter, r *http.Request)
 			exam_id, roll_no, name, verification_date,
 			registration_id, father_name, dob, gender, shift_name, centre_code
 		)
-		VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)
 		ON CONFLICT(exam_id, roll_no) DO UPDATE SET
 			name              = excluded.name,
 			verification_date = excluded.verification_date,
@@ -628,18 +716,18 @@ func (s *Server) superadminUploadExamCSV(w http.ResponseWriter, r *http.Request)
 	if claims != nil {
 		uploaderID = claims.UserID
 	}
-	res, err := tx.ExecContext(r.Context(), `
+	var uploadID int64
+	if err := tx.QueryRowContext(r.Context(), `
 		INSERT INTO exam_csv_uploads(exam_id, filename, storage_path, size_bytes,
 		                             sha256, uploaded_by, rows_seeded)
-		VALUES(?, ?, ?, ?, ?, ?, ?)`,
+		VALUES($1, $2, $3, $4, $5, $6, $7)
+		RETURNING id`,
 		examID, origName, storagePath, int64(len(buf)), hexSum,
-		uploaderID, int64(len(parsed)))
-	if err != nil {
+		uploaderID, int64(len(parsed))).Scan(&uploadID); err != nil {
 		_ = os.Remove(storagePath)
 		writeErr(w, http.StatusInternalServerError, "db upload record: "+err.Error())
 		return
 	}
-	uploadID, _ := res.LastInsertId()
 	if err := tx.Commit(); err != nil {
 		_ = os.Remove(storagePath)
 		writeErr(w, http.StatusInternalServerError, "db commit: "+err.Error())
@@ -675,9 +763,9 @@ func (s *Server) superadminListCandidates(w http.ResponseWriter, r *http.Request
 	rows, err := s.deps.DB.QueryContext(r.Context(), `
 		SELECT id, roll_no, name, verification_date, created_at
 		FROM exam_candidates
-		WHERE exam_id = ?
+		WHERE exam_id = $1
 		ORDER BY id
-		LIMIT ? OFFSET ?`, examID, limit, offset)
+		LIMIT $2 OFFSET $3`, examID, limit, offset)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
 		return
@@ -698,7 +786,7 @@ func (s *Server) superadminListCandidates(w http.ResponseWriter, r *http.Request
 	}
 	var total int64
 	_ = s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT COUNT(*) FROM exam_candidates WHERE exam_id = ?`, examID).Scan(&total)
+		`SELECT COUNT(*) FROM exam_candidates WHERE exam_id = $1`, examID).Scan(&total)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"candidates": out,
 		"total":      total,
@@ -729,7 +817,7 @@ func (s *Server) superadminDownloadRawCSV(w http.ResponseWriter, r *http.Request
 	}
 	var path, filename string
 	err = s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT storage_path, filename FROM exam_csv_uploads WHERE id = ?`,
+		`SELECT storage_path, filename FROM exam_csv_uploads WHERE id = $1`,
 		uploadID).Scan(&path, &filename)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeErr(w, http.StatusNotFound, "upload not found")
@@ -759,11 +847,11 @@ func (s *Server) loadClient(ctx context.Context, id int64) (*clientRow, error) {
 	var c clientRow
 	var visible, closed int
 	var closedAt sql.NullTime
-	err := s.deps.DB.QueryRowContext(ctx, `
+	err := s.deps.DB.QueryRowContext(ctx, db.Q(`
 		SELECT c.id, c.name, COALESCE(c.notes,''),
 		       c.visible, c.closed, c.closed_at, c.created_at, c.updated_at,
 		       (SELECT COUNT(*) FROM exams e WHERE e.client_id = c.id) AS exam_count
-		FROM clients c WHERE c.id = ?`, id).Scan(
+		FROM clients c WHERE c.id = $1`), id).Scan(
 		&c.ID, &c.Name, &c.Notes, &visible, &closed,
 		&closedAt, &c.CreatedAt, &c.UpdatedAt, &c.ExamCount)
 	if err != nil {
@@ -783,14 +871,14 @@ func (s *Server) loadExam(ctx context.Context, id int64) (*examRow, error) {
 	var closedAt sql.NullTime
 	var trustview sql.NullString
 	var reqFace, reqFP, reqIris int
-	err := s.deps.DB.QueryRowContext(ctx, `
+	err := s.deps.DB.QueryRowContext(ctx, db.Q(`
 		SELECT e.id, e.client_id, c.name, e.name, e.exam_code, e.trustview_ref,
 		       e.verification_from, e.verification_to, e.visible, e.closed,
 		       e.closed_at, e.created_at, e.updated_at,
 		       e.requires_face, e.requires_fp, e.requires_iris,
 		       (SELECT COUNT(*) FROM exam_candidates ec WHERE ec.exam_id = e.id)
 		FROM exams e JOIN clients c ON c.id = e.client_id
-		WHERE e.id = ?`, id).Scan(
+		WHERE e.id = $1`), id).Scan(
 		&e.ID, &e.ClientID, &e.ClientName, &e.Name, &e.ExamCode, &trustview,
 		&e.VerificationFrom, &e.VerificationTo, &visible, &closed,
 		&closedAt, &e.CreatedAt, &e.UpdatedAt,
@@ -814,14 +902,14 @@ func (s *Server) loadExam(ctx context.Context, id int64) (*examRow, error) {
 }
 
 func (s *Server) listExamsForClient(ctx context.Context, clientID int64) ([]examRow, error) {
-	rows, err := s.deps.DB.QueryContext(ctx, `
+	rows, err := s.deps.DB.QueryContext(ctx, db.Q(`
 		SELECT e.id, e.client_id, e.name, e.exam_code, e.trustview_ref,
 		       e.verification_from, e.verification_to, e.visible, e.closed,
 		       e.closed_at, e.created_at, e.updated_at,
 		       e.requires_face, e.requires_fp, e.requires_iris,
 		       (SELECT COUNT(*) FROM exam_candidates ec WHERE ec.exam_id = e.id)
-		FROM exams e WHERE e.client_id = ?
-		ORDER BY e.created_at DESC`, clientID)
+		FROM exams e WHERE e.client_id = $1
+		ORDER BY e.created_at DESC`), clientID)
 	if err != nil {
 		return nil, err
 	}
@@ -857,12 +945,12 @@ func (s *Server) listExamsForClient(ctx context.Context, clientID int64) ([]exam
 }
 
 func (s *Server) listUploadsForExam(ctx context.Context, examID int64) ([]uploadRow, error) {
-	rows, err := s.deps.DB.QueryContext(ctx, `
+	rows, err := s.deps.DB.QueryContext(ctx, db.Q(`
 		SELECT u.id, u.filename, u.size_bytes, u.sha256, u.rows_seeded,
 		       COALESCE(usr.username,''), u.uploaded_at
 		FROM exam_csv_uploads u
 		LEFT JOIN users usr ON usr.id = u.uploaded_by
-		WHERE u.exam_id = ? ORDER BY u.uploaded_at DESC LIMIT 50`, examID)
+		WHERE u.exam_id = $1 ORDER BY u.uploaded_at DESC LIMIT 50`), examID)
 	if err != nil {
 		return nil, err
 	}
@@ -899,7 +987,7 @@ func (s *Server) toggleFlag(w http.ResponseWriter, r *http.Request, table, col s
 	q := fmt.Sprintf(
 		"UPDATE %s SET %s = 1 - %s, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 		table, col, col)
-	res, err := s.deps.DB.ExecContext(r.Context(), q, id)
+	res, err := s.deps.DB.ExecContext(r.Context(), db.Q(q), id)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db update: "+err.Error())
 		return
@@ -932,7 +1020,7 @@ func (s *Server) setCloseFlag(w http.ResponseWriter, r *http.Request, table stri
 			"UPDATE %s SET closed = 0, closed_at = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 			table)
 	}
-	res, err := s.deps.DB.ExecContext(r.Context(), q, id)
+	res, err := s.deps.DB.ExecContext(r.Context(), db.Q(q), id)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db update: "+err.Error())
 		return
