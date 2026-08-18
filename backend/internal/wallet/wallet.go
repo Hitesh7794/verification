@@ -111,6 +111,9 @@ func (s *Store) History(ctx context.Context, orgID int64, limit int, beforeID in
 	if limit > 200 {
 		limit = 200
 	}
+	// SQL uses `?` throughout and gets rebound to $N by db.Q. Cursor +
+	// limit are appended in order so their slot numbers stay correct
+	// under both `orgID+limit` and `orgID+beforeID+limit` shapes.
 	q := `SELECT t.id, t.org_id, t.actor_user_id,
 	             COALESCE(u.username,''), COALESCE(u.display_name,''),
 	             t.kind, t.amount_paise, t.balance_after_paise,
@@ -119,15 +122,15 @@ func (s *Store) History(ctx context.Context, orgID int64, limit int, beforeID in
 	             t.created_at
 	      FROM wallet_transactions t
 	      LEFT JOIN users u ON u.id = t.actor_user_id
-	      WHERE t.org_id = $1`
+	      WHERE t.org_id = ?`
 	args := []any{orgID}
 	if beforeID > 0 {
 		q += ` AND t.id < ?`
 		args = append(args, beforeID)
 	}
-	q += ` ORDER BY t.id DESC LIMIT $1`
+	q += ` ORDER BY t.id DESC LIMIT ?`
 	args = append(args, limit)
-	rows, err := s.db.QueryContext(ctx, q, args...)
+	rows, err := s.db.QueryContext(ctx, db.Q(q), args...)
 	if err != nil {
 		return nil, err
 	}

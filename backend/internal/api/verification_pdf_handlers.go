@@ -13,6 +13,8 @@ import (
 
 	"github.com/go-chi/chi/v5"
 	"github.com/jung-kurt/gofpdf"
+
+	"github.com/veni/neet-verification/internal/db"
 )
 
 // verificationPDF assembles a one-page A4 verification receipt and
@@ -115,7 +117,7 @@ func (s *Server) verificationPDF(w http.ResponseWriter, r *http.Request) {
 		         ON ectr.exam_id     = ec.exam_id
 		        AND ectr.centre_code = ec.centre_code
 		  LEFT JOIN users           u  ON u.id          = v.operator_id
-		 WHERE v.id = $1`
+		 WHERE v.id = ?`
 	args := []any{id}
 	// Role gate — attach a scope predicate.
 	switch claims.Role {
@@ -137,7 +139,7 @@ func (s *Server) verificationPDF(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var b pdfBundle
-	err = s.deps.DB.QueryRowContext(r.Context(), query, args...).Scan(
+	err = s.deps.DB.QueryRowContext(r.Context(), db.Q(query), args...).Scan(
 		&b.VerificationID, &b.Status, &b.Via, &b.FaceMatch, &b.FpMatch,
 		&b.FaceMatchScore, &b.FpMatchScore, &b.IrisScore, &b.MatchThreshold,
 		&b.DeviceSerial, &b.DeviceModel, &b.FpVendor, &b.CreatedAt,
