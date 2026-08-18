@@ -1,6 +1,5 @@
 import { useEffect, useState } from 'react'
-import AppShell from '../../components/shell/AppShell.jsx'
-import AdminTabs from '../../components/shell/AdminTabs.jsx'
+import AdminShell, { PageHead } from '../../components/shell/AdminShell.jsx'
 import {
   Badge,
   Button,
@@ -11,7 +10,6 @@ import {
   EmptyState,
   Input,
   Label,
-  PageHeader,
 } from '../../components/ui/ui.jsx'
 import { api, downloadVerificationPDF } from '../../lib/api.js'
 import { getRoleScope, getStoredToken } from '../../lib/authStorage.js'
@@ -146,18 +144,16 @@ export default function AdminHistory() {
   }
 
   return (
-    <AppShell title="Verification history" subtitle="Per-candidate audit log">
-      <PageHeader
+    <AdminShell>
+      <PageHead
+        eyebrow="Audit"
         title="Verification history"
-        subtitle="Search the full audit of every verification under your organisation. Filter, browse, or export to CSV for offline records."
         right={
           <Button onClick={downloadCSV} variant="secondary">
             Export CSV
           </Button>
         }
       />
-      <AdminTabs />
-
       <Card className="mb-6">
         <CardBody>
           <form onSubmit={applyFilters} className="grid gap-3 sm:grid-cols-4">
@@ -288,6 +284,6 @@ export default function AdminHistory() {
           )}
         </CardBody>
       </Card>
-    </AppShell>
+    </AdminShell>
   )
 }

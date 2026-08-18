@@ -1,12 +1,10 @@
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
-import AppShell from '../../components/shell/AppShell.jsx'
-import AdminTabs from '../../components/shell/AdminTabs.jsx'
+import AdminShell, { PageHead } from '../../components/shell/AdminShell.jsx'
 import {
   Button,
   Card,
   CardBody,
-  PageHeader,
 } from '../../components/ui/ui.jsx'
 import { Pill } from '../../components/ui/extras.jsx'
 import { FadeIn } from '../../components/ui/motion.jsx'
@@ -51,13 +49,12 @@ export default function MyExams() {
   }
 
   return (
-    <AppShell>
-      <AdminTabs />
+    <AdminShell>
       <FadeIn>
-        <PageHeader
+        <PageHead
+          eyebrow="Subscribed"
           title="My exams"
-          subtitle="Exams your college is currently subscribed to. Assign them to operators from the Operators tab."
-          right={<Link to="/admin/catalog" className="text-sm font-medium text-indigo-600 hover:underline">Browse catalog →</Link>}
+          right={<Link to="/admin/catalog" className="text-sm font-medium text-stone-900 hover:underline">Browse catalog →</Link>}
         />
         {err && (
           <div role="alert" className="mb-4 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">
@@ -104,10 +101,11 @@ export default function MyExams() {
                         </td>
                         <td className="px-4 py-3 text-right">
                           <Button
-                            variant="ghost"
+                            variant="secondary"
                             size="sm"
                             disabled={busy === s.exam_id}
                             onClick={() => onUnsub(s.exam_id, s.operator_count)}
+                            className="!text-rose-700 !border-rose-200 hover:!bg-rose-50 hover:!border-rose-300"
                           >
                             {busy === s.exam_id ? 'Removing…' : 'Unsubscribe'}
                           </Button>
@@ -121,6 +119,6 @@ export default function MyExams() {
           </CardBody>
         </Card>
       </FadeIn>
-    </AppShell>
+    </AdminShell>
   )
 }

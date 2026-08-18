@@ -1,11 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
-import AppShell from '../../components/shell/AppShell.jsx'
-import AdminTabs from '../../components/shell/AdminTabs.jsx'
+import AdminShell, { PageHead } from '../../components/shell/AdminShell.jsx'
 import {
   Button,
   Card,
   CardBody,
-  PageHeader,
 } from '../../components/ui/ui.jsx'
 import { Pill } from '../../components/ui/extras.jsx'
 import { FadeIn } from '../../components/ui/motion.jsx'
@@ -55,12 +53,11 @@ export default function Catalog() {
   }
 
   return (
-    <AppShell>
-      <AdminTabs />
+    <AdminShell>
       <FadeIn>
-        <PageHeader
+        <PageHead
+          eyebrow="Catalog"
           title="Exam catalog"
-          subtitle="Every exam available on the platform. Subscribe to the ones your college needs."
         />
         {err && (
           <div role="alert" className="mb-4 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">
@@ -113,10 +110,11 @@ export default function Catalog() {
                                   <div className="inline-flex items-center gap-2">
                                     <Pill tone="emerald" dot>Subscribed</Pill>
                                     <Button
-                                      variant="ghost"
+                                      variant="secondary"
                                       size="sm"
                                       disabled={busy === e.id}
                                       onClick={() => onToggle(e.id, true)}
+                                      className="!text-rose-700 !border-rose-200 hover:!bg-rose-50 hover:!border-rose-300"
                                     >
                                       Unsubscribe
                                     </Button>
@@ -143,6 +141,6 @@ export default function Catalog() {
           </div>
         )}
       </FadeIn>
-    </AppShell>
+    </AdminShell>
   )
 }

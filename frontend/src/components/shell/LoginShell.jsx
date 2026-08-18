@@ -1,55 +1,39 @@
 import { useState } from 'react'
 import { useNavigate, useSearchParams } from 'react-router-dom'
+import { motion } from 'framer-motion'
 import { useAuth } from '../../lib/auth.jsx'
 import { Input, Label } from '../ui/ui.jsx'
-import { Brand, PRODUCT_NAME } from '../ui/brand.jsx'
+import { PRODUCT_NAME } from '../ui/brand.jsx'
 import { Icon } from '../ui/icons.jsx'
 
-// LoginShell — single centered card on a neutral background. Same shape
-// every real-world product auth screen uses (Stripe, GitHub, Linear) —
-// the page job is to authenticate, not to market. The role chip is the
-// only place the per-portal accent shows; everything else stays neutral.
+// LoginShell — single centered card on a soft warm ground.
 //
-// The `portalTitle` / `portalSubtitle` props are still accepted by the
-// three Login pages but are no longer rendered as giant copy.
+// Layout: logo mark + wordmark above the card, amber role eyebrow +
+// "Sign in" title inside, two fields, ink-black submit. Optional
+// register link (admin login only) sits below the card.
+//
+// Legacy props (portalTitle, portalSubtitle, accent, demo) are kept so
+// call sites don't need to change.
 
-// Per-role accent — used only on the role chip + primary button. Kept
-// muted so the page reads as "tool" not "advertisement".
-const ACCENTS = {
-  indigo: {
-    chip:   'bg-indigo-50 text-indigo-700 border-indigo-200',
-    button: 'bg-indigo-600 hover:bg-indigo-700 focus:ring-indigo-500',
-  },
-  emerald: {
-    chip:   'bg-emerald-50 text-emerald-700 border-emerald-200',
-    button: 'bg-emerald-600 hover:bg-emerald-700 focus:ring-emerald-500',
-  },
-  slate: {
-    chip:   'bg-slate-100 text-slate-700 border-slate-300',
-    button: 'bg-slate-800 hover:bg-slate-900 focus:ring-slate-500',
-  },
-  violet: {
-    chip:   'bg-violet-50 text-violet-700 border-violet-200',
-    button: 'bg-violet-600 hover:bg-violet-700 focus:ring-violet-500',
-  },
+const ROLE_LABEL = {
+  client:     'Operator',
+  admin:      'Administrator',
+  superadmin: 'Superadmin',
+  ops_admin:  'Operations',
 }
 
-const ROLE_LABELS = {
-  client:     'Operator portal',
-  admin:      'Admin portal',
-  superadmin: 'Superadmin portal',
-  ops_admin:  'Operations portal',
-}
-
-export default function LoginShell({ expectedRole, expectedRoles, redirectTo, redirectByRole, accent = 'indigo', demo, rememberKey, showRegisterLink = false }) {
+export default function LoginShell({
+  expectedRole,
+  expectedRoles,
+  redirectTo,
+  redirectByRole,
+  rememberKey,
+  showRegisterLink = false,
+}) {
   const { login } = useAuth()
   const nav = useNavigate()
   const [params] = useSearchParams()
-  // rememberKey enables pre-filling the username field from
-  // localStorage on subsequent visits. Operator portals use it
-  // (operators type the org-shared username 100x a shift). Admin
-  // and superadmin pages omit it — those logins are rare enough
-  // that auto-fill is more annoying than helpful.
+
   const [username, setUsername] = useState(() => {
     if (!rememberKey || typeof window === 'undefined') return ''
     try { return localStorage.getItem(rememberKey) || '' } catch { return '' }
@@ -58,19 +42,12 @@ export default function LoginShell({ expectedRole, expectedRoles, redirectTo, re
   const [showPw, setShowPw] = useState(false)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(false)
-  const a = ACCENTS[accent] || ACCENTS.indigo
 
-  // /admin/login?session_expired=1 is set by api.js when a 401 forces
-  // the user back to login. Show a clear hint so they understand why
-  // they got bounced rather than seeing a blank login form.
   const sessionExpired = params.get('session_expired') === '1'
-  const justActivated = params.get('just_activated') === '1'
+  const justActivated  = params.get('just_activated')  === '1'
 
-  // expectedRole (single string) is the legacy API; expectedRoles
-  // (array) lets one login screen accept multiple roles — used by the
-  // ops mode build where admin AND ops_admin can both sign in here.
   const allowedRoles = expectedRoles || (expectedRole ? [expectedRole] : [])
-  const roleLabel = ROLE_LABELS[allowedRoles[0]] || 'Sign in'
+  const roleLabel = ROLE_LABEL[allowedRoles[0]] || 'Portal'
 
   async function onSubmit(e) {
     e.preventDefault()
@@ -82,15 +59,9 @@ export default function LoginShell({ expectedRole, expectedRoles, redirectTo, re
         setErr(`This account is a ${u.role}. Use the ${allowedRoles.join(' or ')} portal.`)
         return
       }
-      // Persist the username (NOT the password) for next visit so a
-      // recurring operator doesn't retype it every shift. Scoped per
-      // portal via rememberKey so logins on different portals don't
-      // clobber each other.
       if (rememberKey) {
         try { localStorage.setItem(rememberKey, username) } catch {}
       }
-      // redirectByRole: { admin: '/admin', ops_admin: '/superadmin/applications' }
-      // lets a single login screen route different roles to different pages.
       const dest = redirectByRole?.[u.role] || redirectTo || '/'
       nav(dest)
     } catch (e) {
@@ -101,46 +72,53 @@ export default function LoginShell({ expectedRole, expectedRoles, redirectTo, re
   }
 
   return (
-    <div className="min-h-screen bg-slate-50 flex items-center justify-center p-4">
-      <div className="w-full max-w-sm">
-        {/* Brand sits above the card, not inside — keeps the card pure
-            form so the eye lands on Username first. */}
-        <div className="flex justify-center mb-6">
-          <Brand />
+    <div className="relative min-h-screen bg-warm-page flex items-center justify-center p-4 overflow-hidden">
+      {/* Ambient warm gradient washes — soft, non-distracting */}
+      <div className="absolute -top-40 -left-20 h-96 w-96 rounded-full bg-amber-100/40 blur-3xl pointer-events-none" />
+      <div className="absolute -bottom-32 -right-20 h-96 w-96 rounded-full bg-[#F5EEDF]/60 blur-3xl pointer-events-none" />
+
+      <motion.div
+        initial={{ opacity: 0, y: 12 }}
+        animate={{ opacity: 1, y: 0 }}
+        transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+        className="relative w-full max-w-md"
+      >
+        {/* Wordmark above the card */}
+        <div className="text-center mb-6">
+          <span className="text-xl font-bold text-stone-900 tracking-tight">
+            {PRODUCT_NAME}
+          </span>
         </div>
 
         {/* Card */}
-        <div className="rounded-xl bg-white shadow-sm ring-1 ring-slate-200 p-7">
-          <div className="flex items-center justify-between mb-5">
-            <h1 className="text-lg font-semibold text-slate-900">Sign in</h1>
-            <span className={`inline-flex items-center rounded-full border px-2.5 py-0.5
-                              text-xs font-medium ${a.chip}`}>
-              {roleLabel}
-            </span>
-          </div>
+        <div className="rounded-2xl bg-warm-surface ring-1 ring-warm shadow-lg shadow-stone-900/[0.04] p-8">
+          <p className="text-[11px] font-semibold uppercase tracking-widest text-warm-accent mb-2">
+            {roleLabel}
+          </p>
+          <h1 className="text-2xl font-semibold text-ink-900 tracking-tight">
+            Sign in
+          </h1>
+          <p className="mt-1 text-sm text-stone-500">
+            Enter your credentials to continue.
+          </p>
 
           {sessionExpired && !err && (
             <div role="status"
-                 className="mb-4 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800">
-              Your session ended. Sign in again to continue.
+                 className="mt-5 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
+              Your session ended. Sign in again.
             </div>
           )}
           {justActivated && !err && (
             <div role="status"
-                 className="mb-4 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-sm text-emerald-800">
-              Password set successfully. Sign in to continue.
+                 className="mt-5 rounded-lg bg-emerald-50 border border-emerald-200 px-3 py-2 text-xs text-emerald-800">
+              Password set. Sign in to continue.
             </div>
           )}
 
-          <form onSubmit={onSubmit} className="space-y-4" autoComplete="on">
+          <form onSubmit={onSubmit} className="mt-6 space-y-4" autoComplete="on">
             <div>
-              {/* Admin + operator can sign in with either their username
-                  or the email address on their account. Superadmin has
-                  no email on file so the label stays plain "Username". */}
               <Label>
-                {allowedRoles.includes('superadmin')
-                  ? 'Username'
-                  : 'Username or email'}
+                {allowedRoles.includes('superadmin') ? 'Username' : 'Username or email'}
               </Label>
               <Input
                 value={username}
@@ -164,7 +142,7 @@ export default function LoginShell({ expectedRole, expectedRoles, redirectTo, re
                 <button
                   type="button"
                   onClick={() => setShowPw((v) => !v)}
-                  className="absolute inset-y-0 right-0 px-3 flex items-center text-slate-400 hover:text-slate-700 transition-colors"
+                  className="absolute inset-y-0 right-0 px-3 flex items-center text-stone-400 hover:text-stone-700 transition-colors"
                   aria-label={showPw ? 'Hide password' : 'Show password'}
                   tabIndex={-1}
                 >
@@ -175,7 +153,7 @@ export default function LoginShell({ expectedRole, expectedRoles, redirectTo, re
 
             {err && (
               <div role="alert"
-                   className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">
+                   className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-700">
                 {err}
               </div>
             )}
@@ -183,38 +161,26 @@ export default function LoginShell({ expectedRole, expectedRoles, redirectTo, re
             <button
               type="submit"
               disabled={busy}
-              className={`w-full inline-flex items-center justify-center rounded-lg
-                          text-white font-medium px-4 py-2.5 text-sm shadow-sm
-                          transition focus:outline-none focus:ring-2 focus:ring-offset-1
-                          disabled:opacity-60 disabled:cursor-not-allowed ${a.button}`}
+              className="w-full inline-flex items-center justify-center rounded-lg
+                         bg-stone-900 hover:bg-stone-800 text-white font-medium
+                         px-4 py-2.5 text-sm shadow-sm transition-colors
+                         focus:outline-none focus:ring-2 focus:ring-stone-700 focus:ring-offset-1
+                         disabled:opacity-60 disabled:cursor-not-allowed"
             >
               {busy ? 'Signing in…' : 'Sign in'}
             </button>
           </form>
-
         </div>
 
         {showRegisterLink && (
-          <div className="mt-4 rounded-xl bg-white shadow-sm ring-1 ring-slate-200 p-5">
-            <p className="text-sm font-medium text-slate-900">New institution?</p>
-            <p className="mt-1 text-xs text-slate-500">
-              Register your institution and our team will activate your account within 48 hours.
-            </p>
-            <a
-              href="/register/institution"
-              className="mt-3 inline-flex items-center justify-center rounded-lg
-                         bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium
-                         px-4 py-2 shadow-sm transition"
-            >
+          <p className="mt-5 text-center text-xs text-stone-500">
+            Not yet onboarded?{' '}
+            <a href="/register/institution" className="font-semibold text-warm-accent hover:underline">
               Register your institution →
             </a>
-          </div>
+          </p>
         )}
-
-        <p className="mt-6 text-center text-[11px] text-slate-400">
-          © {new Date().getFullYear()} {PRODUCT_NAME}
-        </p>
-      </div>
+      </motion.div>
     </div>
   )
 }

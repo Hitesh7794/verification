@@ -1,14 +1,12 @@
-import { useCallback, useEffect, useRef, useState } from 'react'
+import React, { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
-import AppShell from '../../components/shell/AppShell.jsx'
-import AdminTabs from '../../components/shell/AdminTabs.jsx'
+import AdminShell, { PageHead } from '../../components/shell/AdminShell.jsx'
 import {
   Button,
   Card,
   CardBody,
   Input,
   Label,
-  PageHeader,
 } from '../../components/ui/ui.jsx'
 import { Icon, Pill } from '../../components/ui/extras.jsx'
 import { FadeIn } from '../../components/ui/motion.jsx'
@@ -92,12 +90,11 @@ export default function Operators() {
   }
 
   return (
-    <AppShell>
-      <AdminTabs />
+    <AdminShell>
       <FadeIn>
-        <PageHeader
+        <PageHead
+          eyebrow="Team"
           title="Operators"
-          subtitle="Per-operator credentials, spending caps, date windows, and assigned exams."
           right={
             <div className="flex gap-2">
               <Button variant="secondary" onClick={() => { setBulking(v => !v); setCreating(false); setEditing(null) }}>
@@ -205,13 +202,29 @@ export default function Operators() {
         )}
 
         {creating && (
-          <OperatorForm
-            subs={subs}
-            walletBalancePaise={walletBalancePaise}
-            mode="create"
-            onCancel={() => setCreating(false)}
-            onSaved={async () => { setCreating(false); await refresh() }}
-          />
+          <div className="mb-6 rounded-xl bg-warm-surface ring-1 ring-warm shadow-sm overflow-hidden">
+            <div className="h-1 bg-stone-900" />
+            <div className="p-5 sm:p-6">
+              <div className="flex items-start gap-3 mb-5">
+                <div className="h-9 w-9 rounded-lg bg-stone-100 text-stone-800 flex items-center justify-center shrink-0">
+                  <Icon.Plus className="h-5 w-5" />
+                </div>
+                <div>
+                  <h3 className="text-base font-semibold text-ink-900">New operator</h3>
+                  <p className="text-xs text-stone-500 mt-0.5">
+                    A per-operator login with an optional spending cap, date window, and one assigned exam.
+                  </p>
+                </div>
+              </div>
+              <OperatorForm
+                subs={subs}
+                walletBalancePaise={walletBalancePaise}
+                mode="create"
+                onCancel={() => setCreating(false)}
+                onSaved={async () => { setCreating(false); await refresh() }}
+              />
+            </div>
+          </div>
         )}
 
         {loading ? (
@@ -241,8 +254,11 @@ export default function Operators() {
                   </thead>
                   <tbody>
                     {operators.map((o) => (
-                      <>
-                        <tr key={o.id} className="border-b border-slate-100 last:border-none hover:bg-slate-50/60">
+                      // Fragment wraps the row + its inline edit row so
+                      // React can render both children under <tbody>
+                      // without introducing an invalid element.
+                      <React.Fragment key={o.id}>
+                        <tr className="border-b border-warm last:border-none hover:bg-[#FBF7F0]">
                           <td className="px-4 py-3 font-mono text-xs text-slate-700">{o.username}</td>
                           <td className="px-4 py-3">
                             <div className="text-slate-900">{o.display_name}</div>
@@ -271,10 +287,17 @@ export default function Operators() {
                           </td>
                           <td className="px-4 py-3 text-right">
                             <div className="inline-flex gap-2">
-                              <Button variant="ghost" size="sm" onClick={() => setEditing(editing === o.id ? null : o.id)}>
+                              <Button variant="secondary" size="sm" onClick={() => setEditing(editing === o.id ? null : o.id)}>
                                 {editing === o.id ? 'Close' : 'Edit'}
                               </Button>
-                              <Button variant="ghost" size="sm" onClick={() => onToggle(o.id, o.status === 'disabled')}>
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => onToggle(o.id, o.status === 'disabled')}
+                                className={o.status === 'disabled'
+                                  ? ''
+                                  : '!text-rose-700 !border-rose-200 hover:!bg-rose-50 hover:!border-rose-300'}
+                              >
                                 {o.status === 'disabled' ? 'Enable' : 'Disable'}
                               </Button>
                             </div>
@@ -282,7 +305,7 @@ export default function Operators() {
                         </tr>
                         {editing === o.id && (
                           <tr>
-                            <td colSpan={7} className="bg-slate-50 border-b border-slate-100 p-4">
+                            <td colSpan={7} className="bg-[#FBF7F0] border-b border-warm p-5">
                               <OperatorForm
                                 subs={subs}
                                 walletBalancePaise={walletBalancePaise}
@@ -294,7 +317,7 @@ export default function Operators() {
                             </td>
                           </tr>
                         )}
-                      </>
+                      </React.Fragment>
                     ))}
                   </tbody>
                 </table>
@@ -303,7 +326,7 @@ export default function Operators() {
           </Card>
         )}
       </FadeIn>
-    </AppShell>
+    </AdminShell>
   )
 }
 
@@ -371,7 +394,7 @@ function ExamMultiSelect({ subs, value, onChange, single = false }) {
         onClick={() => setOpen((o) => !o)}
         aria-expanded={open}
         aria-haspopup="listbox"
-        className="w-full flex items-center justify-between gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-left text-sm text-slate-900 hover:bg-slate-50 focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
+        className="w-full flex items-center justify-between gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-left text-sm text-slate-900 hover:bg-slate-50 focus:border-stone-700 focus:outline-none focus:ring-2 focus:ring-stone-300"
       >
         <span className={selected.length ? 'text-slate-900' : 'text-slate-400'}>
           {summary}
@@ -394,7 +417,7 @@ function ExamMultiSelect({ subs, value, onChange, single = false }) {
                 <>
                   <button
                     type="button"
-                    className="text-xs font-medium text-indigo-600 hover:underline disabled:text-slate-400 disabled:no-underline"
+                    className="text-xs font-medium text-emerald-700 hover:underline disabled:text-slate-400 disabled:no-underline"
                     disabled={allSelected}
                     onClick={() => onChange(subs.map((s) => s.exam_id))}
                   >
@@ -405,7 +428,7 @@ function ExamMultiSelect({ subs, value, onChange, single = false }) {
               )}
               <button
                 type="button"
-                className="text-xs font-medium text-indigo-600 hover:underline disabled:text-slate-400 disabled:no-underline"
+                className="text-xs font-medium text-emerald-700 hover:underline disabled:text-slate-400 disabled:no-underline"
                 disabled={selected.length === 0}
                 onClick={() => onChange([])}
               >
@@ -423,14 +446,14 @@ function ExamMultiSelect({ subs, value, onChange, single = false }) {
                   role="option"
                   aria-selected={checked}
                   className={`flex items-center gap-3 px-3 py-2 cursor-pointer transition-colors ${
-                    checked ? 'bg-indigo-50/60 hover:bg-indigo-50' : 'hover:bg-slate-50'
+                    checked ? 'bg-emerald-50/60 hover:bg-emerald-50' : 'hover:bg-slate-50'
                   }`}
                 >
                   <input
                     type="checkbox"
                     checked={checked}
                     onChange={() => toggle(s.exam_id)}
-                    className="rounded border-slate-300 text-indigo-600 focus:ring-indigo-500"
+                    className="rounded border-slate-300 text-emerald-700 focus:ring-emerald-500"
                   />
                   <span className="min-w-0">
                     <span className="block font-mono text-xs text-slate-700">{s.exam_code}</span>
@@ -450,14 +473,14 @@ function ExamMultiSelect({ subs, value, onChange, single = false }) {
           {selected.map((s) => (
             <span
               key={s.exam_id}
-              className="inline-flex items-center gap-1 rounded-full bg-indigo-50 py-0.5 pl-2.5 pr-1 text-xs font-medium text-indigo-700"
+              className="inline-flex items-center gap-1 rounded-full bg-stone-100 py-0.5 pl-2.5 pr-1 text-xs font-medium text-stone-800"
             >
               {s.exam_code}
               <button
                 type="button"
                 onClick={() => toggle(s.exam_id)}
                 aria-label={`Remove ${s.exam_code}`}
-                className="rounded-full p-0.5 text-indigo-400 hover:bg-indigo-100 hover:text-indigo-700"
+                className="rounded-full p-0.5 text-stone-400 hover:bg-stone-200 hover:text-stone-800"
               >
                 <Icon.X className="h-3 w-3" />
               </button>
@@ -524,7 +547,7 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
   }
 
   return (
-    <form onSubmit={onSubmit} className="space-y-4 max-w-2xl">
+    <form onSubmit={onSubmit} className="space-y-4">
       <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
         {!isEdit && (
           <div>
