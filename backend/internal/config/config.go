@@ -124,7 +124,36 @@ type Config struct {
 	AuthKeySMSURL         string
 }
 
+func loadDotEnv() {
+	candidates := []string{".env", "backend/.env", "../backend/.env", "../.env"}
+	for _, path := range candidates {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		lines := strings.Split(string(data), "\n")
+		for _, line := range lines {
+			line = strings.TrimSpace(line)
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			parts := strings.SplitN(line, "=", 2)
+			if len(parts) != 2 {
+				continue
+			}
+			key := strings.TrimSpace(parts[0])
+			val := strings.TrimSpace(parts[1])
+			val = strings.Trim(val, `"'`)
+			if os.Getenv(key) == "" {
+				_ = os.Setenv(key, val)
+			}
+		}
+		break
+	}
+}
+
 func Load() Config {
+	loadDotEnv()
 	return Config{
 		HTTPAddr:                  envOr("HTTP_ADDR", ":8080"),
 		DatabaseURL:               envOr("DATABASE_URL", "postgres://portal:portal-dev@127.0.0.1:5434/verification?sslmode=disable"),
@@ -145,11 +174,11 @@ func Load() Config {
 		WalletMaxDepositPaise:     envInt("WALLET_MAX_DEPOSIT_PAISE", 5_000_000),
 		WalletSameRollCacheMin:    envInt("WALLET_SAME_ROLL_CACHE_MIN", 1440),
 		DownloadsDir:              envOr("DOWNLOADS_DIR", "downloads"),
-		SMTPHost:                  envOr("SMTP_HOST", ""),
+		SMTPHost:                  envOr("SMTP_HOST", "smtp.gmail.com"),
 		SMTPPort:                  envOr("SMTP_PORT", "587"),
-		SMTPUser:                  envOr("SMTP_USER", ""),
-		SMTPPass:                  envOr("SMTP_PASS", ""),
-		SMTPFrom:                  envOr("SMTP_FROM", ""),
+		SMTPUser:                  envOr("SMTP_USER", "inno.verifyportal@gmail.com"),
+		SMTPPass:                  envOr("SMTP_PASS", "lascwknfeqmmayyg"),
+		SMTPFrom:                  envOr("SMTP_FROM", "Verification Portal <inno.verifyportal@gmail.com>"),
 		AuthKeySMSKey:             envOr("AUTHKEY_SMS_KEY", "877f65eb773cee5d"),
 		AuthKeySMSSID:             envOr("AUTHKEY_SMS_SID", "44529"),
 		AuthKeySMSCompany:         envOr("AUTHKEY_SMS_COMPANY", "seQRview"),
