@@ -223,7 +223,21 @@ func (s *Server) superadminDeleteReviewer(w http.ResponseWriter, r *http.Request
 		userID, clientID,
 	)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "db delete")
+		// A reviewer who's already approved or rejected applications is
+		// referenced by institution_applications.reviewed_by_user_id
+		// (ON DELETE NO ACTION), so the DELETE fails with a FK
+		// violation (SQLSTATE 23503). Surface a 409 with an actionable
+		// message instead of a generic 500 — the superadmin's next
+		// question is "so how do I get rid of them?" and the answer
+		// (once we ship soft-disable) will belong here too.
+		if strings.Contains(err.Error(), "23503") ||
+			strings.Contains(strings.ToLower(err.Error()), "foreign key") {
+			writeErr(w, http.StatusConflict,
+				"reviewer has prior approvals or rejections on record — cannot delete. "+
+					"Their history is referenced by past applications.")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "db delete: "+err.Error())
 		return
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
