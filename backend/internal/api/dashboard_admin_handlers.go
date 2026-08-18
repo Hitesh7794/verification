@@ -3,6 +3,8 @@ package api
 import (
 	"net/http"
 	"time"
+
+	"github.com/veni/neet-verification/internal/db"
 )
 
 // scopeArgs returns a SQL fragment + args restricting verifications to the
@@ -20,17 +22,17 @@ func (s *Server) adminStats(w http.ResponseWriter, r *http.Request) {
 
 	var total, verified, denied, today int
 	_ = s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT COUNT(*) FROM verifications v`+where, args...).Scan(&total)
+		db.Q(`SELECT COUNT(*) FROM verifications v`+where), args...).Scan(&total)
 	_ = s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT COUNT(*) FROM verifications v`+where+` AND v.status='verified'`, args...).Scan(&verified)
+		db.Q(`SELECT COUNT(*) FROM verifications v`+where+` AND v.status='verified'`), args...).Scan(&verified)
 	_ = s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT COUNT(*) FROM verifications v`+where+` AND v.status='denied'`, args...).Scan(&denied)
+		db.Q(`SELECT COUNT(*) FROM verifications v`+where+` AND v.status='denied'`), args...).Scan(&denied)
 
 	startOfDay := time.Now().Truncate(24 * time.Hour)
 	args2 := append([]any{}, args...)
 	args2 = append(args2, startOfDay)
 	_ = s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT COUNT(*) FROM verifications v`+where+` AND v.created_at >= ?`, args2...).Scan(&today)
+		db.Q(`SELECT COUNT(*) FROM verifications v`+where+` AND v.created_at >= ?`), args2...).Scan(&today)
 
 	// Enrolled candidates count = distinct exam_candidates rows in
 	// exams the caller's org has subscribed to (admin) or all rows
@@ -42,7 +44,7 @@ func (s *Server) adminStats(w http.ResponseWriter, r *http.Request) {
 			`SELECT COUNT(DISTINCT ec.id)
 			   FROM exam_candidates ec
 			   JOIN organization_exam_subscriptions s ON s.exam_id = ec.exam_id
-			  WHERE s.org_id = ?`, *c.OrgID).Scan(&enrolled)
+			  WHERE s.org_id = $1`, *c.OrgID).Scan(&enrolled)
 	} else {
 		_ = s.deps.DB.QueryRowContext(r.Context(),
 			`SELECT COUNT(*) FROM exam_candidates`).Scan(&enrolled)
@@ -53,7 +55,7 @@ func (s *Server) adminStats(w http.ResponseWriter, r *http.Request) {
 	var examCount int
 	if c := claimsFrom(r); c.Role == "admin" && c.OrgID != nil {
 		_ = s.deps.DB.QueryRowContext(r.Context(),
-			`SELECT COUNT(*) FROM organization_exam_subscriptions WHERE org_id=?`,
+			`SELECT COUNT(*) FROM organization_exam_subscriptions WHERE org_id=$1`,
 			*c.OrgID).Scan(&examCount)
 	} else {
 		_ = s.deps.DB.QueryRowContext(r.Context(),
@@ -79,11 +81,11 @@ func (s *Server) adminStats(w http.ResponseWriter, r *http.Request) {
 func (s *Server) adminRecent(w http.ResponseWriter, r *http.Request) {
 	where, args := s.scopeArgs(r)
 	rows, err := s.deps.DB.QueryContext(r.Context(),
-		`SELECT v.id, v.roll_no, v.status, v.face_match, v.fp_match, v.created_at,
+		db.Q(`SELECT v.id, v.roll_no, v.status, v.face_match, v.fp_match, v.created_at,
 		        u.display_name
 		 FROM verifications v
 		 JOIN users u ON u.id = v.operator_id`+
-			where+` ORDER BY v.created_at DESC LIMIT 25`, args...)
+			where+` ORDER BY v.created_at DESC LIMIT 25`), args...)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db error")
 		return
@@ -124,14 +126,14 @@ func (s *Server) adminRecent(w http.ResponseWriter, r *http.Request) {
 func (s *Server) adminByCenter(w http.ResponseWriter, r *http.Request) {
 	where, args := s.scopeArgs(r)
 	rows, err := s.deps.DB.QueryContext(r.Context(),
-		`SELECT e.id, e.name || ' (' || e.exam_code || ')',
+		db.Q(`SELECT e.id, e.name || ' (' || e.exam_code || ')',
 		        SUM(CASE WHEN v.status='verified' THEN 1 ELSE 0 END) AS verified,
 		        SUM(CASE WHEN v.status='denied'   THEN 1 ELSE 0 END) AS denied,
 		        COUNT(*) AS total
 		 FROM verifications v
 		 JOIN exam_candidates ec ON ec.roll_no = v.roll_no
 		 JOIN exams e ON e.id = ec.exam_id`+
-			where+` GROUP BY e.id ORDER BY total DESC`, args...)
+			where+` GROUP BY e.id ORDER BY total DESC`), args...)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db error")
 		return
@@ -156,12 +158,12 @@ func (s *Server) adminByCenter(w http.ResponseWriter, r *http.Request) {
 func (s *Server) adminTimeline(w http.ResponseWriter, r *http.Request) {
 	where, args := s.scopeArgs(r)
 	rows, err := s.deps.DB.QueryContext(r.Context(),
-		`SELECT date(v.created_at) AS d,
+		db.Q(`SELECT v.created_at::date AS d,
 		        SUM(CASE WHEN v.status='verified' THEN 1 ELSE 0 END),
 		        SUM(CASE WHEN v.status='denied'   THEN 1 ELSE 0 END)
 		 FROM verifications v`+where+`
-		 AND v.created_at >= date('now','-13 days')
-		 GROUP BY d ORDER BY d ASC`, args...)
+		 AND v.created_at >= CURRENT_DATE - INTERVAL '13 days'
+		 GROUP BY d ORDER BY d ASC`), args...)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db error")
 		return

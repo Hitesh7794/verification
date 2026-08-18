@@ -32,6 +32,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/veni/neet-verification/internal/db"
 )
 
 // ── /api/admin/catalog ────────────────────────────────────────────────
@@ -77,7 +78,7 @@ func (s *Server) adminCatalog(w http.ResponseWriter, r *http.Request) {
 			AND e.visible = 1
 			AND e.closed = 0
 		LEFT JOIN organization_exam_subscriptions s
-			ON s.exam_id = e.id AND s.org_id = ?
+			ON s.exam_id = e.id AND s.org_id = $1
 		WHERE c.visible = 1 AND c.closed = 0
 		ORDER BY c.name, e.created_at DESC`, orgID)
 	if err != nil {
@@ -159,12 +160,12 @@ func (s *Server) adminListSubscriptions(w http.ResponseWriter, r *http.Request) 
 		       (SELECT COUNT(DISTINCT oe.user_id)
 		          FROM operator_exams oe
 		          JOIN users u ON u.id = oe.user_id
-		         WHERE oe.exam_id = e.id AND u.org_id = ?),
+		         WHERE oe.exam_id = e.id AND u.org_id = $1),
 		       s.subscribed_at
 		FROM organization_exam_subscriptions s
 		JOIN exams e   ON e.id = s.exam_id
 		JOIN clients c ON c.id = e.client_id
-		WHERE s.org_id = ?
+		WHERE s.org_id = $2
 		ORDER BY s.subscribed_at DESC`, orgID, orgID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
@@ -211,7 +212,7 @@ func (s *Server) adminSubscribe(w http.ResponseWriter, r *http.Request) {
 	// the catalog surfaces. Hidden exams are not subscribable.
 	var visible, closed int
 	err := s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT visible, closed FROM exams WHERE id = ?`, req.ExamID,
+		`SELECT visible, closed FROM exams WHERE id = $1`, req.ExamID,
 	).Scan(&visible, &closed)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeErr(w, http.StatusNotFound, "exam not found")
@@ -227,7 +228,7 @@ func (s *Server) adminSubscribe(w http.ResponseWriter, r *http.Request) {
 	}
 	if _, err := s.deps.DB.ExecContext(r.Context(), `
 		INSERT INTO organization_exam_subscriptions(org_id, exam_id, subscribed_by)
-		VALUES(?, ?, ?)
+		VALUES($1, $2, $3)
 		ON CONFLICT DO NOTHING`,
 		orgID, req.ExamID, claims.UserID,
 	); err != nil {
@@ -259,7 +260,7 @@ func (s *Server) adminUnsubscribe(w http.ResponseWriter, r *http.Request) {
 
 	// Remove the org's subscription…
 	res, err := tx.ExecContext(r.Context(),
-		`DELETE FROM organization_exam_subscriptions WHERE org_id = ? AND exam_id = ?`,
+		`DELETE FROM organization_exam_subscriptions WHERE org_id = $1 AND exam_id = $2`,
 		orgID, examID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db delete: "+err.Error())
@@ -275,8 +276,8 @@ func (s *Server) adminUnsubscribe(w http.ResponseWriter, r *http.Request) {
 	// operators from OTHER orgs (their subscription is independent).
 	if _, err := tx.ExecContext(r.Context(), `
 		DELETE FROM operator_exams
-		 WHERE exam_id = ?
-		   AND user_id IN (SELECT id FROM users WHERE org_id = ?)`,
+		 WHERE exam_id = $1
+		   AND user_id IN (SELECT id FROM users WHERE org_id = $2)`,
 		examID, orgID,
 	); err != nil {
 		writeErr(w, http.StatusInternalServerError, "db cascade: "+err.Error())
@@ -314,7 +315,7 @@ func (s *Server) setOperatorExams(tx *sql.Tx, orgID, userID int64, examIDs []int
 
 	// Sanity: user belongs to org.
 	var uOrg sql.NullInt64
-	if err := tx.QueryRow(`SELECT org_id FROM users WHERE id = ?`, userID).Scan(&uOrg); err != nil {
+	if err := tx.QueryRow(db.Q(`SELECT org_id FROM users WHERE id = $1`), userID).Scan(&uOrg); err != nil {
 		return fmt.Errorf("operator not found: %w", err)
 	}
 	if !uOrg.Valid || uOrg.Int64 != orgID {
@@ -334,7 +335,7 @@ func (s *Server) setOperatorExams(tx *sql.Tx, orgID, userID int64, examIDs []int
 		q := "SELECT COUNT(*) FROM organization_exam_subscriptions " +
 			"WHERE org_id = ? AND exam_id IN (" + strings.Join(placeholders, ",") + ")"
 		var subCount int
-		if err := tx.QueryRow(q, args...).Scan(&subCount); err != nil {
+		if err := tx.QueryRow(db.Q(q), args...).Scan(&subCount); err != nil {
 			return err
 		}
 		if subCount != len(examIDs) {
@@ -343,12 +344,12 @@ func (s *Server) setOperatorExams(tx *sql.Tx, orgID, userID int64, examIDs []int
 	}
 
 	// Replace: delete all + re-insert. Small list, cheap.
-	if _, err := tx.Exec(`DELETE FROM operator_exams WHERE user_id = ?`, userID); err != nil {
+	if _, err := tx.Exec(db.Q(`DELETE FROM operator_exams WHERE user_id = $1`), userID); err != nil {
 		return err
 	}
 	for _, id := range examIDs {
 		if _, err := tx.Exec(
-			`INSERT INTO operator_exams(user_id, exam_id) VALUES(?, ?)`,
+			`INSERT INTO operator_exams(user_id, exam_id) VALUES($1, $2)`,
 			userID, id,
 		); err != nil {
 			return err

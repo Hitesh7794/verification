@@ -31,6 +31,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"github.com/veni/neet-verification/internal/db"
 )
 
 // Purpose discriminates link uses so a set-password token can't be
@@ -90,7 +91,7 @@ func (s *Store) Generate(ctx context.Context, userID int64, purpose Purpose, ttl
 
 	_, err := s.db.ExecContext(ctx,
 		`INSERT INTO magic_links(user_id, token_hash, purpose, expires_at)
-		 VALUES(?, ?, ?, ?)`,
+		 VALUES($1, $2, $3, $4)`,
 		userID, hash, string(purpose), expiresAt,
 	)
 	if err != nil {
@@ -119,7 +120,7 @@ func (s *Store) Verify(ctx context.Context, token string, purpose Purpose) (*Lin
 	err := s.db.QueryRowContext(ctx,
 		`SELECT id, user_id, purpose, expires_at, used_at
 		 FROM magic_links
-		 WHERE token_hash = ?`,
+		 WHERE token_hash = $1`,
 		hash,
 	).Scan(&id, &userID, &dbPurpose, &expiresAt, &usedAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -165,9 +166,9 @@ func (s *Store) Consume(ctx context.Context, token string, purpose Purpose, fn f
 		expiresAt time.Time
 	)
 	err = tx.QueryRowContext(ctx,
-		`SELECT id, user_id, purpose, expires_at
+		db.Q(`SELECT id, user_id, purpose, expires_at
 		 FROM magic_links
-		 WHERE token_hash = ? AND used_at IS NULL`,
+		 WHERE token_hash = $1 AND used_at IS NULL`),
 		hash,
 	).Scan(&id, &userID, &dbPurpose, &expiresAt)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -184,8 +185,8 @@ func (s *Store) Consume(ctx context.Context, token string, purpose Purpose, fn f
 	}
 
 	res, err := tx.ExecContext(ctx,
-		`UPDATE magic_links SET used_at = CURRENT_TIMESTAMP
-		 WHERE id = ? AND used_at IS NULL`,
+		db.Q(`UPDATE magic_links SET used_at = CURRENT_TIMESTAMP
+		 WHERE id = $1 AND used_at IS NULL`),
 		id,
 	)
 	if err != nil {

@@ -61,7 +61,7 @@ func (s *Server) walletCharge(next http.HandlerFunc) http.HandlerFunc {
 		)
 		err := s.deps.DB.QueryRowContext(r.Context(),
 			`SELECT spending_cap_paise, spent_paise, valid_from, valid_to
-			   FROM users WHERE id = ?`, claims.UserID,
+			   FROM users WHERE id = $1`, claims.UserID,
 		).Scan(&cap, &spent, &vFrom, &vTo)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
 			writeErr(w, http.StatusInternalServerError, "operator lookup: "+err.Error())
@@ -174,7 +174,7 @@ func (s *Server) walletCharge(next http.HandlerFunc) http.HandlerFunc {
 		// than a small policy overshoot. Cap enforcement is at
 		// pre-check time; this is bookkeeping.
 		if _, err := s.deps.DB.ExecContext(r.Context(),
-			`UPDATE users SET spent_paise = spent_paise + ? WHERE id = ?`,
+			`UPDATE users SET spent_paise = spent_paise + $1 WHERE id = $2`,
 			fee, claims.UserID,
 		); err != nil {
 			// Non-fatal: the debit landed, the response is buffered.

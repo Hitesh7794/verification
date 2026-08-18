@@ -61,7 +61,6 @@ func downloadsServer(t *testing.T, bundleName string, bundleBytes []byte) (s *Se
 	cfg := config.Config{
 		HTTPAddr:                ":0",
 		JWTSecret:               "test-secret",
-		FPMatchThresholdDefault: 60,
 		ArtifactRetention:       "metadata",
 		ArtifactDir:             filepath.Join(tmp, "artifacts"),
 		DownloadsDir:            dlDir,

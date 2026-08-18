@@ -50,8 +50,8 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		`SELECT id, password_hash, role, org_id, display_name,
 		        disabled_at, password_change_required, username
 		   FROM users
-		  WHERE username = ?
-		     OR (email = ? AND role IN ('admin','client'))
+		  WHERE username = $1
+		     OR (email = $2 AND role IN ('admin','client'))
 		  LIMIT 1`,
 		identifier, emailLower,
 	).Scan(&id, &passHash, &role, &orgID, &displayName,
@@ -164,7 +164,7 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 	)
 	err := s.deps.DB.QueryRowContext(r.Context(),
 		`SELECT password_hash, role, password_plaintext IS NOT NULL
-		 FROM users WHERE id = ?`,
+		 FROM users WHERE id = $1`,
 		c.UserID,
 	).Scan(&currentHash, &role, &plaintextPresent)
 	if err == sql.ErrNoRows {
@@ -195,15 +195,15 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 	if plaintextPresent {
 		_, err = s.deps.DB.ExecContext(r.Context(),
 			`UPDATE users
-			 SET password_hash = ?, password_plaintext = ?, password_change_required = 0
-			 WHERE id = ?`,
+			 SET password_hash = $1, password_plaintext = $2, password_change_required = 0
+			 WHERE id = $3`,
 			string(newHash), req.NewPassword, c.UserID,
 		)
 	} else {
 		_, err = s.deps.DB.ExecContext(r.Context(),
 			`UPDATE users
-			 SET password_hash = ?, password_change_required = 0
-			 WHERE id = ?`,
+			 SET password_hash = $1, password_change_required = 0
+			 WHERE id = $2`,
 			string(newHash), c.UserID,
 		)
 	}
@@ -220,7 +220,7 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	var displayName string
 	var passChangeReq int
 	_ = s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT display_name, password_change_required FROM users WHERE id=?`, c.UserID,
+		`SELECT display_name, password_change_required FROM users WHERE id=$1`, c.UserID,
 	).Scan(&displayName, &passChangeReq)
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id":                       c.UserID,

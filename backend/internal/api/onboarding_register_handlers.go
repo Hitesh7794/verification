@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/veni/neet-verification/internal/db"
 )
 
 // Designed for ~10k institutions over time, with peaks of dozens of
@@ -344,7 +345,7 @@ func (s *Server) registerInit(w http.ResponseWriter, r *http.Request) {
 		var existingID int64
 		var existingStatus string
 		err := tx.QueryRowContext(r.Context(),
-			`SELECT id, status FROM institution_applications WHERE aishe_code = ?`,
+			`SELECT id, status FROM institution_applications WHERE aishe_code = $1`,
 			req.AisheCode,
 		).Scan(&existingID, &existingStatus)
 		switch {
@@ -370,7 +371,7 @@ func (s *Server) registerInit(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if _, err := tx.ExecContext(r.Context(),
-				`DELETE FROM institution_applications WHERE id = ?`, existingID,
+				`DELETE FROM institution_applications WHERE id = $1`, existingID,
 			); err != nil {
 				writeErr(w, http.StatusInternalServerError, "cleanup old row")
 				return
@@ -385,7 +386,7 @@ func (s *Server) registerInit(w http.ResponseWriter, r *http.Request) {
 		var existingID int64
 		var existingStatus string
 		err := tx.QueryRowContext(r.Context(),
-			`SELECT id, status FROM institution_applications WHERE pan = ?`,
+			`SELECT id, status FROM institution_applications WHERE pan = $1`,
 			pan,
 		).Scan(&existingID, &existingStatus)
 		switch {
@@ -407,7 +408,7 @@ func (s *Server) registerInit(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if _, err := tx.ExecContext(r.Context(),
-				`DELETE FROM institution_applications WHERE id = ?`, existingID,
+				`DELETE FROM institution_applications WHERE id = $1`, existingID,
 			); err != nil {
 				writeErr(w, http.StatusInternalServerError, "cleanup old row (pan)")
 				return
@@ -420,7 +421,7 @@ func (s *Server) registerInit(w http.ResponseWriter, r *http.Request) {
 		var existingID int64
 		var existingStatus string
 		err := tx.QueryRowContext(r.Context(),
-			`SELECT id, status FROM institution_applications WHERE head_email = ?`,
+			`SELECT id, status FROM institution_applications WHERE head_email = $1`,
 			email,
 		).Scan(&existingID, &existingStatus)
 		switch {
@@ -442,7 +443,7 @@ func (s *Server) registerInit(w http.ResponseWriter, r *http.Request) {
 				return
 			}
 			if _, err := tx.ExecContext(r.Context(),
-				`DELETE FROM institution_applications WHERE id = ?`, existingID,
+				`DELETE FROM institution_applications WHERE id = $1`, existingID,
 			); err != nil {
 				writeErr(w, http.StatusInternalServerError, "cleanup old row (email)")
 				return
@@ -450,7 +451,8 @@ func (s *Server) registerInit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	res, err := tx.ExecContext(r.Context(), `INSERT INTO institution_applications(
+	var appID int64
+	if err := tx.QueryRowContext(r.Context(), `INSERT INTO institution_applications(
 		status,
 		institution_name, institution_type, tier, aishe_code, pan,
 		year_established, affiliation_body,
@@ -458,7 +460,8 @@ func (s *Server) registerInit(w http.ResponseWriter, r *http.Request) {
 		approx_student_count, expected_centres,
 		head_name, head_designation, head_email, head_mobile,
 		submitter_ip
-	) VALUES('draft', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+	) VALUES('draft', $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20)
+	RETURNING id`,
 		strings.TrimSpace(req.InstitutionName), req.InstitutionType,
 		nullable(req.Tier), nullable(req.AisheCode), nullable(strings.ToUpper(strings.TrimSpace(req.PAN))),
 		nullInt(req.YearEstablished), nullable(req.AffiliationBody),
@@ -469,12 +472,10 @@ func (s *Server) registerInit(w http.ResponseWriter, r *http.Request) {
 		strings.TrimSpace(req.HeadName), strings.TrimSpace(req.HeadDesignation),
 		strings.ToLower(strings.TrimSpace(req.HeadEmail)), strings.TrimSpace(req.HeadMobile),
 		ip,
-	)
-	if err != nil {
+	).Scan(&appID); err != nil {
 		writeErr(w, http.StatusInternalServerError, "db insert: "+err.Error())
 		return
 	}
-	appID, _ := res.LastInsertId()
 	if err := tx.Commit(); err != nil {
 		writeErr(w, http.StatusInternalServerError, "db commit")
 		return
@@ -589,7 +590,7 @@ func (s *Server) registerUploadDoc(w http.ResponseWriter, r *http.Request) {
 	// superadmin reviewing the queue can't see docs mutating under them.
 	var status string
 	err = s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT status FROM institution_applications WHERE id = ?`, appID,
+		`SELECT status FROM institution_applications WHERE id = $1`, appID,
 	).Scan(&status)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeErr(w, http.StatusNotFound, "application not found")
@@ -607,7 +608,7 @@ func (s *Server) registerUploadDoc(w http.ResponseWriter, r *http.Request) {
 	// Per-application doc count cap.
 	var docCount int
 	_ = s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT COUNT(*) FROM institution_application_documents WHERE application_id = ?`, appID,
+		`SELECT COUNT(*) FROM institution_application_documents WHERE application_id = $1`, appID,
 	).Scan(&docCount)
 	if docCount >= maxDocsPerApplication {
 		writeErr(w, http.StatusConflict, fmt.Sprintf("at most %d documents per application", maxDocsPerApplication))
@@ -694,23 +695,23 @@ func (s *Server) registerUploadDoc(w http.ResponseWriter, r *http.Request) {
 
 	sum := hex.EncodeToString(h.Sum(nil))
 
-	res, err := s.deps.DB.ExecContext(r.Context(),
+	var docID int64
+	if err := s.deps.DB.QueryRowContext(r.Context(),
 		`INSERT INTO institution_application_documents(
 			application_id, doc_kind, original_name, storage_path,
 			mime, size_bytes, sha256
-		) VALUES(?,?,?,?,?,?,?)`,
+		) VALUES($1,$2,$3,$4,$5,$6,$7)
+		RETURNING id`,
 		appID, kind, hdr.Filename, fullPath, mime, written, sum,
-	)
-	if err != nil {
+	).Scan(&docID); err != nil {
 		// Roll back the on-disk file so DB + disk stay consistent.
 		os.Remove(fullPath)
 		writeErr(w, http.StatusInternalServerError, "db insert: "+err.Error())
 		return
 	}
-	docID, _ := res.LastInsertId()
 
 	_, _ = s.deps.DB.ExecContext(r.Context(),
-		`UPDATE institution_applications SET updated_at = CURRENT_TIMESTAMP WHERE id = ?`,
+		`UPDATE institution_applications SET updated_at = CURRENT_TIMESTAMP WHERE id = $1`,
 		appID,
 	)
 	_ = fname
@@ -765,7 +766,7 @@ func (s *Server) registerDeleteDoc(w http.ResponseWriter, r *http.Request) {
 		SELECT a.status, d.storage_path
 		  FROM institution_application_documents d
 		  JOIN institution_applications a ON a.id = d.application_id
-		 WHERE d.id = ? AND d.application_id = ?`,
+		 WHERE d.id = $1 AND d.application_id = $2`,
 		docID, appID,
 	).Scan(&status, &storagePath)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -781,7 +782,7 @@ func (s *Server) registerDeleteDoc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if _, err := s.deps.DB.ExecContext(r.Context(),
-		`DELETE FROM institution_application_documents WHERE id = ?`, docID,
+		`DELETE FROM institution_application_documents WHERE id = $1`, docID,
 	); err != nil {
 		writeErr(w, http.StatusInternalServerError, "db delete")
 		return
@@ -802,7 +803,7 @@ func (s *Server) registerSubmit(w http.ResponseWriter, r *http.Request) {
 	}
 	var status string
 	err = s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT status FROM institution_applications WHERE id = ?`, appID,
+		`SELECT status FROM institution_applications WHERE id = $1`, appID,
 	).Scan(&status)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeErr(w, http.StatusNotFound, "application not found")
@@ -819,7 +820,7 @@ func (s *Server) registerSubmit(w http.ResponseWriter, r *http.Request) {
 
 	// Confirm required docs are on file.
 	rows, err := s.deps.DB.QueryContext(r.Context(),
-		`SELECT doc_kind FROM institution_application_documents WHERE application_id = ?`, appID,
+		`SELECT doc_kind FROM institution_application_documents WHERE application_id = $1`, appID,
 	)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db read")
@@ -847,7 +848,7 @@ func (s *Server) registerSubmit(w http.ResponseWriter, r *http.Request) {
 	_, err = s.deps.DB.ExecContext(r.Context(),
 		`UPDATE institution_applications
 		 SET status = 'pending', updated_at = CURRENT_TIMESTAMP
-		 WHERE id = ? AND status = 'draft'`,
+		 WHERE id = $1 AND status = 'draft'`,
 		appID,
 	)
 	if err != nil {
@@ -893,7 +894,7 @@ func (s *Server) registerStatus(w http.ResponseWriter, r *http.Request) {
 	)
 	err = s.deps.DB.QueryRowContext(r.Context(),
 		`SELECT status, institution_name, head_email, created_at
-		 FROM institution_applications WHERE id = ?`, appID,
+		 FROM institution_applications WHERE id = $1`, appID,
 	).Scan(&st, &name, &email, &createdAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeErr(w, http.StatusNotFound, "application not found")
@@ -906,7 +907,7 @@ func (s *Server) registerStatus(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.deps.DB.QueryContext(r.Context(),
 		`SELECT id, doc_kind, original_name, size_bytes
 		 FROM institution_application_documents
-		 WHERE application_id = ? ORDER BY id`, appID,
+		 WHERE application_id = $1 ORDER BY id`, appID,
 	)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db read docs")
@@ -937,7 +938,7 @@ func (s *Server) registerStatus(w http.ResponseWriter, r *http.Request) {
 // missing files are ignored.
 func (s *Server) deleteApplicationDocs(ctx context.Context, tx *sql.Tx, appID int64) error {
 	rows, err := tx.QueryContext(ctx,
-		`SELECT storage_path FROM institution_application_documents WHERE application_id = ?`,
+		db.Q(`SELECT storage_path FROM institution_application_documents WHERE application_id = $1`),
 		appID,
 	)
 	if err != nil {

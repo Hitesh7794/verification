@@ -50,7 +50,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 		var disabledAt sql.NullTime
 		var dbRole string
 		err = s.deps.DB.QueryRowContext(r.Context(),
-			`SELECT role, disabled_at FROM users WHERE id = ?`, c.UserID,
+			`SELECT role, disabled_at FROM users WHERE id = $1`, c.UserID,
 		).Scan(&dbRole, &disabledAt)
 		if errors.Is(err, sql.ErrNoRows) {
 			writeErr(w, http.StatusUnauthorized, "account no longer exists")

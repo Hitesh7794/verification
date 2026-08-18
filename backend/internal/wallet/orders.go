@@ -59,7 +59,7 @@ func (s *Store) SaveOrder(ctx context.Context, o Order) error {
 		`INSERT INTO razorpay_orders(
 			razorpay_order_id, org_id, actor_user_id,
 			amount_paise, receipt, status
-		) VALUES (?, ?, ?, ?, ?, 'created')`,
+		) VALUES ($1, $2, $3, $4, $5, 'created')`,
 		o.RazorpayOrderID, o.OrgID, o.ActorUserID,
 		o.AmountPaise, nullable(o.Receipt),
 	)
@@ -81,7 +81,7 @@ func (s *Store) FindOrder(ctx context.Context, razorpayOrderID string) (*Order, 
 		        amount_paise, COALESCE(receipt,''), status,
 		        created_at, verified_at
 		 FROM razorpay_orders
-		 WHERE razorpay_order_id = ?`,
+		 WHERE razorpay_order_id = $1`,
 		razorpayOrderID,
 	).Scan(
 		&o.RazorpayOrderID, &o.OrgID, &o.ActorUserID,
@@ -110,7 +110,7 @@ func (s *Store) MarkOrderVerified(ctx context.Context, razorpayOrderID string) e
 	_, err := s.db.ExecContext(ctx,
 		`UPDATE razorpay_orders
 		 SET status = 'verified', verified_at = CURRENT_TIMESTAMP
-		 WHERE razorpay_order_id = ? AND status = 'created'`,
+		 WHERE razorpay_order_id = $1 AND status = 'created'`,
 		razorpayOrderID,
 	)
 	return err

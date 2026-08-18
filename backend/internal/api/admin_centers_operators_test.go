@@ -65,7 +65,6 @@ func twoOrgServer(t *testing.T) (*Server, orgFixture, orgFixture) {
 	cfg := config.Config{
 		HTTPAddr:                ":0",
 		JWTSecret:               "test-secret",
-		FPMatchThresholdDefault: 60,
 		ArtifactRetention:       "metadata",
 		ArtifactDir:             filepath.Join(tmp, "artifacts"),
 	}

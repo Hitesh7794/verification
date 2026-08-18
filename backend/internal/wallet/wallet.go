@@ -28,6 +28,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"github.com/veni/neet-verification/internal/db"
 )
 
 // Errors. Handlers map these to specific HTTP status codes — see
@@ -87,7 +88,7 @@ func (s *Store) Balance(ctx context.Context, orgID int64) (int, error) {
 	}
 	var bal int
 	err := s.db.QueryRowContext(ctx,
-		`SELECT balance_paise FROM wallets WHERE org_id = ?`, orgID).Scan(&bal)
+		`SELECT balance_paise FROM wallets WHERE org_id = $1`, orgID).Scan(&bal)
 	if err != nil {
 		return 0, err
 	}
@@ -118,13 +119,13 @@ func (s *Store) History(ctx context.Context, orgID int64, limit int, beforeID in
 	             t.created_at
 	      FROM wallet_transactions t
 	      LEFT JOIN users u ON u.id = t.actor_user_id
-	      WHERE t.org_id = ?`
+	      WHERE t.org_id = $1`
 	args := []any{orgID}
 	if beforeID > 0 {
 		q += ` AND t.id < ?`
 		args = append(args, beforeID)
 	}
-	q += ` ORDER BY t.id DESC LIMIT ?`
+	q += ` ORDER BY t.id DESC LIMIT $1`
 	args = append(args, limit)
 	rows, err := s.db.QueryContext(ctx, q, args...)
 	if err != nil {
@@ -168,8 +169,8 @@ func (s *Store) HasRecentChargeForRoll(ctx context.Context, orgID int64, roll st
 	var n int
 	err := s.db.QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM wallet_transactions
-		 WHERE org_id = ? AND related_roll = ? AND kind = 'charge'
-		   AND created_at >= ?`,
+		 WHERE org_id = $1 AND related_roll = $2 AND kind = 'charge'
+		   AND created_at >= $3`,
 		orgID, roll, cutoff,
 	).Scan(&n)
 	if err != nil {
@@ -202,10 +203,10 @@ func (s *Store) Debit(ctx context.Context, orgID, actorUserID int64, amountPaise
 	// can't both succeed when the remaining balance is below the sum
 	// of their amounts.
 	res, err := tx.ExecContext(ctx,
-		`UPDATE wallets
-		 SET balance_paise = balance_paise - ?,
+		db.Q(`UPDATE wallets
+		 SET balance_paise = balance_paise - $1,
 		     updated_at    = CURRENT_TIMESTAMP
-		 WHERE org_id = ? AND balance_paise >= ?`,
+		 WHERE org_id = $2 AND balance_paise >= $3`),
 		amountPaise, orgID, amountPaise,
 	)
 	if err != nil {
@@ -222,23 +223,23 @@ func (s *Store) Debit(ctx context.Context, orgID, actorUserID int64, amountPaise
 	// Read the post-debit balance so we can stamp it on the ledger row.
 	var newBal int
 	if err := tx.QueryRowContext(ctx,
-		`SELECT balance_paise FROM wallets WHERE org_id = ?`, orgID,
+		db.Q(`SELECT balance_paise FROM wallets WHERE org_id = $1`), orgID,
 	).Scan(&newBal); err != nil {
 		return Transaction{}, err
 	}
 
-	res, err = tx.ExecContext(ctx,
-		`INSERT INTO wallet_transactions(
+	var id int64
+	if err := tx.QueryRowContext(ctx,
+		db.Q(`INSERT INTO wallet_transactions(
 			org_id, actor_user_id, kind, amount_paise, balance_after_paise,
 			related_roll, description
-		) VALUES (?, ?, 'charge', ?, ?, ?, ?)`,
+		) VALUES ($1, $2, 'charge', $3, $4, $5, $6)
+		RETURNING id`),
 		orgID, actorUserID, -amountPaise, newBal,
 		nullable(relatedRoll), nullable(description),
-	)
-	if err != nil {
+	).Scan(&id); err != nil {
 		return Transaction{}, err
 	}
-	id, _ := res.LastInsertId()
 	if err := tx.Commit(); err != nil {
 		return Transaction{}, err
 	}
@@ -281,32 +282,32 @@ func (s *Store) Credit(ctx context.Context, orgID, actorUserID int64, amountPais
 	defer tx.Rollback()
 
 	if _, err := tx.ExecContext(ctx,
-		`UPDATE wallets
-		 SET balance_paise = balance_paise + ?,
+		db.Q(`UPDATE wallets
+		 SET balance_paise = balance_paise + $1,
 		     updated_at    = CURRENT_TIMESTAMP
-		 WHERE org_id = ?`,
+		 WHERE org_id = $2`),
 		amountPaise, orgID,
 	); err != nil {
 		return Transaction{}, err
 	}
 	var newBal int
 	if err := tx.QueryRowContext(ctx,
-		`SELECT balance_paise FROM wallets WHERE org_id = ?`, orgID,
+		db.Q(`SELECT balance_paise FROM wallets WHERE org_id = $1`), orgID,
 	).Scan(&newBal); err != nil {
 		return Transaction{}, err
 	}
-	res, err := tx.ExecContext(ctx,
-		`INSERT INTO wallet_transactions(
+	var id int64
+	if err := tx.QueryRowContext(ctx,
+		db.Q(`INSERT INTO wallet_transactions(
 			org_id, actor_user_id, kind, amount_paise, balance_after_paise,
 			razorpay_order_id, razorpay_payment_id, description
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		RETURNING id`),
 		orgID, nullableID(actorUserID), string(kind), amountPaise, newBal,
 		nullable(razorpayOrderID), nullable(razorpayPaymentID), nullable(description),
-	)
-	if err != nil {
+	).Scan(&id); err != nil {
 		return Transaction{}, err
 	}
-	id, _ := res.LastInsertId()
 	if err := tx.Commit(); err != nil {
 		return Transaction{}, err
 	}
@@ -345,7 +346,7 @@ func (s *Store) FindByRazorpayPaymentID(ctx context.Context, paymentID string) (
 		        COALESCE(razorpay_payment_id,''), COALESCE(description,''),
 		        created_at
 		 FROM wallet_transactions
-		 WHERE razorpay_payment_id = ?`,
+		 WHERE razorpay_payment_id = $1`,
 		paymentID,
 	).Scan(
 		&t.ID, &t.OrgID, &actorID, &k, &t.AmountPaise, &t.BalanceAfterPaise,
@@ -370,7 +371,7 @@ func (s *Store) FindByRazorpayPaymentID(ctx context.Context, paymentID string) (
 // yet. Safe to call repeatedly — the INSERT OR IGNORE is idempotent.
 func (s *Store) ensureWallet(ctx context.Context, orgID int64) error {
 	_, err := s.db.ExecContext(ctx,
-		`INSERT OR IGNORE INTO wallets(org_id, balance_paise) VALUES (?, 0)`,
+		`INSERT INTO wallets(org_id, balance_paise) VALUES ($1, 0) ON CONFLICT (org_id) DO NOTHING`,
 		orgID,
 	)
 	return err

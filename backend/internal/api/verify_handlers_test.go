@@ -69,7 +69,6 @@ func testServer(t *testing.T) (s *Server, token, roll string, cleanup func()) {
 		HTTPAddr:                ":0",
 		DBPath:                  "",
 		JWTSecret:               "test-secret",
-		FPMatchThresholdDefault: 60,
 		ArtifactRetention:       "metadata",
 		ArtifactDir:             filepath.Join(tmp, "artifacts"),
 	}

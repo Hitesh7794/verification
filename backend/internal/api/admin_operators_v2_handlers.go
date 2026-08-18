@@ -32,6 +32,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/veni/neet-verification/internal/email"
+	"github.com/veni/neet-verification/internal/db"
 )
 
 // ── DTOs ──────────────────────────────────────────────────────────────
@@ -66,7 +67,7 @@ func (s *Server) adminListOperators(w http.ResponseWriter, r *http.Request) {
 		       COALESCE(email,''), disabled_at, spending_cap_paise, spent_paise,
 		       valid_from, valid_to, created_at
 		FROM users
-		WHERE org_id = ? AND role = 'client'
+		WHERE org_id = $1 AND role = 'client'
 		ORDER BY created_at DESC, id DESC`, orgID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
@@ -120,7 +121,7 @@ func (s *Server) adminListOperators(w http.ResponseWriter, r *http.Request) {
 			SELECT oe.user_id, oe.exam_id
 			  FROM operator_exams oe
 			  JOIN users u ON u.id = oe.user_id
-			 WHERE u.org_id = ?`, orgID)
+			 WHERE u.org_id = $1`, orgID)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "db read exams: "+err.Error())
 			return
@@ -173,7 +174,7 @@ func (s *Server) loadOperatorForOrg(r *http.Request, orgID, id int64) (*operator
 		       COALESCE(email,''), disabled_at, spending_cap_paise, spent_paise,
 		       valid_from, valid_to, created_at
 		  FROM users
-		 WHERE id = ? AND org_id = ? AND role = 'client'`, id, orgID,
+		 WHERE id = $1 AND org_id = $2 AND role = 'client'`, id, orgID,
 	).Scan(&o.ID, &o.Username, &o.Password, &o.DisplayName,
 		&o.Email, &disabledAt, &cap, &o.SpentPaise, &vFrom, &vTo, &o.CreatedAt)
 	if err != nil {
@@ -203,7 +204,7 @@ func (s *Server) loadOperatorForOrg(r *http.Request, orgID, id int64) (*operator
 	}
 	o.AssignedExamIDs = []int64{}
 	erows, err := s.deps.DB.QueryContext(r.Context(),
-		`SELECT exam_id FROM operator_exams WHERE user_id = ?`, id)
+		`SELECT exam_id FROM operator_exams WHERE user_id = $1`, id)
 	if err != nil {
 		return nil, err
 	}
@@ -262,7 +263,7 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 	// (defense in depth against races).
 	var dupID int64
 	if err := s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT id FROM users WHERE email IS NOT NULL AND LOWER(email) = LOWER(?) LIMIT 1`,
+		`SELECT id FROM users WHERE email IS NOT NULL AND LOWER(email) = LOWER($1) LIMIT 1`,
 		req.Email,
 	).Scan(&dupID); err == nil {
 		writeErr(w, http.StatusConflict, "a user with this email already exists")
@@ -312,23 +313,23 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 	// Operators are scoped by their operator_exams entries (chosen from
 	// the org's subscribed exams). The legacy centre concept was removed
 	// in migration 021.
-	res, err := tx.ExecContext(r.Context(), `
+	var uid int64
+	if err := tx.QueryRowContext(r.Context(), `
 		INSERT INTO users(username, password_hash, role, org_id,
 		                  display_name, email, password_plaintext,
 		                  spending_cap_paise, valid_from, valid_to)
-		VALUES(?, ?, 'client', ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES($1, $2, 'client', $3, $4, $5, $6, $7, $8, $9)
+		RETURNING id`,
 		req.Username, string(hash), orgID, req.DisplayName,
 		nullable(req.Email), req.Password,
-		nullableInt64(req.SpendingCapPaise), vFrom, vTo)
-	if err != nil {
-		if strings.Contains(err.Error(), "UNIQUE constraint failed: users.username") {
+		nullableInt64(req.SpendingCapPaise), vFrom, vTo).Scan(&uid); err != nil {
+		if isUniqueViolation(err) && strings.Contains(strings.ToLower(err.Error()), "username") {
 			writeErr(w, http.StatusConflict, "username already taken")
 			return
 		}
 		writeErr(w, http.StatusInternalServerError, "db insert: "+err.Error())
 		return
 	}
-	uid, _ := res.LastInsertId()
 	if err := s.setOperatorExams(tx, orgID, uid, req.ExamIDs); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
@@ -411,7 +412,7 @@ func (s *Server) adminPatchOperator(w http.ResponseWriter, r *http.Request) {
 	// Confirm operator exists and belongs to org (rest of the patch runs
 	// UPDATE ... WHERE org_id = ? so this is defence-in-depth).
 	var ownedByOrg int64
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM users WHERE id = ? AND org_id = ? AND role = 'client'`,
+	if err := tx.QueryRow(db.Q(`SELECT COUNT(*) FROM users WHERE id = $1 AND org_id = $2 AND role = 'client'`),
 		id, orgID).Scan(&ownedByOrg); err != nil || ownedByOrg == 0 {
 		writeErr(w, http.StatusNotFound, "operator not found")
 		return
@@ -444,7 +445,7 @@ func (s *Server) adminPatchOperator(w http.ResponseWriter, r *http.Request) {
 		// unique index catches it at the DB layer too.
 		var dupID int64
 		err := tx.QueryRow(
-			`SELECT id FROM users WHERE email IS NOT NULL AND LOWER(email) = LOWER(?) AND id != ? LIMIT 1`,
+			`SELECT id FROM users WHERE email IS NOT NULL AND LOWER(email) = LOWER($1) AND id != $2 LIMIT 1`,
 			e, id,
 		).Scan(&dupID)
 		if err == nil {
@@ -521,8 +522,8 @@ func (s *Server) adminPatchOperator(w http.ResponseWriter, r *http.Request) {
 	if len(sets) > 0 {
 		args = append(args, id, orgID)
 		if _, err := tx.ExecContext(r.Context(),
-			"UPDATE users SET "+strings.Join(sets, ", ")+
-				" WHERE id = ? AND org_id = ?", args...); err != nil {
+			db.Q("UPDATE users SET "+strings.Join(sets, ", ")+
+				" WHERE id = ? AND org_id = ?"), args...); err != nil {
 			writeErr(w, http.StatusInternalServerError, "db update: "+err.Error())
 			return
 		}
@@ -568,10 +569,10 @@ func (s *Server) setOperatorDisabled(w http.ResponseWriter, r *http.Request, dis
 	var q string
 	if disabled {
 		q = `UPDATE users SET disabled_at = CURRENT_TIMESTAMP
-		     WHERE id = ? AND org_id = ? AND role = 'client'`
+		     WHERE id = $1 AND org_id = $2 AND role = 'client'`
 	} else {
 		q = `UPDATE users SET disabled_at = NULL
-		     WHERE id = ? AND org_id = ? AND role = 'client'`
+		     WHERE id = $1 AND org_id = $2 AND role = 'client'`
 	}
 	res, err := s.deps.DB.ExecContext(r.Context(), q, id, orgID)
 	if err != nil {

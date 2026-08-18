@@ -1,6 +1,10 @@
 package api
 
-import "net/http"
+import (
+	"net/http"
+
+	"github.com/veni/neet-verification/internal/db"
+)
 
 // GET /api/super/metrics
 //
@@ -28,12 +32,12 @@ func (s *Server) superMetrics(w http.ResponseWriter, r *http.Request) {
 	// date(...) gives YYYY-MM-DD; same call works on the verifications
 	// created_at column.
 	_ = s.deps.DB.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM verifications WHERE date(created_at)=date('now')`,
+		db.Q(`SELECT COUNT(*) FROM verifications WHERE created_at::date = CURRENT_DATE`),
 	).Scan(&n)
 	out["verifications_today"] = n
 
 	_ = s.deps.DB.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM verifications WHERE created_at >= datetime('now','-24 hours')`,
+		db.Q(`SELECT COUNT(*) FROM verifications WHERE created_at >= NOW() - INTERVAL '24 hours'`),
 	).Scan(&n)
 	out["verifications_24h"] = n
 
@@ -42,32 +46,32 @@ func (s *Server) superMetrics(w http.ResponseWriter, r *http.Request) {
 	// the two metrics (both positive paise).
 	var paise int
 	_ = s.deps.DB.QueryRowContext(ctx,
-		`SELECT COALESCE(SUM(amount_paise),0) FROM wallet_transactions
+		db.Q(`SELECT COALESCE(SUM(amount_paise),0) FROM wallet_transactions
 		 WHERE kind IN ('deposit','admin_credit')
-		   AND date(created_at)=date('now')`,
+		   AND created_at::date = CURRENT_DATE`),
 	).Scan(&paise)
 	out["wallet_credit_paise_today"] = paise
 
 	_ = s.deps.DB.QueryRowContext(ctx,
-		`SELECT COALESCE(-SUM(amount_paise),0) FROM wallet_transactions
+		db.Q(`SELECT COALESCE(-SUM(amount_paise),0) FROM wallet_transactions
 		 WHERE kind = 'charge'
-		   AND date(created_at)=date('now')`,
+		   AND created_at::date = CURRENT_DATE`),
 	).Scan(&paise)
 	out["wallet_charge_paise_today"] = paise
 
 	_ = s.deps.DB.QueryRowContext(ctx,
-		`SELECT COUNT(DISTINCT org_id) FROM verifications
-		 WHERE created_at >= datetime('now','-24 hours')`,
+		db.Q(`SELECT COUNT(DISTINCT org_id) FROM verifications
+		 WHERE created_at >= NOW() - INTERVAL '24 hours'`),
 	).Scan(&n)
 	out["active_orgs_24h"] = n
 
 	_ = s.deps.DB.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM institution_applications WHERE status='pending'`,
+		db.Q(`SELECT COUNT(*) FROM institution_applications WHERE status='pending'`),
 	).Scan(&n)
 	out["pending_applications"] = n
 
 	_ = s.deps.DB.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM users WHERE disabled_at IS NOT NULL`,
+		db.Q(`SELECT COUNT(*) FROM users WHERE disabled_at IS NOT NULL`),
 	).Scan(&n)
 	out["disabled_users"] = n
 

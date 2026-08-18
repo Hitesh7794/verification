@@ -9,7 +9,11 @@ import (
 
 type Config struct {
 	HTTPAddr  string
-	DBPath    string
+	// DatabaseURL is a standard Postgres DSN:
+	//   postgres://user:pass@host:port/dbname?sslmode=disable
+	// Dev + single-host prod run Postgres on loopback (sslmode=disable
+	// is fine). Point at RDS with sslmode=require when we go multi-host.
+	DatabaseURL string
 	DataDir   string
 	JWTSecret string
 
@@ -39,15 +43,12 @@ type Config struct {
 	// the operator's browser submits. Per-org overrides come later; for
 	// now these are the global defaults.
 	//
-	// FPMatchThresholdDefault matches the vendor's own
-	// `DEFAULT_MATCH_THRESHOLD = 140` constant, found in the MorFin
-	// `MorfinAuthClientService` JAR. Earlier value (60) was a guess; 140
-	// is the value the vendor's reference daemon hard-codes, so it's the
-	// best signal we have until a hardware capture lets us look at the
-	// actual score distribution and tune from there.
-	FPMatchThresholdDefault   int     // MorFin MatchScore. Vendor default = 140.
-	IrisMatchThresholdDefault float64 // Marvis MatchImage score per eye. Vendor TBD; placeholder.
-	FaceMatchThresholdDefault float64 // Luxand similarity, when wired in. Placeholder.
+	// Iris score threshold — Marvis MatchImage 0..1 per eye. Placeholder
+	// until we have enough hardware captures to tune it against real
+	// distributions. Face + fingerprint thresholds are TrustView-managed
+	// (unified 0..100 scale, 50 = accept) so no config value is needed
+	// on the server side for those anymore.
+	IrisMatchThresholdDefault float64
 
 	// ArtifactRetention controls whether the backend accepts and stores
 	// captured face/fp/iris bytes alongside the verification row.
@@ -56,23 +57,6 @@ type Config struct {
 	//   "full"     — store bytes under ArtifactDir
 	ArtifactRetention string
 	ArtifactDir       string
-
-	// Luxand face-matching service. The portal backend forwards captured
-	// webcam JPEGs to this service. Loopback-only by default; the service
-	// only accepts traffic from the backend itself.
-	LuxandBase      string // base URL, e.g. http://127.0.0.1:8040/face/
-	FaceTemplateDir string // disk cache for extracted gallery face templates
-
-	// fp-match-service (SourceAFIS) — server-side fingerprint matcher.
-	// Forwards the operator's probe template plus the candidate's gallery
-	// template; returns a similarity score. Same loopback-only deployment
-	// model as luxand. Empty string disables the endpoint cleanly so the
-	// backend still boots without the service running.
-	//
-	// NOTE: retained while TrustView is rolled out (see below); once the
-	// hosted matcher is confirmed in prod, both this and LuxandBase can
-	// go away.
-	FpMatchBase string // base URL, e.g. http://127.0.0.1:8050/fp/
 
 	// TrustView hosted compare API (v1.trustview.in). Single endpoint
 	// replaces the on-prem face + fingerprint matchers and the operator-
@@ -136,20 +120,15 @@ type Config struct {
 func Load() Config {
 	return Config{
 		HTTPAddr:                  envOr("HTTP_ADDR", ":8080"),
-		DBPath:                    envOr("DB_PATH", "verification.db"),
+		DatabaseURL:               envOr("DATABASE_URL", "postgres://portal:portal-dev@127.0.0.1:5434/verification?sslmode=disable"),
 		DataDir:                   envOr("DATA_DIR", defaultDataDir()),
 		JWTSecret:                 envOr("JWT_SECRET", DefaultDevJWTSecret),
 		AppEnv:                    envOr("APP_ENV", "development"),
 		AllowedOrigins:            envOrigins("ALLOWED_ORIGINS"),
 		PublicBaseURL:             strings.TrimRight(envOr("PUBLIC_BASE_URL", ""), "/"),
-		FPMatchThresholdDefault:   envInt("FP_MATCH_THRESHOLD", 140),
 		IrisMatchThresholdDefault: envFloat("IRIS_MATCH_THRESHOLD", 0.6),
-		FaceMatchThresholdDefault: envFloat("FACE_MATCH_THRESHOLD", 0.7),
 		ArtifactRetention:         envOr("ARTIFACT_RETENTION", "none"),
 		ArtifactDir:               envOr("ARTIFACT_DIR", "artifacts"),
-		LuxandBase:                envOr("LUXAND_BASE", "http://127.0.0.1:8040/face/"),
-		FaceTemplateDir:           envOr("FACE_TEMPLATE_DIR", "face_templates"),
-		FpMatchBase:               envOr("FP_MATCH_BASE", "http://127.0.0.1:8050/fp/"),
 		TrustViewBaseURL:          envOr("TRUSTVIEW_BASE_URL", "https://v1.trustview.in"),
 		TrustViewToken:            envOr("TRUSTVIEW_TOKEN", ""),
 		RazorpayKeyID:             envOr("RAZORPAY_KEY_ID", ""),

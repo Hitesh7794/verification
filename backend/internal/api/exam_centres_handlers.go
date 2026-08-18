@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/veni/neet-verification/internal/db"
 )
 
 // Per-exam centre catalog — mirrors the per-exam candidate CSV flow.
@@ -142,7 +143,7 @@ func (s *Server) uploadExamCentres(w http.ResponseWriter, r *http.Request) {
 	// Confirm the exam exists so we don't accept centres for ghosts.
 	var probe int64
 	if err := s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT id FROM exams WHERE id = ?`, examID).Scan(&probe); err != nil {
+		`SELECT id FROM exams WHERE id = $1`, examID).Scan(&probe); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeErr(w, http.StatusNotFound, "exam not found")
 			return
@@ -189,7 +190,7 @@ func (s *Server) uploadExamCentres(w http.ResponseWriter, r *http.Request) {
 	stmt, err := tx.PrepareContext(r.Context(), `
 		INSERT INTO exam_centres(exam_id, centre_code, centre_name,
 		                          address, city, state, pincode)
-		VALUES(?, ?, ?, ?, ?, ?, ?)
+		VALUES($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT(exam_id, centre_code) DO UPDATE SET
 			centre_name = excluded.centre_name,
 			address     = excluded.address,
@@ -253,7 +254,7 @@ func (s *Server) listExamCentres(w http.ResponseWriter, r *http.Request) {
 		       COALESCE(address, ''), COALESCE(city, ''),
 		       COALESCE(state, ''),   COALESCE(pincode, '')
 		  FROM exam_centres
-		 WHERE exam_id = ?
+		 WHERE exam_id = $1
 		 ORDER BY centre_code`, examID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
@@ -280,8 +281,8 @@ func (s *Server) listExamCentres(w http.ResponseWriter, r *http.Request) {
 func (s *Server) assertOrgSubscribed(ctx context.Context, orgID, examID int64) error {
 	var one int
 	err := s.deps.DB.QueryRowContext(ctx,
-		`SELECT 1 FROM organization_exam_subscriptions
-		  WHERE org_id = ? AND exam_id = ? LIMIT 1`,
+		db.Q(`SELECT 1 FROM organization_exam_subscriptions
+		  WHERE org_id = $1 AND exam_id = $2 LIMIT 1`),
 		orgID, examID).Scan(&one)
 	return err
 }

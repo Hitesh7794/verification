@@ -176,7 +176,7 @@ func (s *Server) walletSummary(w http.ResponseWriter, r *http.Request) {
 	)
 	if claims != nil && claims.UserID != 0 {
 		if err := s.deps.DB.QueryRowContext(r.Context(),
-			`SELECT spending_cap_paise, COALESCE(spent_paise, 0) FROM users WHERE id = ?`,
+			`SELECT spending_cap_paise, COALESCE(spent_paise, 0) FROM users WHERE id = $1`,
 			claims.UserID,
 		).Scan(&cap, &spent); err != nil && !errors.Is(err, sql.ErrNoRows) {
 			writeErr(w, http.StatusInternalServerError, "user read: "+err.Error())
@@ -212,7 +212,7 @@ func (s *Server) walletSummary(w http.ResponseWriter, r *http.Request) {
 			SELECT e.id, e.exam_code, e.name
 			  FROM operator_exams oe
 			  JOIN exams e ON e.id = oe.exam_id
-			 WHERE oe.user_id = ?
+			 WHERE oe.user_id = $1
 			 LIMIT 1
 		`, claims.UserID).Scan(&eid, &code, &name)
 		if eid.Valid {

@@ -19,6 +19,7 @@ import (
 
 	"github.com/veni/neet-verification/internal/email"
 	"github.com/veni/neet-verification/internal/magiclink"
+	"github.com/veni/neet-verification/internal/db"
 )
 
 // Superadmin endpoints for the institution-application queue.
@@ -112,7 +113,7 @@ func (s *Server) superadminListApplications(w http.ResponseWriter, r *http.Reque
 	// Count for pagination footer.
 	var total int
 	if err := s.deps.DB.QueryRowContext(r.Context(),
-		"SELECT COUNT(*) FROM institution_applications WHERE "+whereSQL, args...,
+		db.Q("SELECT COUNT(*) FROM institution_applications WHERE "+whereSQL), args...,
 	).Scan(&total); err != nil {
 		writeErr(w, http.StatusInternalServerError, "db count")
 		return
@@ -123,12 +124,12 @@ func (s *Server) superadminListApplications(w http.ResponseWriter, r *http.Reque
 	listArgs := append([]any{}, args...)
 	listArgs = append(listArgs, limit, offset)
 	rows, err := s.deps.DB.QueryContext(r.Context(),
-		"SELECT id, status, institution_name, institution_type, "+
+		db.Q("SELECT id, status, institution_name, institution_type, "+
 			"COALESCE(tier,''), COALESCE(aishe_code,''), state, city, "+
 			"head_name, head_email, created_at, "+
 			"(SELECT COUNT(*) FROM institution_application_documents d WHERE d.application_id = institution_applications.id) "+
 			"FROM institution_applications WHERE "+whereSQL+
-			" ORDER BY created_at DESC LIMIT ? OFFSET ?",
+			" ORDER BY created_at DESC LIMIT ? OFFSET ?"),
 		listArgs...,
 	)
 	if err != nil {
@@ -226,13 +227,13 @@ func (s *Server) loadApplicationDetail(ctx context.Context, appID int64) (*appli
 		createdAt, updatedAt time.Time
 	)
 	err := s.deps.DB.QueryRowContext(ctx,
-		`SELECT id, status, institution_name, institution_type,
+		db.Q(`SELECT id, status, institution_name, institution_type,
 		        tier, aishe_code, pan, year_established, affiliation_body,
 		        address_line1, address_line2, city, district, state, pin_code,
 		        approx_student_count, expected_centres,
 		        head_name, head_designation, head_email, head_mobile,
 		        review_note, reviewed_at, created_at, updated_at
-		 FROM institution_applications WHERE id = ?`, appID,
+		 FROM institution_applications WHERE id = $1`), appID,
 	).Scan(&d.ID, &d.Status, &d.InstitutionName, &d.InstitutionType,
 		&tier, &aishe, &pan, &yearEst, &affil,
 		&d.AddressLine1, &addr2, &d.City, &district, &d.State, &d.PinCode,
@@ -263,9 +264,9 @@ func (s *Server) loadApplicationDetail(ctx context.Context, appID int64) (*appli
 	d.UpdatedAt = updatedAt.UTC().Format(time.RFC3339)
 
 	rows, err := s.deps.DB.QueryContext(ctx,
-		`SELECT id, doc_kind, original_name, mime, size_bytes, sha256, uploaded_at
+		db.Q(`SELECT id, doc_kind, original_name, mime, size_bytes, sha256, uploaded_at
 		 FROM institution_application_documents
-		 WHERE application_id = ? ORDER BY id`, appID,
+		 WHERE application_id = $1 ORDER BY id`), appID,
 	)
 	if err != nil {
 		return nil, err
@@ -307,7 +308,7 @@ func (s *Server) superadminDownloadDoc(w http.ResponseWriter, r *http.Request) {
 	err = s.deps.DB.QueryRowContext(r.Context(),
 		`SELECT storage_path, mime, original_name
 		 FROM institution_application_documents
-		 WHERE id = ? AND application_id = ?`, docID, appID,
+		 WHERE id = $1 AND application_id = $2`, docID, appID,
 	).Scan(&storagePath, &mime, &original)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeErr(w, http.StatusNotFound, "document not found")
@@ -397,11 +398,11 @@ func (s *Server) superadminApproveApplication(w http.ResponseWriter, r *http.Req
 	res0, err := tx.ExecContext(r.Context(),
 		`UPDATE institution_applications
 		 SET status = 'approved',
-		     reviewed_by_user_id = ?,
+		     reviewed_by_user_id = $1,
 		     reviewed_at = CURRENT_TIMESTAMP,
-		     review_note = ?,
+		     review_note = $2,
 		     updated_at = CURRENT_TIMESTAMP
-		 WHERE id = ? AND status = 'pending'`,
+		 WHERE id = $3 AND status = 'pending'`,
 		claims.UserID, nullable(req.Note), appID,
 	)
 	if err != nil {
@@ -414,7 +415,7 @@ func (s *Server) superadminApproveApplication(w http.ResponseWriter, r *http.Req
 		// Read current state to give the caller a precise message.
 		var status string
 		err := tx.QueryRowContext(r.Context(),
-			`SELECT status FROM institution_applications WHERE id = ?`, appID,
+			`SELECT status FROM institution_applications WHERE id = $1`, appID,
 		).Scan(&status)
 		if errors.Is(err, sql.ErrNoRows) {
 			writeErr(w, http.StatusNotFound, "application not found")
@@ -433,7 +434,7 @@ func (s *Server) superadminApproveApplication(w http.ResponseWriter, r *http.Req
 	)
 	err = tx.QueryRowContext(r.Context(),
 		`SELECT institution_name, head_name, head_email, head_designation, aishe_code
-		 FROM institution_applications WHERE id = ?`, appID,
+		 FROM institution_applications WHERE id = $1`, appID,
 	).Scan(&instName, &headName, &headEmail, &headDesignation, &aishe)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db read")
@@ -450,14 +451,14 @@ func (s *Server) superadminApproveApplication(w http.ResponseWriter, r *http.Req
 	// Insert organization (or find existing — orgs.code is UNIQUE).
 	var orgID int64
 	if _, err := tx.ExecContext(r.Context(),
-		`INSERT OR IGNORE INTO organizations(code, name) VALUES(?, ?)`,
+		`INSERT INTO organizations(code, name) VALUES($1, $2) ON CONFLICT (code) DO NOTHING`,
 		orgCode, instName,
 	); err != nil {
 		writeErr(w, http.StatusInternalServerError, "org insert: "+err.Error())
 		return
 	}
 	if err := tx.QueryRowContext(r.Context(),
-		`SELECT id FROM organizations WHERE code = ?`, orgCode,
+		`SELECT id FROM organizations WHERE code = $1`, orgCode,
 	).Scan(&orgID); err != nil {
 		writeErr(w, http.StatusInternalServerError, "org read: "+err.Error())
 		return
@@ -486,17 +487,17 @@ func (s *Server) superadminApproveApplication(w http.ResponseWriter, r *http.Req
 	// register (see auth_handlers.login — accepts both for admin +
 	// client roles). Case-normalised to match how email login queries.
 	adminEmail := strings.ToLower(strings.TrimSpace(headEmail))
-	res, err := tx.ExecContext(r.Context(),
+	var userID int64
+	if err := tx.QueryRowContext(r.Context(),
 		`INSERT INTO users(username, password_hash, role, org_id, display_name, email)
-		 VALUES(?, ?, 'admin', ?, ?, ?)`,
+		 VALUES($1, $2, 'admin', $3, $4, $5)
+		 RETURNING id`,
 		username, string(placeholder), orgID, headName+" ("+headDesignation+")",
 		nullable(adminEmail),
-	)
-	if err != nil {
+	).Scan(&userID); err != nil {
 		writeErr(w, http.StatusInternalServerError, "user insert: "+err.Error())
 		return
 	}
-	userID, _ := res.LastInsertId()
 
 	// Shared operator: one client-role user per org. Every operator
 	// machine at the institution logs in with this single credential.
@@ -519,7 +520,7 @@ func (s *Server) superadminApproveApplication(w http.ResponseWriter, r *http.Req
 	if _, err := tx.ExecContext(r.Context(),
 		`INSERT INTO users(username, password_hash, password_plaintext, role,
 		                   org_id, display_name, activated_at)
-		 VALUES(?, ?, ?, 'client', ?, ?, CURRENT_TIMESTAMP)`,
+		 VALUES($1, $2, $3, 'client', $4, $5, CURRENT_TIMESTAMP)`,
 		operatorUsername, string(operatorHash), operatorPassword,
 		orgID, "Centre Operator",
 	); err != nil {
@@ -633,7 +634,7 @@ func (s *Server) superadminResendAdminLink(w http.ResponseWriter, r *http.Reques
 		       AND username LIKE '%_' || a.id
 		     ORDER BY id DESC LIMIT 1
 		   )
-		 WHERE a.id = ?`,
+		 WHERE a.id = $1`,
 		appID,
 	).Scan(&appStatus, &instName, &headEmail, &headName,
 		&orgID, &adminUserID, &adminUsername, &adminActivated, &adminDisabledAt)
@@ -662,7 +663,7 @@ func (s *Server) superadminResendAdminLink(w http.ResponseWriter, r *http.Reques
 	// so only the most recent link works.
 	if _, err := s.deps.DB.ExecContext(r.Context(),
 		`UPDATE magic_links SET used_at = CURRENT_TIMESTAMP
-		 WHERE user_id = ? AND used_at IS NULL`, adminUserID,
+		 WHERE user_id = $1 AND used_at IS NULL`, adminUserID,
 	); err != nil {
 		writeErr(w, http.StatusInternalServerError, "invalidate prior: "+err.Error())
 		return
@@ -724,7 +725,7 @@ func (s *Server) superadminRejectApplication(w http.ResponseWriter, r *http.Requ
 	var status, instName, headName, headEmail string
 	err = s.deps.DB.QueryRowContext(r.Context(),
 		`SELECT status, institution_name, head_name, head_email
-		 FROM institution_applications WHERE id = ?`, appID,
+		 FROM institution_applications WHERE id = $1`, appID,
 	).Scan(&status, &instName, &headName, &headEmail)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeErr(w, http.StatusNotFound, "application not found")
@@ -740,9 +741,9 @@ func (s *Server) superadminRejectApplication(w http.ResponseWriter, r *http.Requ
 	}
 	if _, err := s.deps.DB.ExecContext(r.Context(),
 		`UPDATE institution_applications
-		 SET status = 'rejected', reviewed_by_user_id = ?, reviewed_at = CURRENT_TIMESTAMP,
-		     review_note = ?, updated_at = CURRENT_TIMESTAMP
-		 WHERE id = ?`,
+		 SET status = 'rejected', reviewed_by_user_id = $1, reviewed_at = CURRENT_TIMESTAMP,
+		     review_note = $2, updated_at = CURRENT_TIMESTAMP
+		 WHERE id = $3`,
 		claims.UserID, strings.TrimSpace(req.Note), appID,
 	); err != nil {
 		writeErr(w, http.StatusInternalServerError, "db update")

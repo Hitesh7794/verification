@@ -43,14 +43,14 @@ func Seed(d *sql.DB, idx *data.Index) error {
 		}
 		orgCode := strings.ToUpper(c.OrgCode)
 		if _, err := tx.Exec(
-			`INSERT OR IGNORE INTO organizations(code,name) VALUES(?,?)`,
+			`INSERT INTO organizations(code,name) VALUES($1,$2) ON CONFLICT (code) DO NOTHING`,
 			orgCode, orgCode,
 		); err != nil {
 			return err
 		}
 		var orgID int64
 		if err := tx.QueryRow(
-			`SELECT id FROM organizations WHERE code=?`, orgCode,
+			`SELECT id FROM organizations WHERE code=$1`, orgCode,
 		).Scan(&orgID); err != nil {
 			return err
 		}
@@ -80,7 +80,7 @@ func Seed(d *sql.DB, idx *data.Index) error {
 				plaintext = pwd
 			}
 			_, err = tx.Exec(`INSERT INTO users(username,password_hash,password_plaintext,role,org_id,display_name,activated_at)
-			                  VALUES(?,?,?,?,?,?,CURRENT_TIMESTAMP)`,
+			                  VALUES($1,$2,$3,$4,$5,$6,CURRENT_TIMESTAMP)`,
 				username, string(hash), plaintext, role, orgID, display)
 			return err
 		}
@@ -112,8 +112,9 @@ func Seed(d *sql.DB, idx *data.Index) error {
 		return err
 	}
 	if _, err := tx.Exec(
-		`INSERT OR IGNORE INTO users(username, password_hash, role, display_name)
-		 VALUES(?, ?, 'ops_admin', ?)`,
+		`INSERT INTO users(username, password_hash, role, display_name)
+		 VALUES($1, $2, 'ops_admin', $3)
+		 ON CONFLICT (username) DO NOTHING`,
 		"ops", string(hash), "Onboarding Ops Admin",
 	); err != nil {
 		return err

@@ -8,6 +8,7 @@ import (
 	"net/http"
 
 	"github.com/veni/neet-verification/internal/auth"
+	"github.com/veni/neet-verification/internal/db"
 )
 
 // Audit log write helpers. Append-only, best-effort: a failed audit
@@ -56,10 +57,10 @@ func (s *Server) audit(ctx context.Context, actor *auth.Claims, action, targetTy
 		}
 	}
 	_, err := s.deps.DB.ExecContext(ctx,
-		`INSERT INTO audit_log(
+		db.Q(`INSERT INTO audit_log(
 			actor_user_id, actor_username, actor_role,
 			org_id, action, target_type, target_id, metadata, ip
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`),
 		actorID, actorUsername, actorRole,
 		orgID, action, tType, tID, metaJSON,
 		sql.NullString{String: ip, Valid: ip != ""},
@@ -142,10 +143,10 @@ func (s *Server) superAuditList(w http.ResponseWriter, r *http.Request) {
 	args = append(args, limit)
 
 	rows, err := s.deps.DB.QueryContext(r.Context(),
-		`SELECT id, actor_user_id, COALESCE(actor_username,''), COALESCE(actor_role,''),
+		db.Q(`SELECT id, actor_user_id, COALESCE(actor_username,''), COALESCE(actor_role,''),
 		        org_id, action, COALESCE(target_type,''), target_id,
 		        COALESCE(metadata,''), COALESCE(ip,''), created_at
-		 FROM audit_log`+where+` ORDER BY id DESC LIMIT ?`,
+		 FROM audit_log`+where+` ORDER BY id DESC LIMIT ?`),
 		args...,
 	)
 	if err != nil {

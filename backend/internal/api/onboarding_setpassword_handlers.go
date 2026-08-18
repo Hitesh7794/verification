@@ -52,7 +52,7 @@ func (s *Server) setPasswordVerify(w http.ResponseWriter, r *http.Request) {
 	}
 	var username, displayName string
 	if err := s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT username, display_name FROM users WHERE id = ?`, link.UserID,
+		`SELECT username, display_name FROM users WHERE id = $1`, link.UserID,
 	).Scan(&username, &displayName); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeJSON(w, http.StatusOK, setPasswordVerifyResp{Valid: false})
@@ -115,9 +115,9 @@ func (s *Server) setPassword(w http.ResponseWriter, r *http.Request) {
 			// password *resets* (when activated_at is already set).
 			_, err := tx.ExecContext(r.Context(),
 				`UPDATE users
-				 SET password_hash = ?,
+				 SET password_hash = $1,
 				     activated_at  = COALESCE(activated_at, CURRENT_TIMESTAMP)
-				 WHERE id = ?`,
+				 WHERE id = $2`,
 				string(hash), userID,
 			)
 			return err

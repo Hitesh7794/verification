@@ -63,7 +63,6 @@ func walletTestServer(t *testing.T, saveOrder *wallet.Order) (*Server, string, i
 	cfg := config.Config{
 		HTTPAddr:                ":0",
 		JWTSecret:               "test-secret",
-		FPMatchThresholdDefault: 60,
 		ArtifactRetention:       "metadata",
 		ArtifactDir:             filepath.Join(tmp, "artifacts"),
 		RazorpayKeyID:           testRazorpayKey,

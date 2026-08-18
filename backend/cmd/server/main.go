@@ -36,7 +36,7 @@ func main() {
 		log.Println("WARNING: JWT_SECRET is the dev default — fine for local dev, MUST be set before production.")
 	}
 
-	database, err := db.Open(cfg.DBPath)
+	database, err := db.Open(cfg.DatabaseURL)
 	if err != nil {
 		log.Fatalf("open db: %v", err)
 	}
@@ -119,9 +119,9 @@ func startMagicLinkCleanup(d *sql.DB) {
 	for {
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		_, err := d.ExecContext(ctx,
-			`DELETE FROM magic_links
-			 WHERE (used_at IS NOT NULL    AND used_at    < DATETIME('now','-30 days'))
-			    OR (used_at IS NULL        AND expires_at < DATETIME('now','-30 days'))`,
+			db.Q(`DELETE FROM magic_links
+			 WHERE (used_at IS NOT NULL    AND used_at    < NOW() - INTERVAL '30 days')
+			    OR (used_at IS NULL        AND expires_at < NOW() - INTERVAL '30 days')`),
 		)
 		cancel()
 		if err != nil {

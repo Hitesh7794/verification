@@ -115,7 +115,7 @@ func (s *Server) verificationPDF(w http.ResponseWriter, r *http.Request) {
 		         ON ectr.exam_id     = ec.exam_id
 		        AND ectr.centre_code = ec.centre_code
 		  LEFT JOIN users           u  ON u.id          = v.operator_id
-		 WHERE v.id = ?`
+		 WHERE v.id = $1`
 	args := []any{id}
 	// Role gate — attach a scope predicate.
 	switch claims.Role {

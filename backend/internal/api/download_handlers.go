@@ -221,7 +221,7 @@ func (s *Server) adminListDownloads(w http.ResponseWriter, r *http.Request) {
 	_ = s.deps.DB.QueryRowContext(r.Context(),
 		`SELECT created_at, COALESCE(actor_username,'')
 		 FROM audit_log
-		 WHERE org_id = ? AND action = 'downloads.operator_client.get'
+		 WHERE org_id = $1 AND action = 'downloads.operator_client.get'
 		 ORDER BY id DESC LIMIT 1`,
 		*claims.OrgID,
 	).Scan(&at, &who)

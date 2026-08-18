@@ -243,7 +243,7 @@ func (s *Server) uploadExamOperators(w http.ResponseWriter, r *http.Request) {
 			existingOrgID sql.NullInt64
 		)
 		lookupErr := tx.QueryRowContext(r.Context(),
-			`SELECT id, org_id FROM users WHERE username = ?`, op.username,
+			`SELECT id, org_id FROM users WHERE username = $1`, op.username,
 		).Scan(&existingID, &existingOrgID)
 
 		var userID int64
@@ -257,20 +257,20 @@ func (s *Server) uploadExamOperators(w http.ResponseWriter, r *http.Request) {
 				writeErr(w, http.StatusInternalServerError, "bcrypt: "+herr.Error())
 				return
 			}
-			res, ierr := tx.ExecContext(r.Context(), `
+			ierr := tx.QueryRowContext(r.Context(), `
 				INSERT INTO users(username, password_hash, role, org_id,
 				                  display_name, email, password_plaintext,
 				                  valid_from, valid_to)
-				VALUES(?, ?, 'client', ?, ?, ?, ?, ?, ?)`,
+				VALUES($1, $2, 'client', $3, $4, $5, $6, $7, $8)
+				RETURNING id`,
 				op.username, string(hash), orgID, op.displayName,
-				nullable(op.email), op.password, vFrom, vTo)
+				nullable(op.email), op.password, vFrom, vTo).Scan(&userID)
 			if ierr != nil {
 				resp.RowsFailed++
 				resp.RowErrors = append(resp.RowErrors, csvValidationErr{
 					Line: 0, Msg: fmt.Sprintf("insert %q: %s", op.username, ierr.Error())})
 				continue
 			}
-			userID, _ = res.LastInsertId()
 			resp.RowsCreated++
 			status = "created"
 
@@ -296,7 +296,7 @@ func (s *Server) uploadExamOperators(w http.ResponseWriter, r *http.Request) {
 
 		// Link to the target exam via operator_exams (idempotent — INSERT OR IGNORE).
 		if _, err := tx.ExecContext(r.Context(),
-			`INSERT OR IGNORE INTO operator_exams(user_id, exam_id) VALUES(?, ?)`,
+			`INSERT INTO operator_exams(user_id, exam_id) VALUES($1, $2) ON CONFLICT (user_id, exam_id) DO NOTHING`,
 			userID, examID); err != nil {
 			resp.RowsFailed++
 			resp.RowErrors = append(resp.RowErrors, csvValidationErr{

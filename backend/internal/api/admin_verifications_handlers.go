@@ -7,6 +7,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/veni/neet-verification/internal/db"
 )
 
 // Admin verification-history endpoints — paginated read + CSV export.
@@ -100,7 +102,7 @@ func (s *Server) adminListVerifications(w http.ResponseWriter, r *http.Request) 
 	args = append(args, limit)
 
 	rows, err := s.deps.DB.QueryContext(r.Context(),
-		`SELECT v.id, v.roll_no, v.status, v.face_match, v.fp_match,
+		db.Q(`SELECT v.id, v.roll_no, v.status, v.face_match, v.fp_match,
 		        COALESCE(v.via, ''),
 		        COALESCE(e.name || ' (' || e.exam_code || ')', ''),
 		        u.display_name, v.created_at,
@@ -109,7 +111,7 @@ func (s *Server) adminListVerifications(w http.ResponseWriter, r *http.Request) 
 		 LEFT JOIN exam_candidates ec ON ec.roll_no = v.roll_no
 		 LEFT JOIN exams e ON e.id = ec.exam_id
 		 JOIN users u ON u.id = v.operator_id`+
-			where+` ORDER BY v.id DESC LIMIT ?`, args...,
+			where+` ORDER BY v.id DESC LIMIT ?`), args...,
 	)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db error: "+err.Error())
@@ -156,7 +158,7 @@ func (s *Server) adminExportVerificationsCSV(w http.ResponseWriter, r *http.Requ
 	args = append(args, 100_000)
 
 	rows, err := s.deps.DB.QueryContext(r.Context(),
-		`SELECT v.id, v.roll_no, v.status, v.face_match, v.fp_match,
+		db.Q(`SELECT v.id, v.roll_no, v.status, v.face_match, v.fp_match,
 		        COALESCE(v.via, ''),
 		        COALESCE(e.name || ' (' || e.exam_code || ')', ''),
 		        u.display_name, v.created_at,
@@ -167,7 +169,7 @@ func (s *Server) adminExportVerificationsCSV(w http.ResponseWriter, r *http.Requ
 		 LEFT JOIN exam_candidates ec ON ec.roll_no = v.roll_no
 		 LEFT JOIN exams e ON e.id = ec.exam_id
 		 JOIN users u ON u.id = v.operator_id`+
-			where+` ORDER BY v.id DESC LIMIT ?`, args...,
+			where+` ORDER BY v.id DESC LIMIT ?`), args...,
 	)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db error: "+err.Error())

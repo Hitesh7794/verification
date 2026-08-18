@@ -264,7 +264,8 @@ func (s *Server) createVerification(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	res, err := s.deps.DB.ExecContext(r.Context(),
+	var id int64
+	err := s.deps.DB.QueryRowContext(r.Context(),
 		`INSERT INTO verifications(
 			roll_no, org_id, operator_id,
 			face_match, fp_match, status, note,
@@ -274,7 +275,8 @@ func (s *Server) createVerification(w http.ResponseWriter, r *http.Request) {
 			face_match_score,
 			via, match_threshold, decision_ms, client_app_version,
 			idempotency_key
-		) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`,
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
+		RETURNING id`,
 		req.RollNo, *claims.OrgID, claims.UserID,
 		boolInt(req.FaceMatch), boolInt(req.FpMatch), req.Status, nullable(req.Note),
 		nullable(req.DeviceSerial), nullable(req.DeviceModel),
@@ -286,7 +288,7 @@ func (s *Server) createVerification(w http.ResponseWriter, r *http.Request) {
 		nullable(req.Via), nullableInt(req.MatchThreshold), nullableInt(req.DecisionMs),
 		nullable(req.ClientAppVersion),
 		nullable(req.IdempotencyKey),
-	)
+	).Scan(&id)
 	if err != nil {
 		// Race: two concurrent requests with the same idempotency key.
 		// Re-fetch and return the winner instead of erroring.
@@ -300,7 +302,6 @@ func (s *Server) createVerification(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "db error")
 		return
 	}
-	id, _ := res.LastInsertId()
 
 	// Promote the probe photo, if the face-match endpoint stashed one
 	// under the same idempotency key. Best-effort: a missing temp file
@@ -309,7 +310,7 @@ func (s *Server) createVerification(w http.ResponseWriter, r *http.Request) {
 	if req.IdempotencyKey != "" && id > 0 {
 		if path := s.promoteProbePhoto(req.IdempotencyKey, id); path != "" {
 			_, _ = s.deps.DB.ExecContext(r.Context(),
-				`UPDATE verifications SET probe_photo_path = ? WHERE id = ?`,
+				`UPDATE verifications SET probe_photo_path = $1 WHERE id = $2`,
 				path, id)
 		}
 	}
@@ -408,7 +409,7 @@ func (s *Server) patchVerification(w http.ResponseWriter, r *http.Request) {
 	)
 	err = s.deps.DB.QueryRowContext(r.Context(),
 		`SELECT status, face_match, fp_match, iris_left_score, via, operator_id
-		   FROM verifications WHERE id = ?`, id,
+		   FROM verifications WHERE id = $1`, id,
 	).Scan(&curStatus, &curFace, &curFp, &curIrisScore, &curVia, &curOperator)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeErr(w, http.StatusNotFound, "verification not found")
@@ -435,7 +436,7 @@ func (s *Server) patchVerification(w http.ResponseWriter, r *http.Request) {
 		   FROM verifications v
 		   JOIN exam_candidates ec ON ec.roll_no = v.roll_no
 		   JOIN exams e ON e.id = ec.exam_id
-		  WHERE v.id = ? LIMIT 1`, id,
+		  WHERE v.id = $1 LIMIT 1`, id,
 	).Scan(&reqFace, &reqFP, &reqIris)
 	facePass := reqFace == 0 || req.FaceMatch
 	fpPassFlag := reqFP == 0 || req.FpMatch
@@ -460,22 +461,22 @@ func (s *Server) patchVerification(w http.ResponseWriter, r *http.Request) {
 	// nullable helpers so a missing PATCH field doesn't zero the DB.
 	_, err = s.deps.DB.ExecContext(r.Context(),
 		`UPDATE verifications
-		    SET face_match         = ?,
-		        fp_match           = ?,
-		        status             = ?,
-		        via                = ?,
-		        face_match_score   = COALESCE(?, face_match_score),
-		        fp_match_score     = COALESCE(?, fp_match_score),
-		        fp_quality         = COALESCE(?, fp_quality),
-		        fp_nfiq            = COALESCE(?, fp_nfiq),
-		        fp_liveness        = COALESCE(?, fp_liveness),
-		        iris_left_score    = COALESCE(?, iris_left_score),
-		        iris_right_score   = COALESCE(?, iris_right_score),
-		        iris_left_quality  = COALESCE(?, iris_left_quality),
-		        iris_right_quality = COALESCE(?, iris_right_quality),
-		        match_threshold    = COALESCE(?, match_threshold),
-		        decision_ms        = COALESCE(?, decision_ms)
-		  WHERE id = ?`,
+		    SET face_match         = $1,
+		        fp_match           = $2,
+		        status             = $3,
+		        via                = $4,
+		        face_match_score   = COALESCE($5, face_match_score),
+		        fp_match_score     = COALESCE($6, fp_match_score),
+		        fp_quality         = COALESCE($7, fp_quality),
+		        fp_nfiq            = COALESCE($8, fp_nfiq),
+		        fp_liveness        = COALESCE($9, fp_liveness),
+		        iris_left_score    = COALESCE($10, iris_left_score),
+		        iris_right_score   = COALESCE($11, iris_right_score),
+		        iris_left_quality  = COALESCE($12, iris_left_quality),
+		        iris_right_quality = COALESCE($13, iris_right_quality),
+		        match_threshold    = COALESCE($14, match_threshold),
+		        decision_ms        = COALESCE($15, decision_ms)
+		  WHERE id = $16`,
 		boolInt(req.FaceMatch), boolInt(req.FpMatch), newStatus, newVia,
 		nullableFloat(req.FaceMatchScore), nullableInt(req.FpMatchScore),
 		nullableInt(req.FpQuality), nullableInt(req.FpNfiq), nullableInt(req.FpLiveness),
@@ -535,7 +536,7 @@ func (s *Server) findByIdempotencyKey(r *http.Request, key string, userID int64)
 	)
 	err := s.deps.DB.QueryRowContext(r.Context(),
 		`SELECT id, status, via FROM verifications
-		 WHERE idempotency_key = ? AND operator_id = ?`,
+		 WHERE idempotency_key = $1 AND operator_id = $2`,
 		key, userID,
 	).Scan(&id, &status, &via)
 	if err != nil {
@@ -641,12 +642,13 @@ func (s *Server) uploadArtifact(w http.ResponseWriter, r *http.Request) {
 
 	sum := hex.EncodeToString(h.Sum(nil))
 
-	res, err := s.deps.DB.ExecContext(r.Context(),
+	var id int64
+	if err := s.deps.DB.QueryRowContext(r.Context(),
 		`INSERT INTO verification_artifacts(verification_id, kind, mime, sha256, size_bytes, storage_path)
-		 VALUES(?,?,?,?,?,?)`,
+		 VALUES($1,$2,$3,$4,$5,$6)
+		 RETURNING id`,
 		verID, kind, mime, sum, size, nullable(storagePath),
-	)
-	if err != nil {
+	).Scan(&id); err != nil {
 		// If we wrote bytes to disk but the DB insert failed, the caller
 		// will retry — leaving an orphan file behind. A sweep job is the
 		// right cleanup; for now we accept this rare failure mode rather
@@ -654,7 +656,6 @@ func (s *Server) uploadArtifact(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "db error")
 		return
 	}
-	id, _ := res.LastInsertId()
 
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":         id,
@@ -691,7 +692,7 @@ func (s *Server) operatorOwnsVerification(r *http.Request, verID int64) bool {
 	var operatorID int64
 	var orgID int64
 	err := s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT operator_id, org_id FROM verifications WHERE id=?`, verID,
+		`SELECT operator_id, org_id FROM verifications WHERE id=$1`, verID,
 	).Scan(&operatorID, &orgID)
 	if err != nil {
 		return false
@@ -830,7 +831,7 @@ func (s *Server) lookupExamCandidate(r *http.Request, claims *authClaims, roll s
 		  FROM exam_candidates ec
 		  JOIN exams   e ON e.id = ec.exam_id
 		  JOIN clients c ON c.id = e.client_id
-		 WHERE ec.roll_no = ?`
+		 WHERE ec.roll_no = $1`
 
 	switch claims.Role {
 	case "client":
@@ -840,7 +841,7 @@ func (s *Server) lookupExamCandidate(r *http.Request, claims *authClaims, roll s
 		query = base + `
 		  AND EXISTS (
 		    SELECT 1 FROM operator_exams oe
-		     WHERE oe.exam_id = ec.exam_id AND oe.user_id = ?
+		     WHERE oe.exam_id = ec.exam_id AND oe.user_id = $1
 		  )
 		LIMIT 1`
 		args = []any{roll, claims.UserID}
@@ -852,7 +853,7 @@ func (s *Server) lookupExamCandidate(r *http.Request, claims *authClaims, roll s
 		query = base + `
 		  AND EXISTS (
 		    SELECT 1 FROM organization_exam_subscriptions s
-		     WHERE s.exam_id = ec.exam_id AND s.org_id = ?
+		     WHERE s.exam_id = ec.exam_id AND s.org_id = $1
 		  )
 		LIMIT 1`
 		args = []any{roll, *claims.OrgID}
@@ -918,7 +919,7 @@ func (s *Server) getCandidateAttempts(w http.ResponseWriter, r *http.Request) {
 	err := s.deps.DB.QueryRowContext(r.Context(), `
 		SELECT COUNT(*), MAX(created_at)
 		  FROM verifications
-		 WHERE org_id = ? AND roll_no = ? AND created_at >= ?`,
+		 WHERE org_id = $1 AND roll_no = $2 AND created_at >= $3`,
 		*claims.OrgID, roll, cutoff,
 	).Scan(&count, &lastAt)
 	if err != nil {

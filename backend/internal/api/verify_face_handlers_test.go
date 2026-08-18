@@ -120,13 +120,12 @@ func newFaceTestServer(t *testing.T) (*Server, string, string, *fakeTrustViewSvc
 	httpSrv := httptest.NewServer(fake.handler())
 
 	cfg := config.Config{
-		HTTPAddr:                ":0",
-		JWTSecret:               "test-secret",
-		FPMatchThresholdDefault: 140,
-		ArtifactRetention:       "metadata",
-		ArtifactDir:             filepath.Join(tmp, "artifacts"),
-		TrustViewBaseURL:        httpSrv.URL,
-		TrustViewToken:          "tvx_test_token",
+		HTTPAddr:          ":0",
+		JWTSecret:         "test-secret",
+		ArtifactRetention: "metadata",
+		ArtifactDir:       filepath.Join(tmp, "artifacts"),
+		TrustViewBaseURL:  httpSrv.URL,
+		TrustViewToken:    "tvx_test_token",
 	}
 	s := &Server{deps: Deps{DB: d, Index: idx, JWT: jwt, Cfg: cfg}}
 	s.trustview = trustview.New(trustview.Config{

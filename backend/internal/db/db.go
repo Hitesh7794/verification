@@ -2,20 +2,26 @@ package db
 
 import (
 	"database/sql"
-	"fmt"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/jackc/pgx/v5/stdlib"
 )
 
-// Open returns a SQLite handle tuned for many concurrent readers.
-// WAL + busy timeout + a small write pool keeps things smooth under
-// the kind of load this portal needs to handle (target ~10k concurrent
-// users — for that scale you would point this at Postgres in prod, but
-// the schema and queries here are written to port over directly).
-func Open(path string) (*sql.DB, error) {
-	dsn := fmt.Sprintf("file:%s?_pragma=journal_mode(wal)&_pragma=synchronous(normal)&_pragma=busy_timeout(5000)&_pragma=foreign_keys(on)", path)
-	d, err := sql.Open("sqlite", dsn)
+// Open returns a Postgres handle configured for the portal's workload.
+//
+// The DSN is a standard Postgres URL:
+//
+//	postgres://user:pass@host:port/dbname?sslmode=disable
+//
+// In dev + local single-host prod we run Postgres on loopback so
+// sslmode=disable is fine. When we point at RDS later, switch to
+// sslmode=require in the .env — no code change needed.
+//
+// Pool sizing matches the previous SQLite tuning (64 max, 16 idle,
+// 30-min lifetime). Postgres handles pooled connections natively, so
+// these numbers become the pgx driver's connection pool bounds.
+func Open(dsn string) (*sql.DB, error) {
+	d, err := sql.Open("pgx", dsn)
 	if err != nil {
 		return nil, err
 	}
