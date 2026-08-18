@@ -127,3 +127,13 @@ MorFinDriver_*.exe
 
 # Claude Code session workspaces (local scratch)
 .claude/
+
+# Production DB snapshots pulled for local inspection — real PII, never commit
+backend/_prod_snapshot/
+
+# Local embedded PostgreSQL binaries and data
+backend/.pgsql/
+backend/.pgsql_data/
+backend/.pgsql_tmp/
+backend/*.log
+*.log

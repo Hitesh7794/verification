@@ -285,6 +285,10 @@ type registerInitReq struct {
 	HeadEmail       string `json:"head_email"`
 	HeadMobile      string `json:"head_mobile"`
 
+	// OTP Verification Proof Tokens
+	EmailVerificationToken  string `json:"email_otp_token,omitempty"`
+	MobileVerificationToken string `json:"mobile_otp_token,omitempty"`
+
 	// Optional — routes this KYC to a specific client's inbox
 	// (e.g. NTA reviews its own applications from /client/*). When
 	// omitted or 0, the application lands in the legacy superadmin
@@ -338,6 +342,36 @@ func (s *Server) registerInit(w http.ResponseWriter, r *http.Request) {
 	if err := validateInit(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
+	}
+
+	// Validate OTP proof tokens if OTP store is active
+	if s.otpStore != nil && !strings.EqualFold(s.deps.Cfg.AppEnv, "test") {
+		// Verify email token
+		if req.EmailVerificationToken == "" {
+			writeErr(w, http.StatusBadRequest, "Head Email must be verified with OTP before submitting")
+			return
+		}
+		if err := s.otpStore.ValidateProofToken("registration", req.HeadEmail, req.EmailVerificationToken); err != nil {
+			writeErr(w, http.StatusBadRequest, "Email verification failed: "+err.Error())
+			return
+		}
+
+		// Verify mobile token
+		if req.MobileVerificationToken == "" {
+			writeErr(w, http.StatusBadRequest, "Head Mobile must be verified with OTP before submitting")
+			return
+		}
+		// Normalise mobile for token verification
+		mob := strings.TrimSpace(req.HeadMobile)
+		if strings.HasPrefix(mob, "+91") {
+			mob = strings.TrimPrefix(mob, "+91")
+		} else if strings.HasPrefix(mob, "91") && len(mob) == 12 {
+			mob = mob[2:]
+		}
+		if err := s.otpStore.ValidateProofToken("registration", mob, req.MobileVerificationToken); err != nil {
+			writeErr(w, http.StatusBadRequest, "Mobile verification failed: "+err.Error())
+			return
+		}
 	}
 
 	// Optional client_id — verify the referenced client is real +

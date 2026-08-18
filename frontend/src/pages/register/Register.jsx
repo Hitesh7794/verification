@@ -30,6 +30,13 @@ import {
   saveDraft,
   clearDraft,
 } from '../../lib/onboarding/register.js'
+import OtpVerificationField from '../../components/ui/OtpVerificationField.jsx'
+import {
+  sendEmailOTP,
+  verifyEmailOTP,
+  sendSmsOTP,
+  verifySmsOTP,
+} from '../../lib/otp/api.js'
 
 // Multi-step institution registration wizard.
 //
@@ -249,6 +256,8 @@ export default function Register() {
   const [errors, setErrors] = useState({})
   const [submitting, setSubmitting] = useState(false)
   const [topError, setTopError] = useState('')
+  const [emailOtpToken, setEmailOtpToken] = useState('')
+  const [mobileOtpToken, setMobileOtpToken] = useState('')
   // Exam boards currently accepting KYC via their own review portal.
   // Loaded once on mount; the register form shows this as a dropdown
   // in step 0. Empty list → dropdown hides entirely (system falls back
@@ -264,6 +273,8 @@ export default function Register() {
       setStep(d.step ?? 0)
       setApplicationId(d.applicationId ?? null)
       setUploaded(d.uploaded ?? {})
+      setEmailOtpToken(d.emailOtpToken ?? '')
+      setMobileOtpToken(d.mobileOtpToken ?? '')
     }
     // Prefill client_id from URL (?client_id=42). Wins over any draft
     // value — if the visitor arrived through a client-specific link,
@@ -296,11 +307,17 @@ export default function Register() {
   }, [])
 
   useEffect(() => {
-    saveDraft({ form, step, applicationId, uploaded })
-  }, [form, step, applicationId, uploaded])
+    saveDraft({ form, step, applicationId, uploaded, emailOtpToken, mobileOtpToken })
+  }, [form, step, applicationId, uploaded, emailOtpToken, mobileOtpToken])
 
   function update(field, value) {
     setForm((f) => ({ ...f, [field]: value }))
+    if (field === 'head_email' && value !== form.head_email) {
+      setEmailOtpToken('')
+    }
+    if (field === 'head_mobile' && value !== form.head_mobile) {
+      setMobileOtpToken('')
+    }
     // Live-correct: only re-run the rule for a field that is ALREADY
     // showing an error, so the message disappears the instant the value
     // becomes valid. Fields with no error stay quiet while typing —
@@ -346,6 +363,16 @@ export default function Register() {
 
   async function goToStep2() {
     if (!validateStep(S_ADDRESS)) return
+
+    if (!emailOtpToken) {
+      setTopError('Please verify the Head of Institution Email address via OTP before continuing.')
+      return
+    }
+    if (!mobileOtpToken) {
+      setTopError('Please verify the Head of Institution Mobile number via OTP before continuing.')
+      return
+    }
+
     setSubmitting(true)
     setTopError('')
     try {
@@ -361,6 +388,8 @@ export default function Register() {
           year_established: Number(form.year_established) || 0,
           approx_student_count: Number(form.approx_student_count) || 0,
           expected_centres: Number(form.expected_centres) || 1,
+          email_otp_token: emailOtpToken,
+          mobile_otp_token: mobileOtpToken,
           // Backend expects an int (or omit). Empty-string picker value
           // → drop the key entirely so the app lands in the legacy
           // superadmin queue rather than 400'ing on a NaN.
@@ -373,7 +402,14 @@ export default function Register() {
       }
       setStep(S_DOCUMENTS)
     } catch (err) {
-      setTopError(err.message)
+      const msg = err.message || 'Registration failed'
+      setTopError(msg)
+      if (msg.toLowerCase().includes('email verification')) {
+        setEmailOtpToken('')
+      }
+      if (msg.toLowerCase().includes('mobile verification')) {
+        setMobileOtpToken('')
+      }
     } finally {
       setSubmitting(false)
     }
@@ -617,6 +653,10 @@ export default function Register() {
                       onBack={() => setStep(S_INSTITUTION)}
                       onNext={goToStep2}
                       submitting={submitting}
+                      emailOtpToken={emailOtpToken}
+                      setEmailOtpToken={setEmailOtpToken}
+                      mobileOtpToken={mobileOtpToken}
+                      setMobileOtpToken={setMobileOtpToken}
                     />
                   )}
                   {step === S_DOCUMENTS && (
@@ -1345,7 +1385,19 @@ function YearPicker({ value, onChange, placeholder = 'Pick year' }) {
 
 // ─── Step 1 ────────────────────────────────────────────────────────────
 
-function Step1({ form, errors, update, onBlurField, onBack, onNext, submitting }) {
+function Step1({
+  form,
+  errors,
+  update,
+  onBlurField,
+  onBack,
+  onNext,
+  submitting,
+  emailOtpToken,
+  setEmailOtpToken,
+  mobileOtpToken,
+  setMobileOtpToken,
+}) {
   return (
     <div className="space-y-5">
       {/* Section 1 — Campus address.
@@ -1438,8 +1490,8 @@ function Step1({ form, errors, update, onBlurField, onBack, onNext, submitting }
         subtitle="We send the activation link to this person after approval."
       >
         <CalloutNote>
-          The email below receives a one-time activation link valid for 7 days.
-          Make sure it's a mailbox the head actually monitors.
+          The email and mobile below will receive OTP verification codes to confirm
+          authenticity, and the email will receive the one-time activation link upon approval.
         </CalloutNote>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
           <Field label="Full name" required error={errors.head_name}>
@@ -1459,27 +1511,42 @@ function Step1({ form, errors, update, onBlurField, onBack, onNext, submitting }
           </Field>
         </div>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-          <Field label="Email" required error={errors.head_email}>
-            <InputWithIcon
-              icon={Icon.Mail}
-              type="email"
-              value={form.head_email}
-              onChange={(e) => update('head_email', e.target.value)}
-              onBlur={() => onBlurField('head_email')}
-              placeholder="principal@college.ac.in"
-            />
-          </Field>
-          <Field label="Mobile" required error={errors.head_mobile}>
-            <InputWithIcon
-              icon={Icon.Phone}
-              value={form.head_mobile}
-              onChange={(e) => update('head_mobile', normaliseIndianMobile(e.target.value))}
-              onBlur={() => onBlurField('head_mobile')}
-              inputMode="numeric"
-              maxLength={14}
-              placeholder="9876543210"
-            />
-          </Field>
+          <OtpVerificationField
+            label="Email"
+            type="email"
+            required
+            icon={Icon.Mail}
+            value={form.head_email}
+            onChange={(e) => update('head_email', e.target.value)}
+            onBlur={() => onBlurField('head_email')}
+            placeholder="principal@college.ac.in"
+            error={errors.head_email}
+            isVerified={Boolean(emailOtpToken)}
+            onVerified={(token) => setEmailOtpToken(token)}
+            onResetVerification={() => setEmailOtpToken('')}
+            canSendOtp={/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(form.head_email?.trim() || '')}
+            sendOtpFn={() => sendEmailOTP(form.head_email.trim(), 'registration')}
+            verifyOtpFn={(code) => verifyEmailOTP(form.head_email.trim(), code, 'registration')}
+          />
+          <OtpVerificationField
+            label="Mobile"
+            type="tel"
+            required
+            icon={Icon.Phone}
+            value={form.head_mobile}
+            onChange={(e) => update('head_mobile', normaliseIndianMobile(e.target.value))}
+            onBlur={() => onBlurField('head_mobile')}
+            placeholder="9876543210"
+            error={errors.head_mobile}
+            inputMode="numeric"
+            maxLength={14}
+            isVerified={Boolean(mobileOtpToken)}
+            onVerified={(token) => setMobileOtpToken(token)}
+            onResetVerification={() => setMobileOtpToken('')}
+            canSendOtp={/^[6-9][0-9]{9}$/.test(form.head_mobile?.trim() || '')}
+            sendOtpFn={() => sendSmsOTP(form.head_mobile.trim(), 'registration')}
+            verifyOtpFn={(code) => verifySmsOTP(form.head_mobile.trim(), code, 'registration')}
+          />
         </div>
       </SectionCard>
 

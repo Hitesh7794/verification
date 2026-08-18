@@ -39,10 +39,15 @@ func NewSMTPSender(host, port, username, password, from string) *SMTPSender {
 	if from == "" {
 		from = username
 	}
+	// Sanitize password (strip quotes and spaces for Gmail App Passwords)
+	password = strings.Trim(strings.TrimSpace(password), `"'`)
+	if strings.Contains(strings.ToLower(host), "gmail.com") {
+		password = strings.ReplaceAll(password, " ", "")
+	}
 	return &SMTPSender{
-		host: host, port: port,
-		username: username, password: password,
-		from: from,
+		host: strings.TrimSpace(host), port: strings.TrimSpace(port),
+		username: strings.TrimSpace(username), password: password,
+		from: strings.TrimSpace(from),
 	}
 }
 
