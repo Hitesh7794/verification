@@ -91,6 +91,36 @@ func (s *Server) faceMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Defence-in-depth: reject face-match requests that don't carry a
+	// still-fresh, passing liveness_checks row keyed by the same
+	// (org, roll, session_id) tuple. The wallet middleware already ran
+	// and did NOT charge (its own duplicate check happens before we
+	// get here); this refusal produces a clean 412 without a debit.
+	//
+	// Only enforced for the URL-scoped route where {roll} is present +
+	// idempotency_key is passed in the body. The legacy body-only
+	// /api/face-match path stays unguarded for now — nothing new
+	// should reach it (frontend has moved to the scoped route) but
+	// removing it needs a separate release window.
+	if chi.URLParam(r, "roll") != "" {
+		claims := claimsFrom(r)
+		if claims != nil && claims.OrgID != nil {
+			key := strings.TrimSpace(req.IdempotencyKey)
+			passed, err := s.livenessGatePassed(r.Context(),
+				*claims.OrgID, roll, key)
+			if err != nil {
+				writeErr(w, http.StatusInternalServerError,
+					"liveness gate probe: "+err.Error())
+				return
+			}
+			if !passed {
+				writeErr(w, http.StatusPreconditionFailed,
+					"active-liveness step required before face capture — please complete the blink challenge")
+				return
+			}
+		}
+	}
+
 	// Read the enrolled gallery photo bytes directly — TrustView compares
 	// raw images end-to-end, so no template extraction step exists any
 	// more. Same candidate-index lookup galleryTemplate did before, just

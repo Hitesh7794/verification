@@ -15,6 +15,7 @@ import {
 import FingerprintCapture from '../../components/verify/FingerprintCapture.jsx'
 import IrisCapture from '../../components/verify/IrisCapture.jsx'
 import FaceMatchPanel from '../../components/verify/FaceMatchPanel.jsx'
+import LivenessPanel from '../../components/verify/LivenessPanel.jsx'
 import { api, fetchFPTemplate, fetchPhotoBlob, isWalletEmptyError, getCandidateAttempts, downloadVerificationPDF } from '../../lib/api.js'
 import { getWalletSummary, formatRupees } from '../../lib/wallet/wallet.js'
 
@@ -73,7 +74,18 @@ function clearPersistedState() {
 // fingerprint verification if the candidate has one on file. The final
 // verified/not-verified verdict is computed from the match thresholds;
 // no manual button any more.
-const STEPS = ['Roll Number', 'Face Capture', 'Fingerprint', 'Result']
+// Aug 2026 update: added Liveness step in front of Face Capture.
+// Luxand active anti-spoof gate (blink challenge) — must pass before
+// the paid /face-match runs. See LivenessPanel.jsx for the flow.
+const STEPS = ['Roll Number', 'Liveness', 'Face Capture', 'Fingerprint', 'Result']
+
+// Step index constants so the mount / gating logic doesn't have to
+// count positions. Same convention S_INSTITUTION etc use in Register.jsx.
+const S_ROLL = 0
+const S_LIVENESS = 1
+const S_FACE = 2
+const S_FINGERPRINT = 3
+const S_RESULT = 4
 
 function Stepper({ step }) {
   return (
@@ -193,6 +205,13 @@ export default function ClientDashboard() {
   const [lookupErr, setLookupErr] = useState('')
   const [snap, setSnap] = useState(null)
   const [faceResult, setFaceResult] = useState(persisted?.faceResult ?? null)
+  // Liveness gate result. Non-null with .pass === true unlocks the
+  // face-capture step. Deliberately NOT persisted — a page refresh
+  // means we make the operator re-prove liveness for the current
+  // session, since the backend's liveness_checks row expires quickly
+  // (LivenessMaxAgeSeconds, default 90s) and there's no way for us to
+  // know from client-side whether the gate is still live.
+  const [livenessResult, setLivenessResult] = useState(null)
   const [fpResult, setFpResult] = useState(persisted?.fpResult ?? null)
   const [irisResult, setIrisResult] = useState(persisted?.irisResult ?? null)
   const [showIris, setShowIris] = useState(persisted?.showIris ?? false)
@@ -260,7 +279,7 @@ export default function ClientDashboard() {
     const fpPass   = !needsFP   || (fpResult   && fpResult.ok   === true)
     const irisPass = !needsIris || (irisResult && irisResult.ok === true)
     const finalStatus = facePass && fpPass && irisPass ? 'verified' : 'denied'
-    if (step < 3) setStep(3)
+    if (step < S_RESULT) setStep(S_RESULT)
     submitVerification(finalStatus)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [candidate, faceResult, fpResult, irisResult, submitting])
@@ -357,7 +376,7 @@ export default function ClientDashboard() {
       } catch {
         setAttempts(null)
       }
-      setStep(1)
+      setStep(S_LIVENESS)
     } catch (e) {
       // HTTP 402 from the wallet middleware → org wallet is empty.
       // Operator cannot self-serve; show a banner with the resolution
@@ -481,6 +500,7 @@ export default function ClientDashboard() {
     setIdempotencyKey(null)
     clearPersistedState()
     setFaceResult(null)
+    setLivenessResult(null)
     setFpResult(null)
     setIrisResult(null)
     setShowIris(false)
@@ -614,15 +634,43 @@ export default function ClientDashboard() {
         </Card>
       )}
 
-      {/* Step 1 — face capture only. Candidate summary is deliberately
+      {/* Step 1 — active liveness gate. Free, unpaid; the operator must
+          pass a blink challenge before the enrolled record is unlocked
+          and before the payable face-match runs. Backend records a
+          liveness_checks row keyed by the same idempotency_key face-match
+          will use; face-match refuses without it. */}
+      {step === S_LIVENESS && candidate && (
+        <Card>
+          <CardHeader>
+            <CardTitle>Step 2 — Liveness check</CardTitle>
+          </CardHeader>
+          <CardBody>
+            <p className="text-sm text-slate-600 mb-4">
+              Prove you're a real person in front of the camera. Free of
+              charge — no wallet debit for this step. If it fails, keep
+              retrying; there's no cap.
+            </p>
+            <LivenessPanel
+              rollNo={candidate.roll_no}
+              sessionId={idempotencyKey}
+              onPass={() => {
+                setLivenessResult({ pass: true })
+                if (step < S_FACE) setStep(S_FACE)
+              }}
+            />
+          </CardBody>
+        </Card>
+      )}
+
+      {/* Step 2 — face capture only. Candidate summary is deliberately
           hidden here: the operator must capture a face before the
           enrolled record is revealed (and before the wallet is
           charged). This nudges "person in front of me first, then
           look at their record" rather than the other way round. */}
-      {step === 1 && candidate && (
+      {step === S_FACE && candidate && (
         <Card>
           <CardHeader>
-            <CardTitle>Step 2 — Live face capture</CardTitle>
+            <CardTitle>Step 3 — Live face capture</CardTitle>
           </CardHeader>
           <CardBody>
             <p className="text-sm text-slate-600 mb-4">
@@ -637,7 +685,7 @@ export default function ClientDashboard() {
               onResult={(r) => {
                 setFaceResult(r)
                 setSnap(r?.snapshot ?? null)
-                if (step < 2) setStep(2)
+                if (step < S_FINGERPRINT) setStep(S_FINGERPRINT)
                 // Face-match is the wallet-charged event; refresh the
                 // header pill so the operator sees the debited balance
                 // immediately without waiting for a page reload.
@@ -648,7 +696,7 @@ export default function ClientDashboard() {
         </Card>
       )}
 
-      {step >= 2 && candidate && (
+      {step >= S_FINGERPRINT && candidate && (
         <div className="grid gap-6 lg:grid-cols-3">
           <Card className="lg:col-span-1 self-start">
             <CardHeader>
@@ -702,7 +750,7 @@ export default function ClientDashboard() {
 
           <div className="lg:col-span-2 space-y-6">
 
-            {step >= 2 && !!candidate?.requires_fp && !!candidate?.has_iso_template && (
+            {step >= S_FINGERPRINT && !!candidate?.requires_fp && !!candidate?.has_iso_template && (
               <Card>
                 <CardHeader>
                   <CardTitle>Step 3 — Fingerprint scan</CardTitle>
@@ -721,14 +769,14 @@ export default function ClientDashboard() {
                       // calibration overrides.
                       onResult={(r) => {
                         setFpResult(r)
-                        if (step < 3) setStep(3)
+                        if (step < S_RESULT) setStep(S_RESULT)
                       }}
                     />
                   ) : (
                     <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
                       No fingerprint template on file for this candidate. Proceed with manual verification.
                       <div className="mt-3">
-                        <Button onClick={() => step < 3 && setStep(3)}>Skip fingerprint step</Button>
+                        <Button onClick={() => step < S_RESULT && setStep(S_RESULT)}>Skip fingerprint step</Button>
                       </div>
                     </div>
                   )}
@@ -740,7 +788,7 @@ export default function ClientDashboard() {
                 on file) and the operator opts in. The sample data has no iris
                 templates, so this is capture-for-audit; if/when iris gallery
                 is enrolled, the matcher kicks in automatically. */}
-            {step >= 2 && fpResult && fpResult.ok === false && !showIris && !(candidate?.requires_iris && candidate?.has_iris_bytes) && (
+            {step >= S_FINGERPRINT && fpResult && fpResult.ok === false && !showIris && !(candidate?.requires_iris && candidate?.has_iris_bytes) && (
               <Card>
                 <CardBody>
                   <p className="text-sm text-slate-700">
@@ -752,7 +800,7 @@ export default function ClientDashboard() {
                 </CardBody>
               </Card>
             )}
-            {(showIris || (step >= 2 && candidate?.requires_iris && candidate?.has_iris_bytes)) && (
+            {(showIris || (step >= S_FINGERPRINT && candidate?.requires_iris && candidate?.has_iris_bytes)) && (
               <Card>
                 <CardHeader>
                   <CardTitle>
@@ -765,14 +813,14 @@ export default function ClientDashboard() {
                     matchThreshold={50}
                     onResult={(r) => {
                       setIrisResult(r)
-                      if (step < 3) setStep(3)
+                      if (step < S_RESULT) setStep(S_RESULT)
                     }}
                   />
                 </CardBody>
               </Card>
             )}
 
-            {step >= 3 && (
+            {step >= S_RESULT && (
               <Card>
                 <CardHeader>
                   <CardTitle>Step 4 — Result</CardTitle>

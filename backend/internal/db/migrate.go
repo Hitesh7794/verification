@@ -13,7 +13,7 @@ var schemaSQL string
 // schemaVersion is the version stamped in schema_migrations after the
 // initial schema has been applied. Bump this only when new post-1
 // migrations are added below.
-const schemaVersion = 2
+const schemaVersion = 3
 
 // Migrate applies schema.sql to an empty database, or is a no-op if
 // the schema has already been applied. Safe to call on every startup.
@@ -51,7 +51,68 @@ func Migrate(d *sql.DB) error {
 		}
 	}
 
+	if !applied[3] {
+		if err := applyV3Liveness(ctx, d); err != nil {
+			return fmt.Errorf("apply v3 liveness: %w", err)
+		}
+	}
+
 	return nil
+}
+
+// applyV3Liveness adds the audit + gating table for the active-liveness
+// pre-step that sits in front of face-match. Each row records the
+// browser session that passed liveness, the roll it was against, and
+// an expiry so /face-match can refuse anything older than the policy
+// window (default 90s — see cfg.LivenessMaxAgeSeconds).
+//
+//	id             — surrogate PK
+//	org_id         — the operator's org, from JWT
+//	roll_no        — normalised
+//	session_id     — the same idempotency key the browser passes to
+//	                 /face-match, so the gate check is a direct lookup
+//	passive_mean   — Luxand's averaged 0..1 score, kept for audit
+//	challenges_passed — JSONB list, e.g. ["blink"] or ["blink","turn_left"]
+//	created_at     — server clock at insert
+//	expires_at     — created_at + policy window; a WHERE ... > NOW()
+//	                 predicate on the gate query cheap-drops stale rows
+func applyV3Liveness(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmts := []string{
+		`CREATE TABLE IF NOT EXISTS liveness_checks (
+		    id              BIGSERIAL PRIMARY KEY,
+		    org_id          BIGINT NOT NULL REFERENCES organizations(id),
+		    roll_no         TEXT   NOT NULL,
+		    session_id      TEXT   NOT NULL UNIQUE,
+		    passive_mean    REAL   NOT NULL,
+		    challenges_passed JSONB NOT NULL DEFAULT '[]'::jsonb,
+		    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+		    expires_at      TIMESTAMPTZ NOT NULL
+		)`,
+		// Gate lookup on face-match: (org_id, roll_no, session_id) hitting
+		// the UNIQUE index on session_id is O(1); expires_at is checked
+		// against NOW() in the WHERE clause.
+		`CREATE INDEX IF NOT EXISTS idx_liveness_org_roll_expires
+		    ON liveness_checks(org_id, roll_no, expires_at DESC)`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.ExecContext(ctx, s); err != nil {
+			return fmt.Errorf("exec %q: %w", firstLine(s), err)
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)`,
+		3, "liveness_checks",
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // applyV2ClientPortal adds the schema needed for the per-client review

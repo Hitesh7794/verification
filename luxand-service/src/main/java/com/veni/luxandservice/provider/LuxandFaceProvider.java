@@ -45,6 +45,7 @@ public final class LuxandFaceProvider implements FaceProvider {
     // Reflected handles — populated lazily on first use.
     private final Class<?> fsdkCls;
     private final Class<?> hImageCls;
+    private final Class<?> hTrackerCls;             // FSDK.HTracker
     private final Class<?> faceTemplateCls;        // FSDK_FaceTemplate
     private final Class<?> faceTemplateRefCls;     // FSDK_FaceTemplate.ByReference
 
@@ -54,6 +55,7 @@ public final class LuxandFaceProvider implements FaceProvider {
         try {
             this.fsdkCls = Class.forName("Luxand.FSDK");
             this.hImageCls = Class.forName("Luxand.FSDK$HImage");
+            this.hTrackerCls = Class.forName("Luxand.FSDK$HTracker");
             this.faceTemplateCls = Class.forName("Luxand.FSDK$FSDK_FaceTemplate");
             this.faceTemplateRefCls = Class.forName("Luxand.FSDK$FSDK_FaceTemplate$ByReference");
         } catch (Throwable t) {
@@ -172,6 +174,113 @@ public final class LuxandFaceProvider implements FaceProvider {
         return match(probeTemplate, galleryTemplate);
     }
 
+    // -- active liveness ------------------------------------------------------
+
+    /**
+     * Feed each frame through a fresh FSDK tracker and read per-frame
+     * Liveness + Expression + face angle values.
+     *
+     * <p>Concurrency: FSDK's tracker isn't thread-safe, and a single
+     * static SDK doesn't tolerate multiple threads inside FeedFrame at
+     * once. We serialize on the provider instance — the HTTP service is
+     * single-node behind the operator flow, so contention is minimal.
+     * If we ever run this at scale, promote to a pool of trackers.
+     *
+     * <p>DetectLiveness is a Luxand model that scores the passive
+     * "is this a live person" probability per frame after the tracker
+     * has enough context (defaults to 15 frames of smoothing). Callers
+     * should feed at least that many frames or the passive values in
+     * the first few slots will be low even for a real person.
+     */
+    @Override
+    public synchronized LivenessSignals livenessSequence(byte[][] frames, String mime)
+            throws FaceException {
+        if (frames == null || frames.length == 0) {
+            return new LivenessSignals(new float[0], new float[0], new float[0], 0);
+        }
+
+        Object tracker = newHTracker();
+        try {
+            // One SetTrackerMultipleParameters call is faster than a
+            // dozen SetTrackerParameters + reduces the risk of a stray
+            // typo in one parameter silently disabling detection.
+            int errPos = setTrackerMultipleParameters(tracker,
+                "DetectLiveness=true;"
+                + "DetectExpression=true;"
+                + "DetermineFaceRotationAngle=true;"
+                + "HandleArbitraryRotations=false;"
+                + "InternalResizeWidth=384;"
+                + "FaceDetectionThreshold=3;"
+                + "SmoothAttributeLiveness=true;"
+                + "SmoothAttributeExpressionEyesOpen=true;"
+                + "AttributeExpressionEyesOpenSmoothingTemporal=6;"
+                + "AttributeLivenessSmoothingAlpha=0.4;"
+            );
+            if (errPos >= 0) {
+                throw new FaceException("-1",
+                    "SetTrackerMultipleParameters rejected parameter #" + errPos);
+            }
+
+            int n = frames.length;
+            float[] passive = new float[n];
+            float[] eyes = new float[n];
+            float[] yaw = new float[n];
+            int found = 0;
+
+            for (int i = 0; i < n; i++) {
+                java.util.Arrays.fill(passive, i, i + 1, Float.NaN);
+                java.util.Arrays.fill(eyes, i, i + 1, Float.NaN);
+                java.util.Arrays.fill(yaw, i, i + 1, Float.NaN);
+
+                if (frames[i] == null || frames[i].length == 0) continue;
+
+                Object himage = newHImage();
+                try {
+                    // Bad frame → skip, don't kill the whole sequence.
+                    try {
+                        loadImage(himage, frames[i], mime);
+                    } catch (FaceException e) {
+                        continue;
+                    }
+
+                    long[] faceCount = new long[]{0};
+                    long[] ids = new long[8]; // up to 8 IDs per frame — plenty
+                    int rc = feedFrame(tracker, 0, himage, faceCount, ids);
+                    if (rc != FSDKE_OK || faceCount[0] == 0) continue;
+
+                    long id = ids[0];
+                    Float p = readAttributeFloat(tracker, id, "Liveness");
+                    if (p != null) passive[i] = p;
+
+                    // Expression returns a semicolon-list like
+                    // "Smile=0.03;EyesOpen=0.92;" — parse EyesOpen out.
+                    String expr = readAttribute(tracker, id, "Expression");
+                    Float e = parseKeyEquals(expr, "EyesOpen");
+                    if (e != null) eyes[i] = e;
+
+                    // Not all builds populate a "FaceAngle" attribute
+                    // reliably; leave as NaN if we can't parse it.
+                    String angles = readAttribute(tracker, id, "FaceAngle");
+                    Float y = parseKeyEquals(angles, "Yaw");
+                    if (y != null) yaw[i] = y;
+
+                    found++;
+                } finally {
+                    try {
+                        invokeStaticInt("FreeImage", new Class<?>[]{hImageCls}, himage);
+                    } catch (Throwable ignored) {}
+                }
+            }
+
+            return new LivenessSignals(passive, eyes, yaw, found);
+        } finally {
+            try {
+                invokeStaticInt("FreeTracker",
+                    new Class<?>[]{hTrackerCls}, tracker);
+            } catch (Throwable ignored) {}
+        }
+    }
+
     // -- reflection helpers ---------------------------------------------------
 
     private int invokeStaticInt(String name, Class<?>[] sig, Object... args)
@@ -235,6 +344,102 @@ public final class LuxandFaceProvider implements FaceProvider {
             throw new FaceException("-1",
                 "could not read FSDK_FaceTemplate.template: " + t.getMessage(), t);
         }
+    }
+
+    private Object newHTracker() throws FaceException {
+        try {
+            Constructor<?> c = hTrackerCls.getConstructor();
+            Object t = c.newInstance();
+            int rc = invokeStaticInt("CreateTracker",
+                new Class<?>[]{hTrackerCls}, t);
+            if (rc != FSDKE_OK) {
+                throw new FaceException(String.valueOf(rc),
+                    "CreateTracker failed (code " + rc + ")");
+            }
+            return t;
+        } catch (FaceException fe) {
+            throw fe;
+        } catch (Throwable t) {
+            throw new FaceException("-1",
+                "HTracker instantiate failed: " + t.getMessage(), t);
+        }
+    }
+
+    /**
+     * Returns the FSDK error position: -1 on success, else a positive
+     * index into the config string. Vendor semantics.
+     */
+    private int setTrackerMultipleParameters(Object tracker, String params)
+            throws FaceException {
+        int[] errPos = new int[]{-1};
+        int rc;
+        try {
+            Method m = fsdkCls.getMethod("SetTrackerMultipleParameters",
+                hTrackerCls, String.class, int[].class);
+            rc = (Integer) m.invoke(null, tracker, params, errPos);
+        } catch (Throwable t) {
+            throw new FaceException("-1",
+                "SetTrackerMultipleParameters reflective call failed: "
+                    + t.getMessage(), t);
+        }
+        if (rc != FSDKE_OK) {
+            return errPos[0] >= 0 ? errPos[0] : 0;
+        }
+        return -1;
+    }
+
+    private int feedFrame(Object tracker, long cameraIdx, Object himage,
+                          long[] faceCount, long[] ids) throws FaceException {
+        try {
+            Method m = fsdkCls.getMethod("FeedFrame",
+                hTrackerCls, long.class, hImageCls, long[].class, long[].class);
+            return (Integer) m.invoke(null, tracker, cameraIdx, himage, faceCount, ids);
+        } catch (Throwable t) {
+            throw new FaceException("-1",
+                "FeedFrame reflective call failed: " + t.getMessage(), t);
+        }
+    }
+
+    private String readAttribute(Object tracker, long id, String attr) {
+        String[] out = new String[]{""};
+        try {
+            Method m = fsdkCls.getMethod("GetTrackerFacialAttribute",
+                hTrackerCls, long.class, long.class, String.class,
+                String[].class, long.class);
+            int rc = (Integer) m.invoke(null, tracker, 0L, id, attr, out, 256L);
+            if (rc != FSDKE_OK) return null;
+            return out[0];
+        } catch (Throwable t) {
+            return null;
+        }
+    }
+
+    private Float readAttributeFloat(Object tracker, long id, String attr) {
+        String s = readAttribute(tracker, id, attr);
+        if (s == null || s.isEmpty()) return null;
+        // Attributes come back as "AttributeName=0.87" or a bare float
+        // depending on the SDK build. Handle both.
+        String v = s;
+        int eq = s.indexOf('=');
+        if (eq >= 0 && eq + 1 < s.length()) {
+            int semi = s.indexOf(';', eq + 1);
+            v = semi > eq ? s.substring(eq + 1, semi) : s.substring(eq + 1);
+        }
+        try { return Float.parseFloat(v.trim()); }
+        catch (NumberFormatException e) { return null; }
+    }
+
+    /** Parse "Smile=0.03;EyesOpen=0.92;Yaw=-4.2" for the given key. */
+    private Float parseKeyEquals(String s, String key) {
+        if (s == null || s.isEmpty()) return null;
+        String needle = key + "=";
+        int i = s.indexOf(needle);
+        if (i < 0) return null;
+        int start = i + needle.length();
+        int end = s.indexOf(';', start);
+        String v = end < 0 ? s.substring(start) : s.substring(start, end);
+        try { return Float.parseFloat(v.trim()); }
+        catch (NumberFormatException e) { return null; }
     }
 
     private void writeTemplateBytes(Object tplRef, byte[] src) throws FaceException {

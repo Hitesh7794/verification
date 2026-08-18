@@ -66,6 +66,19 @@ type Config struct {
 	TrustViewBaseURL string // default https://v1.trustview.in
 	TrustViewToken   string // Bearer token; empty = compare disabled
 
+	// luxand-service base URL (Docker container on prod, loopback in
+	// dev). Serves only /face/liveness — face matching moved to
+	// TrustView. Empty → the liveness endpoint returns 503 and the
+	// operator flow refuses to start.
+	LuxandBaseURL string // default http://127.0.0.1:8041
+
+	// Liveness pass age. If more than this many seconds pass between
+	// a passing liveness check and the face-match POST, we make the
+	// operator redo the liveness step. Long enough for a slow user,
+	// short enough that a spoofer can't reuse a live check for a
+	// static-photo match minutes later.
+	LivenessMaxAgeSeconds int // default 90
+
 	// Razorpay test-mode integration for the per-client wallet feature.
 	// Keys come from the Razorpay dashboard → Settings → API Keys (test
 	// mode); they look like rzp_test_<14 chars>. The KEY_ID is sent to
@@ -167,6 +180,8 @@ func Load() Config {
 		ArtifactDir:               envOr("ARTIFACT_DIR", "artifacts"),
 		TrustViewBaseURL:          envOr("TRUSTVIEW_BASE_URL", "https://v1.trustview.in"),
 		TrustViewToken:            envOr("TRUSTVIEW_TOKEN", ""),
+		LuxandBaseURL:             envOr("LUXAND_BASE_URL", "http://127.0.0.1:8041"),
+		LivenessMaxAgeSeconds:     envInt("LIVENESS_MAX_AGE_SECONDS", 90),
 		RazorpayKeyID:             envOr("RAZORPAY_KEY_ID", ""),
 		RazorpayKeySecret:         envOr("RAZORPAY_KEY_SECRET", ""),
 		RazorpayWebhookSecret:     envOr("RAZORPAY_WEBHOOK_SECRET", ""),

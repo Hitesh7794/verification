@@ -2,6 +2,7 @@ package com.veni.luxandservice;
 
 import com.veni.luxandservice.provider.FaceException;
 import com.veni.luxandservice.provider.FaceProvider;
+import com.veni.luxandservice.provider.LivenessSignals;
 
 import java.util.Arrays;
 
@@ -59,5 +60,23 @@ public final class StubFaceProvider implements FaceProvider {
         byte[] probe = extractTemplate(probeImage, mime);
         if (probe == null) return Float.NaN;
         return match(probe, galleryTemplate);
+    }
+
+    @Override
+    public LivenessSignals livenessSequence(byte[][] frames, String mime) {
+        int n = frames == null ? 0 : frames.length;
+        float[] passive = new float[n];
+        float[] eyes = new float[n];
+        float[] yaw = new float[n];
+        // Fake a real person with two mid-sequence blinks so unit tests
+        // exercising the HTTP layer see a happy-path pass response.
+        for (int i = 0; i < n; i++) {
+            passive[i] = 0.85f;
+            eyes[i] = (i == n / 4 || i == n / 4 + 1
+                     || i == 3 * n / 4 || i == 3 * n / 4 + 1)
+                     ? 0.10f : 0.90f;
+            yaw[i] = 0.0f;
+        }
+        return new LivenessSignals(passive, eyes, yaw, n);
     }
 }

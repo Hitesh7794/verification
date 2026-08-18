@@ -27,10 +27,11 @@ import (
 // Sentinel errors from the shared helpers so callers can map to HTTP
 // status without string-matching. Every other error is treated as 500.
 var (
-	errAppNotFound     = errors.New("application not found")
-	errAppNotPending   = errors.New("application is not pending")
-	errAppOutOfScope   = errors.New("application belongs to a different client")
-	errAppNoteRequired = errors.New("rejection note required")
+	errAppNotFound       = errors.New("application not found")
+	errAppNotPending     = errors.New("application is not pending")
+	errAppOutOfScope     = errors.New("application belongs to a different client")
+	errAppNoteRequired   = errors.New("rejection note required")
+	errAppPortalDisabled = errors.New("this board's review portal is currently disabled")
 )
 
 // approvedApplication is what the shared approve helper returns after
@@ -70,6 +71,17 @@ func (s *Server) approveApplication(
 	note string,
 ) (*approvedApplication, error) {
 	ctx := r.Context()
+
+	// Defence in depth: the reviewer's login gate already blocks new
+	// sessions when portal_enabled=false, but a JWT minted just before
+	// the toggle flipped stays valid for its 12h expiry. Re-check here
+	// so a stale-JWT approve during a disabled window fails cleanly.
+	if scope != nil {
+		if err := s.checkPortalEnabled(ctx, *scope); err != nil {
+			return nil, err
+		}
+	}
+
 	tx, err := s.deps.DB.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("db begin: %w", err)
@@ -255,6 +267,11 @@ func (s *Server) rejectApplication(
 	if note == "" {
 		return errAppNoteRequired
 	}
+	if scope != nil {
+		if err := s.checkPortalEnabled(ctx, *scope); err != nil {
+			return err
+		}
+	}
 
 	// Read + validate the row up front so we can send the rejection
 	// email after the UPDATE lands.
@@ -319,6 +336,30 @@ func mapReviewErrorToHTTP(err error) (int, string) {
 		return http.StatusConflict, err.Error()
 	case errors.Is(err, errAppNoteRequired):
 		return http.StatusBadRequest, "rejection note required"
+	case errors.Is(err, errAppPortalDisabled):
+		return http.StatusForbidden,
+			"this board's review portal is currently disabled — contact the platform team"
 	}
 	return http.StatusInternalServerError, err.Error()
+}
+
+// checkPortalEnabled returns errAppPortalDisabled if the given client's
+// portal_enabled flag is off. Also returns errAppOutOfScope if the
+// client id itself doesn't exist (couldn't happen from a valid JWT,
+// but keeps the failure mode explicit).
+func (s *Server) checkPortalEnabled(ctx context.Context, clientID int64) error {
+	var enabled bool
+	err := s.deps.DB.QueryRowContext(ctx,
+		`SELECT portal_enabled FROM clients WHERE id = $1`, clientID,
+	).Scan(&enabled)
+	if errors.Is(err, sql.ErrNoRows) {
+		return errAppOutOfScope
+	}
+	if err != nil {
+		return fmt.Errorf("portal probe: %w", err)
+	}
+	if !enabled {
+		return errAppPortalDisabled
+	}
+	return nil
 }

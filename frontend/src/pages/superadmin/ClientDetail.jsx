@@ -420,6 +420,9 @@ function ReviewPortalPanel({ client, onChanged }) {
                 to reviewer accounts you create below, and let those reviewers sign
                 in at <a href="/reviewer/login" className="font-mono text-stone-800 underline">/reviewer/login</a> to
                 approve or reject KYC without needing superadmin access.
+                Turning it off closes the whole surface: reviewers can't sign in
+                and can't approve or reject even with an already-valid session.
+                Applications already in the queue stay visible to superadmin.
               </p>
             </div>
           </div>

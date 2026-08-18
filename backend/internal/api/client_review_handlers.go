@@ -329,13 +329,14 @@ func (s *Server) clientReviewerMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	var (
-		name    string
-		visible int
-		closed  int
+		name          string
+		visible       int
+		closed        int
+		portalEnabled bool
 	)
 	if err := s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT name, visible, closed FROM clients WHERE id = $1`, clientID,
-	).Scan(&name, &visible, &closed); err != nil {
+		`SELECT name, visible, closed, portal_enabled FROM clients WHERE id = $1`, clientID,
+	).Scan(&name, &visible, &closed, &portalEnabled); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeErr(w, http.StatusNotFound, "client not found")
 			return
@@ -344,9 +345,10 @@ func (s *Server) clientReviewerMe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"client_id": clientID,
-		"name":      name,
-		"visible":   visible == 1,
-		"closed":    closed == 1,
+		"client_id":      clientID,
+		"name":           name,
+		"visible":        visible == 1,
+		"closed":         closed == 1,
+		"portal_enabled": portalEnabled,
 	})
 }

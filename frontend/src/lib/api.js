@@ -128,6 +128,28 @@ export async function fetchFPTemplate(roll) {
 //
 // Returns {face_found, score, threshold, status, roll_no} or throws on
 // transport / SDK error. The caller surfaces the error in the UI.
+// postLivenessCheck runs the active-liveness gate against luxand-service
+// via our backend proxy. `frames` is an ordered array of base64 JPEG
+// data URLs captured during the challenge; `sessionId` is the same
+// idempotency key that will be handed to postFaceMatch — the backend
+// pairs the two calls by that key. On pass, backend writes a
+// liveness_checks row that lets the follow-up /face-match through.
+//
+// Returns {session_id, pass, passive_mean, passive_passed,
+// blinks_detected, challenges_passed, faces_found, expires_in_seconds}.
+// pass=false is not an exception — the caller retries as many times as
+// needed (per product spec, no cap).
+export async function postLivenessCheck(roll, frames, sessionId, challenges) {
+  return api(`/candidates/${encodeURIComponent(roll)}/liveness-check`, {
+    method: 'POST',
+    body: {
+      session_id: sessionId,
+      frames,
+      challenges: challenges && challenges.length ? challenges : ['blink'],
+    },
+  })
+}
+
 export async function postFaceMatch(roll, dataURLOrBase64, idempotencyKey) {
   // URL-scoped: the wallet middleware extracts {roll} from the path for
   // its same-roll cache. Also this is now the wallet-chargeable event

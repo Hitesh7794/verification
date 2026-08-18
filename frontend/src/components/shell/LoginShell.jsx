@@ -46,6 +46,7 @@ export default function LoginShell({
 
   const sessionExpired = params.get('session_expired') === '1'
   const justActivated  = params.get('just_activated')  === '1'
+  const portalDisabled = params.get('portal_disabled') === '1'
 
   const allowedRoles = expectedRoles || (expectedRole ? [expectedRole] : [])
   const roleLabel = ROLE_LABEL[allowedRoles[0]] || 'Portal'
@@ -103,7 +104,15 @@ export default function LoginShell({
             Enter your credentials to continue.
           </p>
 
-          {sessionExpired && !err && (
+          {portalDisabled && !err && (
+            <div role="status"
+                 className="mt-5 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-800">
+              This board's review portal has been disabled by the platform team.
+              You've been signed out. Please contact them if you believe this is
+              a mistake.
+            </div>
+          )}
+          {sessionExpired && !err && !portalDisabled && (
             <div role="status"
                  className="mt-5 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-xs text-amber-800">
               Your session ended. Sign in again.

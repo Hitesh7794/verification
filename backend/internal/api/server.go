@@ -15,6 +15,7 @@ import (
 	"github.com/veni/neet-verification/internal/config"
 	"github.com/veni/neet-verification/internal/data"
 	"github.com/veni/neet-verification/internal/email"
+	"github.com/veni/neet-verification/internal/luxand"
 	"github.com/veni/neet-verification/internal/magiclink"
 	"github.com/veni/neet-verification/internal/otp"
 	"github.com/veni/neet-verification/internal/razorpay"
@@ -33,6 +34,7 @@ type Deps struct {
 type Server struct {
 	deps       Deps
 	trustview  *trustview.Client // optional; nil = TRUSTVIEW_TOKEN empty, biometric compare handlers return 503
+	luxand     *luxand.Client    // active-liveness only; nil-safe (client returns ErrDisabled)
 	wallet     *wallet.Store     // optional; nil disables /api/wallet/* + candidate charge
 	razorpayCl *razorpay.Client  // optional; nil disables Razorpay deposit flow (admin_credit still works)
 
@@ -60,6 +62,12 @@ func NewServer(d Deps) *Server {
 	s.trustview = trustview.New(trustview.Config{
 		BaseURL: d.Cfg.TrustViewBaseURL,
 		Token:   d.Cfg.TrustViewToken,
+	})
+	// Luxand: liveness-only, nil-safe. If LUXAND_BASE_URL is blank the
+	// client itself returns ErrDisabled when called, so downstream
+	// handlers can 503 with a specific message.
+	s.luxand = luxand.New(luxand.Config{
+		BaseURL: d.Cfg.LuxandBaseURL,
 	})
 	// Wallet store always wires up (it's just a thin DB wrapper); the
 	// candidate-charge middleware below short-circuits cleanly when
@@ -188,6 +196,14 @@ func (s *Server) Router() http.Handler {
 		// New URL-scoped routes so the wallet middleware can extract
 		// {roll} for the same-roll 5-min cache. Old body-based routes
 		// stay wired below for anything still calling them.
+		// Active-liveness gate. Runs BEFORE face-match — the operator's
+		// browser records a short blink challenge, we forward the frame
+		// sequence to luxand-service, and on pass we stash a
+		// liveness_checks row keyed by session_id (same key the browser
+		// will use on the follow-up /face-match). No wallet charge —
+		// liveness is a gate; the payable event stays at /face-match.
+		r.Post("/api/candidates/{roll}/liveness-check",
+			s.requireRole("client")(s.livenessCheck))
 		r.Post("/api/candidates/{roll}/face-match", s.requireRole("client")(s.walletCharge(s.faceMatch)))
 		r.Post("/api/candidates/{roll}/fp-match",   s.requireRole("client")(s.fpMatch))
 		// Iris moved server-side with the TrustView migration — used to

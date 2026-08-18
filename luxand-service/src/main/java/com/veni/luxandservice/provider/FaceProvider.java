@@ -57,6 +57,27 @@ public interface FaceProvider {
             throws FaceException;
 
     /**
+     * Analyze a short sequence of frames for active liveness. Feeds
+     * every frame through the FSDK tracker with DetectLiveness +
+     * DetectExpression enabled and returns:
+     *   - passive[]         per-frame Liveness value in [0, 1]
+     *   - eyesOpen[]        per-frame EyesOpen value in [0, 1]
+     *   - yaw[]             per-frame face yaw in degrees (null if not
+     *                       detected). Reserved for a future "turn head"
+     *                       challenge; may be an all-NaN array today.
+     *   - facesFound        count of frames where a face was tracked
+     *
+     * <p>Callers (the HTTP handler) decide what constitutes a pass —
+     * this method deliberately returns raw signals so the pass/fail
+     * policy can be tuned without redeploying the JAR.
+     *
+     * <p>Frames must be sequential in time. Each is decoded as
+     * {@code mime} (image/jpeg by default). Returns {@code null} for
+     * either component if the sequence is empty.
+     */
+    LivenessSignals livenessSequence(byte[][] frames, String mime) throws FaceException;
+
+    /**
      * Release SDK resources. Called from a JVM shutdown hook.
      */
     default void shutdown() {}

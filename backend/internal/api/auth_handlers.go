@@ -84,6 +84,25 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "account disabled — contact your administrator")
 		return
 	}
+	// A client_reviewer account can only sign in while the client's
+	// review portal is enabled. This is the front-door signal: if the
+	// superadmin has turned the toggle off, existing reviewers hit a
+	// clear 403 the next time they log in, rather than getting an
+	// authenticated session that then silently blocks every action.
+	// The approve/reject helpers also re-check portal_enabled server
+	// side (defence in depth: a JWT minted just before the toggle
+	// flipped stays valid for its 12h expiry, and shouldn't be usable
+	// to act during the disabled window).
+	if role == "client_reviewer" && clientID.Valid {
+		var portalOn bool
+		if err := s.deps.DB.QueryRowContext(r.Context(),
+			`SELECT portal_enabled FROM clients WHERE id = $1`, clientID.Int64,
+		).Scan(&portalOn); err != nil || !portalOn {
+			writeErr(w, http.StatusForbidden,
+				"this board's review portal is currently disabled — contact the platform team")
+			return
+		}
+	}
 
 	claims := auth.Claims{
 		UserID:   id,

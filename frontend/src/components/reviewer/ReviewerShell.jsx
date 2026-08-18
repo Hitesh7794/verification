@@ -15,6 +15,12 @@ import { reviewerMe } from '../../lib/reviewer/api.js'
 //     noise. Adding a second surface later (e.g. audit log) is where
 //     tabs come in.
 
+// How often we re-poll /api/client/me while a reviewer is signed in.
+// 15s is a good balance: fast enough that a superadmin flipping the
+// toggle boots the session within one screen-refresh window, slow
+// enough that a dozen reviewer tabs don't hammer the endpoint.
+const PORTAL_GATE_INTERVAL_MS = 15_000
+
 export default function ReviewerShell({ children, meOverride }) {
   return (
     <div className="min-h-full bg-warm-page">
@@ -37,12 +43,52 @@ function ReviewerHeader({ meOverride }) {
   const [me, setMe] = useState(meOverride || null)
   const [now, setNow] = useState(() => new Date())
 
+  // Poll /me periodically so the moment the superadmin turns the
+  // portal off — or the session is otherwise revoked (JWT expiry,
+  // reviewer account deleted) — the tab boots itself to the login
+  // page. Without this the reviewer would silently be able to browse
+  // read-only state until their JWT expires (up to 12h). The initial
+  // fire runs on mount and doubles as the "get the client name for
+  // the header" call, replacing the old one-shot fetch.
   useEffect(() => {
-    if (meOverride) { setMe(meOverride); return }
+    if (meOverride) { setMe(meOverride) }
+
     let alive = true
-    reviewerMe().then((r) => { if (alive) setMe(r) }).catch(() => {})
-    return () => { alive = false }
-  }, [meOverride])
+    const kick = (reason) => {
+      if (!alive) return
+      logout()
+      nav(`/reviewer/login?${reason}=1`, { replace: true })
+    }
+    const check = () => {
+      reviewerMe()
+        .then((r) => {
+          if (!alive) return
+          if (r && r.portal_enabled === false) {
+            kick('portal_disabled')
+            return
+          }
+          setMe(r)
+        })
+        .catch((e) => {
+          if (!alive) return
+          // 403/401 → session no longer valid (portal off, account
+          // deleted, or JWT rejected). Boot to login with the right
+          // reason so the banner reads correctly.
+          if (e && (e.status === 403 || e.status === 401)) {
+            const msg = String(e.message || '').toLowerCase()
+            kick(msg.includes('portal') ? 'portal_disabled' : 'session_expired')
+          }
+          // Network blips and 5xx just leave the last-known me in
+          // place — no reason to boot the user for a transient error.
+        })
+    }
+    check()
+    const id = setInterval(check, PORTAL_GATE_INTERVAL_MS)
+    return () => { alive = false; clearInterval(id) }
+    // meOverride is intentionally not in deps — we own the polling
+    // once mounted regardless of what the parent originally handed us.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 60_000)

@@ -1,6 +1,7 @@
 package com.veni.luxandservice;
 
 import com.veni.luxandservice.handler.FaceHandlers;
+import com.veni.luxandservice.handler.LivenessHandlers;
 import com.veni.luxandservice.provider.FaceException;
 import com.veni.luxandservice.provider.FaceProvider;
 import com.veni.luxandservice.provider.LuxandFaceProvider;
@@ -70,6 +71,7 @@ public final class Main {
         }).start(bindAddr, port);
 
         new FaceHandlers(provider, threshold).register(app);
+        new LivenessHandlers(provider).register(app);
 
         Runtime.getRuntime().addShutdownHook(new Thread(() -> {
             LOG.info("shutting down — releasing FaceSDK");

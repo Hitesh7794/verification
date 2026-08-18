@@ -75,8 +75,17 @@ export default function ReviewerDashboard() {
   const showingFrom = items.length > 0 ? offset + 1 : 0
   const showingTo = Math.min(offset + PAGE_SIZE, total)
 
-  const portalDisabled = me && me.visible === false
-  const closed = me && me.closed === true
+  // Two overlapping "we're closed" signals from the platform:
+  //   portal_enabled=false  → superadmin turned the whole reviewer
+  //     surface off. Existing reviewers should stop acting. Login is
+  //     already blocked; this banner exists because a JWT minted just
+  //     before the flip stays valid for up to 12h.
+  //   visible=false / closed=true → the client itself is hidden from
+  //     institutions on the register form (see [[project-snapshot]] for
+  //     the visible/closed semantics). Reviewing still works.
+  const portalOff  = me && me.portal_enabled === false
+  const hidden     = me && me.visible === false
+  const closed     = me && me.closed === true
 
   return (
     <ReviewerShell meOverride={me}>
@@ -97,7 +106,22 @@ export default function ReviewerDashboard() {
         }
       />
 
-      {(portalDisabled || closed) && (
+      {portalOff && (
+        <div className="mb-6 rounded-xl border border-rose-200 bg-rose-50 px-4 py-3 flex items-start gap-3">
+          <span className="mt-0.5 h-8 w-8 rounded-lg bg-white text-rose-700 flex items-center justify-center shrink-0 ring-1 ring-rose-200">
+            <Icon.AlertTriangle className="h-4 w-4" />
+          </span>
+          <div className="text-sm text-rose-900">
+            <p className="font-semibold">Review portal disabled by the platform team.</p>
+            <p className="mt-0.5 text-rose-800 text-xs">
+              You can still browse existing applications, but approving or rejecting
+              is blocked until the portal is re-enabled. New sign-ins are refused
+              at the login screen.
+            </p>
+          </div>
+        </div>
+      )}
+      {!portalOff && (hidden || closed) && (
         <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50 px-4 py-3 flex items-start gap-3">
           <span className="mt-0.5 h-8 w-8 rounded-lg bg-white text-amber-700 flex items-center justify-center shrink-0 ring-1 ring-amber-200">
             <Icon.AlertTriangle className="h-4 w-4" />
