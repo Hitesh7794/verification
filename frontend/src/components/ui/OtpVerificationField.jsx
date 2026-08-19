@@ -197,10 +197,15 @@ export default function OtpVerificationField({
         </div>
       </div>
 
-      {/* External Field Error */}
-      {error && !otpError && (
+      {/* External Field Error or Send OTP Error */}
+      {otpError && !otpSent ? (
+        <p className="text-xs text-rose-600 font-medium flex items-center gap-1">
+          <Icon.AlertCircle className="h-3.5 w-3.5 shrink-0" />
+          {otpError}
+        </p>
+      ) : error && !otpError ? (
         <p className="text-xs text-rose-600">{error}</p>
-      )}
+      ) : null}
 
       {/* Expandable OTP Verification Drawer */}
       <AnimatePresence>
@@ -241,7 +246,10 @@ export default function OtpVerificationField({
                   maxLength={6}
                   placeholder="• • • • • •"
                   value={otpCode}
-                  onChange={(e) => setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                  onChange={(e) => {
+                    setOtpCode(e.target.value.replace(/\D/g, '').slice(0, 6))
+                    if (otpError) setOtpError('')
+                  }}
                   onKeyDown={(e) => e.key === 'Enter' && handleVerifyOtp(e)}
                   className="font-mono text-center tracking-widest text-base font-semibold bg-white border-indigo-200 focus:border-indigo-600 focus:ring-indigo-200"
                 />

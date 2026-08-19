@@ -224,6 +224,7 @@ type createOperatorReq struct {
 	Password         string  `json:"password"`
 	DisplayName      string  `json:"display_name"`
 	Email            string  `json:"email,omitempty"` // optional; if set, we send a welcome mail
+	EmailOTPToken    string  `json:"email_otp_token,omitempty"`
 	SpendingCapPaise *int64  `json:"spending_cap_paise,omitempty"`
 	ValidFrom        string  `json:"valid_from,omitempty"` // YYYY-MM-DD or empty
 	ValidTo          string  `json:"valid_to,omitempty"`
@@ -272,6 +273,21 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "email check: "+err.Error())
 		return
 	}
+
+	// Validate email OTP proof token if OTP store is active
+	if s.otpStore != nil && !strings.EqualFold(s.deps.Cfg.AppEnv, "test") {
+		if req.EmailOTPToken == "" {
+			writeErr(w, http.StatusBadRequest, "Operator email must be verified with OTP before creating")
+			return
+		}
+		if err := s.otpStore.ValidateProofToken("operator_creation", req.Email, req.EmailOTPToken); err != nil {
+			if err2 := s.otpStore.ValidateProofToken("registration", req.Email, req.EmailOTPToken); err2 != nil {
+				writeErr(w, http.StatusBadRequest, "Email verification failed: "+err.Error())
+				return
+			}
+		}
+	}
+
 	if strings.TrimSpace(req.ValidFrom) == "" || strings.TrimSpace(req.ValidTo) == "" {
 		writeErr(w, http.StatusBadRequest, "valid_from and valid_to are required (YYYY-MM-DD)")
 		return
@@ -375,6 +391,7 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 type patchOperatorReq struct {
 	DisplayName      *string  `json:"display_name,omitempty"`
 	Email            *string  `json:"email,omitempty"` // empty string clears
+	EmailOTPToken    string   `json:"email_otp_token,omitempty"`
 	Password         *string  `json:"password,omitempty"`     // if present, hash + store plaintext
 	SpendingCapPaise *int64   `json:"spending_cap_paise,omitempty"`
 	ClearSpendingCap bool     `json:"clear_spending_cap,omitempty"` // sentinel: set to NULL
@@ -455,6 +472,23 @@ func (s *Server) adminPatchOperator(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, "email check: "+err.Error())
 			return
 		}
+
+		var currentEmail sql.NullString
+		_ = tx.QueryRow(`SELECT email FROM users WHERE id = $1`, id).Scan(&currentEmail)
+		emailChanged := !currentEmail.Valid || !strings.EqualFold(strings.TrimSpace(currentEmail.String), e)
+		if emailChanged && s.otpStore != nil && !strings.EqualFold(s.deps.Cfg.AppEnv, "test") {
+			if req.EmailOTPToken == "" {
+				writeErr(w, http.StatusBadRequest, "Operator email must be verified with OTP before saving")
+				return
+			}
+			if err := s.otpStore.ValidateProofToken("operator_creation", e, req.EmailOTPToken); err != nil {
+				if err2 := s.otpStore.ValidateProofToken("registration", e, req.EmailOTPToken); err2 != nil {
+					writeErr(w, http.StatusBadRequest, "Email verification failed: "+err.Error())
+					return
+				}
+			}
+		}
+
 		sets = append(sets, "email = ?")
 		args = append(args, e)
 	}
