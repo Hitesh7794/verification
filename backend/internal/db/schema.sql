@@ -331,6 +331,7 @@ CREATE TABLE institution_applications (
 CREATE INDEX idx_inst_apps_status     ON institution_applications(status, created_at DESC);
 CREATE INDEX idx_inst_apps_created    ON institution_applications(created_at DESC);
 CREATE INDEX idx_inst_apps_head_email ON institution_applications(head_email);
+CREATE INDEX idx_inst_apps_head_mobile ON institution_applications(head_mobile);
 CREATE UNIQUE INDEX idx_inst_apps_aishe
     ON institution_applications(aishe_code) WHERE aishe_code IS NOT NULL;
 CREATE UNIQUE INDEX idx_inst_apps_pan_active
@@ -338,6 +339,8 @@ CREATE UNIQUE INDEX idx_inst_apps_pan_active
     WHERE pan IS NOT NULL AND status IN ('approved','pending');
 CREATE UNIQUE INDEX idx_inst_apps_head_email_active
     ON institution_applications(head_email) WHERE status IN ('approved','pending');
+CREATE UNIQUE INDEX idx_inst_apps_head_mobile_active
+    ON institution_applications(head_mobile) WHERE status IN ('approved','pending');
 
 CREATE TABLE institution_application_documents (
     id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,

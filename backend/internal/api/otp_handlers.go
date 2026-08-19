@@ -67,6 +67,36 @@ func (s *Server) sendEmailOTP(w http.ResponseWriter, r *http.Request) {
 		purpose = "registration"
 	}
 
+	// For registration, enforce that the email is not already tied to an approved or pending institution or active user
+	if s.deps.DB != nil && purpose == "registration" {
+		// 1. Check existing active users
+		var userID int64
+		err := s.deps.DB.QueryRowContext(r.Context(),
+			`SELECT id FROM users WHERE LOWER(TRIM(email)) = $1 AND disabled_at IS NULL LIMIT 1`,
+			target,
+		).Scan(&userID)
+		if err == nil {
+			writeErr(w, http.StatusConflict, "This email is already registered to an active institution administrator.")
+			return
+		}
+
+		// 2. Check active or pending institution applications
+		var existingStatus string
+		err = s.deps.DB.QueryRowContext(r.Context(),
+			`SELECT status FROM institution_applications WHERE LOWER(TRIM(head_email)) = $1 AND status IN ('approved', 'pending') LIMIT 1`,
+			target,
+		).Scan(&existingStatus)
+		if err == nil {
+			if existingStatus == "approved" {
+				writeErr(w, http.StatusConflict, "This email is already registered to an active institution.")
+				return
+			} else if existingStatus == "pending" {
+				writeErr(w, http.StatusConflict, "An application with this email is already under review.")
+				return
+			}
+		}
+	}
+
 	code, err := s.otpStore.Generate(purpose, target)
 	if err != nil {
 		writeErr(w, http.StatusTooManyRequests, err.Error())
@@ -155,6 +185,27 @@ func (s *Server) sendSmsOTP(w http.ResponseWriter, r *http.Request) {
 	purpose := strings.TrimSpace(req.Purpose)
 	if purpose == "" {
 		purpose = "registration"
+	}
+
+	// For registration, enforce that the mobile number is unique and not already registered to an active or pending institution admin
+	if s.deps.DB != nil && purpose == "registration" {
+		var existingStatus string
+		err := s.deps.DB.QueryRowContext(r.Context(),
+			`SELECT status FROM institution_applications 
+			 WHERE (head_mobile = $1 OR head_mobile = '+91' || $1 OR head_mobile = '91' || $1) 
+			   AND status IN ('approved', 'pending') 
+			 LIMIT 1`,
+			mobile,
+		).Scan(&existingStatus)
+		if err == nil {
+			if existingStatus == "approved" {
+				writeErr(w, http.StatusConflict, "This mobile number is already registered to an active institution admin.")
+				return
+			} else if existingStatus == "pending" {
+				writeErr(w, http.StatusConflict, "An application with this mobile number is already under review.")
+				return
+			}
+		}
 	}
 
 	code, err := s.otpStore.Generate(purpose, mobile)
