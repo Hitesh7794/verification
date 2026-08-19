@@ -98,4 +98,21 @@ func TestOTPHandlersFlow(t *testing.T) {
 	if rec.Code != http.StatusBadRequest {
 		t.Fatalf("expected 400 on wrong SMS OTP, got %d: %s", rec.Code, rec.Body.String())
 	}
+
+	// 6. Send SMS OTP with invalid non-Indian mobile numbers (e.g. starting with 1, 2, or less than 10 digits)
+	invalidMobiles := []string{"1234567890", "5555555555", "98765", "abcdefghij"}
+	for _, inv := range invalidMobiles {
+		invBody, _ := json.Marshal(map[string]string{
+			"mobile":  inv,
+			"purpose": "registration",
+		})
+		req = httptest.NewRequest(http.MethodPost, "/api/otp/send-sms", bytes.NewReader(invBody))
+		req.Header.Set("Content-Type", "application/json")
+		rec = httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+
+		if rec.Code != http.StatusBadRequest {
+			t.Fatalf("expected 400 on invalid mobile %q, got %d: %s", inv, rec.Code, rec.Body.String())
+		}
+	}
 }

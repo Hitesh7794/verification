@@ -42,12 +42,11 @@ if (-not $conn.TcpTestSucceeded) {
 
 # Create 'verification' database if it doesn't exist
 Write-Host "==> Ensuring 'verification' database exists..." -ForegroundColor Yellow
-& (Join-Path $binDir "createdb.exe") -p 5434 -U portal -h 127.0.0.1 verification 2>$null
-if ($LASTEXITCODE -eq 0) {
-    Write-Host "==> Created 'verification' database." -ForegroundColor Green
-} else {
-    Write-Host "==> 'verification' database ready." -ForegroundColor Green
-}
+$prevEAP = $ErrorActionPreference
+$ErrorActionPreference = "SilentlyContinue"
+& (Join-Path $binDir "createdb.exe") -p 5434 -U portal -h 127.0.0.1 verification 2>&1 | Out-Null
+$ErrorActionPreference = $prevEAP
+Write-Host "==> 'verification' database ready." -ForegroundColor Green
 
 Write-Host "`nSUCCESS: Local PostgreSQL is running on 127.0.0.1:5434!" -ForegroundColor Green
 Write-Host "DATABASE_URL: postgres://portal:portal-dev@127.0.0.1:5434/verification?sslmode=disable`n" -ForegroundColor Cyan

@@ -478,10 +478,23 @@ func (s *Server) registerInit(w http.ResponseWriter, r *http.Request) {
 
 	// Head-email uniqueness — same semantics as PAN.
 	if email := strings.ToLower(strings.TrimSpace(req.HeadEmail)); email != "" {
+		// 1. Check existing active users
+		var existingUserID int64
+		err := tx.QueryRowContext(r.Context(),
+			`SELECT id FROM users WHERE LOWER(TRIM(email)) = $1 AND disabled_at IS NULL LIMIT 1`,
+			email,
+		).Scan(&existingUserID)
+		if err == nil {
+			writeErr(w, http.StatusConflict,
+				"this email is already registered to an active institution administrator")
+			return
+		}
+
+		// 2. Check institution_applications
 		var existingID int64
 		var existingStatus string
-		err := tx.QueryRowContext(r.Context(),
-			`SELECT id, status FROM institution_applications WHERE head_email = $1`,
+		err = tx.QueryRowContext(r.Context(),
+			`SELECT id, status FROM institution_applications WHERE LOWER(TRIM(head_email)) = $1`,
 			email,
 		).Scan(&existingID, &existingStatus)
 		switch {
@@ -506,6 +519,50 @@ func (s *Server) registerInit(w http.ResponseWriter, r *http.Request) {
 				`DELETE FROM institution_applications WHERE id = $1`, existingID,
 			); err != nil {
 				writeErr(w, http.StatusInternalServerError, "cleanup old row (email)")
+				return
+			}
+		}
+	}
+
+	// Head-mobile uniqueness — same semantics as PAN and email.
+	// Must be unique across approved or pending institution applications.
+	if mobile := strings.TrimSpace(req.HeadMobile); mobile != "" {
+		if strings.HasPrefix(mobile, "+91") {
+			mobile = strings.TrimPrefix(mobile, "+91")
+		} else if strings.HasPrefix(mobile, "91") && len(mobile) == 12 {
+			mobile = mobile[2:]
+		}
+		mobile = strings.TrimSpace(mobile)
+		req.HeadMobile = mobile
+
+		var existingID int64
+		var existingStatus string
+		err := tx.QueryRowContext(r.Context(),
+			`SELECT id, status FROM institution_applications WHERE head_mobile = $1`,
+			mobile,
+		).Scan(&existingID, &existingStatus)
+		switch {
+		case errors.Is(err, sql.ErrNoRows):
+		case err != nil:
+			writeErr(w, http.StatusInternalServerError, "db lookup (mobile)")
+			return
+		case existingStatus == "approved":
+			writeErr(w, http.StatusConflict,
+				"this mobile number is already registered to an active institution admin")
+			return
+		case existingStatus == "pending":
+			writeErr(w, http.StatusConflict,
+				"an application with this mobile number is already under review")
+			return
+		default:
+			if err := s.deleteApplicationDocs(r.Context(), tx, existingID); err != nil {
+				writeErr(w, http.StatusInternalServerError, "cleanup old (mobile): "+err.Error())
+				return
+			}
+			if _, err := tx.ExecContext(r.Context(),
+				`DELETE FROM institution_applications WHERE id = $1`, existingID,
+			); err != nil {
+				writeErr(w, http.StatusInternalServerError, "cleanup old row (mobile)")
 				return
 			}
 		}

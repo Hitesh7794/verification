@@ -3,6 +3,7 @@ package db
 import (
 	"database/sql"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -57,49 +58,65 @@ func Seed(d *sql.DB, idx *data.Index) error {
 		orgIDs[c.OrgCode] = orgID
 	}
 
-	// 2. Seed demo users — only if there are no users yet.
-	var userCount int
-	if err := tx.QueryRow(`SELECT COUNT(*) FROM users`).Scan(&userCount); err != nil {
+	// Ensure default demo org GNDU27 exists if no orgs found in data tree
+	if len(orgIDs) == 0 {
+		if _, err := tx.Exec(
+			`INSERT INTO organizations(code, name) VALUES($1, $2) ON CONFLICT (code) DO NOTHING`,
+			"GNDU27", "Guru Nanak Dev University",
+		); err != nil {
+			return err
+		}
+		var gnduID int64
+		if err := tx.QueryRow(`SELECT id FROM organizations WHERE code=$1`, "GNDU27").Scan(&gnduID); err == nil {
+			orgIDs["GNDU27"] = gnduID
+			_, _ = tx.Exec(
+				`INSERT INTO wallets(org_id, balance_paise) VALUES($1, 50000) ON CONFLICT (org_id) DO NOTHING`,
+				gnduID,
+			)
+		}
+	}
+
+	// 2. Ensure superadmin user exists (idempotent, every boot).
+	superHash, err := bcrypt.GenerateFromPassword([]byte("super123"), bcrypt.DefaultCost)
+	if err != nil {
 		return err
 	}
-	if userCount == 0 && len(idx.Centers()) > 0 {
-		centers := idx.Centers()
-		firstOrgID := orgIDs[centers[0].OrgCode]
+	if _, err := tx.Exec(
+		`INSERT INTO users(username, password_hash, role, display_name, activated_at)
+		 VALUES($1, $2, 'superadmin', $3, CURRENT_TIMESTAMP)
+		 ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash, role = EXCLUDED.role`,
+		"super", string(superHash), "System Superadmin",
+	); err != nil {
+		return err
+	}
 
-		mkUser := func(username, pwd, role, display string, orgID *int64) error {
-			hash, err := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
-			if err != nil {
-				return err
-			}
-			// Shared operator (client role) needs the plaintext column
-			// populated so the admin's operators dashboard can surface
-			// it. Human roles (admin/superadmin) intentionally do not
-			// store plaintext — see migration 010.
-			var plaintext any
-			if role == "client" {
-				plaintext = pwd
-			}
-			_, err = tx.Exec(`INSERT INTO users(username,password_hash,password_plaintext,role,org_id,display_name,activated_at)
-			                  VALUES($1,$2,$3,$4,$5,$6,CURRENT_TIMESTAMP)`,
-				username, string(hash), plaintext, role, orgID, display)
-			return err
+	// Seed demo admin & client operator if org is available
+	var firstOrgID *int64
+	for _, oid := range orgIDs {
+		idCopy := oid
+		firstOrgID = &idCopy
+		break
+	}
+
+	if firstOrgID != nil {
+		adminHash, err := bcrypt.GenerateFromPassword([]byte("admin123"), bcrypt.DefaultCost)
+		if err == nil {
+			_, _ = tx.Exec(
+				`INSERT INTO users(username, password_hash, role, org_id, display_name, activated_at)
+				 VALUES($1, $2, 'admin', $3, $4, CURRENT_TIMESTAMP)
+				 ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash, role = EXCLUDED.role`,
+				"admin", string(adminHash), firstOrgID, "Exam Controller",
+			)
 		}
 
-		if err := mkUser("super", "super123", "superadmin", "System Superadmin", nil); err != nil {
-			return err
-		}
-		if err := mkUser("admin", "admin123", "admin", "Exam Controller", &firstOrgID); err != nil {
-			return err
-		}
-		if err := mkUser("client", "client123", "client",
-			centers[0].Name+" Operator", &firstOrgID); err != nil {
-			return err
-		}
-		if len(centers) > 1 {
-			if err := mkUser("client2", "client123", "client",
-				centers[1].Name+" Operator", &firstOrgID); err != nil {
-				return err
-			}
+		clientHash, err := bcrypt.GenerateFromPassword([]byte("client123"), bcrypt.DefaultCost)
+		if err == nil {
+			_, _ = tx.Exec(
+				`INSERT INTO users(username, password_hash, password_plaintext, role, org_id, display_name, activated_at)
+				 VALUES($1, $2, 'client123', 'client', $3, $4, CURRENT_TIMESTAMP)
+				 ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash, role = EXCLUDED.role, password_plaintext = EXCLUDED.password_plaintext`,
+				"client", string(clientHash), firstOrgID, "GNDU Operator",
+			)
 		}
 	}
 
@@ -134,15 +151,44 @@ func Seed(d *sql.DB, idx *data.Index) error {
 		return err
 	}
 
-	// 5. Was: idempotent re-flag of super/ops needing password rotation.
-	//    Removed 2026-08-13 -- the condition `activated_at = created_at`
-	//    stays TRUE forever on the seeded row (nothing updates
-	//    activated_at), so every backend restart flipped
-	//    password_change_required back to 1 and locked the operator
-	//    out of super login. Demo boxes are fine with the seeded
-	//    credential; production deployments should rotate super
-	//    manually and rely on password_change_required only at
-	//    initial-invite time (mig 011 semantics).
+	// 5. Idempotent: seed a default exam board (client) and 3 exams for the catalog
+	var clientID int64
+	err = tx.QueryRow(`SELECT id FROM clients WHERE name = 'National Testing Agency'`).Scan(&clientID)
+	if err == sql.ErrNoRows {
+		err = tx.QueryRow(`
+			INSERT INTO clients(name, notes, visible, closed)
+			VALUES('National Testing Agency', 'Central testing agency for national level entrance examinations', 1, 0)
+			RETURNING id
+		`).Scan(&clientID)
+	}
+	if err != nil && err != sql.ErrNoRows {
+		return err
+	}
+
+	if clientID > 0 {
+		catalogExams := []struct {
+			name     string
+			code     string
+			ref      string
+			fromDays int
+			toDays   int
+		}{
+			{"NEET UG 2026", "NEET-UG-2026", "TV-NEET-2026", -30, 90},
+			{"JEE Main 2026", "JEE-MAIN-2026", "TV-JEE-2026", -15, 60},
+			{"CUET UG 2026", "CUET-UG-2026", "TV-CUET-2026", -5, 45},
+		}
+
+		today := time.Now()
+		for _, ex := range catalogExams {
+			vFrom := today.AddDate(0, 0, ex.fromDays).Format("2006-01-02")
+			vTo := today.AddDate(0, 0, ex.toDays).Format("2006-01-02")
+			_, _ = tx.Exec(`
+				INSERT INTO exams(client_id, name, exam_code, trustview_ref, verification_from, verification_to, visible, closed, requires_face, requires_fp, requires_iris)
+				VALUES($1, $2, $3, $4, $5, $6, 1, 0, 1, 1, 0)
+				ON CONFLICT (exam_code) DO NOTHING
+			`, clientID, ex.name, ex.code, ex.ref, vFrom, vTo)
+		}
+	}
 
 	return tx.Commit()
 }
