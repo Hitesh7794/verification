@@ -82,6 +82,37 @@ func (i *Index) Get(roll string) (*Candidate, bool) {
 	return c, ok
 }
 
+// Upsert overlays a candidate that came from the DB (S3-backed uploads
+// that never touched disk). Merges into any existing row from the disk
+// scan — TRUE flag values only, so a stale disk file still marking
+// HasPhoto=true isn't clobbered to false by a DB row with the default
+// flag values. Callers pass a shell Candidate with just RollNo + the
+// has_* flags they want to flip on.
+//
+// Held under a write lock; safe to call from Server.hydrateIndexFromDB
+// after a disk Refresh().
+func (i *Index) Upsert(roll string, hasPhoto, hasFpImage, hasFpTemplate, hasIris bool) {
+	i.mu.Lock()
+	defer i.mu.Unlock()
+	c := i.byRoll[roll]
+	if c == nil {
+		c = &Candidate{RollNo: roll, OrgCode: "s3", CenterCode: "s3"}
+		i.byRoll[roll] = c
+	}
+	if hasPhoto {
+		c.HasPhoto = true
+	}
+	if hasFpImage {
+		c.HasFpImage = true
+	}
+	if hasFpTemplate {
+		c.HasIsoTpl = true
+	}
+	if hasIris {
+		c.HasIrisBytes = true
+	}
+}
+
 // Refresh rebuilds the index from disk and atomically swaps the
 // internal maps. Called from the biometric-upload handler so newly-
 // uploaded files become visible without a service restart, and

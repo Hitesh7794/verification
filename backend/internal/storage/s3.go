@@ -138,6 +138,67 @@ func ProbeKey(examCode string, verifID int64) string {
 	return fmt.Sprintf("%s/probes/%d.jpg", safeSegment(examCode), verifID)
 }
 
+// Biometric key layout mirrors the disk tree we've had since the CSV
+// upload feature landed — one subdir per modality under the exam.
+// Extensions are preserved as-is (an iris file might be .iso, .k7, or
+// .bmp depending on the operator device, and we've historically kept
+// that distinction so downstream tools can pick a decoder).
+
+// FpImageKey is the S3 key for a fingerprint capture image (raw scan,
+// pre-template-extraction). Example: NEET2/fingerprints/images/20002.bmp
+func FpImageKey(examCode, roll, ext string) string {
+	return fmt.Sprintf("%s/fingerprints/images/%s%s",
+		safeSegment(examCode), safeSegment(roll), normExt(ext))
+}
+
+// FpTemplateKey is the S3 key for an extracted fingerprint template
+// (FMR / ANSI / vendor-specific bytes). Example:
+// NEET2/fingerprints/templates/20002.iso
+func FpTemplateKey(examCode, roll, ext string) string {
+	return fmt.Sprintf("%s/fingerprints/templates/%s%s",
+		safeSegment(examCode), safeSegment(roll), normExt(ext))
+}
+
+// IrisKey is the S3 key for an iris capture. Example:
+// NEET2/iris/20002.k7
+func IrisKey(examCode, roll, ext string) string {
+	return fmt.Sprintf("%s/iris/%s%s",
+		safeSegment(examCode), safeSegment(roll), normExt(ext))
+}
+
+// normExt normalises an incoming extension: lowercase, leading-dot
+// preserved (or added). Empty maps to ".bin" so a caller that lost the
+// extension still gets a valid key.
+func normExt(ext string) string {
+	ext = strings.TrimSpace(strings.ToLower(ext))
+	if ext == "" {
+		return ".bin"
+	}
+	if !strings.HasPrefix(ext, ".") {
+		ext = "." + ext
+	}
+	return ext
+}
+
+// PutBiometric uploads bytes at an already-composed key. Used by the
+// bulk-import handler which computes the key via one of the *Key
+// helpers above based on the request path. Overwrites silently.
+func (c *Client) PutBiometric(ctx context.Context, key string, body []byte, mime string) error {
+	if !c.Enabled() {
+		return ErrDisabled
+	}
+	if mime == "" {
+		mime = "application/octet-stream"
+	}
+	_, err := c.s3c.PutObject(ctx, &s3.PutObjectInput{
+		Bucket:      awsv2.String(c.bucket),
+		Key:         awsv2.String(key),
+		Body:        bytes.NewReader(body),
+		ContentType: awsv2.String(mime),
+	})
+	return err
+}
+
 // DocKey is the S3 key for a KYC document uploaded via the register
 // form. Uses application_id for tenant isolation + doc_id in the
 // filename so re-uploads never collide.

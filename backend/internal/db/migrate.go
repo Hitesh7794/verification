@@ -13,7 +13,7 @@ var schemaSQL string
 // schemaVersion is the version stamped in schema_migrations after the
 // initial schema has been applied. Bump this only when new post-1
 // migrations are added below.
-const schemaVersion = 4
+const schemaVersion = 5
 
 // Migrate applies schema.sql to an empty database, or is a no-op if
 // the schema has already been applied. Safe to call on every startup.
@@ -63,7 +63,54 @@ func Migrate(d *sql.DB) error {
 		}
 	}
 
+	if !applied[5] {
+		if err := applyV5CandidateBiometricFlags(ctx, d); err != nil {
+			return fmt.Errorf("apply v5 candidate biometric flags: %w", err)
+		}
+	}
+
 	return nil
+}
+
+// applyV5CandidateBiometricFlags adds per-modality presence flags on
+// exam_candidates. Historically the runtime derived "does this candidate
+// have a photo / FP / iris?" by walking the local filesystem
+// (data/uploaded/<exam_id>/{photo,fps,iso,iris}/) at Index refresh time.
+// With the S3 migration new uploads no longer touch disk, so the Index
+// can't see them. These flags are the DB-side source of truth going
+// forward — the Index overlays them after the disk walk.
+//
+// All flags default false. Legacy candidates whose files exist on disk
+// stay reachable through the disk walk in scanUploaded/scanCenter, so
+// no backfill is needed at migration time — only new uploads flip the
+// flag. When a bulk backfill is desired, a follow-up script can UPDATE
+// the flags from the S3 ListObjects output.
+func applyV5CandidateBiometricFlags(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmts := []string{
+		`ALTER TABLE exam_candidates ADD COLUMN IF NOT EXISTS has_photo       BOOLEAN NOT NULL DEFAULT false`,
+		`ALTER TABLE exam_candidates ADD COLUMN IF NOT EXISTS has_fp_image    BOOLEAN NOT NULL DEFAULT false`,
+		`ALTER TABLE exam_candidates ADD COLUMN IF NOT EXISTS has_fp_template BOOLEAN NOT NULL DEFAULT false`,
+		`ALTER TABLE exam_candidates ADD COLUMN IF NOT EXISTS has_iris        BOOLEAN NOT NULL DEFAULT false`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.ExecContext(ctx, s); err != nil {
+			return fmt.Errorf("exec %q: %w", firstLine(s), err)
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)`,
+		5, "candidate_biometric_flags",
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // applyV4HeadMobileUniqueness enforces that head_mobile must be unique across

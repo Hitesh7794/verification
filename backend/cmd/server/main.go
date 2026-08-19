@@ -67,6 +67,14 @@ func main() {
 		Cfg:   cfg,
 	})
 
+	// Overlay DB-side biometric flags onto the disk-scanned Index so
+	// candidates whose files live in S3 (post-bulk-upload) are still
+	// discoverable by the runtime. Additive: TRUE flags win, disk
+	// scan's TRUE flags stay for legacy files.
+	if err := srv.HydrateIndexFromDB(context.Background()); err != nil {
+		log.Printf("warning: overlay DB biometric flags: %v", err)
+	}
+
 	// Magic-link table cleanup runs hourly. Deletes rows that are both
 	// used AND older than 30 days (we keep them around briefly for audit
 	// trail), plus unused-but-long-expired rows. Idempotent + tiny — a
@@ -82,15 +90,24 @@ func main() {
 		Addr:              cfg.HTTPAddr,
 		Handler:           srv.Router(),
 		ReadHeaderTimeout: 5 * time.Second,
-		ReadTimeout:       15 * time.Second,
+		// ReadTimeout is the deadline for the ENTIRE request read —
+		// including body. Was 15s, which killed any bulk upload
+		// bigger than what fit in 15 seconds through nginx (roughly
+		// >200 MB on a real operator uplink). 60 min matches the
+		// frontend XHR timeout and the nginx upstream timeouts on
+		// /bulk/, so the whole stack agrees. Slowloris protection
+		// comes from ReadHeaderTimeout above + the reverse-proxy in
+		// front, not this timeout.
+		ReadTimeout: 60 * time.Minute,
 		// WriteTimeout is the deadline for the ENTIRE response write,
-		// not just headers. 30 min accommodates the ~370 MB operator
-		// install bundle over slow connections (e.g. college Wi-Fi at
-		// 1-2 MB/s = 3-6 min). JSON API endpoints all respond in <1s
-		// so they're never affected. Caddy fronts the server and has
+		// not just headers. 60 min accommodates both the ~370 MB
+		// operator install bundle over slow connections and the
+		// long-tail of bulk-upload responses that follow lots of
+		// per-entry S3 PUTs. JSON API endpoints all respond in <1s
+		// so they're never affected. nginx fronts the server and has
 		// its own request+response timeouts + slow-loris protection,
 		// so a long stdlib WriteTimeout is not an exposure.
-		WriteTimeout: 30 * time.Minute,
+		WriteTimeout: 60 * time.Minute,
 		IdleTimeout:  120 * time.Second,
 	}
 

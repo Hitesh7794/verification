@@ -118,6 +118,75 @@ export async function getExamCompleteness(examId) {
   return api(`/superadmin/exams/${examId}/completeness`)
 }
 
+// bulkUploadBiometrics ships a .zip of biometric files for one
+// modality (photos | fp-images | fp-templates | iris) in one request.
+// Backend streams entries into S3 keyed by <exam_code>/<modality>/<roll>.<ext>
+// and flips exam_candidates.has_<modality>=true for each successful roll.
+//
+// Uses XMLHttpRequest instead of fetch because we want upload-progress
+// events for the operator's progress bar. fetch's ReadableStream
+// progress upload isn't broadly supported yet.
+//
+// Returns { promise, cancel } — cancel() aborts the in-flight XHR;
+// the promise rejects with a CanceledError so the caller can silently
+// swallow it without a red banner.
+export function bulkUploadBiometrics(examId, modality, zipFile, onProgress) {
+  const xhr = new XMLHttpRequest()
+  let canceled = false
+  const promise = new Promise((resolve, reject) => {
+    const fd = new FormData()
+    fd.append('file', zipFile)
+    xhr.open('POST', `/api/superadmin/exams/${examId}/bulk/${modality}`)
+    const token = getStoredToken('superadmin')
+    if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
+    xhr.upload.onprogress = (e) => {
+      if (e.lengthComputable && onProgress) {
+        onProgress(Math.round((e.loaded / e.total) * 100))
+      }
+    }
+    xhr.onload = () => {
+      let body
+      try { body = JSON.parse(xhr.responseText) } catch { body = null }
+      if (xhr.status >= 200 && xhr.status < 300) {
+        resolve(body)
+      } else {
+        const err = new Error(body?.error || `HTTP ${xhr.status}`)
+        err.status = xhr.status
+        err.body = body
+        reject(err)
+      }
+    }
+    xhr.onerror = () => {
+      if (canceled) {
+        const err = new Error('canceled')
+        err.canceled = true
+        reject(err)
+        return
+      }
+      reject(new Error('network error while uploading'))
+    }
+    xhr.onabort = () => {
+      const err = new Error('canceled')
+      err.canceled = true
+      reject(err)
+    }
+    xhr.ontimeout = () => reject(new Error('upload timed out'))
+    // Big zips (up to 2 GB) can legitimately take a long time on a
+    // typical centre uplink — a 2 GB upload at ~4 MB/s is ~8 min, at
+    // ~1 MB/s (a slower line) is ~35 min. 60-min ceiling so a slow
+    // but real upload completes, but a genuinely stuck one eventually
+    // gives up rather than hanging the tab forever.
+    // Ceilings to keep aligned: see bulkUploadMaxBytes in the Go
+    // handler and nginx @bulk_upload client_max_body_size.
+    xhr.timeout = 60 * 60 * 1000
+    xhr.send(fd)
+  })
+  return {
+    promise,
+    cancel: () => { canceled = true; try { xhr.abort() } catch {} },
+  }
+}
+
 // Upload one biometric file (photo / fp_image / fp_template / iris)
 // for one candidate. Backend writes to DATA_DIR/uploaded/<exam>/… and
 // refreshes the in-memory index so the file is queryable immediately.

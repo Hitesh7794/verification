@@ -28,6 +28,7 @@ import {
 } from '../../lib/superadmin/examCatalog.js'
 import { uploadExamCSV } from '../../lib/api.js'
 import { dateOnly, dateRange } from '../../lib/dates.js'
+import BulkBiometricUpload from './BulkBiometricUpload.jsx'
 
 // Superadmin > Exam detail — the exam meta, list of enrolled
 // candidates (paginated), CSV upload area, upload history with
@@ -384,6 +385,16 @@ export default function ExamDetail() {
               </div>
             </CardBody>
           </Card>
+        )}
+
+        {/* Bulk-zip upload for each biometric modality. Dynamic per
+            exam's requires_* flags. Feeds S3 directly, no disk hop. */}
+        {exam && (
+          <BulkBiometricUpload
+            examId={id}
+            exam={exam}
+            onUploaded={() => { refreshCompleteness(); refreshCandidates(); }}
+          />
         )}
 
         {/* Biometrics completeness — a small band above the candidates

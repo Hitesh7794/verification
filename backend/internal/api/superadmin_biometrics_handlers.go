@@ -204,6 +204,24 @@ func (s *Server) superadminUploadBiometric(w http.ResponseWriter, r *http.Reques
 				fmt.Fprintf(os.Stderr,
 					"biometric upload: s3 mirror FAILED for exam=%s roll=%s: %v\n",
 					examCode, roll, perr)
+			} else {
+				// Flip the has_photo flag so the DB is the source of
+				// truth for the runtime (via Index overlay at boot
+				// and via Index.Upsert immediately below). Log-only
+				// on failure — S3 has the bytes, disk has the bytes,
+				// only the flag is stale.
+				if _, uerr := s.deps.DB.ExecContext(r.Context(),
+					`UPDATE exam_candidates SET has_photo = true
+					  WHERE exam_id = $1 AND roll_no = $2`,
+					examID, roll,
+				); uerr != nil {
+					fmt.Fprintf(os.Stderr,
+						"biometric upload: has_photo flag update FAILED exam=%d roll=%s: %v\n",
+						examID, roll, uerr)
+				}
+				if s.deps.Index != nil {
+					s.deps.Index.Upsert(roll, true, false, false, false)
+				}
 			}
 		}
 	}

@@ -143,7 +143,10 @@ func (s *Server) Router() http.Handler {
 	r.Use(chimw.RequestID)
 	r.Use(chimw.RealIP)
 	r.Use(chimw.Recoverer)
-	r.Use(skipTimeoutFor(chimw.Timeout(30*time.Second), "/api/downloads/"))
+	r.Use(skipTimeoutFor(chimw.Timeout(30*time.Second),
+		"/api/downloads/",
+		"/bulk/", // superadmin bulk zip upload — 2 GB uploads can take 10+ min
+	))
 	// CORS allowlist comes from config (ALLOWED_ORIGINS env). When unset
 	// we fall back to the Vite dev server URLs so a fresh `go run` against
 	// `npm run dev` Just Works. In production main.go enforces that
@@ -357,6 +360,14 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/superadmin/exams/{id}/candidates",                 s.requireRole("superadmin")(s.superadminListCandidates))
 		r.Get("/api/superadmin/exams/{id}/completeness",               s.requireRole("superadmin")(s.superadminExamCompleteness))
 		r.Post("/api/superadmin/exams/{id}/candidates/{roll}/biometric", s.requireRole("superadmin")(s.superadminUploadBiometric))
+		// Bulk zip upload — one route per modality. Superadmin picks a
+		// .zip on their machine, browser POSTs it here, backend streams
+		// entries straight into S3 keyed by <exam_code>/<modality>/<roll>.<ext>
+		// and flips the has_* flag on exam_candidates. Strict filename
+		// convention (<roll>.<ext>) — bad names land in the per-file
+		// summary as "skipped".
+		r.Post("/api/superadmin/exams/{id}/bulk/{modality}",
+			s.requireRole("superadmin")(s.superadminBulkUpload))
 		r.Post("/api/superadmin/reindex",                              s.requireRole("superadmin")(s.superadminReindex))
 		r.Get("/api/superadmin/exams/{id}/uploads",                    s.requireRole("superadmin")(s.superadminListUploads))
 		r.Get("/api/superadmin/uploads/{upload_id}/raw",               s.requireRole("superadmin")(s.superadminDownloadRawCSV))
@@ -381,18 +392,28 @@ func (s *Server) Router() http.Handler {
 }
 
 // skipTimeoutFor lets a middleware apply globally EXCEPT for a set of
-// URL-path prefixes. Used to keep the 30s request-timeout guard on all
-// JSON endpoints while letting the operator-bundle download (~300 MB
-// streamed via http.ServeContent) run for as long as the client needs.
-// Without this, chi.Timeout wraps the ResponseWriter and cuts off the
+// URL-path patterns. Matches on substring (not just prefix) so we can
+// exempt routes with a dynamic segment in the middle — e.g. "/bulk/"
+// matches "/api/superadmin/exams/12/bulk/photos" without exempting
+// every other endpoint under /api/superadmin/exams/.
+//
+// Existing "/api/downloads/" caller still works: any URL starting
+// with that prefix also contains it, so semantics don't change for
+// prefix-style patterns.
+//
+// Used to keep the 30s request-timeout guard on all JSON endpoints
+// while letting long-running operations run: the operator-bundle
+// download (~300 MB streamed) + bulk biometric uploads (up to 2 GB
+// zips, which can take 10+ minutes on a centre uplink). Without the
+// exemption chi.Timeout wraps the ResponseWriter and cuts off the
 // stream mid-flight, which the reverse proxy sees as an unexpected
 // EOF and the browser reports as ERR_HTTP2_PROTOCOL_ERROR.
-func skipTimeoutFor(mw func(http.Handler) http.Handler, prefixes ...string) func(http.Handler) http.Handler {
+func skipTimeoutFor(mw func(http.Handler) http.Handler, patterns ...string) func(http.Handler) http.Handler {
 	return func(next http.Handler) http.Handler {
 		wrapped := mw(next)
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			for _, p := range prefixes {
-				if strings.HasPrefix(r.URL.Path, p) {
+			for _, p := range patterns {
+				if strings.Contains(r.URL.Path, p) {
 					next.ServeHTTP(w, r)
 					return
 				}
