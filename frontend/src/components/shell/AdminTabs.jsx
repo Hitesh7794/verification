@@ -24,6 +24,7 @@ const tabs = [
   { to: '/admin/my-exams',  label: 'My exams',     end: false },
   { to: '/admin/operators', label: 'Operators',    end: false },
   { to: '/admin/history',   label: 'History',      end: false },
+  { to: '/admin/products',  label: 'Products',     end: false },
   { to: '/admin/downloads', label: 'Downloads',    end: false },
 ]
 

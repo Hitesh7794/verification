@@ -9,6 +9,7 @@ import AdminLogin from './pages/admin/Login.jsx'
 import AdminDashboard from './pages/admin/Dashboard.jsx'
 import AdminHistory from './pages/admin/History.jsx'
 import AdminDownloads from './pages/admin/Downloads.jsx'
+import AdminProducts from './pages/admin/Products.jsx'
 import AdminCatalog from './pages/admin/Catalog.jsx'
 import AdminMyExams from './pages/admin/MyExams.jsx'
 import AdminOperators from './pages/admin/Operators.jsx'
@@ -161,6 +162,14 @@ export default function App() {
             element={
               <RequireRole role="admin">
                 <AdminHistory />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/admin/products"
+            element={
+              <RequireRole role="admin">
+                <AdminProducts />
               </RequireRole>
             }
           />
