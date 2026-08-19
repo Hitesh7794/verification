@@ -726,7 +726,7 @@ function EditExamForm({ exam, onCancel, onSaved }) {
           <div>
             <Label>Biometrics required for verification</Label>
             <p className="text-xs text-slate-500 mb-2">
-              Operators only see capture panels for the biometrics ticked here.
+              Verification agents only see capture panels for the biometrics ticked here.
               At least one must be selected.
             </p>
             <div className="flex flex-wrap gap-4">
