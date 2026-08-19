@@ -16,10 +16,10 @@ import { Link } from 'react-router-dom'
 
 export default function ClientDownloads() {
   return (
-    <AppShell title="Downloads" subtitle="Operator-laptop install bundle">
+    <AppShell title="Downloads" subtitle="Verification agent laptop install bundle">
       <PageHeader
-        title="Operator client installer"
-        subtitle="Use this to install the verification client on a new operator laptop. After install, sign in with the same credentials you used here."
+        title="Verification agent installer"
+        subtitle="Use this to install the verification client on a new verification agent laptop. After install, sign in with the same credentials you used here."
         right={
           <Link to="/institute/operator">
             <Button variant="secondary">Back to verification</Button>

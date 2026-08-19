@@ -512,7 +512,7 @@ export default function ClientDashboard() {
 
   return (
     <AppShell
-      title="Center Operator Portal"
+      title="Center Verification Agent Portal"
       subtitle="Biometric verification workstation"
     >
       {walletEmpty && (
@@ -549,7 +549,7 @@ export default function ClientDashboard() {
             {step === 0 ? (
               <Link
                 to="/institute/operator/downloads"
-                title="Download the install bundle for a new operator laptop"
+                title="Download the install bundle for a new verification agent laptop"
                 className="inline-flex items-center gap-2 rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 transition-colors hover:bg-slate-50 focus:outline-none focus:ring-2 focus:ring-slate-300 focus:ring-offset-1"
               >
                 <svg

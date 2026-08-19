@@ -859,7 +859,7 @@ function NewExamForm({ clientId, onCancel, onCreated }) {
           </FormSection>
 
           {/* Section 3 — biometric requirements */}
-          <FormSection num="3" title="Biometrics" hint="Which biometrics the operator must capture for a candidate to be verified. At least one required.">
+          <FormSection num="3" title="Biometrics" hint="Which biometrics the verification agent must capture for a candidate to be verified. At least one required.">
             <div className="flex flex-wrap gap-4">
               <label className="inline-flex items-center gap-2 text-sm text-slate-700">
                 <input type="checkbox" checked={reqFace} onChange={(e) => setReqFace(e.target.checked)} />

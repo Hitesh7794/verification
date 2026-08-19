@@ -307,10 +307,10 @@ func (s *Server) setOperatorExams(tx *sql.Tx, orgID, userID int64, examIDs []int
 	// two+ would collide with the UNIQUE index from migration 022.
 	// Checking here gives a clean 4xx instead of a raw DB error.
 	if len(examIDs) == 0 {
-		return errors.New("an operator must be assigned to exactly one exam")
+		return errors.New("a verification agent must be assigned to exactly one exam")
 	}
 	if len(examIDs) > 1 {
-		return errors.New("an operator can be assigned to only one exam")
+		return errors.New("a verification agent can be assigned to only one exam")
 	}
 
 	// Sanity: user belongs to org.
@@ -319,7 +319,7 @@ func (s *Server) setOperatorExams(tx *sql.Tx, orgID, userID int64, examIDs []int
 		return fmt.Errorf("operator not found: %w", err)
 	}
 	if !uOrg.Valid || uOrg.Int64 != orgID {
-		return errors.New("operator does not belong to your organisation")
+		return errors.New("verification agent does not belong to your organisation")
 	}
 
 	// Every exam in the incoming list must be subscribed by this org.

@@ -360,7 +360,7 @@ function RecentTable({ recent, loaded }) {
               <tr className="border-b border-warm bg-[#FBF7F0]">
                 <th className="text-left px-5 py-2.5 text-[10px] font-semibold uppercase tracking-widest text-stone-500">Roll</th>
                 <th className="text-left px-3 py-2.5 text-[10px] font-semibold uppercase tracking-widest text-stone-500">Exam / centre</th>
-                <th className="text-left px-3 py-2.5 text-[10px] font-semibold uppercase tracking-widest text-stone-500">Operator</th>
+                <th className="text-left px-3 py-2.5 text-[10px] font-semibold uppercase tracking-widest text-stone-500">Verification Agent</th>
                 <th className="text-left px-3 py-2.5 text-[10px] font-semibold uppercase tracking-widest text-stone-500">Status</th>
                 <th className="text-right px-5 py-2.5 text-[10px] font-semibold uppercase tracking-widest text-stone-500">Time</th>
               </tr>

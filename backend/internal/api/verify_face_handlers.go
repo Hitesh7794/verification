@@ -153,7 +153,7 @@ func (s *Server) faceMatch(w http.ResponseWriter, r *http.Request) {
 		}
 		if examCode == "" {
 			writeErr(w, http.StatusForbidden,
-				"operator is not scoped to any exam")
+				"verification agent is not scoped to any exam")
 			return
 		}
 		galleryBytes, err = s.storage.GetPhotoBytes(r.Context(), examCode, roll)

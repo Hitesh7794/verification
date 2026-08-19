@@ -5,8 +5,8 @@ import { Brand } from '../components/ui/brand.jsx'
 const portals = [
   {
     to: '/institute/operator/login',
-    title: 'Operator Portal',
-    desc: 'For centre operators conducting on-site biometric verification of candidates.',
+    title: 'Verification Agent Portal',
+    desc: 'For centre verification agents conducting on-site biometric verification of candidates.',
     accent: 'bg-indigo-600',
   },
   {
@@ -18,7 +18,7 @@ const portals = [
   {
     to: '/superadmin/login',
     title: 'Superadmin Portal',
-    desc: 'Platform-wide oversight across organisations, exams and operators.',
+    desc: 'Platform-wide oversight across organisations, exams and verification agents.',
     accent: 'bg-slate-800',
   },
 ]

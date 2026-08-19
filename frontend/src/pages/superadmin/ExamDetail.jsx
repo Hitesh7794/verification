@@ -159,7 +159,7 @@ export default function ExamDetail() {
   function askDelete() {
     setDlg({
       title:        `Delete "${exam.name}"?`,
-      body:         'This is permanent. Only allowed if no verifications reference candidates in this exam.\n\nDeleting will also remove all its candidates, centres, CSV uploads, and operator assignments.\n\nUse "End" instead if you want to close it while preserving data.',
+      body:         'This is permanent. Only allowed if no verifications reference candidates in this exam.\n\nDeleting will also remove all its candidates, centres, CSV uploads, and verification agent assignments.\n\nUse "End" instead if you want to close it while preserving data.',
       confirmLabel: 'Delete exam',
       tone:         'danger',
       onConfirm:    async () => { await deleteExam(id); nav(`/superadmin/clients/${exam.client_id}`) },

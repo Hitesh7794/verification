@@ -1,14 +1,11 @@
 package api
 
 import (
-	"crypto/sha256"
 	"database/sql"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -20,20 +17,6 @@ import (
 
 	"github.com/veni/neet-verification/internal/auth"
 )
-
-// Maximum artifact upload size. Captured fingerprint images are <100 KB,
-// photos <500 KB, iris images can hit a couple MB. 5 MB is a comfortable
-// ceiling that still rejects accidental whole-disk uploads.
-const maxArtifactBytes = 5 << 20
-
-// kinds the verification_artifacts.kind CHECK constraint will accept.
-var allowedArtifactKinds = map[string]bool{
-	"captured_face":         true,
-	"captured_fp_image":     true,
-	"captured_fp_template":  true,
-	"captured_iris_left":    true,
-	"captured_iris_right":   true,
-}
 
 // channels the verifications.via column can record. "manual" means the
 // operator made the decision without a passing biometric — kept as a
@@ -181,7 +164,7 @@ func (s *Server) getCandidatePhoto(w http.ResponseWriter, r *http.Request) {
 		}
 		if examCode == "" {
 			writeErr(w, http.StatusForbidden,
-				"operator is not scoped to any exam")
+				"verification agent is not scoped to any exam")
 			return
 		}
 		url, err := s.storage.PresignPhotoURL(r.Context(), examCode, roll, 5*time.Minute)
@@ -260,7 +243,7 @@ type verifyReq struct {
 func (s *Server) createVerification(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r)
 	if claims.OrgID == nil {
-		writeErr(w, http.StatusForbidden, "operator missing org context")
+		writeErr(w, http.StatusForbidden, "verification agent missing org context")
 		return
 	}
 	// (center_id column was dropped in migration 021; verifications
@@ -585,165 +568,6 @@ func (s *Server) findByIdempotencyKey(r *http.Request, key string, userID int64)
 		"status": status,
 		"via":    via.String,
 	}, true
-}
-
-// uploadArtifact stores a captured biometric image/template alongside an
-// existing verification row. Behaviour depends on Cfg.ArtifactRetention:
-//
-//	"none"     — accept the upload, hash and discard
-//	"metadata" — record sha256/size/mime only
-//	"full"     — also persist bytes under Cfg.ArtifactDir
-//
-// The streaming hasher means we never load the whole file into memory; this
-// is what lets a single backend instance handle hundreds of operators
-// uploading captures without ballooning RSS.
-func (s *Server) uploadArtifact(w http.ResponseWriter, r *http.Request) {
-	claims := claimsFrom(r)
-
-	verID, err := parseInt64(chi.URLParam(r, "id"))
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid id")
-		return
-	}
-	_ = claims
-	if !s.operatorOwnsVerification(r, verID) {
-		writeErr(w, http.StatusForbidden, "not your verification")
-		return
-	}
-
-	r.Body = http.MaxBytesReader(w, r.Body, maxArtifactBytes)
-	if err := r.ParseMultipartForm(maxArtifactBytes); err != nil {
-		writeErr(w, http.StatusBadRequest, "multipart parse: "+err.Error())
-		return
-	}
-
-	kind := r.FormValue("kind")
-	if !allowedArtifactKinds[kind] {
-		writeErr(w, http.StatusBadRequest, "invalid kind")
-		return
-	}
-	file, hdr, err := r.FormFile("file")
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "file required")
-		return
-	}
-	defer file.Close()
-
-	mime := hdr.Header.Get("Content-Type")
-	if mime == "" {
-		mime = "application/octet-stream"
-	}
-
-	if s.deps.Cfg.ArtifactRetention == "none" {
-		// Drop on the floor but still 200 so clients don't retry.
-		writeJSON(w, http.StatusOK, map[string]any{"stored": false, "reason": "retention=none"})
-		return
-	}
-
-	h := sha256.New()
-	var size int64
-	var storagePath string
-
-	if s.deps.Cfg.ArtifactRetention == "full" {
-		dir, fname, err := s.artifactPath(verID, kind, hdr.Filename)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "artifact path: "+err.Error())
-			return
-		}
-		if err := os.MkdirAll(dir, 0o755); err != nil {
-			writeErr(w, http.StatusInternalServerError, "mkdir: "+err.Error())
-			return
-		}
-		full := filepath.Join(dir, fname)
-		f, err := os.OpenFile(full, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o644)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "create: "+err.Error())
-			return
-		}
-		// Tee through the hasher so we don't have to read the file twice.
-		size, err = io.Copy(io.MultiWriter(f, h), file)
-		f.Close()
-		if err != nil {
-			os.Remove(full)
-			writeErr(w, http.StatusInternalServerError, "write: "+err.Error())
-			return
-		}
-		storagePath = full
-	} else {
-		// retention=metadata: hash through a discarding writer.
-		size, err = io.Copy(h, file)
-		if err != nil {
-			writeErr(w, http.StatusInternalServerError, "read: "+err.Error())
-			return
-		}
-	}
-
-	sum := hex.EncodeToString(h.Sum(nil))
-
-	var id int64
-	if err := s.deps.DB.QueryRowContext(r.Context(),
-		`INSERT INTO verification_artifacts(verification_id, kind, mime, sha256, size_bytes, storage_path)
-		 VALUES($1,$2,$3,$4,$5,$6)
-		 RETURNING id`,
-		verID, kind, mime, sum, size, nullable(storagePath),
-	).Scan(&id); err != nil {
-		// If we wrote bytes to disk but the DB insert failed, the caller
-		// will retry — leaving an orphan file behind. A sweep job is the
-		// right cleanup; for now we accept this rare failure mode rather
-		// than fragile rollback.
-		writeErr(w, http.StatusInternalServerError, "db error")
-		return
-	}
-
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"id":         id,
-		"sha256":     sum,
-		"size_bytes": size,
-		"stored":     storagePath != "",
-	})
-}
-
-// artifactPath returns the directory and filename for a stored artifact.
-// Files are sharded by date so a single directory never accumulates more
-// than ~1 day of captures.
-func (s *Server) artifactPath(verID int64, kind, original string) (dir, fname string, err error) {
-	now := time.Now().UTC()
-	dir = filepath.Join(
-		s.deps.Cfg.ArtifactDir,
-		fmt.Sprintf("%04d", now.Year()),
-		fmt.Sprintf("%02d", now.Month()),
-		fmt.Sprintf("%02d", now.Day()),
-	)
-	ext := filepath.Ext(original)
-	if ext == "" || len(ext) > 5 {
-		ext = ".bin"
-	}
-	fname = fmt.Sprintf("%d_%s%s", verID, kind, ext)
-	return dir, fname, nil
-}
-
-// operatorOwnsVerification checks the row belongs to the calling operator
-// (or the org/superadmin scope). Without this an operator could attach
-// captures to another center's verifications.
-func (s *Server) operatorOwnsVerification(r *http.Request, verID int64) bool {
-	c := claimsFrom(r)
-	var operatorID int64
-	var orgID int64
-	err := s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT operator_id, org_id FROM verifications WHERE id=$1`, verID,
-	).Scan(&operatorID, &orgID)
-	if err != nil {
-		return false
-	}
-	switch c.Role {
-	case "client":
-		return operatorID == c.UserID
-	case "admin":
-		return c.OrgID != nil && *c.OrgID == orgID
-	case "superadmin":
-		return true
-	}
-	return false
 }
 
 func boolInt(b bool) int {

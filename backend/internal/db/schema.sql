@@ -15,9 +15,6 @@
 --     application layer. A future refactor can switch these to BOOLEAN.
 --   * All defaults use NOW()/CURRENT_TIMESTAMP where the SQLite version
 --     did CURRENT_TIMESTAMP.
---   * The verification_artifacts.verification_id FK in the SQLite dump
---     references a phantom "verifications_old" table (leftover from a
---     table-rebuild migration). Fixed here to reference verifications.
 
 -- schema_migrations is created by Migrate() before applying this file
 -- (that's how the runner detects whether the schema has been applied
@@ -228,25 +225,6 @@ CREATE INDEX idx_verifications_roll        ON verifications(roll_no);
 CREATE INDEX idx_verifications_status      ON verifications(status);
 CREATE UNIQUE INDEX idx_verifications_idempotency
     ON verifications(idempotency_key) WHERE idempotency_key IS NOT NULL;
-
-CREATE TABLE verification_artifacts (
-    id              BIGINT GENERATED ALWAYS AS IDENTITY PRIMARY KEY,
-    verification_id BIGINT NOT NULL REFERENCES verifications(id) ON DELETE CASCADE,
-    kind            TEXT NOT NULL CHECK (kind IN (
-        'captured_face',
-        'captured_fp_image',
-        'captured_fp_template',
-        'captured_iris_left',
-        'captured_iris_right'
-    )),
-    mime            TEXT NOT NULL,
-    sha256          TEXT NOT NULL,
-    size_bytes      BIGINT NOT NULL,
-    storage_path    TEXT,
-    created_at      TIMESTAMPTZ NOT NULL DEFAULT NOW()
-);
-CREATE INDEX idx_artifacts_verification ON verification_artifacts(verification_id);
-CREATE INDEX idx_artifacts_kind         ON verification_artifacts(kind);
 
 -- ─────────────────────────────────────────────────────────────
 --  Wallet + Razorpay

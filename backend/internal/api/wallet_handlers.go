@@ -118,7 +118,7 @@ func (s *Server) resolveOrgID(w http.ResponseWriter, r *http.Request) (int64, bo
 		// with an org_id override. Prevents cross-tenant enumeration
 		// even if a client token somehow reached this endpoint.
 		if claims.OrgID == nil {
-			writeErr(w, http.StatusForbidden, "operator without org context")
+			writeErr(w, http.StatusForbidden, "verification agent without org context")
 			return 0, false
 		}
 		return *claims.OrgID, true

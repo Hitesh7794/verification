@@ -26,7 +26,7 @@ import { getDownloads, downloadOperatorClient } from '../lib/downloads.js'
 //   - The 222+ MB bundle streams via fetch + ReadableStream so the
 //     progress bar reflects real bytes-on-wire, not a fake spinner.
 
-export default function DownloadsPanel({ heading = 'Operator client (Windows)' }) {
+export default function DownloadsPanel({ heading = 'Verification agent client (Windows)' }) {
   const [data, setData] = useState(null)          // { items, last_download? }
   const [loadErr, setLoadErr] = useState('')
   const [busy, setBusy] = useState(false)
@@ -96,7 +96,7 @@ export default function DownloadsPanel({ heading = 'Operator client (Windows)' }
           <CardBody>
             <EmptyState
               title="No installer published yet"
-              body="The portal admin will publish an operator install bundle here once it's ready. Check back shortly."
+              body="The portal admin will publish a verification agent install bundle here once it's ready. Check back shortly."
             />
           </CardBody>
         </Card>
@@ -229,7 +229,7 @@ export default function DownloadsPanel({ heading = 'Operator client (Windows)' }
                   </li>
                   <li>
                     <strong>Sign in</strong> — open Chrome / Edge from the new Desktop shortcut, sign in
-                    with the operator credentials you already have. Plug in the fingerprint device. The
+                    with the verification agent credentials you already have. Plug in the fingerprint device. The
                     device indicator turns green when ready.
                   </li>
                   <li>

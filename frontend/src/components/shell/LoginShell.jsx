@@ -16,7 +16,7 @@ import { Icon } from '../ui/icons.jsx'
 // call sites don't need to change.
 
 const ROLE_LABEL = {
-  client:          'Operator',
+  client:          'Verification Agent',
   admin:           'Administrator',
   superadmin:      'Superadmin',
   ops_admin:       'Operations',

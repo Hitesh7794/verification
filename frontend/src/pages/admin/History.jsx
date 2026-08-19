@@ -225,7 +225,7 @@ export default function AdminHistory() {
                   <th className="text-left px-4 py-2 font-medium">Status</th>
                   <th className="text-left px-4 py-2 font-medium">Via</th>
                   <th className="text-left px-4 py-2 font-medium">Centre</th>
-                  <th className="text-left px-4 py-2 font-medium">Operator</th>
+                  <th className="text-left px-4 py-2 font-medium">Verification Agent</th>
                   <th className="text-right px-4 py-2 font-medium">PDF</th>
                 </tr>
               </thead>

@@ -96,14 +96,14 @@ export default function Operators() {
       <FadeIn>
         <PageHead
           eyebrow="Team"
-          title="Operators"
+          title="Verification Agents"
           right={
             <div className="flex gap-2">
               <Button variant="secondary" onClick={() => { setBulking(v => !v); setCreating(false); setEditing(null) }}>
                 {bulking ? 'Cancel bulk' : 'Bulk upload CSV'}
               </Button>
               <Button onClick={() => { setCreating(v => !v); setBulking(false); setEditing(null) }}>
-                {creating ? 'Cancel' : '+ New operator'}
+                {creating ? 'Cancel' : '+ New verification agent'}
               </Button>
             </div>
           }
@@ -112,7 +112,7 @@ export default function Operators() {
         {bulking && (
           <Card className="mb-4">
             <CardBody>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">Bulk-upload operators from CSV</h3>
+              <h3 className="text-sm font-semibold text-slate-900 mb-1">Bulk-upload verification agents from CSV</h3>
               <p className="text-xs text-slate-500 mb-3">
                 Required columns: <code>username</code>, <code>password</code>, <code>first_name</code>,
                 {' '}<code>last_name</code>, <code>email</code>. Extra columns (<code>phone</code>,
@@ -193,7 +193,7 @@ export default function Operators() {
 
         {subs.length === 0 && (
           <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800">
-            You haven't subscribed to any exams yet — operators need at least one subscribed exam to verify against.{' '}
+            You haven't subscribed to any exams yet — verification agents need at least one subscribed exam to verify against.{' '}
             <Link to="/admin/catalog" className="font-medium text-amber-900 hover:underline">Open catalog →</Link>
           </div>
         )}
@@ -212,9 +212,9 @@ export default function Operators() {
                   <Icon.Plus className="h-5 w-5" />
                 </div>
                 <div>
-                  <h3 className="text-base font-semibold text-ink-900">New operator</h3>
+                  <h3 className="text-base font-semibold text-ink-900">New verification agent</h3>
                   <p className="text-xs text-stone-500 mt-0.5">
-                    A per-operator login with an optional spending cap, date window, and one assigned exam.
+                    A per-agent login with an optional spending cap, date window, and one assigned exam.
                   </p>
                 </div>
               </div>
@@ -234,8 +234,8 @@ export default function Operators() {
         ) : operators.length === 0 && !creating ? (
           <Card><CardBody>
             <div className="p-6 text-center">
-              <p className="text-sm text-slate-500">No operators yet.</p>
-              <p className="text-xs text-slate-400 mt-1">Click <b>New operator</b> to add one.</p>
+              <p className="text-sm text-slate-500">No verification agents yet.</p>
+              <p className="text-xs text-slate-400 mt-1">Click <b>New verification agent</b> to add one.</p>
             </div>
           </CardBody></Card>
         ) : (
@@ -524,7 +524,7 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
       const capPaise = capRupees.trim() ? Math.round(Number(capRupees) * 100) : null
       if (isEdit) {
         if (!isEmailVerified) {
-          setErr('Please verify the operator email with OTP before saving.')
+          setErr('Please verify the verification agent email with OTP before saving.')
           setSaving(false)
           return
         }
@@ -542,7 +542,7 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
         await patchOperator(operator.id, patch)
       } else {
         if (!isEmailVerified) {
-          setErr('Please verify the operator email with OTP before creating.')
+          setErr('Please verify the verification agent email with OTP before creating.')
           setSaving(false)
           return
         }
@@ -587,7 +587,7 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="operator@college.edu"
+            placeholder="agent@college.edu"
             required
             isVerified={isEmailVerified}
             onVerified={(token) => {

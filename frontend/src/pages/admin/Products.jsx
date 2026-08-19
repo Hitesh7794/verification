@@ -60,7 +60,7 @@ export default function Products() {
         <PageHead
           eyebrow="Hardware"
           title="Certified Biometric Products"
-          subtitle="Officially compatible biometric capture devices for center operator workstations."
+          subtitle="Officially compatible biometric capture devices for center verification agent workstations."
         />
 
         {/* Filter Pills */}

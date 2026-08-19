@@ -82,7 +82,7 @@ export default function MyExams() {
                       <th className="px-4 py-2.5">Client</th>
                       <th className="px-4 py-2.5">Window</th>
                       <th className="px-4 py-2.5">Candidates</th>
-                      <th className="px-4 py-2.5">Operators</th>
+                      <th className="px-4 py-2.5">Verification Agents</th>
                       <th className="px-4 py-2.5">Status</th>
                       <th className="px-4 py-2.5 text-right">Actions</th>
                     </tr>

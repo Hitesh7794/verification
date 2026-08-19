@@ -43,7 +43,7 @@ func (s *Server) walletCharge(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 		if claims.OrgID == nil {
-			writeErr(w, http.StatusInternalServerError, "operator missing org context")
+			writeErr(w, http.StatusInternalServerError, "verification agent missing org context")
 			return
 		}
 		orgID := *claims.OrgID
@@ -64,7 +64,7 @@ func (s *Server) walletCharge(next http.HandlerFunc) http.HandlerFunc {
 			   FROM users WHERE id = $1`, claims.UserID,
 		).Scan(&cap, &spent, &vFrom, &vTo)
 		if err != nil && !errors.Is(err, sql.ErrNoRows) {
-			writeErr(w, http.StatusInternalServerError, "operator lookup: "+err.Error())
+			writeErr(w, http.StatusInternalServerError, "verification agent lookup: "+err.Error())
 			return
 		}
 		today := time.Now().UTC().Format("2006-01-02")
@@ -110,7 +110,7 @@ func (s *Server) walletCharge(next http.HandlerFunc) http.HandlerFunc {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusPaymentRequired)
 			_, _ = w.Write([]byte(fmt.Sprintf(
-				`{"error":"operator spending cap reached; ask your admin to raise it","spent_paise":%d,"cap_paise":%d,"fee_paise":%d}`,
+				`{"error":"verification agent spending cap reached; ask your admin to raise it","spent_paise":%d,"cap_paise":%d,"fee_paise":%d}`,
 				spent, cap.Int64, fee)))
 			return
 		}

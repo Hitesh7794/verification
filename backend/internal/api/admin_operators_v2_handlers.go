@@ -155,7 +155,7 @@ func (s *Server) adminGetOperator(w http.ResponseWriter, r *http.Request) {
 	op, err := s.loadOperatorForOrg(r, orgID, id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
-			writeErr(w, http.StatusNotFound, "operator not found")
+			writeErr(w, http.StatusNotFound, "verification agent not found")
 			return
 		}
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -277,7 +277,7 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 	// Validate email OTP proof token if OTP store is active
 	if s.otpStore != nil && !strings.EqualFold(s.deps.Cfg.AppEnv, "test") {
 		if req.EmailOTPToken == "" {
-			writeErr(w, http.StatusBadRequest, "Operator email must be verified with OTP before creating")
+			writeErr(w, http.StatusBadRequest, "Verification agent email must be verified with OTP before creating")
 			return
 		}
 		if err := s.otpStore.ValidateProofToken("operator_creation", req.Email, req.EmailOTPToken); err != nil {
@@ -374,7 +374,7 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 			defer cancel()
 			if err := sender.Send(ctx, email.Message{
 				To:      to,
-				Subject: "Your Verification Portal operator account",
+				Subject: "Your Verification Portal verification agent account",
 				Body:    body,
 			}); err != nil {
 				log.Printf("welcome email to %s: %v", to, err)
@@ -431,7 +431,7 @@ func (s *Server) adminPatchOperator(w http.ResponseWriter, r *http.Request) {
 	var ownedByOrg int64
 	if err := tx.QueryRow(db.Q(`SELECT COUNT(*) FROM users WHERE id = $1 AND org_id = $2 AND role = 'client'`),
 		id, orgID).Scan(&ownedByOrg); err != nil || ownedByOrg == 0 {
-		writeErr(w, http.StatusNotFound, "operator not found")
+		writeErr(w, http.StatusNotFound, "verification agent not found")
 		return
 	}
 
@@ -478,7 +478,7 @@ func (s *Server) adminPatchOperator(w http.ResponseWriter, r *http.Request) {
 		emailChanged := !currentEmail.Valid || !strings.EqualFold(strings.TrimSpace(currentEmail.String), e)
 		if emailChanged && s.otpStore != nil && !strings.EqualFold(s.deps.Cfg.AppEnv, "test") {
 			if req.EmailOTPToken == "" {
-				writeErr(w, http.StatusBadRequest, "Operator email must be verified with OTP before saving")
+				writeErr(w, http.StatusBadRequest, "Verification agent email must be verified with OTP before saving")
 				return
 			}
 			if err := s.otpStore.ValidateProofToken("operator_creation", e, req.EmailOTPToken); err != nil {
@@ -615,7 +615,7 @@ func (s *Server) setOperatorDisabled(w http.ResponseWriter, r *http.Request, dis
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
-		writeErr(w, http.StatusNotFound, "operator not found")
+		writeErr(w, http.StatusNotFound, "verification agent not found")
 		return
 	}
 	action := "operator.enable"

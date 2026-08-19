@@ -22,7 +22,7 @@ const tabs = [
   { to: '/admin',           label: 'Overview',     end: true  },
   { to: '/admin/catalog',   label: 'Exam catalog', end: false },
   { to: '/admin/my-exams',  label: 'My exams',     end: false },
-  { to: '/admin/operators', label: 'Operators',    end: false },
+  { to: '/admin/operators', label: 'Verification Agents',    end: false },
   { to: '/admin/history',   label: 'History',      end: false },
   { to: '/admin/products',  label: 'Products',     end: false },
   { to: '/admin/downloads', label: 'Downloads',    end: false },

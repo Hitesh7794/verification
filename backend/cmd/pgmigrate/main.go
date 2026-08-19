@@ -46,7 +46,6 @@ var tables = []struct {
 	{"organization_exam_subscriptions", false}, // composite PK
 	{"operator_exams", false},                  // composite PK
 	{"verifications", true},
-	{"verification_artifacts", true},
 	{"wallets", false}, // PK is org_id (not identity)
 	{"wallet_transactions", true},
 	{"razorpay_orders", false}, // PK is razorpay_order_id (text)

@@ -664,7 +664,7 @@ func buildApprovalEmail(institutionName, headName, username, link, note string) 
 	if strings.TrimSpace(note) != "" {
 		fmt.Fprintf(&b, "Reviewer's note: %s\n\n", note)
 	}
-	b.WriteString("Once you set a password, you can sign in at /admin/login and create operator accounts for your centre staff.\n\n")
+	b.WriteString("Once you set a password, you can sign in at /admin/login and create verification agent accounts for your centre staff.\n\n")
 	b.WriteString("If you didn't apply for an account, please ignore this email.\n")
 	return b.String()
 }

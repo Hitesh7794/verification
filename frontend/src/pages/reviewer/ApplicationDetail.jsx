@@ -106,7 +106,7 @@ export default function ReviewerApplicationDetail() {
   }, [app, activeDocId])
 
   async function approve() {
-    if (!confirm('Approve this institution? This creates an admin account and emails them an activation link. The operator credential is shown once — save it before you close this page.')) return
+    if (!confirm('Approve this institution? This creates an admin account and emails them an activation link. The verification agent credential is shown once — save it before you close this page.')) return
     setReviewing(true)
     setActionErr('')
     try {
@@ -433,8 +433,8 @@ function ApprovalResultCard({ result }) {
           <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
             <CredBlock label="Admin username" value={result.admin_username} mono />
             <CredBlock label="Magic link (one-time)" value={result.magic_link_url} link />
-            <CredBlock label="Operator username" value={result.operator_username} mono />
-            <CredBlock label="Operator password" value={result.operator_password} mono warn />
+            <CredBlock label="Verification agent username" value={result.operator_username} mono />
+            <CredBlock label="Verification agent password" value={result.operator_password} mono warn />
           </div>
         </div>
       </div>

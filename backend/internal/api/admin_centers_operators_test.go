@@ -65,7 +65,6 @@ func twoOrgServer(t *testing.T) (*Server, orgFixture, orgFixture) {
 	cfg := config.Config{
 		HTTPAddr:                ":0",
 		JWTSecret:               "test-secret",
-		ArtifactRetention:       "metadata",
 		ArtifactDir:             filepath.Join(tmp, "artifacts"),
 	}
 	s := NewServer(Deps{DB: d, Index: idx, JWT: jwt, Cfg: cfg})
@@ -224,7 +223,6 @@ func approvalTestServer(t *testing.T) *Server {
 	jwt := auth.NewJWTService("test-secret", time.Hour)
 	cfg := config.Config{
 		JWTSecret:         "test-secret",
-		ArtifactRetention: "metadata",
 		ArtifactDir:       filepath.Join(tmp, "artifacts"),
 	}
 	return NewServer(Deps{DB: d, Index: idx, JWT: jwt, Cfg: cfg})

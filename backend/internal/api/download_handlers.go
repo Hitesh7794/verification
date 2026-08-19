@@ -247,7 +247,7 @@ func (s *Server) adminDownloadOperatorClient(w http.ResponseWriter, r *http.Requ
 	}
 	item, path, err := s.findOperatorClient()
 	if errors.Is(err, errNoOperatorClient) {
-		writeErr(w, http.StatusNotFound, "no operator client bundle published yet")
+		writeErr(w, http.StatusNotFound, "no verification agent client bundle published yet")
 		return
 	}
 	if err != nil {

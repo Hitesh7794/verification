@@ -121,7 +121,7 @@ export default function SuperDashboard() {
             hint="View list ↓"
           />
           <BigStat
-            label="Operators & staff"
+            label="Verification agents & staff"
             value={userCount}
             loaded={loaded}
             delay={0.15}

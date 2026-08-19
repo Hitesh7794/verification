@@ -50,13 +50,10 @@ type Config struct {
 	// on the server side for those anymore.
 	IrisMatchThresholdDefault float64
 
-	// ArtifactRetention controls whether the backend accepts and stores
-	// captured face/fp/iris bytes alongside the verification row.
-	//   "none"     — drop on receipt, no metadata kept
-	//   "metadata" — record sha256/size/mime but discard bytes
-	//   "full"     — store bytes under ArtifactDir
-	ArtifactRetention string
-	ArtifactDir       string
+	// ArtifactDir is where probe photos (attached to a verification for
+	// the PDF receipt) land on disk. See verify_candidate_handlers.go
+	// promoteProbeIfPending.
+	ArtifactDir string
 
 	// TrustView hosted compare API (v1.trustview.in). Single endpoint
 	// replaces the on-prem face + fingerprint matchers and the operator-
@@ -189,7 +186,6 @@ func Load() Config {
 		AllowedOrigins:            envOrigins("ALLOWED_ORIGINS"),
 		PublicBaseURL:             strings.TrimRight(envOr("PUBLIC_BASE_URL", ""), "/"),
 		IrisMatchThresholdDefault: envFloat("IRIS_MATCH_THRESHOLD", 0.6),
-		ArtifactRetention:         envOr("ARTIFACT_RETENTION", "none"),
 		ArtifactDir:               envOr("ARTIFACT_DIR", "artifacts"),
 		TrustViewBaseURL:          envOr("TRUSTVIEW_BASE_URL", "https://v1.trustview.in"),
 		TrustViewToken:            envOr("TRUSTVIEW_TOKEN", ""),
