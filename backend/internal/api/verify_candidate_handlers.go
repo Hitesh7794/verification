@@ -161,7 +161,45 @@ func (s *Server) getCandidateFPTemplate(w http.ResponseWriter, r *http.Request) 
 func (s *Server) getCandidatePhoto(w http.ResponseWriter, r *http.Request) {
 	roll := chi.URLParam(r, "roll")
 	c, ok := s.deps.Index.Get(roll)
-	if !ok || !c.HasPhoto {
+	if !ok {
+		writeErr(w, http.StatusNotFound, "photo not found")
+		return
+	}
+
+	// PHOTOS_BACKEND=s3: mint a 5-minute presigned URL and 302 the
+	// browser at it. The bytes never touch our EC2 — big win for
+	// bandwidth once a testing centre has many operators viewing
+	// photos in parallel. Auth is enforced HERE (requireRole gate on
+	// the route) before we hand out the signed URL, so an
+	// unauthenticated browser still gets 401 upstream.
+	if s.deps.Cfg.PhotosBackend == "s3" && s.storage != nil && s.storage.Enabled() {
+		examCode, err := s.resolveExamCodeForOperator(r)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError,
+				"could not resolve exam scope: "+err.Error())
+			return
+		}
+		if examCode == "" {
+			writeErr(w, http.StatusForbidden,
+				"operator is not scoped to any exam")
+			return
+		}
+		url, err := s.storage.PresignPhotoURL(r.Context(), examCode, roll, 5*time.Minute)
+		if err != nil {
+			writeErr(w, http.StatusBadGateway,
+				"could not presign photo url: "+err.Error())
+			return
+		}
+		// 302 lets the browser follow to S3 directly. Cache-Control
+		// on the redirect itself is 0 so the browser re-hits our
+		// auth check each time the operator revisits the page.
+		w.Header().Set("Cache-Control", "no-store")
+		http.Redirect(w, r, url, http.StatusFound)
+		return
+	}
+
+	// Disk fallback (dev + prod during migration window).
+	if !c.HasPhoto {
 		writeErr(w, http.StatusNotFound, "photo not found")
 		return
 	}

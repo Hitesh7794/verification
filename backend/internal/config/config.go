@@ -72,6 +72,19 @@ type Config struct {
 	// operator flow refuses to start.
 	LuxandBaseURL string // default http://127.0.0.1:8041
 
+	// S3 bucket holding enrolled candidate photos and KYC documents.
+	// Empty → storage is disabled and all read/write paths fall back
+	// to local filesystem (dev machines without AWS credentials).
+	// See internal/storage/s3.go for the key layout.
+	S3Bucket string // e.g. "trustview-verification-portal"
+	S3Region string // e.g. "ap-south-1"
+
+	// Toggle for the migration window. "disk" (default) reads photos
+	// from the filesystem the way we've always done; "s3" reads via
+	// storage.Client. Superadmin uploads keep dual-writing to both
+	// so we can flip back safely without data loss.
+	PhotosBackend string // "disk" | "s3"
+
 	// Liveness pass age. If more than this many seconds pass between
 	// a passing liveness check and the face-match POST, we make the
 	// operator redo the liveness step. Long enough for a slow user,
@@ -182,6 +195,9 @@ func Load() Config {
 		TrustViewToken:            envOr("TRUSTVIEW_TOKEN", ""),
 		LuxandBaseURL:             envOr("LUXAND_BASE_URL", "http://127.0.0.1:8041"),
 		LivenessMaxAgeSeconds:     envInt("LIVENESS_MAX_AGE_SECONDS", 90),
+		S3Bucket:                  envOr("S3_BUCKET", ""),
+		S3Region:                  envOr("S3_REGION", "ap-south-1"),
+		PhotosBackend:             envOr("PHOTOS_BACKEND", "disk"),
 		RazorpayKeyID:             envOr("RAZORPAY_KEY_ID", ""),
 		RazorpayKeySecret:         envOr("RAZORPAY_KEY_SECRET", ""),
 		RazorpayWebhookSecret:     envOr("RAZORPAY_WEBHOOK_SECRET", ""),

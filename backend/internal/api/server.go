@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"database/sql"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -20,6 +21,7 @@ import (
 	"github.com/veni/neet-verification/internal/otp"
 	"github.com/veni/neet-verification/internal/razorpay"
 	"github.com/veni/neet-verification/internal/sms"
+	"github.com/veni/neet-verification/internal/storage"
 	"github.com/veni/neet-verification/internal/trustview"
 	"github.com/veni/neet-verification/internal/wallet"
 )
@@ -35,6 +37,7 @@ type Server struct {
 	deps       Deps
 	trustview  *trustview.Client // optional; nil = TRUSTVIEW_TOKEN empty, biometric compare handlers return 503
 	luxand     *luxand.Client    // active-liveness only; nil-safe (client returns ErrDisabled)
+	storage    *storage.Client   // S3 for photos + KYC docs; nil = disabled (dev) — every method is nil-safe
 	wallet     *wallet.Store     // optional; nil disables /api/wallet/* + candidate charge
 	razorpayCl *razorpay.Client  // optional; nil disables Razorpay deposit flow (admin_credit still works)
 
@@ -69,6 +72,29 @@ func NewServer(d Deps) *Server {
 	s.luxand = luxand.New(luxand.Config{
 		BaseURL: d.Cfg.LuxandBaseURL,
 	})
+	// S3 storage. Nil-safe — if S3_BUCKET is empty (dev machines
+	// without AWS creds) the client is nil and the disk fallback stays
+	// in effect. Boot-time HeadBucket probe surfaces a bad role or
+	// wrong-region config LOUD instead of silently on the first
+	// photo request.
+	if cli, err := storage.New(context.Background(), storage.Config{
+		Bucket: d.Cfg.S3Bucket,
+		Region: d.Cfg.S3Region,
+	}); err != nil {
+		log.Printf("storage: init failed (%s region=%s): %v — falling back to disk",
+			d.Cfg.S3Bucket, d.Cfg.S3Region, err)
+	} else if cli != nil {
+		s.storage = cli
+		ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+		if perr := s.storage.Probe(ctx); perr != nil {
+			log.Printf("storage: HeadBucket probe failed on %s: %v — the role attached to this instance may lack s3:ListBucket or the bucket doesn't exist",
+				s.storage.Bucket(), perr)
+		} else {
+			log.Printf("storage: S3 ready (bucket=%s region=%s photos_backend=%s)",
+				s.storage.Bucket(), d.Cfg.S3Region, d.Cfg.PhotosBackend)
+		}
+		cancel()
+	}
 	// Wallet store always wires up (it's just a thin DB wrapper); the
 	// candidate-charge middleware below short-circuits cleanly when
 	// the per-deployment fee is 0, so deployments that don't want the

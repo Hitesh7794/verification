@@ -4,6 +4,9 @@ import java.lang.reflect.Constructor;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
 /**
  * Reflective wrapper around Luxand's {@code Luxand.FSDK} class. Reflection
  * is deliberate: the FaceSDK JAR + its native {@code libfsdk.so} are
@@ -35,6 +38,8 @@ import java.lang.reflect.Method;
  * </pre>
  */
 public final class LuxandFaceProvider implements FaceProvider {
+
+    private static final Logger LOG_LIVENESS = LoggerFactory.getLogger("liveness");
 
     // FSDK error codes worth surfacing distinctly (taken from FSDK.java).
     private static final int FSDKE_OK              = 0;
@@ -201,25 +206,37 @@ public final class LuxandFaceProvider implements FaceProvider {
 
         Object tracker = newHTracker();
         try {
-            // One SetTrackerMultipleParameters call is faster than a
-            // dozen SetTrackerParameters + reduces the risk of a stray
-            // typo in one parameter silently disabling detection.
+            // Only turn on what we actually need. Leave detector defaults
+            // alone — the ones I originally overrode (FaceDetectionThreshold=3,
+            // InternalResizeWidth=384) were producing FacesFound=0 on real
+            // webcam frames AND known-good enrolled photos. The SDK defaults
+            // (5 and 256 respectively) detect faces reliably.
+            //
+            // HandleArbitraryRotations=true is friendlier for a laptop
+            // webcam where users tilt their heads slightly — costs a bit
+            // of CPU per frame, no accuracy downside.
+            // Keep passive liveness smoothed (it's a slow signal — smoothing
+            // reduces per-frame flicker) but leave EyesOpen RAW. A real
+            // blink lasts ~2-3 frames at 10 fps; temporally smoothing it
+            // averages the dip out and blink detection silently stops
+            // working. First version had smoothing on and produced logs
+            // like "blinks=0 eyes_range=[0.87, 0.94]" — you can't see a
+            // 200 ms eye closure through a 4-frame moving average.
             int errPos = setTrackerMultipleParameters(tracker,
                 "DetectLiveness=true;"
                 + "DetectExpression=true;"
                 + "DetermineFaceRotationAngle=true;"
-                + "HandleArbitraryRotations=false;"
-                + "InternalResizeWidth=384;"
-                + "FaceDetectionThreshold=3;"
+                + "HandleArbitraryRotations=true;"
                 + "SmoothAttributeLiveness=true;"
-                + "SmoothAttributeExpressionEyesOpen=true;"
-                + "AttributeExpressionEyesOpenSmoothingTemporal=6;"
-                + "AttributeLivenessSmoothingAlpha=0.4;"
+                + "SmoothAttributeExpressionEyesOpen=false;"
+                + "AttributeLivenessSmoothingAlpha=0.5;"
             );
             if (errPos >= 0) {
                 throw new FaceException("-1",
                     "SetTrackerMultipleParameters rejected parameter #" + errPos);
             }
+            LOG_LIVENESS.info("liveness tracker created, first_frame_bytes={}",
+                frames[0] == null ? 0 : frames[0].length);
 
             int n = frames.length;
             float[] passive = new float[n];
@@ -272,6 +289,17 @@ public final class LuxandFaceProvider implements FaceProvider {
                 }
             }
 
+            // Log stats we can tune thresholds from — mean/min/max per
+            // stream plus a compact series so a "why didn't my blink
+            // count?" bug can be diagnosed from prod logs alone.
+            float pMean = mean(passive), pMin = min(passive), pMax = max(passive);
+            float eMean = mean(eyes),    eMin = min(eyes),    eMax = max(eyes);
+            LOG_LIVENESS.info(
+                "liveness done: frames={} faces={} passive[mean={},min={},max={}] eyes[mean={},min={},max={}] eyes_series={}",
+                n, found,
+                fmt(pMean), fmt(pMin), fmt(pMax),
+                fmt(eMean), fmt(eMin), fmt(eMax),
+                compactSeries(eyes));
             return new LivenessSignals(passive, eyes, yaw, found);
         } finally {
             try {
@@ -344,6 +372,37 @@ public final class LuxandFaceProvider implements FaceProvider {
             throw new FaceException("-1",
                 "could not read FSDK_FaceTemplate.template: " + t.getMessage(), t);
         }
+    }
+
+    private static float mean(float[] xs) {
+        double s = 0; int n = 0;
+        for (float x : xs) if (!Float.isNaN(x)) { s += x; n++; }
+        return n == 0 ? Float.NaN : (float) (s / n);
+    }
+    private static float min(float[] xs) {
+        float m = Float.POSITIVE_INFINITY;
+        for (float x : xs) if (!Float.isNaN(x) && x < m) m = x;
+        return m == Float.POSITIVE_INFINITY ? Float.NaN : m;
+    }
+    private static float max(float[] xs) {
+        float m = Float.NEGATIVE_INFINITY;
+        for (float x : xs) if (!Float.isNaN(x) && x > m) m = x;
+        return m == Float.NEGATIVE_INFINITY ? Float.NaN : m;
+    }
+    private static String fmt(float v) {
+        if (Float.isNaN(v)) return "NaN";
+        return String.format("%.2f", v);
+    }
+    /** Compact "0.9,0.9,0.8,0.4,0.2,0.7,0.9" style series for logs. */
+    private static String compactSeries(float[] xs) {
+        StringBuilder sb = new StringBuilder(xs.length * 5);
+        sb.append('[');
+        for (int i = 0; i < xs.length; i++) {
+            if (i > 0) sb.append(',');
+            sb.append(Float.isNaN(xs[i]) ? "-" : String.format("%.2f", xs[i]));
+        }
+        sb.append(']');
+        return sb.toString();
     }
 
     private Object newHTracker() throws FaceException {

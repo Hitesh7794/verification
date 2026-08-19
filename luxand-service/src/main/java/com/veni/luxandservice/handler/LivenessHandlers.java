@@ -59,13 +59,16 @@ public final class LivenessHandlers {
     private static final float PASSIVE_PER_FRAME_FLOOR = 0.20f; // worst frame
 
     /**
-     * Eye-close threshold. FSDK's smoothed EyesOpen sits near ~0.9 for
-     * a wide-open eye and drops toward ~0.2 during a blink. A crossing
-     * below CLOSE_TH, followed by a return above OPEN_TH, counts as
-     * one blink.
+     * Eye-close threshold. FSDK's EyesOpen (with per-frame smoothing
+     * DISABLED so a real blink actually shows up in the series) sits
+     * near ~0.9 for a wide-open eye and dips during a blink. A cross
+     * below CLOSE_TH followed by a return above OPEN_TH counts as one
+     * blink. Loosened from 0.35/0.70 → 0.50/0.75 after v1.1.2 field
+     * testing showed natural blinks dipping only to ~0.4-0.5 at 10 fps
+     * capture, not the 0.2 the paper values assume.
      */
-    private static final float EYES_CLOSE_TH = 0.35f;
-    private static final float EYES_OPEN_TH  = 0.70f;
+    private static final float EYES_CLOSE_TH = 0.50f;
+    private static final float EYES_OPEN_TH  = 0.75f;
 
     private final FaceProvider provider;
 

@@ -317,19 +317,20 @@ func (s *Server) superadminDownloadDoc(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "db read")
 		return
 	}
-	f, err := os.Open(storagePath)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "file open")
-		return
-	}
-	defer f.Close()
 	w.Header().Set("Content-Type", mime)
 	// Inline so PDF renders in the browser tab; the filename hints the
 	// "save as" name if the superadmin chooses to download.
 	w.Header().Set("Content-Disposition",
 		fmt.Sprintf(`inline; filename="%s"`, safeFilename(original)))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	_, _ = io.Copy(w, f)
+	if err := s.streamDocBytes(w, r, storagePath); err != nil {
+		// Header hasn't been fully sent yet if we didn't write body,
+		// but be defensive: caller already saw content-type. Log and
+		// return — writing an error JSON after headers would produce
+		// a corrupt response.
+		fmt.Fprintf(os.Stderr,
+			"superadminDownloadDoc: stream failed doc=%d: %v\n", docID, err)
+	}
 }
 
 // safeFilename strips characters that could escape the Content-
@@ -339,6 +340,44 @@ func (s *Server) superadminDownloadDoc(w http.ResponseWriter, r *http.Request) {
 func safeFilename(s string) string {
 	r := strings.NewReplacer(`"`, "", `\`, "", "\n", "", "\r", "")
 	return r.Replace(s)
+}
+
+// streamDocBytes serves the bytes at storage_path to the response. The
+// path is either an "s3://…" URI (new S3-backed rows) or an absolute
+// filesystem path (legacy disk rows) — we discriminate on the s3://
+// prefix. Both download handlers (superadmin + client reviewer) route
+// through here so the storage transition is invisible to their code.
+//
+// KYC docs are NOT presigned-redirected the way photos are — an audit
+// review pulling PANs and authorization letters should always flow
+// through our backend so access is logged, cache-controlled, and
+// cannot be re-shared as a bare S3 link that outlives the reviewer's
+// session. Photos are lower-risk (already-published faces) and get
+// the presign to save bandwidth.
+func (s *Server) streamDocBytes(w http.ResponseWriter, r *http.Request, storagePath string) error {
+	if strings.HasPrefix(storagePath, "s3://") {
+		if s.storage == nil || !s.storage.Enabled() {
+			writeErr(w, http.StatusServiceUnavailable,
+				"storage disabled — this document lives in s3 but S3_BUCKET is not configured on this deployment")
+			return fmt.Errorf("s3 disabled but doc URI is %s", storagePath)
+		}
+		body, err := s.storage.GetDocBytes(r.Context(), storagePath)
+		if err != nil {
+			writeErr(w, http.StatusBadGateway,
+				"could not read document from storage: "+err.Error())
+			return err
+		}
+		_, err = w.Write(body)
+		return err
+	}
+	f, err := os.Open(storagePath)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "file open")
+		return err
+	}
+	defer f.Close()
+	_, err = io.Copy(w, f)
+	return err
 }
 
 // ----- POST /api/superadmin/applications/{id}/approve -----

@@ -28,6 +28,7 @@ package api
 
 import (
 	"archive/zip"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -35,6 +36,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -81,13 +83,21 @@ func (s *Server) superadminUploadBiometric(w http.ResponseWriter, r *http.Reques
 		return
 	}
 
-	// Verify the candidate actually belongs to this exam. Without this,
-	// a superadmin could pollute an exam bucket with unrelated rolls.
-	var candName string
+	// Verify the candidate actually belongs to this exam AND pull the
+	// exam_code in the same round-trip — the S3 dual-write below keys
+	// on exam_code (not exam_id), which is what the operator-side face-
+	// match handler resolves through operator_exams.
+	var (
+		candName string
+		examCode string
+	)
 	err = s.deps.DB.QueryRowContext(r.Context(),
-		db.Q(`SELECT name FROM exam_candidates WHERE exam_id = ? AND roll_no = ?`),
+		db.Q(`SELECT c.name, e.exam_code
+		        FROM exam_candidates c
+		        JOIN exams e ON e.id = c.exam_id
+		       WHERE c.exam_id = ? AND c.roll_no = ?`),
 		examID, roll,
-	).Scan(&candName)
+	).Scan(&candName, &examCode)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "candidate not enrolled in this exam")
 		return
@@ -166,6 +176,36 @@ func (s *Server) superadminUploadBiometric(w http.ResponseWriter, r *http.Reques
 		// Log-and-continue — the file is on disk regardless, and the
 		// next successful upload (or a manual /reindex) will pick it up.
 		fmt.Fprintf(os.Stderr, "biometric upload: reindex failed: %v\n", err)
+	}
+
+	// Dual-write to S3 for the photo kind — face-match reads from S3
+	// when PHOTOS_BACKEND=s3, so a fresh upload has to land there too
+	// or the operator would 404 on the very next lookup. Kinds other
+	// than photo aren't in scope for the S3 migration yet (FP
+	// templates + iris stay on disk until the follow-up pass).
+	//
+	// We read the just-written file back rather than replaying the
+	// multipart body — file is small (~200 KB gallery photo) and this
+	// keeps the atomic-rename dance the sole source of truth for
+	// what actually got saved.
+	if kind == "photo" && s.storage != nil && s.storage.Enabled() {
+		if bodyBytes, rerr := os.ReadFile(finalPath); rerr == nil {
+			mime := "image/jpeg"
+			if ext == ".png" {
+				mime = "image/png"
+			}
+			ctx, cancel := context.WithTimeout(r.Context(), 15*time.Second)
+			perr := s.storage.PutPhoto(ctx, examCode, roll, bodyBytes, mime)
+			cancel()
+			if perr != nil {
+				// Log-and-continue: disk copy is safe, but the
+				// operator MUST know so they can retry or fall back
+				// to PHOTOS_BACKEND=disk while we investigate.
+				fmt.Fprintf(os.Stderr,
+					"biometric upload: s3 mirror FAILED for exam=%s roll=%s: %v\n",
+					examCode, roll, perr)
+			}
+		}
 	}
 
 	s.auditFromRequest(r, "biometric.upload", "exam_candidate", examID, map[string]any{

@@ -816,6 +816,13 @@ func (s *Server) registerUploadDoc(w http.ResponseWriter, r *http.Request) {
 
 	sum := hex.EncodeToString(h.Sum(nil))
 
+	// storage_path is what download handlers switch on:
+	//   "s3://…"  → new S3-backed row (fetched via storage.GetDocBytes)
+	//   "/…"      → legacy disk row  (fetched via os.Open)
+	// New rows go straight to S3 when the bucket is configured. Insert
+	// with the disk path first, then flip to s3:// after a successful
+	// upload so a mid-flight failure leaves the row pointing at bytes
+	// that actually exist.
 	var docID int64
 	if err := s.deps.DB.QueryRowContext(r.Context(),
 		`INSERT INTO institution_application_documents(
@@ -829,6 +836,41 @@ func (s *Server) registerUploadDoc(w http.ResponseWriter, r *http.Request) {
 		os.Remove(fullPath)
 		writeErr(w, http.StatusInternalServerError, "db insert: "+err.Error())
 		return
+	}
+
+	if s.storage != nil && s.storage.Enabled() {
+		body, rerr := os.ReadFile(fullPath)
+		if rerr != nil {
+			fmt.Fprintf(os.Stderr,
+				"kyc upload: read local file for s3 mirror failed doc=%d: %v\n",
+				docID, rerr)
+		} else {
+			ctx, cancel := context.WithTimeout(r.Context(), 20*time.Second)
+			ext := strings.ToLower(strings.TrimPrefix(filepath.Ext(hdr.Filename), "."))
+			uri, perr := s.storage.PutDoc(ctx, appID, docID, kind, ext, body, mime)
+			cancel()
+			if perr != nil {
+				fmt.Fprintf(os.Stderr,
+					"kyc upload: s3 put failed doc=%d: %v — leaving row on disk\n",
+					docID, perr)
+			} else {
+				// Flip the DB pointer to S3, then drop the local copy.
+				// If the UPDATE fails, we leave both copies alive so the
+				// disk row keeps serving until the next upload retries.
+				if _, uerr := s.deps.DB.ExecContext(r.Context(),
+					`UPDATE institution_application_documents
+					    SET storage_path = $1
+					  WHERE id = $2`,
+					uri, docID,
+				); uerr != nil {
+					fmt.Fprintf(os.Stderr,
+						"kyc upload: db update to s3 uri failed doc=%d: %v\n",
+						docID, uerr)
+				} else {
+					_ = os.Remove(fullPath)
+				}
+			}
+		}
 	}
 
 	_, _ = s.deps.DB.ExecContext(r.Context(),
@@ -908,9 +950,19 @@ func (s *Server) registerDeleteDoc(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "db delete")
 		return
 	}
-	// Best-effort disk cleanup. If it fails the row is gone, so the
-	// file becomes orphaned but causes no functional harm.
-	_ = os.Remove(storagePath)
+	// Best-effort object cleanup. If it fails the row is already gone,
+	// so the file becomes orphaned but causes no functional harm.
+	// Discriminate on the s3:// prefix — S3-backed rows go via the
+	// storage client, disk rows via os.Remove.
+	if strings.HasPrefix(storagePath, "s3://") {
+		if s.storage != nil && s.storage.Enabled() {
+			ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+			_ = s.storage.DeleteDoc(ctx, storagePath)
+			cancel()
+		}
+	} else {
+		_ = os.Remove(storagePath)
+	}
 	writeJSON(w, http.StatusOK, map[string]any{"deleted": true, "doc_id": docID})
 }
 

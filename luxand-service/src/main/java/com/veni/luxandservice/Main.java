@@ -68,6 +68,11 @@ public final class Main {
         Javalin app = Javalin.create(cfg -> {
             cfg.showJavalinBanner = false;
             cfg.plugins.enableCors(c -> c.add(it -> it.anyHost()));
+            // Liveness posts up to ~30 webcam frames (~1 MB total). The
+            // Go backend already caps its own body at 4 MB before it
+            // forwards; give Javalin 20 MB of headroom so we're never
+            // the bottleneck.
+            cfg.http.maxRequestSize = 20L * 1024L * 1024L;
         }).start(bindAddr, port);
 
         new FaceHandlers(provider, threshold).register(app);

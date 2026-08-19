@@ -1,6 +1,8 @@
 package api
 
 import (
+	"context"
+	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
@@ -11,6 +13,7 @@ import (
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/veni/neet-verification/internal/storage"
 	"github.com/veni/neet-verification/internal/trustview"
 )
 
@@ -130,14 +133,51 @@ func (s *Server) faceMatch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusNotFound, "candidate not found")
 		return
 	}
-	if !c.HasPhoto || c.PhotoPath == "" {
-		writeErr(w, http.StatusNotFound, "candidate has no enrolled photo")
-		return
-	}
-	galleryBytes, err := os.ReadFile(c.PhotoPath)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "read gallery photo: "+err.Error())
-		return
+
+	// Photo source selection:
+	//   PHOTOS_BACKEND=s3 + storage wired  → read from bucket, keyed by
+	//                                        <exam_code>/photos/<roll>.jpg
+	//   anything else                      → read from local disk via the
+	//                                        candidate index (unchanged)
+	// Failure to read the s3 object fails LOUD (400/500) — better than
+	// silently degrading to disk and running a match against a stale
+	// pre-migration photo. Fresh-install exams will never have a disk
+	// copy in the first place.
+	var galleryBytes []byte
+	if s.deps.Cfg.PhotosBackend == "s3" && s.storage != nil && s.storage.Enabled() {
+		examCode, err := s.resolveExamCodeForOperator(r)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError,
+				"could not resolve exam scope: "+err.Error())
+			return
+		}
+		if examCode == "" {
+			writeErr(w, http.StatusForbidden,
+				"operator is not scoped to any exam")
+			return
+		}
+		galleryBytes, err = s.storage.GetPhotoBytes(r.Context(), examCode, roll)
+		if err != nil {
+			if errors.Is(err, storage.ErrNotFound) {
+				writeErr(w, http.StatusNotFound,
+					"candidate has no enrolled photo")
+				return
+			}
+			writeErr(w, http.StatusBadGateway,
+				"read gallery photo from s3: "+err.Error())
+			return
+		}
+	} else {
+		if !c.HasPhoto || c.PhotoPath == "" {
+			writeErr(w, http.StatusNotFound, "candidate has no enrolled photo")
+			return
+		}
+		galleryBytes, err = os.ReadFile(c.PhotoPath)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError,
+				"read gallery photo: "+err.Error())
+			return
+		}
 	}
 
 	if s.trustview == nil {
@@ -200,3 +240,36 @@ var (
 	errCandidateMissing = errors.New("candidate not found")
 	errPhotoMissing     = errors.New("candidate has no enrolled photo")
 )
+
+// resolveExamCodeForOperator returns the exam_code the requesting
+// operator is scoped to via operator_exams (UNIQUE on user_id, so at
+// most one exam per operator). Returns "" without error if the caller
+// isn't an operator or isn't subscribed to any exam.
+//
+// The S3 key layout is <exam_code>/photos/<roll>.jpg, so this is the
+// missing piece the disk path doesn't need (Candidate.PhotoPath was
+// pre-baked at index-scan time from filesystem walk).
+func (s *Server) resolveExamCodeForOperator(r *http.Request) (string, error) {
+	c := claimsFrom(r)
+	if c == nil {
+		return "", nil
+	}
+	var code string
+	err := s.deps.DB.QueryRowContext(r.Context(),
+		`SELECT e.exam_code
+		   FROM operator_exams oe
+		   JOIN exams e ON e.id = oe.exam_id
+		  WHERE oe.user_id = $1
+		  LIMIT 1`,
+		c.UserID,
+	).Scan(&code)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	return code, err
+}
+
+// Keep the context import referenced when the resolver isn't
+// called (dev builds with PhotosBackend=disk).
+var _ = context.Background
+var _ = storage.ErrNotFound

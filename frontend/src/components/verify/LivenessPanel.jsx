@@ -121,7 +121,12 @@ export default function LivenessPanel({ rollNo, sessionId, onPass }) {
       const r = await postLivenessCheck(rollNo, frames, sessionId, CHALLENGES)
       setResult(r)
       if (r.pass) {
+        // Dwell on the success state for a beat so the operator sees the
+        // green checkmark before the parent yanks them to face capture.
+        // ~1.6s is long enough to register as a distinct moment ("it
+        // worked!") but short enough that it doesn't feel like a wait.
         setPhase('pass')
+        await sleep(1600)
         onPass?.({
           sessionId: r.session_id,
           expiresIn: r.expires_in_seconds || 90,
@@ -172,6 +177,23 @@ export default function LivenessPanel({ rollNo, sessionId, onPass }) {
                 />
               </div>
             </>
+          )}
+          {phase === 'pass' && (
+            // Big, unmissable "you passed" moment layered over the
+            // webcam preview so the operator has a distinct visual beat
+            // before the next step swaps in. The parent auto-advances
+            // ~1.6s after this shows.
+            <div className="absolute inset-0 bg-emerald-600/85 flex items-center justify-center">
+              <div className="text-white text-center">
+                <div className="mx-auto h-20 w-20 rounded-full bg-white/20 ring-4 ring-white/40 flex items-center justify-center animate-[ping_1.2s_ease-out_1]">
+                  <svg className="h-12 w-12 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <polyline points="5 12 10 17 20 7" />
+                  </svg>
+                </div>
+                <p className="mt-3 text-lg font-bold tracking-tight">Liveness verified</p>
+                <p className="text-xs opacity-90 mt-0.5">Opening face capture…</p>
+              </div>
+            </div>
           )}
         </div>
 

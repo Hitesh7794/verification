@@ -26,7 +26,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"os"
 	"strconv"
@@ -228,17 +227,14 @@ func (s *Server) clientDownloadDoc(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "db read")
 		return
 	}
-	f, err := os.Open(storagePath)
-	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "file open")
-		return
-	}
-	defer f.Close()
 	w.Header().Set("Content-Type", mime)
 	w.Header().Set("Content-Disposition",
 		fmt.Sprintf(`inline; filename="%s"`, safeFilename(original)))
 	w.Header().Set("X-Content-Type-Options", "nosniff")
-	_, _ = io.Copy(w, f)
+	if err := s.streamDocBytes(w, r, storagePath); err != nil {
+		fmt.Fprintf(os.Stderr,
+			"clientDownloadDoc: stream failed doc=%d: %v\n", docID, err)
+	}
 }
 
 // ---------- POST /api/client/applications/{id}/approve ----------
