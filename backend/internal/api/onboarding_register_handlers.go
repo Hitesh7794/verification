@@ -81,6 +81,7 @@ var (
 	allowedInstitutionTypes = map[string]bool{
 		"college":    true,
 		"university": true,
+		"other":      true, // added 2026-08-20 alongside V7 migration + Register form
 	}
 	allowedTiers = map[string]bool{
 		"":       true, // optional
@@ -625,7 +626,7 @@ func validateInit(r *registerInitReq) error {
 		return errors.New("institution_name must be 3-200 characters")
 	}
 	if !allowedInstitutionTypes[r.InstitutionType] {
-		return errors.New("institution_type must be college or university")
+		return errors.New("institution_type must be college, university, or other")
 	}
 	// Tier is optional — when supplied it must be one of the known
 	// values, but the form no longer requires it.
