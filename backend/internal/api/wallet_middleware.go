@@ -168,20 +168,9 @@ func (s *Server) walletCharge(next http.HandlerFunc) http.HandlerFunc {
 			writeErr(w, http.StatusInternalServerError, "wallet debit: "+err.Error())
 			return
 		}
-		// Bump this operator's running spent total. If it races and
-		// pushes over the cap by a tiny amount, we accept the overshoot
-		// — refunding the org for a service already rendered is worse
-		// than a small policy overshoot. Cap enforcement is at
-		// pre-check time; this is bookkeeping.
-		if _, err := s.deps.DB.ExecContext(r.Context(),
-			`UPDATE users SET spent_paise = spent_paise + $1 WHERE id = $2`,
-			fee, claims.UserID,
-		); err != nil {
-			// Non-fatal: the debit landed, the response is buffered.
-			// Log but don't fail — operator's response is more important
-			// than perfect accounting on the audit trail.
-			fmt.Println("wallet_middleware: spent_paise bump failed:", err)
-		}
+		// spent_paise is now bumped atomically inside wallet.Debit(),
+		// tied to the same tx as the org wallet debit + ledger row.
+		// See the comment there for why the split was removed.
 		setWalletHeaders(buf.ResponseWriter, tx.BalanceAfterPaise, fee)
 		buf.flush()
 	}

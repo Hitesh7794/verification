@@ -243,6 +243,29 @@ func (s *Store) Debit(ctx context.Context, orgID, actorUserID int64, amountPaise
 	).Scan(&id); err != nil {
 		return Transaction{}, err
 	}
+
+	// Fold the actor's personal spent_paise counter into the SAME tx as
+	// the org wallet debit + ledger row. Previously this UPDATE lived
+	// outside the tx and logged-and-continued on failure — a DB blip
+	// mid-request left the wallet charged but the operator's spent
+	// counter unmoved, so `spent + fee > cap` never tripped and their
+	// cap could be silently bypassed indefinitely. Atomic tx means
+	// either both happen or neither, so the cap check at pre-charge
+	// time is now always reading a truthful running total.
+	//
+	// actorUserID = 0 is a valid "system-initiated debit with no
+	// personal actor" — skip the bump in that case. UPDATE ... WHERE id
+	// = ? affecting 0 rows (deleted user) is a no-op, not an error,
+	// which is intentional.
+	if actorUserID != 0 {
+		if _, err := tx.ExecContext(ctx,
+			db.Q(`UPDATE users SET spent_paise = spent_paise + $1 WHERE id = $2`),
+			amountPaise, actorUserID,
+		); err != nil {
+			return Transaction{}, fmt.Errorf("bump spent_paise: %w", err)
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		return Transaction{}, err
 	}
