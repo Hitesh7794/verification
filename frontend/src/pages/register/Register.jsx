@@ -118,6 +118,11 @@ const INSTITUTION_TYPES = [
     label: 'University',
     blurb: 'Multi-faculty, degree-granting in its own right',
   },
+  {
+    value: 'other',
+    label: 'Other',
+    blurb: 'School, academy, coaching or autonomous institute',
+  },
 ]
 const AFFILIATION_BODIES = [
   'UGC', 'AICTE', 'CBSE', 'ICSE', 'State Board',
@@ -516,39 +521,35 @@ export default function Register() {
   }
 
   return (
-    <div className="min-h-screen relative bg-slate-50 overflow-hidden">
-      {/* Ambient background — layered gradient orbs + fine grid overlay.
-          Anchored to the body so it scrolls; pointer-events off. */}
+    <div className="min-h-screen relative bg-warm-page overflow-hidden">
+      {/* Ambient background — warm golden/amber washes + fine warm grid overlay. */}
       <div
         aria-hidden="true"
         className="pointer-events-none absolute inset-0 overflow-hidden"
       >
-        {/* soft grid — barely visible; adds structure without noise */}
+        {/* soft warm grid */}
         <div
           className="absolute inset-0 opacity-[0.35]"
           style={{
             backgroundImage:
-              'linear-gradient(to right, rgb(226 232 240 / 0.5) 1px, transparent 1px), linear-gradient(to bottom, rgb(226 232 240 / 0.5) 1px, transparent 1px)',
+              'linear-gradient(to right, rgb(216 203 176 / 0.45) 1px, transparent 1px), linear-gradient(to bottom, rgb(216 203 176 / 0.45) 1px, transparent 1px)',
             backgroundSize: '48px 48px',
             maskImage: 'radial-gradient(ellipse at top, black 40%, transparent 75%)',
             WebkitMaskImage: 'radial-gradient(ellipse at top, black 40%, transparent 75%)',
           }}
         />
-        {/* Two cool orbs in adjacent hues (indigo + blue). Was indigo +
-            violet + emerald — three unrelated families competing behind
-            a form about PAN numbers and authorization letters. Dropped
-            to two, and softened, so the background stays background. */}
+        {/* Warm amber / parchment ambient glows */}
         <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 1.2, ease: 'easeOut' }}
-          className="absolute -top-40 -left-24 h-[28rem] w-[28rem] rounded-full bg-indigo-200/35 blur-[100px]"
+          className="absolute -top-40 -left-24 h-[28rem] w-[28rem] rounded-full bg-amber-100/50 blur-[100px]"
         />
         <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 1.2, delay: 0.1, ease: 'easeOut' }}
-          className="absolute -top-24 right-[-6rem] h-[26rem] w-[26rem] rounded-full bg-blue-200/30 blur-[100px]"
+          className="absolute -top-24 right-[-6rem] h-[26rem] w-[26rem] rounded-full bg-[#F5EEDF]/70 blur-[100px]"
         />
       </div>
 
@@ -556,41 +557,52 @@ export default function Register() {
         right={
           <Link
             to="/admin/login"
-            className="inline-flex items-center gap-1.5 rounded-lg
-                       bg-white/70 hover:bg-white px-3 py-1.5 text-sm font-medium
-                       text-slate-700 hover:text-slate-900
-                       ring-1 ring-slate-200 hover:ring-slate-300
-                       backdrop-blur transition"
+            className="inline-flex items-center gap-2 rounded-xl
+                       bg-warm-surface hover:bg-white px-3.5 py-2 text-sm font-medium
+                       text-stone-700 hover:text-ink-900
+                       border border-warm hover:border-warm-strong
+                       shadow-xs backdrop-blur-md transition-all"
           >
-            <Icon.ChevronLeft className="h-4 w-4" />
+            <Icon.ChevronLeft className="h-4 w-4 text-stone-500" />
             Back to sign in
           </Link>
         }
       />
 
-      <main className="relative mx-auto max-w-6xl px-4 sm:px-6 pt-10 pb-16">
-        <motion.h1
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.5, ease: 'easeOut' }}
-          className="text-3xl sm:text-4xl lg:text-[2.5rem] font-semibold tracking-tight text-slate-900 leading-tight"
-        >
-          {step === S_DONE
-            ? 'Application received'
-            : (
-              <>
-                Register your{' '}
-                <span className={`bg-gradient-to-r ${ACCENTS.heading} bg-clip-text text-transparent`}>
-                  institution
-                </span>
-              </>
-            )}
-        </motion.h1>
+      <main className="relative mx-auto max-w-6xl px-4 sm:px-6 pt-8 pb-16">
+        <div className="mb-6">
+          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#F5EEDF] border border-warm text-xs font-semibold text-amber-900 mb-3 shadow-2xs">
+            <span className="h-1.5 w-1.5 rounded-full bg-amber-600 animate-pulse" />
+            Institutional Accreditation & Onboarding
+          </div>
+          <motion.h1
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.45, ease: 'easeOut' }}
+            className="text-3xl sm:text-4xl lg:text-[2.65rem] font-bold tracking-tight text-ink-900 leading-tight"
+          >
+            {step === S_DONE
+              ? 'Application received'
+              : (
+                <>
+                  Register your{' '}
+                  <span className="text-warm-accent">
+                    institution
+                  </span>
+                </>
+              )}
+          </motion.h1>
+          {step !== S_DONE && (
+            <p className="mt-2 text-sm sm:text-base text-stone-600 max-w-2xl leading-relaxed">
+              Complete the secure 4-step accreditation profile to establish your institution's biometric verification registry.
+            </p>
+          )}
+        </div>
 
         {topError && (
-          <div className="mt-4 rounded-lg bg-rose-50 border border-rose-200 px-4 py-3 text-sm text-rose-800 flex items-start gap-2">
+          <div className="mt-4 rounded-xl bg-rose-50 border border-rose-200/80 px-4 py-3 text-sm text-rose-800 flex items-start gap-2.5 shadow-2xs">
             <Icon.X className="h-5 w-5 text-rose-600 shrink-0 mt-0.5" />
-            <span>{topError}</span>
+            <span className="font-medium">{topError}</span>
           </div>
         )}
 
@@ -699,50 +711,64 @@ export default function Register() {
 function StepSidebar({ step }) {
   return (
     <aside className="lg:sticky lg:top-6 lg:self-start">
-      <AestheticCard>
-        <ol className="p-3 space-y-1.5">
+      <div className="rounded-2xl border border-warm bg-warm-surface shadow-xs p-3.5 overflow-hidden">
+        <div className="px-3 pt-2 pb-3 mb-1 border-b border-warm flex items-center justify-between">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-stone-400">Onboarding Steps</span>
+          <span className="text-xs font-semibold text-amber-900 bg-[#F5EEDF] border border-warm px-2 py-0.5 rounded-md font-mono">
+            {step + 1} / 4
+          </span>
+        </div>
+        <ol className="space-y-1.5 mt-2">
           {STEPS.slice(0, 4).map((s, i) => {
             const active = i === step
             const done = i < step
             const IconComp = s.icon
+            const stepNum = `0${i + 1}`
             return (
               <li key={s.label}>
                 <motion.div
                   layout
-                  className={`flex items-center gap-3 rounded-xl px-3 py-3 transition-colors ${
+                  className={`flex items-center gap-3.5 rounded-xl px-3.5 py-3 transition-all ${
                     active
-                      ? 'bg-slate-900'
+                      ? 'bg-ink-900 text-white shadow-sm ring-1 ring-ink-900/10'
                       : done
-                      ? 'bg-emerald-50/70'
-                      : 'bg-transparent'
+                      ? 'bg-emerald-50/70 hover:bg-emerald-50 text-emerald-950 border border-emerald-200/60'
+                      : 'bg-transparent text-stone-600 hover:bg-[#F5EEDF]/40'
                   }`}
                 >
                   <motion.span
                     initial={false}
                     animate={{ scale: active ? 1.05 : 1 }}
                     transition={{ duration: 0.2 }}
-                    className={`h-9 w-9 rounded-lg flex items-center justify-center shrink-0 ${
+                    className={`h-9 w-9 rounded-xl flex items-center justify-center shrink-0 ${
                       active
                         ? 'bg-white/15 text-white'
                         : done
-                        ? 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-200'
-                        : 'bg-slate-100 text-slate-400'
+                        ? 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-200/80'
+                        : 'bg-[#F5EEDF] text-stone-600 font-mono text-xs font-semibold border border-warm'
                     }`}
                   >
-                    {done ? <Icon.Check className="h-4 w-4" /> : <IconComp className="h-4 w-4" />}
+                    {done ? <Icon.Check className="h-4 w-4" /> : active ? <IconComp className="h-4 w-4" /> : stepNum}
                   </motion.span>
-                  <p
-                    className={`text-sm font-medium ${
-                      active ? 'text-white' : done ? 'text-emerald-800' : 'text-slate-700'
-                    }`}
-                  >
-                    {s.label}
-                  </p>
+                  <div className="min-w-0 flex-1">
+                    <p
+                      className={`text-sm font-semibold leading-tight ${
+                        active ? 'text-white' : done ? 'text-emerald-900' : 'text-stone-800'
+                      }`}
+                    >
+                      {s.label}
+                    </p>
+                    <p className={`text-[11px] mt-0.5 ${
+                      active ? 'text-stone-300' : done ? 'text-emerald-600 font-medium' : 'text-stone-400'
+                    }`}>
+                      {done ? 'Completed' : active ? 'In progress' : 'Pending'}
+                    </p>
+                  </div>
                   {active && (
                     <motion.span
                       initial={{ scale: 0 }}
                       animate={{ scale: 1 }}
-                      className="ml-auto h-2 w-2 rounded-full bg-emerald-400 shrink-0 animate-pulse"
+                      className="h-2 w-2 rounded-full bg-emerald-400 shrink-0 shadow-[0_0_8px_rgba(52,211,153,0.8)]"
                       aria-label="current step"
                     />
                   )}
@@ -751,7 +777,7 @@ function StepSidebar({ step }) {
             )
           })}
         </ol>
-      </AestheticCard>
+      </div>
     </aside>
   )
 }
@@ -759,10 +785,6 @@ function StepSidebar({ step }) {
 // ─── Step 0 ────────────────────────────────────────────────────────────
 
 function Step0({ form, errors, update, onBlurField, onNext, publicClients = [], clientsLoaded = false }) {
-  // The dropdown only shows up once we've heard back from the server AND
-  // there's at least one enabled client. If the list is empty we hide the
-  // control entirely rather than showing "— None available —"; the
-  // application will fall back to the superadmin queue silently.
   const showClientPicker = clientsLoaded && publicClients.length > 0
   const selectedClient = publicClients.find(
     (c) => String(c.id) === String(form.client_id),
@@ -770,43 +792,32 @@ function Step0({ form, errors, update, onBlurField, onNext, publicClients = [], 
 
   return (
     <AestheticCard>
-      {/* Header — generous padding so the chip + title don't feel
-          glued to the card edges. */}
-      <div className="px-7 py-5 border-b border-slate-100 flex items-center gap-3.5">
-        <span className="h-11 w-11 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center shrink-0">
+      {/* Header with warm icon and border */}
+      <div className="px-7 py-5 border-b border-warm flex items-center gap-3.5">
+        <span className="h-11 w-11 rounded-xl bg-[#F5EEDF] text-amber-900 border border-warm flex items-center justify-center shrink-0">
           <Icon.Building className="h-5 w-5" />
         </span>
         <div className="min-w-0">
-          <h2 className="text-base font-semibold text-slate-900">Institution details</h2>
-          <p className="text-sm text-slate-500 mt-0.5">Type, identifiers, and history of your institution.</p>
+          <h2 className="text-base font-semibold text-ink-900">Institution details</h2>
+          <p className="text-sm text-stone-500 mt-0.5">Type, identifiers, and history of your institution.</p>
         </div>
       </div>
 
-      {/* Body — split into two clearly-spaced visual sections:
-            1. Type picker
-            2. Identifier / history fields
-          Separated by a subtle labelled divider so the eye doesn't
-          read everything as one undifferentiated grid. */}
       <div className="px-7 py-7 space-y-7">
         {showClientPicker && (
-          // Reviewer picker. First thing on the form because it frames
-          // the whole flow — the chosen board's team is who'll read the
-          // uploaded docs and approve/reject. Kept in an amber-tinted
-          // panel so it's visually distinct from the indigo card body
-          // without competing for hierarchy with the primary CTA.
-          <div className="rounded-xl border border-amber-100 bg-amber-50/60 px-5 py-4">
+          <div className="rounded-xl border border-warm bg-[#F5EEDF]/60 px-5 py-4">
             <div className="flex items-start gap-3">
-              <span className="mt-0.5 h-8 w-8 rounded-lg bg-white text-amber-700 flex items-center justify-center shrink-0 ring-1 ring-amber-200">
+              <span className="mt-0.5 h-8 w-8 rounded-lg bg-white text-amber-800 flex items-center justify-center shrink-0 border border-warm">
                 <Icon.ShieldCheck className="h-4 w-4" />
               </span>
               <div className="min-w-0 flex-1">
                 <div className="flex items-baseline justify-between gap-2">
-                  <Label className="!mb-0">Exam board reviewer</Label>
-                  <span className="text-[11px] uppercase tracking-wide text-amber-700/80">
+                  <Label className="!mb-0 font-medium text-ink-900">Exam board reviewer</Label>
+                  <span className="text-[11px] uppercase tracking-wide text-warm-accent font-semibold">
                     Optional
                   </span>
                 </div>
-                <p className="text-xs text-slate-600 mt-1">
+                <p className="text-xs text-stone-600 mt-1">
                   Route this KYC to a specific board. If left blank, the
                   platform's onboarding team reviews it.
                 </p>
@@ -821,9 +832,8 @@ function Step0({ form, errors, update, onBlurField, onNext, publicClients = [], 
                   />
                 </div>
                 {selectedClient && (
-                  <p className="mt-2 text-xs text-amber-900">
-                    <span className="font-medium">{selectedClient.name}</span> will
-                    review your documents and issue admin credentials on approval.
+                  <p className="mt-2 text-xs text-amber-950 font-medium">
+                    <span>{selectedClient.name}</span> will review your documents and issue admin credentials on approval.
                   </p>
                 )}
               </div>
@@ -832,37 +842,39 @@ function Step0({ form, errors, update, onBlurField, onNext, publicClients = [], 
         )}
 
         <div>
-          <Label>
-            Type <span className="text-rose-600 ml-0.5">*</span>
-          </Label>
-          {/* Capped width: with Tier gone this picker would otherwise
-              stretch the full card, turning two short options into two
-              very wide slabs. */}
-          <div className="grid grid-cols-2 gap-2.5 max-w-md">
-            {INSTITUTION_TYPES.map((t) => (
-              <CompactChoice
-                key={t.value}
-                selected={form.institution_type === t.value}
-                onSelect={() => update('institution_type', t.value)}
-                icon={Icon.Building}
-                label={t.label}
-              />
-            ))}
+          <div className="flex items-baseline justify-between mb-2">
+            <Label className="!mb-0 font-semibold text-ink-900">
+              Type of Institution <span className="text-rose-600 ml-0.5">*</span>
+            </Label>
+            <span className="text-xs text-stone-400">Select institutional category</span>
+          </div>
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-2xl">
+            {INSTITUTION_TYPES.map((t) => {
+              const iconMap = {
+                college: Icon.Building,
+                university: Icon.Sparkles,
+                other: Icon.FileText,
+              }
+              const IconComp = iconMap[t.value] || Icon.Building
+              return (
+                <CompactChoice
+                  key={t.value}
+                  selected={form.institution_type === t.value}
+                  onSelect={() => update('institution_type', t.value)}
+                  icon={IconComp}
+                  label={t.label}
+                  blurb={t.blurb}
+                />
+              )
+            })}
           </div>
           {errors.institution_type && (
-            <p className="mt-1.5 text-xs text-rose-600">{errors.institution_type}</p>
+            <p className="mt-1.5 text-xs text-rose-600 font-medium">{errors.institution_type}</p>
           )}
         </div>
 
         <Divider label="Identifiers & history" />
 
-        {/* Identifier + history fields in a 6-column grid. The col-spans
-            below balance label widths so nothing wraps awkwardly:
-              row 1: name (full)
-              row 2: AISHE | PAN | Year      (2 + 2 + 2)
-              row 3: Affiliation | Students  (4 + 2)
-            gap-6 gives each row ~24px breathing room horizontally and
-            vertically — enough that adjacent fields don't crowd. */}
         <div className="grid grid-cols-1 sm:grid-cols-6 gap-x-6 gap-y-5">
           <Field className="sm:col-span-6" label="Institution name" required error={errors.institution_name}>
             <Input
@@ -917,7 +929,7 @@ function Step0({ form, errors, update, onBlurField, onNext, publicClients = [], 
                   maxLength={80}
                 />
                 {errors.affiliation_body_other && (
-                  <p className="mt-1.5 text-xs text-rose-600">{errors.affiliation_body_other}</p>
+                  <p className="mt-1.5 text-xs text-rose-600 font-medium">{errors.affiliation_body_other}</p>
                 )}
               </div>
             )}
@@ -936,8 +948,8 @@ function Step0({ form, errors, update, onBlurField, onNext, publicClients = [], 
       </div>
 
       <FooterBar>
-        <span className="text-xs text-slate-500">
-          Required fields marked with <span className="text-rose-600">*</span>
+        <span className="text-xs text-stone-500">
+          Required fields marked with <span className="text-rose-600 font-semibold">*</span>
         </span>
         <Button onClick={onNext} size="lg">
           Continue
@@ -948,48 +960,46 @@ function Step0({ form, errors, update, onBlurField, onNext, publicClients = [], 
   )
 }
 
-// CompactChoice — picker button for the Type slot. A leading icon chip
-// so the eye picks the category before the text. Used in a 2-up grid;
-// the dropped blurb (vs the old ChoiceCard) keeps things tidy without
-// feeling cramped.
-function CompactChoice({ selected, onSelect, icon: IconComp, label }) {
-  // `flex w-full` so both buttons fill their grid cell to exactly the
-  // same width, and `justify-center` so the icon + label sit centred
-  // rather than ragged against the left edge.
+function CompactChoice({ selected, onSelect, icon: IconComp, label, blurb }) {
   return (
     <motion.button
       type="button"
       onClick={onSelect}
+      whileHover={{ y: -1.5, transition: { duration: 0.15 } }}
       whileTap={{ scale: 0.98 }}
-      className={`relative h-14 flex w-full items-center justify-center gap-2.5 rounded-xl border px-9 transition-colors ${
+      className={`relative text-left p-3.5 rounded-xl border transition-all ${
         selected
-          ? 'border-slate-900 bg-slate-50/80 ring-1 ring-slate-900/10'
-          : 'border-slate-200 bg-white hover:border-slate-300'
+          ? 'border-amber-700 bg-amber-50/70 ring-2 ring-amber-600/20 shadow-xs'
+          : 'border-warm bg-warm-surface hover:border-warm-strong hover:bg-white'
       }`}
     >
-      {IconComp && (
+      <div className="flex items-start gap-3">
         <span
-          className={`h-8 w-8 rounded-lg flex items-center justify-center shrink-0 transition-colors ${
-            selected ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600'
+          className={`h-9 w-9 rounded-lg flex items-center justify-center shrink-0 transition-all ${
+            selected ? 'bg-amber-700 text-white shadow-xs' : 'bg-[#F5EEDF] text-stone-700 border border-warm'
           }`}
         >
-          <IconComp className="h-4 w-4" />
+          {IconComp && <IconComp className="h-4 w-4" />}
         </span>
-      )}
-      <span className={`text-sm font-medium ${selected ? 'text-slate-900' : 'text-slate-800'}`}>
-        {label}
-      </span>
-      {/* Absolutely positioned, so selecting an option doesn't shove its
-          label off-centre and leave the two buttons visibly mismatched.
-          The symmetric px-9 reserves room for it on both sides. */}
+        <div className="min-w-0 flex-1 pr-4">
+          <p className={`text-sm font-bold tracking-tight ${selected ? 'text-amber-950' : 'text-ink-900'}`}>
+            {label}
+          </p>
+          {blurb && (
+            <p className={`text-xs mt-0.5 leading-snug ${selected ? 'text-amber-900/80' : 'text-stone-500'}`}>
+              {blurb}
+            </p>
+          )}
+        </div>
+      </div>
       {selected && (
         <motion.span
           initial={{ scale: 0 }}
           animate={{ scale: 1 }}
           transition={{ duration: 0.15, ease: [0.22, 1.5, 0.36, 1] }}
-          className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 rounded-full bg-emerald-50 text-emerald-600 ring-1 ring-emerald-200 flex items-center justify-center"
+          className="absolute right-3 top-3.5 h-4 w-4 rounded-full bg-amber-700 text-white flex items-center justify-center shadow-xs"
         >
-          <Icon.Check className="h-2.5 w-2.5" />
+          <Icon.Check className="h-2.5 w-2.5 stroke-[2.5]" />
         </motion.span>
       )}
     </motion.button>
@@ -997,55 +1007,6 @@ function CompactChoice({ selected, onSelect, icon: IconComp, label }) {
 }
 
 // ─── New visual primitives used by Step 0 ──────────────────────────────
-
-// ChoiceCard — a large clickable card used for type-picking. Animates
-// a subtle scale + border tightening on hover, and locks in with a
-// dark border + check icon when selected.
-function ChoiceCard({ selected, onSelect, icon: IconComp, label, blurb }) {
-  return (
-    <motion.button
-      type="button"
-      onClick={onSelect}
-      whileHover={{ y: -2, transition: { duration: 0.18 } }}
-      whileTap={{ scale: 0.985, y: 0 }}
-      className={`relative text-left rounded-xl border p-4 transition-colors duration-150
-                  ${selected
-                    ? 'border-slate-900 bg-slate-50/80 ring-1 ring-slate-900/10'
-                    : 'border-slate-200 bg-white hover:border-slate-300'}`}
-    >
-      <div className="flex items-start gap-3">
-        <span
-          className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 transition-colors
-                      ${selected ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-600'}`}
-        >
-          <IconComp className="h-5 w-5" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <div className="flex items-center gap-2">
-            <p className={`text-sm font-semibold ${selected ? 'text-slate-900' : 'text-slate-800'}`}>{label}</p>
-          </div>
-          <p className="text-xs text-slate-500 mt-0.5 leading-relaxed">{blurb}</p>
-        </div>
-      </div>
-      {/* Animated emerald check badge when selected. Soft green pill
-          (bg-emerald-50 + emerald-600 stroke) matches the rest of the
-          completion indicators in the wizard. */}
-      <AnimatePresence>
-        {selected && (
-          <motion.span
-            initial={{ scale: 0, opacity: 0 }}
-            animate={{ scale: 1, opacity: 1 }}
-            exit={{ scale: 0, opacity: 0 }}
-            transition={{ duration: 0.18, ease: [0.22, 1.5, 0.36, 1] }}
-            className="absolute top-3 right-3 h-6 w-6 rounded-lg bg-emerald-50 text-emerald-600 ring-1 ring-emerald-200 flex items-center justify-center"
-          >
-            <Icon.Check className="h-3.5 w-3.5" />
-          </motion.span>
-        )}
-      </AnimatePresence>
-    </motion.button>
-  )
-}
 
 // ─── Review step ───────────────────────────────────────────────────────
 //
@@ -1078,14 +1039,14 @@ function ReviewStep({ form, uploaded, onEdit, onBack, onSubmit, submitting }) {
 
   return (
     <AestheticCard>
-      <div className="px-7 py-6 border-b border-slate-100">
+      <div className="px-7 py-6 border-b border-warm">
         <div className="flex items-start gap-3">
-          <span className="h-10 w-10 rounded-xl bg-indigo-50 text-indigo-700 flex items-center justify-center shrink-0">
+          <span className="h-10 w-10 rounded-xl bg-[#F5EEDF] text-amber-900 border border-warm flex items-center justify-center shrink-0">
             <Icon.Eye className="h-5 w-5" />
           </span>
           <div>
-            <h2 className="text-base font-semibold text-slate-900">Review your application</h2>
-            <p className="text-sm text-slate-500 mt-0.5">
+            <h2 className="text-base font-semibold text-ink-900">Review your application</h2>
+            <p className="text-sm text-stone-500 mt-0.5">
               Check every detail before submitting. Our team reviews this manually,
               so a correction now saves days later.
             </p>
@@ -1126,43 +1087,41 @@ function ReviewStep({ form, uploaded, onEdit, onBack, onSubmit, submitting }) {
             ['Email', form.head_email],
             ['Mobile', form.head_mobile],
           ]}
-          // The activation link goes to this address — if it's wrong the
-          // applicant never hears back, so it's worth calling out.
           note="The activation link is sent to this email address after approval."
         />
 
         <div>
           <div className="flex items-center justify-between gap-3 mb-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-600">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-warm-accent">
               Documents
             </h3>
             <button
               type="button"
               onClick={() => onEdit(S_DOCUMENTS)}
-              className="text-xs font-medium text-indigo-600 hover:text-indigo-800 hover:underline"
+              className="text-xs font-semibold text-warm-accent hover:underline"
             >
               Edit
             </button>
           </div>
-          <ul className="rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
+          <ul className="rounded-xl border border-warm divide-y divide-warm overflow-hidden bg-warm-surface">
             {docs.map((d) => (
               <li key={d.kind} className="flex items-center gap-3 px-4 py-2.5">
-                <span className="h-6 w-6 rounded-md bg-emerald-50 text-emerald-600 ring-1 ring-emerald-200 flex items-center justify-center shrink-0">
+                <span className="h-6 w-6 rounded-md bg-emerald-50 text-emerald-700 border border-emerald-200 flex items-center justify-center shrink-0">
                   <Icon.Check className="h-3.5 w-3.5" />
                 </span>
-                <span className="text-sm text-slate-800">{d.label}</span>
-                <span className="ml-auto text-xs text-slate-500 truncate max-w-[45%]">
+                <span className="text-sm font-medium text-stone-800">{d.label}</span>
+                <span className="ml-auto text-xs text-stone-500 font-mono truncate max-w-[45%]">
                   {uploaded[d.kind]?.original_name}
                 </span>
               </li>
             ))}
             {docs.length === 0 && (
-              <li className="px-4 py-3 text-sm text-slate-500">No documents uploaded.</li>
+              <li className="px-4 py-3 text-sm text-stone-500 italic">No documents uploaded.</li>
             )}
           </ul>
         </div>
 
-        <div className="rounded-lg bg-slate-50 border border-slate-200 px-4 py-3 text-xs text-slate-600 leading-relaxed">
+        <div className="rounded-xl bg-[#F5EEDF]/60 border border-warm px-4 py-3 text-xs text-stone-700 leading-relaxed">
           Submitting locks the application for review. You won't be able to edit it
           afterwards — our team will contact the head of institution at the email above.
         </div>
@@ -1180,60 +1139,51 @@ function ReviewStep({ form, uploaded, onEdit, onBack, onSubmit, submitting }) {
   )
 }
 
-// One labelled block of read-only answers, with an Edit link back to
-// whichever step owns them.
 function ReviewGroup({ title, rows, onEdit, note }) {
   const filled = rows.filter(([, v]) => v !== undefined && v !== null && String(v).trim() !== '')
   return (
     <div>
       <div className="flex items-center justify-between gap-3 mb-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-600">{title}</h3>
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-warm-accent">{title}</h3>
         <button
           type="button"
           onClick={onEdit}
-          className="text-xs font-medium text-indigo-600 hover:text-indigo-800 hover:underline"
+          className="text-xs font-semibold text-warm-accent hover:underline"
         >
           Edit
         </button>
       </div>
-      <dl className="rounded-xl border border-slate-200 divide-y divide-slate-100 overflow-hidden">
+      <dl className="rounded-xl border border-warm divide-y divide-warm overflow-hidden bg-warm-surface">
         {filled.map(([k, v]) => (
           <div key={k} className="flex gap-4 px-4 py-2.5">
-            <dt className="text-xs text-slate-500 w-40 shrink-0 pt-0.5">{k}</dt>
-            {/* whitespace-pre-line so the multi-line address keeps its
-                line breaks instead of collapsing into one run-on line. */}
-            <dd className="text-sm text-slate-900 min-w-0 break-words whitespace-pre-line">{v}</dd>
+            <dt className="text-xs text-stone-500 w-40 shrink-0 pt-0.5">{k}</dt>
+            <dd className="text-sm text-ink-900 min-w-0 break-words whitespace-pre-line">{v}</dd>
           </div>
         ))}
         {filled.length === 0 && (
-          <div className="px-4 py-3 text-sm text-slate-500">Nothing entered.</div>
+          <div className="px-4 py-3 text-sm text-stone-500">Nothing entered.</div>
         )}
       </dl>
-      {note && <p className="mt-1.5 text-xs text-slate-500">{note}</p>}
+      {note && <p className="mt-1.5 text-xs text-stone-500">{note}</p>}
     </div>
   )
 }
 
-// Divider — a thin horizontal rule with a label centred over it. Adds
-// visual hierarchy without taking real estate.
 function Divider({ label }) {
   return (
     <div className="flex items-center gap-3 pt-1">
-      <span className="h-px flex-1 bg-slate-200" />
-      <span className="text-[11px] font-semibold uppercase tracking-wider text-slate-400">{label}</span>
-      <span className="h-px flex-1 bg-slate-200" />
+      <span className="h-px flex-1 bg-[#EDE4D3]" />
+      <span className="text-[11px] font-semibold uppercase tracking-wider text-stone-400">{label}</span>
+      <span className="h-px flex-1 bg-[#EDE4D3]" />
     </div>
   )
 }
 
-// InputWithIcon — wraps the existing Input with a slate icon on the
-// left. Animates a soft indigo glow on focus so the active field is
-// visually distinct.
 function InputWithIcon({ icon: IconComp, className = '', ...rest }) {
   return (
     <div className="relative group">
       {IconComp && (
-        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-slate-400 group-focus-within:text-slate-700 transition-colors pointer-events-none">
+        <span className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400 group-focus-within:text-stone-700 transition-colors pointer-events-none">
           <IconComp className="h-4 w-4" />
         </span>
       )}
@@ -1245,27 +1195,16 @@ function InputWithIcon({ icon: IconComp, className = '', ...rest }) {
   )
 }
 
-// YearPicker — calendar-style year selector. Clicking the trigger
-// reveals a decade grid below; prev/next decade nav at the top;
-// future years (after the current year) are disabled because an
-// institution can't be "established" in the future. Click outside
-// or hit Escape to dismiss.
 function YearPicker({ value, onChange, placeholder = 'Pick year' }) {
   const currentYear = new Date().getFullYear()
   const [open, setOpen] = useState(false)
-  // The decade currently shown in the popover. Initialised from the
-  // selected year (so reopening lands you on the right decade) or
-  // current year otherwise.
   const [viewYear, setViewYear] = useState(() => Number(value) || currentYear)
   const containerRef = useRef(null)
 
-  // Whenever the user picks a value, re-anchor the view to that decade
-  // on next open. Cheap enough to do unconditionally.
   useEffect(() => {
     if (value) setViewYear(Number(value))
   }, [value])
 
-  // Close on click outside.
   useEffect(() => {
     if (!open) return
     function handleClick(e) {
@@ -1277,7 +1216,6 @@ function YearPicker({ value, onChange, placeholder = 'Pick year' }) {
     return () => document.removeEventListener('mousedown', handleClick)
   }, [open])
 
-  // Close on Escape.
   useEffect(() => {
     if (!open) return
     function handleKey(e) {
@@ -1293,19 +1231,17 @@ function YearPicker({ value, onChange, placeholder = 'Pick year' }) {
 
   return (
     <div className="relative" ref={containerRef}>
-      {/* Trigger — looks like the regular Input, with a calendar icon
-          on the right and the selected year (or placeholder) inside. */}
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className={`w-full inline-flex items-center justify-between gap-2 rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-left transition-colors focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200 ${
-          open ? 'border-indigo-500 ring-2 ring-indigo-200' : 'hover:border-slate-400'
+        className={`w-full inline-flex items-center justify-between gap-2 rounded-xl border border-warm bg-white px-3 py-2 text-sm text-left transition-colors focus:border-amber-600 focus:outline-none focus:ring-2 focus:ring-amber-200 ${
+          open ? 'border-amber-600 ring-2 ring-amber-200' : 'hover:border-warm-strong'
         }`}
       >
-        <span className={value ? 'text-slate-900 tabular-nums' : 'text-slate-400'}>
+        <span className={value ? 'text-ink-900 tabular-nums font-medium' : 'text-stone-400'}>
           {value || placeholder}
         </span>
-        <Icon.Calendar className={`h-4 w-4 ${open ? 'text-slate-700' : 'text-slate-400'} transition-colors`} />
+        <Icon.Calendar className={`h-4 w-4 ${open ? 'text-stone-700' : 'text-stone-400'} transition-colors`} />
       </button>
 
       <AnimatePresence>
@@ -1315,37 +1251,31 @@ function YearPicker({ value, onChange, placeholder = 'Pick year' }) {
             animate={{ opacity: 1, y: 0, scale: 1 }}
             exit={{ opacity: 0, y: -4, scale: 0.97 }}
             transition={{ duration: 0.15, ease: 'easeOut' }}
-            className="absolute z-30 mt-2 w-full min-w-[260px] rounded-xl border border-slate-200 bg-white p-3 shadow-[0_8px_24px_-8px_rgba(15,23,42,0.18)]"
-            // The popover anchors to the trigger via min-width; if the
-            // input is narrow (sm:grid columns), 260px keeps the grid
-            // readable rather than crushing the cells.
+            className="absolute z-30 mt-2 w-full min-w-[260px] rounded-xl border border-warm bg-warm-surface p-3 shadow-lg shadow-stone-900/10"
           >
-            {/* Decade nav: ◀  2020 – 2029  ▶ */}
             <div className="flex items-center justify-between mb-3">
               <button
                 type="button"
                 onClick={() => setViewYear(viewYear - 10)}
-                className="rounded-md p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-900 transition-colors"
+                className="rounded-md p-1 text-stone-500 hover:bg-[#F5EEDF] hover:text-ink-900 transition-colors"
                 aria-label="Previous decade"
               >
                 <Icon.ChevronLeft className="h-4 w-4" />
               </button>
-              <span className="text-sm font-medium text-slate-700 tabular-nums">
+              <span className="text-sm font-semibold text-stone-800 tabular-nums">
                 {decadeStart} – {decadeStart + 9}
               </span>
               <button
                 type="button"
                 onClick={() => setViewYear(viewYear + 10)}
                 disabled={!canGoForward}
-                className="rounded-md p-1 text-slate-500 hover:bg-slate-100 hover:text-slate-900 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                className="rounded-md p-1 text-stone-500 hover:bg-[#F5EEDF] hover:text-ink-900 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                 aria-label="Next decade"
               >
                 <Icon.ChevronRight className="h-4 w-4" />
               </button>
             </div>
 
-            {/* Year grid — 4 columns, 10 cells (the last 2 sit in the
-                third row, intentionally). */}
             <div className="grid grid-cols-4 gap-1.5">
               {years.map((y) => {
                 const future = y > currentYear
@@ -1363,12 +1293,12 @@ function YearPicker({ value, onChange, placeholder = 'Pick year' }) {
                     }}
                     className={`rounded-lg px-2 py-2 text-sm font-medium tabular-nums transition-colors ${
                       selected
-                        ? 'bg-slate-900 text-white shadow-sm'
+                        ? 'bg-ink-900 text-white shadow-xs'
                         : future
-                        ? 'text-slate-300 cursor-not-allowed'
+                        ? 'text-stone-300 cursor-not-allowed'
                         : isCurrent
-                        ? 'text-slate-900 ring-1 ring-slate-300 hover:bg-slate-100'
-                        : 'text-slate-700 hover:bg-slate-100'
+                        ? 'text-ink-900 ring-1 ring-warm-strong bg-warm-surface hover:bg-[#F5EEDF]'
+                        : 'text-stone-700 hover:bg-[#F5EEDF]'
                     }`}
                   >
                     {y}
@@ -1382,8 +1312,6 @@ function YearPicker({ value, onChange, placeholder = 'Pick year' }) {
     </div>
   )
 }
-
-// ─── Step 1 ────────────────────────────────────────────────────────────
 
 function Step1({
   form,
@@ -1400,15 +1328,8 @@ function Step1({
 }) {
   return (
     <div className="space-y-5">
-      {/* Section 1 — Campus address.
-          Own card so it visually reads as a distinct block from the
-          head-of-institution section below. Both sections now share
-          this step's accent — the ICONS already say "place" vs
-          "person", so spending a second hue on that distinction was
-          buying nothing and cost the form its coherence. */}
       <SectionCard
         icon={Icon.MapPin}
-        accent={ACCENTS.section}
         title="Campus address"
         subtitle="Where the institution is physically located."
       >
@@ -1480,12 +1401,8 @@ function Step1({
         </Field>
       </SectionCard>
 
-      {/* Section 2 — Head of institution. Slate chip marks it as the
-          subordinate block on this step; the shield icon and the
-          callout carry the "this is a person, and it matters" weight. */}
       <SectionCard
         icon={Icon.ShieldCheck}
-        accent={ACCENTS.sub}
         title="Head of institution"
         subtitle="We send the activation link to this person after approval."
       >
@@ -1550,16 +1467,14 @@ function Step1({
         </div>
       </SectionCard>
 
-      {/* Action bar — wrapped in its own card so the visual rhythm
-          (3 stacked cards) is consistent with the rest of the step. */}
       <AestheticCard>
         <FooterBar>
           <Button variant="secondary" onClick={onBack} size="lg">
             <Icon.ChevronLeft className="mr-1.5 h-4 w-4" />
             Back
           </Button>
-          <span className="text-xs text-slate-500 inline-flex items-center gap-1.5">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+          <span className="text-xs text-stone-500 inline-flex items-center gap-1.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-600 animate-pulse" />
             Draft saved automatically
           </span>
           <Button onClick={onNext} disabled={submitting} size="lg">
@@ -1573,27 +1488,21 @@ function Step1({
   )
 }
 
-// ─── SectionCard ───────────────────────────────────────────────────────
-// Used by step 1 to break the form into two visually distinct cards
-// (address + head). The icon chip is the only place a subtle gradient
-// appears in the registration flow — keeps the chrome interesting
-// without colouring whole panels.
-function SectionCard({ icon: IconComp, accent, title, subtitle, children }) {
+function SectionCard({ icon: IconComp, title, subtitle, children }) {
   return (
     <AestheticCard>
-      <div className="px-6 py-5 border-b border-slate-100 flex items-start gap-3">
+      <div className="px-6 py-5 border-b border-warm flex items-start gap-3">
         <motion.span
           initial={{ scale: 0.85, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ duration: 0.28, ease: [0.22, 1.2, 0.36, 1] }}
-          className={`h-10 w-10 rounded-xl text-white flex items-center justify-center shrink-0 shadow-sm
-                      bg-gradient-to-br ${accent || 'from-slate-700 to-slate-900'}`}
+          className="h-10 w-10 rounded-xl bg-[#F5EEDF] text-amber-900 border border-warm flex items-center justify-center shrink-0 shadow-2xs"
         >
           <IconComp className="h-5 w-5" />
         </motion.span>
         <div className="min-w-0">
-          <h2 className="text-base font-semibold text-slate-900">{title}</h2>
-          {subtitle && <p className="text-sm text-slate-500 mt-0.5">{subtitle}</p>}
+          <h2 className="text-base font-semibold text-ink-900">{title}</h2>
+          {subtitle && <p className="text-sm text-stone-500 mt-0.5">{subtitle}</p>}
         </div>
       </div>
       <div className="px-6 py-6 space-y-5">{children}</div>
@@ -1601,32 +1510,28 @@ function SectionCard({ icon: IconComp, accent, title, subtitle, children }) {
   )
 }
 
-// CalloutNote — small inline tip box used inside SectionCard bodies
-// when the operator needs a heads-up about a specific field group.
 function CalloutNote({ children }) {
   return (
-    <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2 text-xs text-slate-600 leading-relaxed">
+    <div className="rounded-xl bg-amber-50/70 border border-warm px-3.5 py-2.5 text-xs text-stone-700 leading-relaxed">
       {children}
     </div>
   )
 }
-
-// ─── Step 2: Documents ─────────────────────────────────────────────────
 
 function Step2({ applicationId, uploaded, errors, handleFile, removeDoc, onBack, onSubmit, submitting }) {
   const requiredCount = REQUIRED_DOCS.filter((d) => d.required).length
   const uploadedRequiredCount = REQUIRED_DOCS.filter((d) => d.required && uploaded[d.kind]?.doc_id).length
   return (
     <AestheticCard>
-      <div className="px-6 py-5 border-b border-slate-100 flex items-start gap-3">
-        <span className="h-10 w-10 rounded-lg bg-indigo-50 text-indigo-700 flex items-center justify-center shrink-0">
+      <div className="px-6 py-5 border-b border-warm flex items-start gap-3">
+        <span className="h-10 w-10 rounded-xl bg-[#F5EEDF] text-amber-900 border border-warm flex items-center justify-center shrink-0">
           <Icon.Upload className="h-5 w-5" />
         </span>
         <div className="flex-1 min-w-0">
-          <h2 className="text-base font-semibold text-slate-900">Upload documents</h2>
-          <p className="text-sm text-slate-500 mt-0.5">
+          <h2 className="text-base font-semibold text-ink-900">Upload documents</h2>
+          <p className="text-sm text-stone-500 mt-0.5">
             PDF, JPG or PNG — up to 10 MB per file. Application{' '}
-            <code className="px-1.5 py-0.5 rounded bg-slate-100 text-slate-700 text-xs font-mono">
+            <code className="px-1.5 py-0.5 rounded bg-[#F5EEDF] border border-warm text-stone-800 text-xs font-mono">
               #{applicationId ?? '—'}
             </code>
           </p>
@@ -1655,10 +1560,6 @@ function Step2({ applicationId, uploaded, errors, handleFile, removeDoc, onBack,
           <Icon.ChevronLeft className="mr-1.5 h-4 w-4" />
           Back
         </Button>
-        {/* Goes to the Review step, not to submit — the label has to say
-            so, or the applicant braces for a commit that isn't happening
-            yet. `success` variant dropped for the same reason: green
-            reads as "this is the final action". */}
         <Button onClick={onSubmit} size="lg">
           Review application
           <Icon.ChevronRight className="ml-1.5 h-4 w-4" />
@@ -1681,7 +1582,7 @@ function DocUploadRow({ kind, label, hint, required, state, error, onFile, onRem
           ? 'border-emerald-200 bg-emerald-50/40'
           : error
           ? 'border-rose-300 bg-rose-50/40'
-          : 'border-slate-200 hover:border-slate-300 bg-white'
+          : 'border-warm hover:border-warm-strong bg-warm-surface'
       }`}
     >
       <div className="flex items-start gap-4">
@@ -1689,39 +1590,39 @@ function DocUploadRow({ kind, label, hint, required, state, error, onFile, onRem
           initial={false}
           animate={done ? { scale: [1, 1.12, 1] } : { scale: 1 }}
           transition={{ duration: 0.32, ease: 'easeOut' }}
-          className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 ring-1 ${
+          className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 border ${
             done
-              ? 'bg-emerald-50 text-emerald-600 ring-emerald-200'
-              : 'bg-slate-100 text-slate-500 ring-slate-200'
+              ? 'bg-emerald-50 text-emerald-600 border-emerald-200'
+              : 'bg-[#F5EEDF] text-stone-700 border-warm'
           }`}
         >
           {done ? <Icon.Check className="h-5 w-5" /> : <Icon.FileText className="h-5 w-5" />}
         </motion.span>
         <div className="flex-1 min-w-0">
           <div className="flex items-baseline gap-2 flex-wrap">
-            <p className="text-sm font-medium text-slate-900">{label}</p>
+            <p className="text-sm font-medium text-ink-900">{label}</p>
             {required && (
-              <span className="text-xs text-rose-600 font-medium">required</span>
+              <span className="text-xs text-rose-600 font-semibold">required</span>
             )}
           </div>
-          {hint && <p className="text-xs text-slate-500 mt-0.5">{hint}</p>}
+          {hint && <p className="text-xs text-stone-500 mt-0.5">{hint}</p>}
           {state?.original_name && (
-            <p className="mt-2 text-xs text-slate-700 truncate">
-              <span className="font-mono">{state.original_name}</span>
+            <p className="mt-2 text-xs text-stone-700 truncate">
+              <span className="font-mono font-medium">{state.original_name}</span>
               {state.size_bytes ? ` · ${(state.size_bytes / 1024).toFixed(0)} KB` : ''}
             </p>
           )}
           {uploading && (
-            <div className="mt-2 h-1.5 w-full bg-slate-200 rounded-full overflow-hidden">
+            <div className="mt-2 h-1.5 w-full bg-[#EDE4D3] rounded-full overflow-hidden">
               <motion.div
-                className="h-full bg-slate-900 rounded-full"
+                className="h-full bg-ink-900 rounded-full"
                 initial={false}
                 animate={{ width: `${state.progress || 0}%` }}
                 transition={{ duration: 0.18, ease: 'easeOut' }}
               />
             </div>
           )}
-          {error && <p className="mt-2 text-xs text-rose-600">{error}</p>}
+          {error && <p className="mt-2 text-xs text-rose-600 font-medium">{error}</p>}
         </div>
         <div className="shrink-0">
           {done ? (
@@ -1744,7 +1645,7 @@ function DocUploadRow({ kind, label, hint, required, state, error, onFile, onRem
                   className={`inline-flex items-center gap-1.5 rounded-lg font-medium text-sm px-3 py-1.5 transition cursor-pointer ${
                     uploading
                       ? 'bg-slate-100 text-slate-400 cursor-not-allowed'
-                      : 'bg-white text-slate-700 border border-slate-300 hover:bg-slate-50'
+                      : 'bg-white text-stone-700 border border-warm hover:border-warm-strong hover:bg-warm-surface'
                   }`}
                 >
                   <Icon.Upload className="h-4 w-4" />
@@ -1759,42 +1660,71 @@ function DocUploadRow({ kind, label, hint, required, state, error, onFile, onRem
   )
 }
 
-// ─── Step 3: Done ──────────────────────────────────────────────────────
-
 function DonePanel({ applicationId, email, institutionName, onStartOver, onHome }) {
+  const [copied, setCopied] = useState(false)
+
+  function copyRef() {
+    if (!applicationId) return
+    navigator.clipboard?.writeText(String(applicationId))
+    setCopied(true)
+    setTimeout(() => setCopied(false), 2000)
+  }
+
   return (
-    <AestheticCard>
-      <div className="px-6 py-12 text-center">
+    <div className="rounded-2xl border border-warm bg-warm-surface shadow-sm overflow-hidden">
+      <div className="px-6 py-12 text-center max-w-xl mx-auto">
         <motion.div
           initial={{ scale: 0.6, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ duration: 0.45, ease: [0.22, 1.5, 0.36, 1] }}
-          className="mx-auto h-16 w-16 rounded-full bg-slate-900 text-white flex items-center justify-center shadow-sm"
+          className="mx-auto h-16 w-16 rounded-2xl bg-emerald-600 text-white flex items-center justify-center shadow-lg shadow-emerald-600/20 ring-4 ring-emerald-100"
         >
-          <Icon.Check className="h-8 w-8" />
+          <Icon.Check className="h-8 w-8 stroke-[2.5]" />
         </motion.div>
-        <h2 className="mt-5 text-2xl font-semibold text-slate-900">
-          Submitted!
+        <h2 className="mt-5 text-2xl sm:text-3xl font-bold tracking-tight text-ink-900">
+          Application Submitted!
         </h2>
-        <p className="mt-2 text-sm text-slate-600 max-w-md mx-auto leading-relaxed">
-          Your application for <strong className="text-slate-900">{institutionName}</strong> is now under review.
-          Our team typically responds within 48 hours to{' '}
-          <strong className="text-slate-900">{email}</strong>.
+        <p className="mt-2.5 text-sm sm:text-base text-stone-600 leading-relaxed">
+          Your onboarding application for <strong className="text-ink-900 font-semibold">{institutionName}</strong> has been successfully received and placed in the accreditation queue.
         </p>
-        <div className="mt-5 inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-3 py-1 text-xs text-slate-600">
-          <Icon.Clock className="h-3.5 w-3.5" />
-          Reference: <code className="font-mono">#{applicationId}</code>
+
+        <div className="mt-6 p-4 rounded-xl bg-[#F5EEDF]/70 border border-warm flex flex-col sm:flex-row items-center justify-between gap-3">
+          <div className="text-left">
+            <p className="text-[11px] font-semibold uppercase tracking-wider text-stone-500">Application Reference ID</p>
+            <p className="text-base font-bold font-mono text-ink-900 tracking-tight">#{applicationId ?? '—'}</p>
+          </div>
+          <button
+            type="button"
+            onClick={copyRef}
+            className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white border border-warm text-xs font-semibold text-stone-700 hover:text-ink-900 hover:border-warm-strong shadow-2xs transition-all"
+          >
+            {copied ? <Icon.Check className="h-3.5 w-3.5 text-emerald-600" /> : <Icon.File className="h-3.5 w-3.5 text-stone-400" />}
+            {copied ? 'Copied!' : 'Copy Reference'}
+          </button>
         </div>
+
+        <div className="mt-6 text-left p-4 rounded-xl bg-amber-50/80 border border-amber-200/80">
+          <h4 className="text-xs font-bold uppercase tracking-wider text-amber-950 mb-2">What happens next?</h4>
+          <ul className="text-xs text-amber-950 space-y-1.5">
+            <li className="flex items-start gap-2">
+              <span className="h-4 w-4 rounded-full bg-amber-200/80 text-amber-900 flex items-center justify-center shrink-0 mt-0.5 text-[10px] font-bold">1</span>
+              <span>Our verification team reviews your uploaded recognition letter and PAN.</span>
+            </li>
+            <li className="flex items-start gap-2">
+              <span className="h-4 w-4 rounded-full bg-amber-200/80 text-amber-900 flex items-center justify-center shrink-0 mt-0.5 text-[10px] font-bold">2</span>
+              <span>Upon approval, the activation magic link will be sent to <strong className="font-semibold text-amber-950">{email}</strong> within 24–48 hours.</span>
+            </li>
+          </ul>
+        </div>
+
         <div className="mt-8 flex items-center justify-center gap-3 flex-wrap">
-          <Button variant="secondary" onClick={onStartOver}>Register another</Button>
-          <Button onClick={onHome}>Back to home</Button>
+          <Button variant="secondary" onClick={onStartOver}>Register Another Institution</Button>
+          <Button onClick={onHome}>Return to Portal</Button>
         </div>
       </div>
-    </AestheticCard>
+    </div>
   )
 }
-
-// ─── Helpers ───────────────────────────────────────────────────────────
 
 function Field({ label, required, error, help, className = '', children }) {
   return (
