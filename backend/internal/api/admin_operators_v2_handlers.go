@@ -259,15 +259,18 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	// Pre-check uniqueness (case-insensitive) to give a clean 409
-	// instead of a raw SQLite "UNIQUE constraint failed" error. The
-	// migration-023 index enforces this at the DB layer regardless
-	// (defense in depth against races).
+	// instead of a raw "UNIQUE constraint failed" error. Scoped to
+	// this admin's org so the same person can be provisioned as an
+	// operator under multiple orgs (migration V6). The DB index
+	// enforces the same (org_id, LOWER(email)) tuple at commit time.
 	var dupID int64
 	if err := s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT id FROM users WHERE email IS NOT NULL AND LOWER(email) = LOWER($1) LIMIT 1`,
-		req.Email,
+		`SELECT id FROM users
+		 WHERE org_id = $1 AND email IS NOT NULL AND LOWER(email) = LOWER($2)
+		 LIMIT 1`,
+		orgID, req.Email,
 	).Scan(&dupID); err == nil {
-		writeErr(w, http.StatusConflict, "a user with this email already exists")
+		writeErr(w, http.StatusConflict, "a user with this email already exists in this organisation")
 		return
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		writeErr(w, http.StatusInternalServerError, "email check: "+err.Error())
@@ -456,17 +459,20 @@ func (s *Server) adminPatchOperator(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "email is not a valid address")
 			return
 		}
-		// Reject if any OTHER user (excluding this operator) has the
-		// same email, case-insensitively. Prevents rewriting an
-		// operator's email to collide with an existing user; the
-		// unique index catches it at the DB layer too.
+		// Reject if any OTHER user in THIS org has the same email.
+		// Scoped to org_id since V6 — a person can legitimately be an
+		// operator under a different org with the same email; only
+		// collisions inside the caller's own org are the problem.
 		var dupID int64
 		err := tx.QueryRow(
-			`SELECT id FROM users WHERE email IS NOT NULL AND LOWER(email) = LOWER($1) AND id != $2 LIMIT 1`,
-			e, id,
+			`SELECT id FROM users
+			 WHERE org_id = $1 AND email IS NOT NULL
+			   AND LOWER(email) = LOWER($2) AND id != $3
+			 LIMIT 1`,
+			orgID, e, id,
 		).Scan(&dupID)
 		if err == nil {
-			writeErr(w, http.StatusConflict, "a user with this email already exists")
+			writeErr(w, http.StatusConflict, "a user with this email already exists in this organisation")
 			return
 		} else if !errors.Is(err, sql.ErrNoRows) {
 			writeErr(w, http.StatusInternalServerError, "email check: "+err.Error())

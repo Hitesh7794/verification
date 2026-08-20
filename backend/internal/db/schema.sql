@@ -51,8 +51,11 @@ CREATE TABLE users (
     valid_to                 DATE
 );
 CREATE INDEX idx_users_org_role ON users(org_id, role);
-CREATE UNIQUE INDEX ux_users_email_ci
-    ON users(LOWER(email))
+-- Email uniqueness scoped per organisation (V6, 2026-08-20) — same
+-- physical person can operate under multiple orgs with the same email;
+-- collisions inside one org are still prevented.
+CREATE UNIQUE INDEX ux_users_org_email_ci
+    ON users(org_id, LOWER(email))
     WHERE email IS NOT NULL AND email != '';
 
 CREATE TABLE magic_links (

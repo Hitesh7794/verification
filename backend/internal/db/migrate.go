@@ -13,7 +13,7 @@ var schemaSQL string
 // schemaVersion is the version stamped in schema_migrations after the
 // initial schema has been applied. Bump this only when new post-1
 // migrations are added below.
-const schemaVersion = 5
+const schemaVersion = 6
 
 // Migrate applies schema.sql to an empty database, or is a no-op if
 // the schema has already been applied. Safe to call on every startup.
@@ -69,7 +69,56 @@ func Migrate(d *sql.DB) error {
 		}
 	}
 
+	if !applied[6] {
+		if err := applyV6PerOrgEmailUniqueness(ctx, d); err != nil {
+			return fmt.Errorf("apply v6 per-org email uniqueness: %w", err)
+		}
+	}
+
 	return nil
+}
+
+// applyV6PerOrgEmailUniqueness scopes the users.email uniqueness
+// constraint to (org_id, email) instead of globally unique. Lets the
+// same physical person exist as an operator/admin under multiple
+// organisations — a legitimate case (agent working two centres run by
+// different clients) that the old global-unique index blocked.
+//
+// Username stays globally unique — that's the login identifier and
+// two users with the same username would fight the JWT flow. If a
+// person needs to belong to two orgs, they get two usernames
+// (e.g. "john_nta", "john_ntakolkata") but can reuse the same email.
+//
+// Migration is safe because every existing row satisfies the new
+// constraint: if `(email)` was globally unique before, then
+// `(org_id, email)` is also unique after — the new tuple is strictly
+// more permissive.
+func applyV6PerOrgEmailUniqueness(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmts := []string{
+		`DROP INDEX IF EXISTS ux_users_email_ci`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS ux_users_org_email_ci
+		    ON users(org_id, LOWER(email))
+		    WHERE email IS NOT NULL AND email <> ''`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.ExecContext(ctx, s); err != nil {
+			return fmt.Errorf("exec %q: %w", firstLine(s), err)
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)`,
+		6, "per_org_email_uniqueness",
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // applyV5CandidateBiometricFlags adds per-modality presence flags on
