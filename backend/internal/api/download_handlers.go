@@ -107,6 +107,16 @@ var operatorClientPatterns = []string{
 	"VerificationPortalClient-*-windows.zip",
 }
 
+// agentAndroidPatterns is the mobile-app counterpart. The verification-
+// agent Android app ships as a signed .apk that a centre agent installs
+// on their handset. Same DOWNLOADS_DIR, same selection rule (newest mtime
+// among matches wins). Kept as a slice for the same "future variants
+// drop in without code change" reason.
+var agentAndroidPatterns = []string{
+	"VerificationAgent-*.apk",
+	"verification-agent-*.apk",
+}
+
 // findOperatorClient walks DOWNLOADS_DIR for the best operator-client
 // artefact. Returns errNoOperatorClient if nothing matches — handler
 // surfaces that as 404 so the admin sees "no bundle published yet"
@@ -215,6 +225,9 @@ func (s *Server) adminListDownloads(w http.ResponseWriter, r *http.Request) {
 	if item, _, err := s.findOperatorClient(); err == nil {
 		resp.Items = append(resp.Items, *item)
 	}
+	if item, _, err := s.findAgentAndroid(); err == nil {
+		resp.Items = append(resp.Items, *item)
+	}
 	// Best-effort last-download lookup. Empty result = first time;
 	// we just omit the field.
 	var at, who string
@@ -295,6 +308,100 @@ func (s *Server) adminDownloadOperatorClient(w http.ResponseWriter, r *http.Requ
 	rng := r.Header.Get("Range")
 	if rng == "" || strings.HasPrefix(strings.TrimSpace(rng), "bytes=0-") {
 		s.auditFromRequest(r, "downloads.operator_client.get", "download", 0, map[string]any{
+			"filename":   item.Filename,
+			"size_bytes": fi.Size(),
+			"sha256":     item.SHA256,
+		})
+	}
+
+	http.ServeContent(w, r, item.Filename, fi.ModTime(), f)
+}
+
+// ----- Android agent APK -----
+
+var errNoAgentAndroid = errors.New("no verification-agent android apk found")
+
+// findAgentAndroid mirrors findOperatorClient but for the mobile app.
+func (s *Server) findAgentAndroid() (*downloadItem, string, error) {
+	dir := s.deps.Cfg.DownloadsDir
+	if dir == "" {
+		return nil, "", errNoAgentAndroid
+	}
+	for _, pattern := range agentAndroidPatterns {
+		matches, _ := filepath.Glob(filepath.Join(dir, pattern))
+		if len(matches) == 0 {
+			continue
+		}
+		var (
+			bestPath string
+			bestInfo os.FileInfo
+		)
+		for _, m := range matches {
+			fi, err := os.Stat(m)
+			if err != nil || fi.IsDir() {
+				continue
+			}
+			if bestInfo == nil || fi.ModTime().After(bestInfo.ModTime()) {
+				bestPath = m
+				bestInfo = fi
+			}
+		}
+		if bestInfo == nil {
+			continue
+		}
+		sum, err := cachedSHA256(bestPath, bestInfo)
+		if err != nil {
+			return nil, "", fmt.Errorf("sha256: %w", err)
+		}
+		return &downloadItem{
+			ID:          "agent-android",
+			Filename:    filepath.Base(bestPath),
+			Version:     parseVersionFromFilename(filepath.Base(bestPath)),
+			SizeBytes:   bestInfo.Size(),
+			SHA256:      sum,
+			UpdatedAt:   bestInfo.ModTime().UTC().Format(time.RFC3339),
+			DownloadURL: "/api/downloads/agent-android",
+		}, bestPath, nil
+	}
+	return nil, "", errNoAgentAndroid
+}
+
+// GET /api/downloads/agent-android
+//
+// Streams the verification-agent Android APK. Auth: client (agent
+// self-reinstall on a new handset) OR admin (hand it to a new agent).
+// Same audit + Range-request handling as the desktop bundle.
+func (s *Server) downloadAgentAndroid(w http.ResponseWriter, r *http.Request) {
+	item, path, err := s.findAgentAndroid()
+	if errors.Is(err, errNoAgentAndroid) {
+		writeErr(w, http.StatusNotFound, "no verification agent APK published yet")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "lookup: "+err.Error())
+		return
+	}
+	f, err := os.Open(path)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "open: "+err.Error())
+		return
+	}
+	defer f.Close()
+	fi, err := f.Stat()
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "stat: "+err.Error())
+		return
+	}
+
+	w.Header().Set("Content-Type", "application/vnd.android.package-archive")
+	w.Header().Set("Content-Disposition",
+		fmt.Sprintf(`attachment; filename="%s"`, safeFilename(item.Filename)))
+	w.Header().Set("X-Content-Type-Options", "nosniff")
+	w.Header().Set("X-SHA256", item.SHA256)
+
+	rng := r.Header.Get("Range")
+	if rng == "" || strings.HasPrefix(strings.TrimSpace(rng), "bytes=0-") {
+		s.auditFromRequest(r, "downloads.agent_android.get", "download", 0, map[string]any{
 			"filename":   item.Filename,
 			"size_bytes": fi.Size(),
 			"sha256":     item.SHA256,

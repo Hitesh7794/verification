@@ -257,3 +257,86 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 		"password_change_required": passChangeReq != 0,
 	})
 }
+
+// authRefresh mints a fresh JWT for the calling user without requiring
+// them to re-enter credentials. Same shape as /api/auth/login on success.
+//
+// Long-lived clients (the Android verification-agent app) call this when
+// their token is within a few hours of expiry so a shift at the exam
+// centre doesn't get kicked back to the login screen mid-verification.
+//
+// Re-verifies from the DB every call so a disabled account or a
+// reviewer whose client's portal was flipped off can't extend their
+// session past those events.
+func (s *Server) authRefresh(w http.ResponseWriter, r *http.Request) {
+	c := claimsFrom(r)
+	if c == nil {
+		writeErr(w, http.StatusUnauthorized, "auth required")
+		return
+	}
+
+	var (
+		actualUsername string
+		role           string
+		displayName    string
+		disabledAt     sql.NullTime
+		orgID          sql.NullInt64
+		clientID       sql.NullInt64
+	)
+	if err := s.deps.DB.QueryRowContext(r.Context(),
+		`SELECT username, role, COALESCE(display_name, username),
+		        disabled_at, org_id, client_id
+		 FROM users WHERE id = $1`, c.UserID,
+	).Scan(&actualUsername, &role, &displayName, &disabledAt, &orgID, &clientID); err != nil {
+		writeErr(w, http.StatusUnauthorized, "user not found")
+		return
+	}
+	if disabledAt.Valid {
+		writeErr(w, http.StatusForbidden, "account disabled")
+		return
+	}
+
+	if role == "client_reviewer" && clientID.Valid {
+		var portalOn bool
+		if err := s.deps.DB.QueryRowContext(r.Context(),
+			`SELECT portal_enabled FROM clients WHERE id = $1`, clientID.Int64,
+		).Scan(&portalOn); err != nil || !portalOn {
+			writeErr(w, http.StatusForbidden,
+				"this board's review portal is currently disabled — contact the platform team")
+			return
+		}
+	}
+
+	claims := auth.Claims{
+		UserID:   c.UserID,
+		Username: actualUsername,
+		Role:     role,
+	}
+	if orgID.Valid {
+		v := orgID.Int64
+		claims.OrgID = &v
+	}
+	if clientID.Valid {
+		v := clientID.Int64
+		claims.ClientID = &v
+	}
+	tok, err := s.deps.JWT.Issue(claims)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "token error")
+		return
+	}
+
+	s.audit(r.Context(), &claims, "auth.refresh", "user", c.UserID, clientIP(r), nil)
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"token": tok,
+		"user": map[string]any{
+			"id":           c.UserID,
+			"username":     actualUsername,
+			"role":         role,
+			"display_name": displayName,
+			"org_id":       claims.OrgID,
+			"client_id":    claims.ClientID,
+		},
+	})
+}

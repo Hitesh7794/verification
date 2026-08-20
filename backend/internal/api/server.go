@@ -189,6 +189,12 @@ func (s *Server) Router() http.Handler {
 	// a KYC to a board that can't act on it.
 	r.Get("/api/clients/public", s.publicListClients)
 
+	// ----- public: mobile app runtime knobs -----
+	// Unauthenticated: the Android verification-agent app hits this
+	// BEFORE login to decide whether the installed version is still
+	// supported. All fields are display / soft-tuning; no secrets.
+	r.Get("/api/mobile/config", s.mobileConfig)
+
 	// ----- public set-password landing -----
 	// Backs the magic-link the head clicks after approval.
 	r.Get("/api/set-password/verify", s.setPasswordVerify)
@@ -206,6 +212,7 @@ func (s *Server) Router() http.Handler {
 
 		r.Get("/api/me", s.me)
 		r.Post("/api/me/change-password", s.changePassword)
+		r.Post("/api/auth/refresh", s.authRefresh)
 
 		// Client portal — FACE-FIRST FLOW:
 		//   Candidate lookup is FREE for everyone (operator confirms a
@@ -296,6 +303,8 @@ func (s *Server) Router() http.Handler {
 			s.requireRole("admin", "client", "superadmin")(s.adminListDownloads))
 		r.Get("/api/downloads/operator-client",
 			s.requireRole("admin", "client", "superadmin")(s.adminDownloadOperatorClient))
+		r.Get("/api/downloads/agent-android",
+			s.requireRole("admin", "client", "superadmin")(s.downloadAgentAndroid))
 
 		r.Get("/api/super/stats", s.requireRole("superadmin")(s.superStats))
 		r.Get("/api/super/organizations", s.requireRole("superadmin")(s.superOrganizations))
