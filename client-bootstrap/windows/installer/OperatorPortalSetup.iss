@@ -35,7 +35,7 @@
 
 #define AppName        "Verification Portal Operator Client"
 #define AppShortName   "VerificationPortal"
-#define AppVersion     "1.0.0"
+#define AppVersion     "1.1.0"
 #define AppPublisher   "Verification Portal"
 
 ; Portal URL is baked in at build time -- this .exe knows exactly which

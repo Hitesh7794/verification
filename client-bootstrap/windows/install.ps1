@@ -556,6 +556,68 @@ Common causes:
 #      our startek.js client). Warn the operator if L1 RD is missing.
 #   3. The Capture API MSI (this bundle ships L1_API_Setup_30072025.msi).
 
+function Install-StartekWbfDriver {
+    # ACPL WBF (Windows Biometric Framework) driver — makes Windows
+    # recognise the FM220 series as a biometric device at OS level.
+    # MUST run first — nothing below can talk to the sensor without it.
+    #
+    # Vendor's installer is a plain Inno Setup .exe (silent-friendly via
+    # /VERYSILENT /NORESTART). Idempotent — repeated runs no-op cleanly
+    # if the driver's already at the correct version.
+    $startekDir = Join-Path $InstallRoot 'startek'
+    $wbf = Join-Path $startekDir 'Startek_WBF_Driver.exe'
+    if (-not (Test-Path $wbf)) {
+        Write-Host "  (Startek_WBF_Driver.exe not staged; skipping -- re-run build-bundle.sh)"
+        return
+    }
+    Write-Host "  -> installing Startek WBF fingerprint driver (silent)"
+    $p = Start-Process -FilePath $wbf `
+                       -ArgumentList '/VERYSILENT','/NORESTART','/SUPPRESSMSGBOXES' `
+                       -Wait -PassThru
+    # Inno Setup convention: 0 = ok, 3010 = success but reboot needed. Some
+    # driver installers also emit 1 on "already installed at same version".
+    if ($p.ExitCode -notin 0,1,3010) {
+        Write-Warning "Startek WBF driver returned exit code $($p.ExitCode); FM220 devices may not be recognised by Windows"
+    } else {
+        Write-Host "  -> WBF driver installed (exit $($p.ExitCode))"
+    }
+}
+
+function Install-StartekL1RdService {
+    # ACPL L1 RD Service — UIDAI-certified Registered Device middleware.
+    # Even for our non-Aadhaar TrustView flow this is required because
+    # the FM220U L1 sensor firmware refuses to open a session to anything
+    # other than a whitelisted RD Service. See STARTEK_INTEGRATION.md.
+    #
+    # Ships as a Windows Installer MSI. Silent switches: /qn /norestart.
+    # The service self-registers as "Access RD Service" (or similar) and
+    # binds to localhost:11101 or the ACPL-configured port; downstream
+    # Capture API talks to it via RD-native IPC, not TCP.
+    $startekDir = Join-Path $InstallRoot 'startek'
+    $rd = Join-Path $startekDir 'Startek_L1_RDService.msi'
+    if (-not (Test-Path $rd)) {
+        Write-Host "  (Startek_L1_RDService.msi not staged; skipping -- re-run build-bundle.sh)"
+        return
+    }
+    Write-Host "  -> installing Startek L1 RD Service (silent)"
+    $logFile = Join-Path $InstallRoot 'logs\startek-l1-rd.log'
+    $logDir = Split-Path $logFile
+    if (-not (Test-Path $logDir)) { New-Item -ItemType Directory -Path $logDir -Force | Out-Null }
+    $p = Start-Process -FilePath 'msiexec.exe' `
+                       -ArgumentList @(
+                           '/i',"`"$rd`"",
+                           '/qn','/norestart',
+                           '/l*v',"`"$logFile`""
+                       ) `
+                       -Wait -PassThru
+    # 1638 = newer version already installed (fine); 3010 = reboot needed.
+    if ($p.ExitCode -notin 0,1638,3010) {
+        Write-Warning "Startek L1 RD Service MSI returned exit code $($p.ExitCode); FM220U capture will not work until this is resolved. Log: $logFile"
+    } else {
+        Write-Host "  -> L1 RD Service installed (log: $logFile)"
+    }
+}
+
 function Install-StartekCaptureApi {
     $startekDir = Join-Path $InstallRoot 'startek'
     if (-not (Test-Path $startekDir)) {
@@ -600,23 +662,20 @@ function Install-StartekCaptureApi {
     }
     Write-Host "  -> Capture API installed (log: $logFile)"
 
-    # --- L1 RD Service presence check ---
-    # The Capture API can technically run without L1 RD if no other process
-    # has the device open, but ACPL's documented workflow needs L1 RD
-    # holding the device and our client calling RELEASEFM220 to hand it off.
-    # If the operator's laptop doesn't have L1 RD installed, the first
-    # capture will likely fail with "device not connected". Warn loudly
-    # rather than fail -- let the operator decide whether to install it
-    # before/after our bundle.
-    $l1rd = Get-Service -Name '*L1RD*','*l1-rd*','*ACPLL1*' -ErrorAction SilentlyContinue |
+    # --- L1 RD Service post-install sanity check ---
+    # We've just installed it in Install-StartekL1RdService above, so we
+    # expect it to be present. If the check fails, log a warning: the
+    # capture path will still attempt to start but real captures may
+    # error with "device not connected". Nothing here throws — the
+    # operator can also install RD Service manually if needed.
+    $l1rd = Get-Service -Name '*L1RD*','*l1-rd*','*ACPLL1*','*RDService*' -ErrorAction SilentlyContinue |
         Select-Object -First 1
     if ($l1rd) {
         Write-Host "  -> L1 RD service detected: $($l1rd.Name) ($($l1rd.Status))"
     } else {
-        Write-Warning ("Windows Certified RD Service for L1 Devices not detected. " +
-                       "If you plan to use Startek/ACPL fingerprint devices, install " +
-                       "it from https://acpl.in.net/RdService.html before running a " +
-                       "verification. (Mantra MorFin devices work without it.)")
+        Write-Warning ("L1 RD service not detected after install. Check " +
+                       "'services.msc' for an 'Access RD Service' entry. " +
+                       "If missing, re-run the installer as Administrator.")
     }
 }
 
@@ -730,12 +789,27 @@ Install-MorfinService
 # Runs alongside Mantra on separate ports (MorFin :8030, ACPL :4443/:8090).
 # The frontend probes both and picks whichever vendor has a device plugged
 # in -- having both installed is intentional, not a conflict.
+#
+# THREE-stage install (order matters):
+#   1. WBF driver     — Windows Biometric Framework driver so the OS
+#                       recognises FM220 series as a biometric device.
+#   2. L1 RD Service  — UIDAI-certified device middleware. Required
+#                       even for our non-Aadhaar flow because L1-sealed
+#                       sensors refuse sessions from anything else.
+#   3. Capture API    — the SDK our fingerprint client calls into.
+# The vendor's own docs mandate this order; skipping (1) leaves the
+# device invisible, skipping (2) leaves it locked.
 if (-not $SkipStartek) {
     Write-Host ""
-    Write-Host "=== Fingerprint daemon -- Startek / ACPL Capture API (Windows native) ==="
+    Write-Host "=== Fingerprint stack -- Startek / ACPL (Windows native) ==="
+    Write-Host "-- 1/3: WBF driver --"
+    Install-StartekWbfDriver
+    Write-Host "-- 2/3: L1 RD Service --"
+    Install-StartekL1RdService
+    Write-Host "-- 3/3: L1 Capture API --"
     Install-StartekCaptureApi
 } else {
-    Write-Host "-> -SkipStartek set; Startek Capture API NOT installed"
+    Write-Host "-> -SkipStartek set; Startek WBF/RD/Capture stack NOT installed"
 }
 
 # --- browser + shortcuts ---------------------------------------------------

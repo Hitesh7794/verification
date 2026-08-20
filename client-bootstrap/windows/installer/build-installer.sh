@@ -7,10 +7,10 @@
 # Prerequisites:
 #   1. Docker Desktop running.
 #   2. build-bundle.sh has been run so the payload sits at
-#      client-bootstrap/windows/dist/VerificationPortalClient-1.0.0-windows/
+#      client-bootstrap/windows/dist/VerificationPortalClient-1.1.0-windows/
 #
 # Output:
-#   client-bootstrap/windows/installer/output/OperatorPortalSetup-1.0.0.exe
+#   client-bootstrap/windows/installer/output/OperatorPortalSetup-1.1.0.exe
 #
 # Portal URL override (optional):
 #   PORTAL_URL=https://staging.example.com ./build-installer.sh
@@ -22,7 +22,7 @@ cd "$(dirname "$0")"
 INSTALLER_DIR="$(pwd)"
 WINDOWS_DIR="$(cd .. && pwd)"
 
-BUNDLE_DIR="${WINDOWS_DIR}/dist/VerificationPortalClient-1.0.0-windows"
+BUNDLE_DIR="${WINDOWS_DIR}/dist/VerificationPortalClient-1.1.0-windows"
 if [ ! -d "$BUNDLE_DIR" ]; then
     echo "✗ Bundle payload not found at $BUNDLE_DIR" >&2
     echo "  Run ../build-bundle.sh first." >&2
@@ -65,7 +65,7 @@ docker run --rm \
     ${DEFINE_ARGS[@]+"${DEFINE_ARGS[@]}"} \
     OperatorPortalSetup.iss
 
-OUT="$INSTALLER_DIR/output/OperatorPortalSetup-1.0.0.exe"
+OUT="$INSTALLER_DIR/output/OperatorPortalSetup-1.1.0.exe"
 if [ ! -f "$OUT" ]; then
     echo "✗ Compilation succeeded but output .exe not found at $OUT" >&2
     exit 1

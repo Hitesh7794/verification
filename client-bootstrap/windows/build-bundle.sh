@@ -20,7 +20,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 ROOT="$(cd ../.. && pwd)"
 
-VERSION="1.0.0"
+VERSION="1.1.0"
 BUNDLE_NAME="VerificationPortalClient-${VERSION}-windows"
 
 # --- inputs ---------------------------------------------------------------
@@ -165,17 +165,44 @@ else
     echo "     See client-bootstrap/windows/vendor/README.md for the download source." >&2
 fi
 
-# Windows-side: Startek/ACPL Capture API MSI + VC++ redist prereq.
-# Both files come from the vendor SDK package shipped by ACPL
-# (Setup_ACPL_L1_API/). Optional — if STARTEK_DIR is missing or the
-# MSI isn't there, install.ps1 just skips the Startek phase.
+# Windows-side: full Startek/ACPL stack — WBF driver + L1 RD Service +
+# L1 API MSI + VC++ redist prereq. All stage into $OUT/startek/. If any
+# piece is missing, install.ps1's per-installer Test-Path guards handle
+# it (the phase just skips that installer with a warning).
+#
+# The three installers run on the operator's laptop in this order:
+#   1. Startek_WBF_Driver.exe      (Windows Biometric Framework)
+#   2. Startek_L1_RDService.msi    (UIDAI L1 RD Service)
+#   3. L1_API_Setup_*.msi          (ACPL Capture API)
+
+# 1) WBF driver — lives directly in vendor/ (not vendor SDK folder).
+STARTEK_WBF="${STARTEK_WBF:-${ROOT}/client-bootstrap/windows/vendor/Startek_WBF_Driver.exe}"
+if [ -f "$STARTEK_WBF" ]; then
+    cp "$STARTEK_WBF" "$OUT/startek/Startek_WBF_Driver.exe"
+    echo "  staged Startek WBF driver: $(basename "$STARTEK_WBF") ($(du -h "$STARTEK_WBF" | cut -f1))"
+else
+    echo "  (no WBF driver at $STARTEK_WBF — install.ps1 will skip that phase)" >&2
+fi
+
+# 2) L1 RD Service MSI — also in vendor/.
+STARTEK_RD="${STARTEK_RD:-${ROOT}/client-bootstrap/windows/vendor/Startek_L1_RDService.msi}"
+if [ -f "$STARTEK_RD" ]; then
+    cp "$STARTEK_RD" "$OUT/startek/Startek_L1_RDService.msi"
+    echo "  staged Startek L1 RD Service: $(basename "$STARTEK_RD") ($(du -h "$STARTEK_RD" | cut -f1))"
+else
+    echo "  (no L1 RD Service MSI at $STARTEK_RD — install.ps1 will skip that phase)" >&2
+fi
+
+# 3) L1 Capture API MSI + VC++ redist — both live in the vendor SDK
+# folder shipped by ACPL as Setup_ACPL_L1_API/. Optional — bundle still
+# builds if absent, install.ps1 just skips the Capture API phase.
 if [ -d "$STARTEK_DIR" ]; then
     STARTEK_MSI=$(ls "$STARTEK_DIR"/L1_API_Setup_*.msi 2>/dev/null | head -n1 || true)
     if [ -n "$STARTEK_MSI" ] && [ -f "$STARTEK_MSI" ]; then
         cp "$STARTEK_MSI" "$OUT/startek/"
-        echo "  staged startek MSI: $(basename "$STARTEK_MSI")"
+        echo "  staged startek L1 API MSI: $(basename "$STARTEK_MSI")"
     else
-        echo "  ⚠ Startek MSI not found in $STARTEK_DIR (L1_API_Setup_*.msi)" >&2
+        echo "  ⚠ Startek L1 API MSI not found in $STARTEK_DIR (L1_API_Setup_*.msi)" >&2
     fi
     # VC++ 2017 x86 redist (required by ACPLAPI.DLL). Prefer the
     # VC17_redist build that ACPL bundles; fall back to vcredist_x86 if
@@ -187,7 +214,7 @@ if [ -d "$STARTEK_DIR" ]; then
         echo "  ⚠ using older vcredist_x86.exe (VC17_redist.x86.exe not found)" >&2
     fi
 else
-    echo "  (Setup_ACPL_L1_API/ not present at $STARTEK_DIR — bundling without Startek)"
+    echo "  (Setup_ACPL_L1_API/ not present at $STARTEK_DIR — bundling without Capture API)"
 fi
 
 # Tooling
