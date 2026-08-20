@@ -13,7 +13,7 @@ var schemaSQL string
 // schemaVersion is the version stamped in schema_migrations after the
 // initial schema has been applied. Bump this only when new post-1
 // migrations are added below.
-const schemaVersion = 7
+const schemaVersion = 8
 
 // Migrate applies schema.sql to an empty database, or is a no-op if
 // the schema has already been applied. Safe to call on every startup.
@@ -81,7 +81,41 @@ func Migrate(d *sql.DB) error {
 		}
 	}
 
+	if !applied[8] {
+		if err := applyV8AllowCustomInstitutionType(ctx, d); err != nil {
+			return fmt.Errorf("apply v8 allow_custom_institution_type: %w", err)
+		}
+	}
+
 	return nil
+}
+
+// applyV8AllowCustomInstitutionType drops the CHECK constraint on
+// institution_applications.institution_type so user-entered custom
+// institution types (when Other is picked) can be stored directly.
+func applyV8AllowCustomInstitutionType(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmts := []string{
+		`ALTER TABLE institution_applications DROP CONSTRAINT IF EXISTS institution_applications_institution_type_check`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.ExecContext(ctx, s); err != nil {
+			return fmt.Errorf("exec %q: %w", firstLine(s), err)
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)`,
+		8, "allow_custom_institution_type",
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // applyV7AllowOtherInstitutionType widens the CHECK constraint on

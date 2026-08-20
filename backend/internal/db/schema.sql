@@ -282,8 +282,7 @@ CREATE TABLE institution_applications (
     status                TEXT NOT NULL DEFAULT 'pending'
         CHECK (status IN ('draft','pending','approved','rejected')),
     institution_name      TEXT NOT NULL,
-    institution_type      TEXT NOT NULL
-        CHECK (institution_type IN ('school','college','university','coaching','other')),
+    institution_type      TEXT NOT NULL,
     tier                  TEXT
         CHECK (tier IS NULL OR tier IN ('tier_1','tier_2','tier_3')),
     aishe_code            TEXT,

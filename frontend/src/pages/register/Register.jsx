@@ -111,17 +111,14 @@ const INSTITUTION_TYPES = [
   {
     value: 'college',
     label: 'College',
-    blurb: 'Undergraduate / professional, affiliated to a university',
   },
   {
     value: 'university',
     label: 'University',
-    blurb: 'Multi-faculty, degree-granting in its own right',
   },
   {
     value: 'other',
     label: 'Other',
-    blurb: 'School, academy, coaching or autonomous institute',
   },
 ]
 const AFFILIATION_BODIES = [
@@ -156,6 +153,8 @@ const FIELD_RULES = {
     v.trim().length < 3 ? 'Required (at least 3 characters)' : undefined,
   institution_type: (v) =>
     INSTITUTION_TYPES.find((t) => t.value === v) ? undefined : 'Pick a type',
+  institution_type_other: (v, form) =>
+    form.institution_type === 'other' && !v?.trim() ? 'Please specify institution type' : undefined,
   aishe_code: (v) => (!v.trim() ? 'Required' : undefined),
   pan: (v) => {
     if (!v.trim()) return 'Required'
@@ -217,7 +216,7 @@ function normaliseIndianMobile(raw) {
 // Which fields belong to which step, for the Continue-time sweep.
 const STEP_FIELDS = [
   [
-    'institution_name', 'institution_type', 'aishe_code', 'pan',
+    'institution_name', 'institution_type', 'institution_type_other', 'aishe_code', 'pan',
     'year_established', 'affiliation_body', 'affiliation_body_other',
     'approx_student_count',
   ],
@@ -232,6 +231,7 @@ const EMPTY_FORM = {
   client_id: '',
   institution_name: '',
   institution_type: 'college',
+  institution_type_other: '', // free text when institution_type === 'other'
   aishe_code: '',
   pan: '',
   year_established: '',
@@ -387,8 +387,12 @@ export default function Register() {
         const affiliation = form.affiliation_body === 'Other'
           ? form.affiliation_body_other.trim()
           : form.affiliation_body
+        const institutionType = form.institution_type === 'other'
+          ? (form.institution_type_other.trim() || 'other')
+          : form.institution_type
         const payload = {
           ...form,
+          institution_type: institutionType,
           affiliation_body: affiliation,
           year_established: Number(form.year_established) || 0,
           approx_student_count: Number(form.approx_student_count) || 0,
@@ -401,6 +405,7 @@ export default function Register() {
           client_id: form.client_id ? Number(form.client_id) : undefined,
         }
         delete payload.affiliation_body_other // internal-only field
+        delete payload.institution_type_other // internal-only field
         if (!payload.client_id) delete payload.client_id
         const res = await registerInit(payload)
         setApplicationId(res.application_id)
@@ -785,10 +790,31 @@ function StepSidebar({ step }) {
 // ─── Step 0 ────────────────────────────────────────────────────────────
 
 function Step0({ form, errors, update, onBlurField, onNext, publicClients = [], clientsLoaded = false }) {
+  const [otherDraft, setOtherDraft] = useState(form.institution_type_other || '')
+
+  useEffect(() => {
+    setOtherDraft(form.institution_type_other || '')
+  }, [form.institution_type_other])
+
   const showClientPicker = clientsLoaded && publicClients.length > 0
   const selectedClient = publicClients.find(
     (c) => String(c.id) === String(form.client_id),
   )
+
+  function handleAddOther() {
+    const val = otherDraft.trim()
+    update('institution_type_other', val)
+    if (!val && onBlurField) {
+      onBlurField('institution_type_other')
+    }
+  }
+
+  function handleContinue() {
+    if (form.institution_type === 'other' && otherDraft.trim()) {
+      update('institution_type_other', otherDraft.trim())
+    }
+    onNext()
+  }
 
   return (
     <AestheticCard>
@@ -856,20 +882,75 @@ function Step0({ form, errors, update, onBlurField, onNext, publicClients = [], 
                 other: Icon.FileText,
               }
               const IconComp = iconMap[t.value] || Icon.Building
+              const customVal = t.value === 'other' ? form.institution_type_other : undefined
               return (
                 <CompactChoice
                   key={t.value}
                   selected={form.institution_type === t.value}
-                  onSelect={() => update('institution_type', t.value)}
+                  onSelect={() => {
+                    update('institution_type', t.value)
+                    if (t.value !== 'other') {
+                      update('institution_type_other', '')
+                      setOtherDraft('')
+                    }
+                  }}
                   icon={IconComp}
                   label={t.label}
-                  blurb={t.blurb}
+                  customValue={customVal}
                 />
               )
             })}
           </div>
           {errors.institution_type && (
             <p className="mt-1.5 text-xs text-rose-600 font-medium">{errors.institution_type}</p>
+          )}
+          {form.institution_type === 'other' && (
+            <motion.div
+              initial={{ opacity: 0, y: -4 }}
+              animate={{ opacity: 1, y: 0 }}
+              className="mt-3.5 max-w-lg p-4 rounded-xl border border-warm bg-[#F5EEDF]/40 space-y-2.5"
+            >
+              <div className="flex items-center justify-between">
+                <Label className="!mb-0 text-xs font-semibold text-ink-900">
+                  Specify institution type <span className="text-rose-600">*</span>
+                </Label>
+                {form.institution_type_other && (
+                  <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full inline-flex items-center gap-1">
+                    <Icon.Check className="h-3 w-3 stroke-[2.5]" /> Added: {form.institution_type_other}
+                  </span>
+                )}
+              </div>
+              <div className="flex items-center gap-2">
+                <Input
+                  value={otherDraft}
+                  onChange={(e) => {
+                    setOtherDraft(e.target.value)
+                  }}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter') {
+                      e.preventDefault()
+                      handleAddOther()
+                    }
+                  }}
+                  placeholder="e.g. Autonomous Institute, Academy, School"
+                  maxLength={80}
+                  autoFocus
+                  className="flex-1 bg-white"
+                />
+                <Button
+                  type="button"
+                  size="md"
+                  onClick={handleAddOther}
+                  disabled={!otherDraft.trim()}
+                  className="shrink-0 font-medium px-4"
+                >
+                  {form.institution_type_other === otherDraft.trim() && form.institution_type_other ? 'Selected' : 'Add'}
+                </Button>
+              </div>
+              {errors.institution_type_other && (
+                <p className="text-xs text-rose-600 font-medium">{errors.institution_type_other}</p>
+              )}
+            </motion.div>
           )}
         </div>
 
@@ -951,7 +1032,7 @@ function Step0({ form, errors, update, onBlurField, onNext, publicClients = [], 
         <span className="text-xs text-stone-500">
           Required fields marked with <span className="text-rose-600 font-semibold">*</span>
         </span>
-        <Button onClick={onNext} size="lg">
+        <Button onClick={handleContinue} size="lg">
           Continue
           <Icon.ChevronRight className="ml-1.5 h-4 w-4" />
         </Button>
@@ -960,7 +1041,7 @@ function Step0({ form, errors, update, onBlurField, onNext, publicClients = [], 
   )
 }
 
-function CompactChoice({ selected, onSelect, icon: IconComp, label, blurb }) {
+function CompactChoice({ selected, onSelect, icon: IconComp, label, blurb, customValue }) {
   return (
     <motion.button
       type="button"
@@ -973,7 +1054,7 @@ function CompactChoice({ selected, onSelect, icon: IconComp, label, blurb }) {
           : 'border-warm bg-warm-surface hover:border-warm-strong hover:bg-white'
       }`}
     >
-      <div className="flex items-start gap-3">
+      <div className={`flex gap-3 ${customValue ? 'items-start' : 'items-center'}`}>
         <span
           className={`h-9 w-9 rounded-lg flex items-center justify-center shrink-0 transition-all ${
             selected ? 'bg-amber-700 text-white shadow-xs' : 'bg-[#F5EEDF] text-stone-700 border border-warm'
@@ -985,11 +1066,15 @@ function CompactChoice({ selected, onSelect, icon: IconComp, label, blurb }) {
           <p className={`text-sm font-bold tracking-tight ${selected ? 'text-amber-950' : 'text-ink-900'}`}>
             {label}
           </p>
-          {blurb && (
+          {customValue ? (
+            <p className="text-xs mt-0.5 font-semibold text-amber-900 truncate" title={customValue}>
+              {customValue}
+            </p>
+          ) : blurb ? (
             <p className={`text-xs mt-0.5 leading-snug ${selected ? 'text-amber-900/80' : 'text-stone-500'}`}>
               {blurb}
             </p>
-          )}
+          ) : null}
         </div>
       </div>
       {selected && (
@@ -997,7 +1082,7 @@ function CompactChoice({ selected, onSelect, icon: IconComp, label, blurb }) {
           initial={{ scale: 0 }}
           animate={{ scale: 1 }}
           transition={{ duration: 0.15, ease: [0.22, 1.5, 0.36, 1] }}
-          className="absolute right-3 top-3.5 h-4 w-4 rounded-full bg-amber-700 text-white flex items-center justify-center shadow-xs"
+          className={`absolute right-3 ${customValue ? 'top-3.5' : 'top-1/2 -translate-y-1/2'} h-4 w-4 rounded-full bg-amber-700 text-white flex items-center justify-center shadow-xs`}
         >
           <Icon.Check className="h-2.5 w-2.5 stroke-[2.5]" />
         </motion.span>
@@ -1025,8 +1110,9 @@ function ReviewStep({ form, uploaded, onEdit, onBack, onSubmit, submitting }) {
       : form.affiliation_body
 
   const typeLabel =
-    INSTITUTION_TYPES.find((t) => t.value === form.institution_type)?.label ||
-    form.institution_type
+    form.institution_type === 'other'
+      ? (form.institution_type_other?.trim() || 'Other')
+      : (INSTITUTION_TYPES.find((t) => t.value === form.institution_type)?.label || form.institution_type)
 
   const address = [
     form.address_line1,
