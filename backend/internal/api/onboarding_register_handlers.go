@@ -71,18 +71,11 @@ var (
 		"image/png":       true,
 	}
 
-	// Allowed institution types / tiers / designations / kinds —
-	// hard-coded enums mirroring the CHECK constraints on the DB rows.
-	// Mismatch = 400 before we ever touch the DB.
-	// College + university only — schools and coaching centres are
-	// not currently in scope. The DB CHECK constraint still allows
-	// the historical 'school' / 'coaching' values for any legacy
-	// rows, but new submissions can only pick from this map.
-	allowedInstitutionTypes = map[string]bool{
-		"college":    true,
-		"university": true,
-		"other":      true, // added 2026-08-20 alongside V7 migration + Register form
-	}
+	// institution_type used to be a fixed enum enforced by both this map
+	// and a DB CHECK constraint. V8 (2026-08-20) dropped the CHECK to let
+	// users type a custom value when they pick "Other" in the register
+	// form, so the allowlist here was dropped too — validateInit now
+	// only checks length. See project_snapshot.md V8 notes.
 	allowedTiers = map[string]bool{
 		"":       true, // optional
 		"tier_1": true,
@@ -622,7 +615,12 @@ func validateInit(r *registerInitReq) error {
 	r.AisheCode = strings.TrimSpace(r.AisheCode)
 	r.PinCode = strings.TrimSpace(r.PinCode)
 
-	r.InstitutionType = strings.TrimSpace(r.InstitutionType)
+	// Normalize institution_type so casing / whitespace variants of the
+	// same free-text bucket collapse to one DB value. Since V8 dropped
+	// the CHECK enum, "IIT College", "iit college", "IIT  college" would
+	// otherwise be three distinct rows.
+	r.InstitutionType = strings.ToLower(strings.TrimSpace(r.InstitutionType))
+	r.InstitutionType = strings.Join(strings.Fields(r.InstitutionType), " ")
 	if len(r.InstitutionName) < 3 || len(r.InstitutionName) > 200 {
 		return errors.New("institution_name must be 3-200 characters")
 	}
