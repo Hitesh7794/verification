@@ -622,11 +622,12 @@ func validateInit(r *registerInitReq) error {
 	r.AisheCode = strings.TrimSpace(r.AisheCode)
 	r.PinCode = strings.TrimSpace(r.PinCode)
 
+	r.InstitutionType = strings.TrimSpace(r.InstitutionType)
 	if len(r.InstitutionName) < 3 || len(r.InstitutionName) > 200 {
 		return errors.New("institution_name must be 3-200 characters")
 	}
-	if !allowedInstitutionTypes[r.InstitutionType] {
-		return errors.New("institution_type must be college, university, or other")
+	if r.InstitutionType == "" || len(r.InstitutionType) > 80 {
+		return errors.New("institution_type is required (up to 80 characters)")
 	}
 	// Tier is optional — when supplied it must be one of the known
 	// values, but the form no longer requires it.
