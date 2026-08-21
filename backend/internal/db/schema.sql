@@ -175,11 +175,30 @@ CREATE INDEX idx_exam_csv_uploads_exam ON exam_csv_uploads(exam_id, uploaded_at 
 CREATE TABLE organization_exam_subscriptions (
     org_id         BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
     exam_id        BIGINT NOT NULL REFERENCES exams(id)         ON DELETE CASCADE,
+    status         TEXT NOT NULL DEFAULT 'approved'
+        CHECK (status IN ('pending', 'approved', 'rejected')),
+    approval_type  TEXT
+        CHECK (approval_type IS NULL OR approval_type IN ('per_exam', 'blanket_client')),
+    requested_at   TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     subscribed_at  TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     subscribed_by  BIGINT REFERENCES users(id),
+    reviewed_at    TIMESTAMPTZ,
+    reviewed_by    BIGINT REFERENCES users(id),
+    review_note    TEXT,
     PRIMARY KEY (org_id, exam_id)
 );
 CREATE INDEX idx_org_exam_subs_exam ON organization_exam_subscriptions(exam_id);
+CREATE INDEX idx_org_exam_subs_status ON organization_exam_subscriptions(status);
+
+CREATE TABLE client_organization_approvals (
+    client_id   BIGINT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+    org_id      BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    approved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+    approved_by BIGINT REFERENCES users(id),
+    note        TEXT,
+    PRIMARY KEY (client_id, org_id)
+);
+CREATE INDEX idx_client_org_approvals_org ON client_organization_approvals(org_id);
 
 CREATE TABLE operator_exams (
     user_id  BIGINT NOT NULL REFERENCES users(id) ON DELETE CASCADE,

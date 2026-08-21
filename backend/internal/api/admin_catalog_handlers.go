@@ -38,19 +38,23 @@ import (
 // ── /api/admin/catalog ────────────────────────────────────────────────
 
 type catalogExam struct {
-	ID               int64  `json:"id"`
-	Name             string `json:"name"`
-	ExamCode         string `json:"exam_code"`
-	VerificationFrom string `json:"verification_from"`
-	VerificationTo   string `json:"verification_to"`
-	CandidateCount   int64  `json:"candidate_count"`
-	Subscribed       bool   `json:"subscribed"`
+	ID                 int64  `json:"id"`
+	Name               string `json:"name"`
+	ExamCode           string `json:"exam_code"`
+	VerificationFrom   string `json:"verification_from"`
+	VerificationTo     string `json:"verification_to"`
+	CandidateCount     int64  `json:"candidate_count"`
+	Subscribed         bool   `json:"subscribed"` // true if status == "approved"
+	SubscriptionStatus string `json:"subscription_status"` // "none", "pending", "approved", "rejected"
+	ReviewNote         string `json:"review_note,omitempty"`
+	RequestedAt        string `json:"requested_at,omitempty"`
 }
 type catalogClient struct {
-	ID    int64         `json:"id"`
-	Name  string        `json:"name"`
-	Notes string        `json:"notes,omitempty"`
-	Exams []catalogExam `json:"exams"`
+	ID                    int64         `json:"id"`
+	Name                  string        `json:"name"`
+	Notes                 string        `json:"notes,omitempty"`
+	ClientBlanketApproved bool          `json:"client_blanket_approved"`
+	Exams                 []catalogExam `json:"exams"`
 }
 
 func (s *Server) adminCatalog(w http.ResponseWriter, r *http.Request) {
@@ -62,25 +66,28 @@ func (s *Server) adminCatalog(w http.ResponseWriter, r *http.Request) {
 	orgID := *claims.OrgID
 
 	// Single query: visible clients LEFT JOIN their visible+open exams,
-	// LEFT JOIN this org's subscriptions so we know per-exam whether the
-	// admin has already subscribed. Ordering keeps clients alphabetical
-	// and exams by creation.
+	// LEFT JOIN this org's subscriptions and client-level approvals.
 	rows, err := s.deps.DB.QueryContext(r.Context(), `
 		SELECT
 			c.id, c.name, COALESCE(c.notes,''),
+			CASE WHEN coa.client_id IS NOT NULL THEN 1 ELSE 0 END AS client_blanket_approved,
 			e.id, e.name, e.exam_code,
 			e.verification_from, e.verification_to,
 			(SELECT COUNT(*) FROM exam_candidates ec WHERE ec.exam_id = e.id),
-			CASE WHEN s.exam_id IS NULL THEN 0 ELSE 1 END AS subscribed
+			COALESCE(s.status, ''),
+			COALESCE(s.review_note, ''),
+			s.requested_at
 		FROM clients c
+		LEFT JOIN client_organization_approvals coa
+			ON coa.client_id = c.id AND coa.org_id = $1
 		LEFT JOIN exams e
 			ON e.client_id = c.id
 			AND e.visible = 1
 			AND e.closed = 0
 		LEFT JOIN organization_exam_subscriptions s
-			ON s.exam_id = e.id AND s.org_id = $1
+			ON s.exam_id = e.id AND s.org_id = $2
 		WHERE c.visible = 1 AND c.closed = 0
-		ORDER BY c.name, e.created_at DESC`, orgID)
+		ORDER BY c.name, e.created_at DESC`, orgID, orgID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
 		return
@@ -91,34 +98,55 @@ func (s *Server) adminCatalog(w http.ResponseWriter, r *http.Request) {
 	order := []int64{}
 	for rows.Next() {
 		var (
-			cID           int64
-			cName, cNotes string
-			eID           sql.NullInt64
-			eName, eCode  sql.NullString
-			from, to      sql.NullString
-			candCount     sql.NullInt64
-			sub           int
+			cID             int64
+			cName, cNotes   string
+			blanketApproved int
+			eID             sql.NullInt64
+			eName, eCode    sql.NullString
+			from, to        sql.NullString
+			candCount       sql.NullInt64
+			subStatus       string
+			reviewNote      string
+			reqAt           sql.NullTime
 		)
-		if err := rows.Scan(&cID, &cName, &cNotes,
-			&eID, &eName, &eCode, &from, &to, &candCount, &sub); err != nil {
+		if err := rows.Scan(&cID, &cName, &cNotes, &blanketApproved,
+			&eID, &eName, &eCode, &from, &to, &candCount,
+			&subStatus, &reviewNote, &reqAt); err != nil {
 			writeErr(w, http.StatusInternalServerError, "row scan: "+err.Error())
 			return
 		}
 		cli, ok := byClient[cID]
 		if !ok {
-			cli = &catalogClient{ID: cID, Name: cName, Notes: cNotes, Exams: []catalogExam{}}
+			cli = &catalogClient{
+				ID:                    cID,
+				Name:                  cName,
+				Notes:                 cNotes,
+				ClientBlanketApproved: blanketApproved == 1,
+				Exams:                 []catalogExam{},
+			}
 			byClient[cID] = cli
 			order = append(order, cID)
 		}
 		if eID.Valid {
+			statusStr := subStatus
+			if statusStr == "" {
+				statusStr = "none"
+			}
+			var reqAtStr string
+			if reqAt.Valid {
+				reqAtStr = reqAt.Time.UTC().Format("2006-01-02T15:04:05Z")
+			}
 			cli.Exams = append(cli.Exams, catalogExam{
-				ID:               eID.Int64,
-				Name:             eName.String,
-				ExamCode:         eCode.String,
-				VerificationFrom: from.String,
-				VerificationTo:   to.String,
-				CandidateCount:   candCount.Int64,
-				Subscribed:       sub == 1,
+				ID:                 eID.Int64,
+				Name:               eName.String,
+				ExamCode:           eCode.String,
+				VerificationFrom:   from.String,
+				VerificationTo:     to.String,
+				CandidateCount:     candCount.Int64,
+				Subscribed:         statusStr == "approved",
+				SubscriptionStatus: statusStr,
+				ReviewNote:         reviewNote,
+				RequestedAt:        reqAtStr,
 			})
 		}
 	}
@@ -165,7 +193,7 @@ func (s *Server) adminListSubscriptions(w http.ResponseWriter, r *http.Request) 
 		FROM organization_exam_subscriptions s
 		JOIN exams e   ON e.id = s.exam_id
 		JOIN clients c ON c.id = e.client_id
-		WHERE s.org_id = $2
+		WHERE s.org_id = $2 AND s.status = 'approved'
 		ORDER BY s.subscribed_at DESC`, orgID, orgID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
@@ -210,10 +238,11 @@ func (s *Server) adminSubscribe(w http.ResponseWriter, r *http.Request) {
 	}
 	// Verify the exam exists, is visible, and not closed — matches what
 	// the catalog surfaces. Hidden exams are not subscribable.
+	var clientID int64
 	var visible, closed int
 	err := s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT visible, closed FROM exams WHERE id = $1`, req.ExamID,
-	).Scan(&visible, &closed)
+		`SELECT client_id, visible, closed FROM exams WHERE id = $1`, req.ExamID,
+	).Scan(&clientID, &visible, &closed)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeErr(w, http.StatusNotFound, "exam not found")
 		return
@@ -226,16 +255,48 @@ func (s *Server) adminSubscribe(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusConflict, "exam is hidden or closed; cannot subscribe")
 		return
 	}
+
+	// Check if this organization already has blanket approval from this client.
+	var blanketApproved int
+	_ = s.deps.DB.QueryRowContext(r.Context(),
+		`SELECT 1 FROM client_organization_approvals WHERE client_id = $1 AND org_id = $2`,
+		clientID, orgID,
+	).Scan(&blanketApproved)
+
+	initialStatus := "pending"
+	var approvalType sql.NullString
+	if blanketApproved == 1 {
+		initialStatus = "approved"
+		approvalType = sql.NullString{String: "blanket_client", Valid: true}
+	}
+
 	if _, err := s.deps.DB.ExecContext(r.Context(), `
-		INSERT INTO organization_exam_subscriptions(org_id, exam_id, subscribed_by)
-		VALUES($1, $2, $3)
-		ON CONFLICT DO NOTHING`,
-		orgID, req.ExamID, claims.UserID,
+		INSERT INTO organization_exam_subscriptions(
+			org_id, exam_id, status, approval_type, requested_at, subscribed_at, subscribed_by, reviewed_at, review_note
+		) VALUES(
+			$1, $2, $3, $4, NOW(), NOW(), $5,
+			CASE WHEN $3 = 'approved' THEN NOW() ELSE NULL END,
+			CASE WHEN $3 = 'approved' THEN 'Pre-approved via client blanket authorization' ELSE NULL END
+		)
+		ON CONFLICT (org_id, exam_id) DO UPDATE SET
+			status = EXCLUDED.status,
+			approval_type = EXCLUDED.approval_type,
+			requested_at = NOW(),
+			subscribed_at = NOW(),
+			subscribed_by = EXCLUDED.subscribed_by,
+			reviewed_at = EXCLUDED.reviewed_at,
+			review_note = EXCLUDED.review_note`,
+		orgID, req.ExamID, initialStatus, approvalType, claims.UserID,
 	); err != nil {
 		writeErr(w, http.StatusInternalServerError, "db insert: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"ok": true, "exam_id": req.ExamID})
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"ok":                  true,
+		"exam_id":             req.ExamID,
+		"status":              initialStatus,
+		"blanket_preapproved": blanketApproved == 1,
+	})
 }
 
 func (s *Server) adminUnsubscribe(w http.ResponseWriter, r *http.Request) {

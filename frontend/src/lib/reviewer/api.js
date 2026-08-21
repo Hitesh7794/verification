@@ -48,3 +48,55 @@ export async function rejectReviewerApplication(id, note) {
     body: { note: note || '' },
   })
 }
+
+// ── Exam Subscription Requests ─────────────────────────────────────────
+
+// GET /api/client/subscription-requests
+export async function listSubscriptionRequests({ status = 'pending', examId = '' } = {}) {
+  const qs = new URLSearchParams()
+  if (status) qs.set('status', status)
+  if (examId && examId !== 'all') qs.set('exam_id', examId)
+  return api(`/client/subscription-requests?${qs}`)
+}
+
+// POST /api/client/subscription-requests/{org_id}/{exam_id}/approve
+// mode: "per_exam" | "blanket_client"
+export async function approveSubscriptionRequest(orgId, examId, { mode = 'per_exam', note = '' } = {}) {
+  return api(`/client/subscription-requests/${orgId}/${examId}/approve`, {
+    method: 'POST',
+    body: { mode, note },
+  })
+}
+
+// POST /api/client/subscription-requests/{org_id}/{exam_id}/reject
+export async function rejectSubscriptionRequest(orgId, examId, { note = '' } = {}) {
+  return api(`/client/subscription-requests/${orgId}/${examId}/reject`, {
+    method: 'POST',
+    body: { note },
+  })
+}
+
+// POST /api/client/subscription-requests/bulk-approve
+// orgIds: number[], examIds: number[], mode: "per_exam" | "blanket_client", note: string
+export async function bulkApproveSubscriptionRequests({ orgIds = [], examIds = [], mode = 'per_exam', note = '' } = {}) {
+  return api('/client/subscription-requests/bulk-approve', {
+    method: 'POST',
+    body: { org_ids: orgIds, exam_ids: examIds, mode, note },
+  })
+}
+
+// POST /api/client/subscription-requests/bulk-reject
+// orgIds: number[], examIds: number[], note: string
+export async function bulkRejectSubscriptionRequests({ orgIds = [], examIds = [], note = '' } = {}) {
+  return api('/client/subscription-requests/bulk-reject', {
+    method: 'POST',
+    body: { org_ids: orgIds, exam_ids: examIds, note },
+  })
+}
+
+// POST /api/client/subscription-requests/{org_id}/{exam_id}/reset-pending
+export async function resetSubscriptionRequestToPending(orgId, examId) {
+  return api(`/client/subscription-requests/${orgId}/${examId}/reset-pending`, {
+    method: 'POST',
+  })
+}

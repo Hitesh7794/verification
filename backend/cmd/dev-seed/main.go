@@ -1,634 +1,506 @@
-// dev-seed — populate a local dev database with demo data.
+// dev-seed — populate local PostgreSQL dev database with realistic multi-tenant data.
 //
-// Why this exists: the normal Seed() in internal/db only creates demo
-// users when the bundled candidate tree (gndu27/) is present on disk.
-// That tree is gitignored and lives outside the repo, so anyone who
-// gets the code as a ZIP or a fresh clone boots into an empty portal —
-// no organizations, no admin login, and therefore no way to reach the
-// admin-side pages at all.
+// Seeds:
+//   - Superadmin (super / super123)
+//   - 4 Clients / Exam Boards (NTA, AIIMS, UPSC, CBSE) with dedicated Client Reviewer logins
+//   - 8 Universities & Colleges with Admin accounts & Wallets
+//   - Multiple open Exams with Candidate rosters
+//   - Various Subscription Requests across institutions (Pending, Approved per-exam, Blanket Partner)
 //
-// Clients, exams and candidates are never seeded by the app under any
-// circumstance (they're superadmin-authored through the UI), so this
-// also lays down a small catalog so the Phase 1-2 screens have
-// something to render.
-//
-// Safe to re-run: every insert is idempotent on a natural key.
-// Local development only — never point this at a real database.
-//
-//	cd backend && go run ./cmd/dev-seed
+// Usage:
+//   cd backend && go run ./cmd/dev-seed
 package main
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 	"log"
-	"strings"
 	"time"
 
-	_ "modernc.org/sqlite"
+	_ "github.com/jackc/pgx/v5/stdlib"
 	"golang.org/x/crypto/bcrypt"
+
+	"github.com/veni/neet-verification/internal/config"
+	"github.com/veni/neet-verification/internal/db"
 )
 
-const dbPath = "verification.db"
-
 func main() {
-	d, err := sql.Open("sqlite", dbPath)
+	cfg := config.Load()
+	dsn := cfg.DatabaseURL
+	if dsn == "" {
+		dsn = "postgres://portal:portal-dev@127.0.0.1:5434/verification?sslmode=disable"
+	}
+
+	log.Printf("Connecting to PostgreSQL at %s ...", dsn)
+	d, err := db.Open(dsn)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("failed to open database: %v", err)
 	}
 	defer d.Close()
 
-	// Foreign keys off during seeding: we insert parents and children in
-	// dependency order anyway, and SQLite's FK enforcement plus the
-	// ON CONFLICT upserts below interact badly on re-runs.
-	if _, err := d.Exec(`PRAGMA foreign_keys = OFF`); err != nil {
-		log.Fatal(err)
+	if err := db.Migrate(d); err != nil {
+		log.Fatalf("failed to migrate database: %v", err)
 	}
 
-	// Ensure required tables exist
-	if _, err := d.Exec(`
-		CREATE TABLE IF NOT EXISTS organizations (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			code TEXT NOT NULL UNIQUE,
-			name TEXT NOT NULL,
-			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-		);
-		CREATE TABLE IF NOT EXISTS wallets (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			org_id INTEGER NOT NULL UNIQUE,
-			balance_paise INTEGER NOT NULL DEFAULT 0,
-			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-		);
-		CREATE TABLE IF NOT EXISTS users (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			username TEXT NOT NULL UNIQUE,
-			password_hash TEXT NOT NULL,
-			password_plaintext TEXT,
-			role TEXT NOT NULL,
-			org_id INTEGER,
-			client_id INTEGER,
-			display_name TEXT NOT NULL,
-			email TEXT,
-			disabled_at DATETIME,
-			activated_at DATETIME,
-			password_change_required INTEGER NOT NULL DEFAULT 0,
-			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-		);
-		CREATE TABLE IF NOT EXISTS clients (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			name TEXT NOT NULL UNIQUE,
-			notes TEXT,
-			visible INTEGER NOT NULL DEFAULT 1,
-			closed INTEGER NOT NULL DEFAULT 0,
-			closed_at DATETIME,
-			portal_enabled INTEGER NOT NULL DEFAULT 0,
-			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-		);
-		CREATE TABLE IF NOT EXISTS exams (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			client_id INTEGER NOT NULL,
-			name TEXT NOT NULL,
-			exam_code TEXT NOT NULL UNIQUE,
-			trustview_ref TEXT,
-			verification_from DATE NOT NULL,
-			verification_to DATE NOT NULL,
-			visible INTEGER NOT NULL DEFAULT 1,
-			closed INTEGER NOT NULL DEFAULT 0,
-			closed_at DATETIME,
-			requires_face INTEGER NOT NULL DEFAULT 1,
-			requires_fp INTEGER NOT NULL DEFAULT 1,
-			requires_iris INTEGER NOT NULL DEFAULT 0,
-			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			updated_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-		);
-		CREATE TABLE IF NOT EXISTS exam_candidates (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			exam_id INTEGER NOT NULL,
-			roll_no TEXT NOT NULL,
-			name TEXT NOT NULL,
-			verification_date DATE,
-			registration_id TEXT,
-			father_name TEXT,
-			dob DATE,
-			gender TEXT,
-			shift_name TEXT,
-			centre_code TEXT,
-			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			UNIQUE (exam_id, roll_no)
-		);
-		CREATE TABLE IF NOT EXISTS organization_exam_subscriptions (
-			org_id INTEGER NOT NULL,
-			exam_id INTEGER NOT NULL,
-			subscribed_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			subscribed_by INTEGER,
-			PRIMARY KEY (org_id, exam_id)
-		);
-		CREATE TABLE IF NOT EXISTS centers (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			org_id INTEGER NOT NULL,
-			code TEXT NOT NULL,
-			name TEXT NOT NULL,
-			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
-			UNIQUE (org_id, code)
-		);
-		CREATE TABLE IF NOT EXISTS verifications (
-			id INTEGER PRIMARY KEY AUTOINCREMENT,
-			roll_no TEXT NOT NULL,
-			org_id INTEGER NOT NULL,
-			center_id INTEGER,
-			operator_id INTEGER NOT NULL,
-			face_match INTEGER NOT NULL DEFAULT 0,
-			fp_match INTEGER NOT NULL DEFAULT 0,
-			status TEXT NOT NULL,
-			note TEXT,
-			via TEXT,
-			fp_match_score INTEGER,
-			face_match_score REAL,
-			match_threshold INTEGER,
-			decision_ms INTEGER,
-			client_app_version TEXT,
-			idempotency_key TEXT,
-			created_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP
-		);
-	`); err != nil {
-		log.Fatal("create tables: ", err)
-	}
-
-	// Safe alter table for existing SQLite databases
-	cols := []string{
-		"ALTER TABLE verifications ADD COLUMN center_id INTEGER",
-		"ALTER TABLE verifications ADD COLUMN operator_id INTEGER DEFAULT 1",
-		"ALTER TABLE verifications ADD COLUMN fp_match_score INTEGER",
-		"ALTER TABLE verifications ADD COLUMN face_match_score REAL",
-		"ALTER TABLE verifications ADD COLUMN match_threshold INTEGER",
-		"ALTER TABLE verifications ADD COLUMN decision_ms INTEGER",
-		"ALTER TABLE verifications ADD COLUMN client_app_version TEXT",
-		"ALTER TABLE verifications ADD COLUMN via TEXT",
-		"ALTER TABLE users ADD COLUMN password_plaintext TEXT",
-		"ALTER TABLE users ADD COLUMN activated_at DATETIME",
-		"ALTER TABLE users ADD COLUMN password_change_required INTEGER DEFAULT 0",
-		"ALTER TABLE users ADD COLUMN client_id INTEGER",
-	}
-	for _, colStmt := range cols {
-		_, _ = d.Exec(colStmt)
-	}
-
-	tx, err := d.Begin()
+	ctx := context.Background()
+	tx, err := d.BeginTx(ctx, nil)
 	if err != nil {
-		log.Fatal(err)
+		log.Fatalf("failed to start tx: %v", err)
 	}
 	defer tx.Rollback()
 
-	// ── 1. Organization (the college that logs in and holds the wallet)
-	orgID, err := upsertOrg(tx, "GNDU27", "Guru Nanak Dev University")
-	if err != nil {
-		log.Fatal("org: ", err)
-	}
-
-	// Wallet with ₹500 so candidate lookups aren't blocked by the 402 path.
-	if _, err := tx.Exec(
-		`INSERT INTO wallets(org_id, balance_paise) VALUES(?, 50000)
-		 ON CONFLICT(org_id) DO UPDATE SET balance_paise = 50000`,
-		orgID,
+	log.Println("Seeding core superadmin...")
+	superHash, _ := bcrypt.GenerateFromPassword([]byte("super123"), bcrypt.DefaultCost)
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO users(username, password_hash, role, display_name, activated_at)
+		VALUES('super', $1, 'superadmin', 'System Superadmin', NOW())
+		ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash, role = EXCLUDED.role`,
+		string(superHash),
 	); err != nil {
-		log.Fatal("wallet: ", err)
+		log.Fatalf("seed superadmin: %v", err)
 	}
 
-	// ── 2. Users. Mirrors what internal/db/seed.go would have created,
-	// minus the centre wiring — migration 017 made center_id nullable,
-	// so operators no longer need one.
-	for _, u := range []struct {
-		username, password, role, display string
-		org                               *int64
-	}{
-		{"admin", "admin123", "admin", "Exam Controller", &orgID},
-		{"client", "client123", "client", "GNDU Operator", &orgID},
-	} {
-		if err := upsertUser(tx, u.username, u.password, u.role, u.display, u.org); err != nil {
-			log.Fatalf("user %s: %v", u.username, err)
+	// ─────────────────────────────────────────────────────────────────────────
+	// 1. SEED CLIENTS (EXAM BOARDS) & REVIEWER LOGINS
+	// ─────────────────────────────────────────────────────────────────────────
+	log.Println("Seeding clients & reviewers...")
+	type clientDef struct {
+		name         string
+		notes        string
+		reviewerUser string
+		reviewerName string
+		reviewerPass string
+	}
+
+	clients := []clientDef{
+		{
+			name:         "National Testing Agency (NTA)",
+			notes:        "Premier testing organization for higher educational institutions",
+			reviewerUser: "nta_reviewer",
+			reviewerName: "NTA Examination Reviewer",
+			reviewerPass: "reviewer123",
+		},
+		{
+			name:         "All India Institute of Medical Sciences (AIIMS)",
+			notes:        "Autonomous institutes of national importance for medical education",
+			reviewerUser: "aiims_reviewer",
+			reviewerName: "AIIMS Medical Board Reviewer",
+			reviewerPass: "reviewer123",
+		},
+		{
+			name:         "Union Public Service Commission (UPSC)",
+			notes:        "Central recruiting agency for civil services and defence forces",
+			reviewerUser: "upsc_reviewer",
+			reviewerName: "UPSC Verification Officer",
+			reviewerPass: "reviewer123",
+		},
+		{
+			name:         "Central Board of Secondary Education (CBSE)",
+			notes:        "National board of education for public and private schools",
+			reviewerUser: "cbse_reviewer",
+			reviewerName: "CBSE Accreditation Reviewer",
+			reviewerPass: "reviewer123",
+		},
+	}
+
+	clientIDs := map[string]int64{}
+	reviewerHash, _ := bcrypt.GenerateFromPassword([]byte("reviewer123"), bcrypt.DefaultCost)
+
+	for _, c := range clients {
+		var cid int64
+		err := tx.QueryRowContext(ctx, `SELECT id FROM clients WHERE name = $1`, c.name).Scan(&cid)
+		if err == sql.ErrNoRows {
+			err = tx.QueryRowContext(ctx, `
+				INSERT INTO clients(name, notes, visible, closed, portal_enabled, created_at, updated_at)
+				VALUES($1, $2, 1, 0, TRUE, NOW(), NOW())
+				RETURNING id`,
+				c.name, c.notes,
+			).Scan(&cid)
+		} else if err == nil {
+			_, err = tx.ExecContext(ctx, `
+				UPDATE clients SET notes = $1, portal_enabled = TRUE, visible = 1, closed = 0, updated_at = NOW()
+				WHERE id = $2`,
+				c.notes, cid,
+			)
 		}
-	}
-
-	// ── 3. Clients (exam-conducting bodies) + their exams.
-	// Dates are relative to today so the verification window is open and
-	// the exams are actually searchable rather than expired.
-	today := time.Now()
-	window := func(fromDays, toDays int) (string, string) {
-		const d = "2006-01-02"
-		return today.AddDate(0, 0, fromDays).Format(d),
-			today.AddDate(0, 0, toDays).Format(d)
-	}
-
-	type exam struct {
-		name, code, trustview string
-		fromDays, toDays      int
-		candidates            int
-	}
-	catalog := []struct {
-		client, notes string
-		exams         []exam
-	}{
-		{
-			client: "National Testing Agency",
-			notes:  "Central body — NEET, JEE, CUET",
-			exams: []exam{
-				{"NEET UG 2026", "EXAM-2026-01", "TV-NEET-UG-2026", -5, 25, 12},
-				{"CUET UG 2026", "EXAM-2026-02", "TV-CUET-UG-2026", 3, 40, 8},
-			},
-		},
-		{
-			client: "Punjab School Education Board",
-			notes:  "State board — class XII certification",
-			exams: []exam{
-				{"PSEB Class XII 2026", "EXAM-2026-03", "TV-PSEB-XII-2026", -10, 15, 10},
-			},
-		},
-		{
-			client: "Uttar Pradesh Government",
-			notes:  "State recruitment examinations",
-			exams: []exam{
-				// Deliberately already-expired, so the UI has a window
-				// that has closed to render differently.
-				{"UP Police Constable 2025", "EXAM-2025-77", "TV-UPP-2025", -120, -60, 5},
-			},
-		},
-	}
-
-	rollSeq := 10001
-	var nClients, nExams, nCands int
-
-	for _, entry := range catalog {
-		clientID, err := upsertClient(tx, entry.client, entry.notes)
 		if err != nil {
-			log.Fatalf("client %s: %v", entry.client, err)
+			log.Fatalf("seed client %s: %v", c.name, err)
 		}
-		nClients++
+		clientIDs[c.name] = cid
 
-		for _, e := range entry.exams {
-			from, to := window(e.fromDays, e.toDays)
-			examID, err := upsertExam(tx, clientID, e.name, e.code, e.trustview, from, to)
-			if err != nil {
-				log.Fatalf("exam %s: %v", e.code, err)
-			}
-			nExams++
-
-			for i := 0; i < e.candidates; i++ {
-				roll := fmt.Sprintf("%d", rollSeq)
-				rollSeq++
-				if _, err := tx.Exec(
-					`INSERT INTO exam_candidates(exam_id, roll_no, name, verification_date)
-					 VALUES(?,?,?,?)
-					 ON CONFLICT(exam_id, roll_no) DO NOTHING`,
-					examID, roll, fmt.Sprintf("Candidate %s", roll), to,
-				); err != nil {
-					log.Fatalf("candidate %s: %v", roll, err)
-				}
-				nCands++
-			}
-
-			// Subscribe the demo college to every open exam so the
-			// admin's "My exams" page isn't empty on first look.
-			if e.toDays > 0 {
-				if _, err := tx.Exec(
-					`INSERT INTO organization_exam_subscriptions(org_id, exam_id)
-					 VALUES(?,?) ON CONFLICT(org_id, exam_id) DO NOTHING`,
-					orgID, examID,
-				); err != nil {
-					log.Fatalf("subscription %s: %v", e.code, err)
-				}
-			}
+		// Create reviewer user scoped to this client
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO users(username, password_hash, role, display_name, email, activated_at, client_id)
+			VALUES($1, $2, 'client_reviewer', $3, $4, NOW(), $5)
+			ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash, client_id = EXCLUDED.client_id, role = 'client_reviewer'`,
+			c.reviewerUser, string(reviewerHash), c.reviewerName, c.reviewerUser+"@exam.gov.in", cid,
+		); err != nil {
+			log.Fatalf("seed reviewer %s: %v", c.reviewerUser, err)
 		}
 	}
 
-	// ── 4. More organizations + centers + verification history, so the
-	// superadmin Overview has something to plot. Without this the
-	// dashboard renders empty axes: `verifications` starts at zero by
-	// design (seed.go deliberately creates no synthetic history) and
-	// `centers` only ever came from the candidate tree.
-	nOrgs, nCenters, nVerifs, err := seedTelemetry(tx, orgID)
-	if err != nil {
-		log.Fatal("telemetry: ", err)
+	// ─────────────────────────────────────────────────────────────────────────
+	// 2. SEED EXAMS UNDER CLIENTS
+	// ─────────────────────────────────────────────────────────────────────────
+	log.Println("Seeding exams...")
+	type examDef struct {
+		clientName string
+		examCode   string
+		name       string
+		from       string
+		to         string
+	}
+
+	exams := []examDef{
+		// NTA Exams
+		{"National Testing Agency (NTA)", "NEET-UG-2026", "National Eligibility cum Entrance Test (UG) 2026", "2026-05-01", "2026-05-30"},
+		{"National Testing Agency (NTA)", "JEE-MAIN-2026", "Joint Entrance Examination (Main) Session 2", "2026-04-10", "2026-04-28"},
+		{"National Testing Agency (NTA)", "CUET-UG-2026", "Common University Entrance Test (UG) 2026", "2026-05-15", "2026-06-10"},
+		{"National Testing Agency (NTA)", "UGC-NET-2026", "National Eligibility Test for Assistant Professor", "2026-06-15", "2026-07-05"},
+
+		// AIIMS Exams
+		{"All India Institute of Medical Sciences (AIIMS)", "INI-CET-2026", "Institute of National Importance Combined Entrance Test", "2026-05-20", "2026-06-05"},
+		{"All India Institute of Medical Sciences (AIIMS)", "AIIMS-MSC-2026", "AIIMS M.Sc & Post-Graduate Nursing Entrance", "2026-06-01", "2026-06-20"},
+
+		// UPSC Exams
+		{"Union Public Service Commission (UPSC)", "CSE-PRELIMS-2026", "Civil Services (Preliminary) Examination 2026", "2026-05-25", "2026-05-25"},
+		{"Union Public Service Commission (UPSC)", "NDA-NA-2026", "National Defence Academy & Naval Academy Exam", "2026-09-01", "2026-09-01"},
+
+		// CBSE Exams
+		{"Central Board of Secondary Education (CBSE)", "CTET-2026", "Central Teacher Eligibility Test July 2026", "2026-07-01", "2026-07-15"},
+		{"Central Board of Secondary Education (CBSE)", "CBSE-ACAD-2026", "CBSE Senior School Certificate Practical Exams", "2026-03-01", "2026-03-25"},
+	}
+
+	examIDs := map[string]int64{}
+	for _, e := range exams {
+		cid := clientIDs[e.clientName]
+		var eid int64
+		err := tx.QueryRowContext(ctx, `SELECT id FROM exams WHERE exam_code = $1`, e.examCode).Scan(&eid)
+		if err == sql.ErrNoRows {
+			err = tx.QueryRowContext(ctx, `
+				INSERT INTO exams(client_id, name, exam_code, verification_from, verification_to, visible, closed, requires_face, requires_fp, created_at, updated_at)
+				VALUES($1, $2, $3, $4, $5, 1, 0, 1, 1, NOW(), NOW())
+				RETURNING id`,
+				cid, e.name, e.examCode, e.from, e.to,
+			).Scan(&eid)
+		} else if err == nil {
+			_, err = tx.ExecContext(ctx, `
+				UPDATE exams SET client_id = $1, name = $2, verification_from = $3, verification_to = $4, updated_at = NOW()
+				WHERE id = $5`,
+				cid, e.name, e.from, e.to, eid,
+			)
+		}
+		if err != nil {
+			log.Fatalf("seed exam %s: %v", e.examCode, err)
+		}
+		examIDs[e.examCode] = eid
+
+		// Seed demo candidates for each exam
+		for cIdx := 1; cIdx <= 15; cIdx++ {
+			roll := fmt.Sprintf("%s-ROLL-%04d", e.examCode, cIdx)
+			candName := fmt.Sprintf("Candidate %03d (%s)", cIdx, e.examCode)
+			_, _ = tx.ExecContext(ctx, `
+				INSERT INTO exam_candidates(exam_id, roll_no, name, registration_id, gender, father_name, created_at)
+				VALUES($1, $2, $3, $4, 'M', 'Father Name', NOW())
+				ON CONFLICT (exam_id, roll_no) DO NOTHING`,
+				eid, roll, candName, fmt.Sprintf("REG-%d-%04d", eid, cIdx),
+			)
+		}
+	}
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// 3. SEED ORGANIZATIONS (UNIVERSITIES & COLLEGES)
+	// ─────────────────────────────────────────────────────────────────────────
+	log.Println("Seeding universities & colleges...")
+	type orgDef struct {
+		code      string
+		name      string
+		instType  string
+		aishe     string
+		state     string
+		city      string
+		headName  string
+		headEmail string
+		headMob   string
+		adminUser string
+		adminPass string
+	}
+
+	orgs := []orgDef{
+		{
+			code:      "st_lawrance_2",
+			name:      "St. Lawrence University",
+			instType:  "university",
+			aishe:     "U-0123",
+			state:     "Delhi",
+			city:      "New Delhi",
+			headName:  "Dr. Robert Miller",
+			headEmail: "registrar@stlawrence.edu.in",
+			headMob:   "9876543210",
+			adminUser: "st_lawrance_admin",
+			adminPass: "admin123",
+		},
+		{
+			code:      "dtu_delhi",
+			name:      "Delhi Technological University",
+			instType:  "university",
+			aishe:     "U-0456",
+			state:     "Delhi",
+			city:      "Delhi",
+			headName:  "Prof. Prateek Sharma",
+			headEmail: "vc@dtu.ac.in",
+			headMob:   "9811223344",
+			adminUser: "dtu_admin",
+			adminPass: "admin123",
+		},
+		{
+			code:      "amity_univ",
+			name:      "Amity University Noida",
+			instType:  "university",
+			aishe:     "U-0789",
+			state:     "Uttar Pradesh",
+			city:      "Noida",
+			headName:  "Dr. Balvinder Shukla",
+			headEmail: "vc@amity.edu",
+			headMob:   "9822334455",
+			adminUser: "amity_admin",
+			adminPass: "admin123",
+		},
+		{
+			code:      "manipal_univ",
+			name:      "Manipal Academy of Higher Education",
+			instType:  "university",
+			aishe:     "U-0999",
+			state:     "Karnataka",
+			city:      "Manipal",
+			headName:  "Lt. Gen. M.D. Venkatesh",
+			headEmail: "registrar@manipal.edu",
+			headMob:   "9833445566",
+			adminUser: "manipal_admin",
+			adminPass: "admin123",
+		},
+		{
+			code:      "xaviers_mumbai",
+			name:      "St. Xavier's College Mumbai",
+			instType:  "college",
+			aishe:     "C-1122",
+			state:     "Maharashtra",
+			city:      "Mumbai",
+			headName:  "Dr. Rajendra Shinde",
+			headEmail: "principal@xaviers.edu",
+			headMob:   "9844556677",
+			adminUser: "xaviers_admin",
+			adminPass: "admin123",
+		},
+		{
+			code:      "bit_mesra",
+			name:      "Birla Institute of Technology (BIT Mesra)",
+			instType:  "university",
+			aishe:     "U-3344",
+			state:     "Jharkhand",
+			city:      "Ranchi",
+			headName:  "Prof. Indranil Manna",
+			headEmail: "vc@bitmesra.ac.in",
+			headMob:   "9855667788",
+			adminUser: "bit_admin",
+			adminPass: "admin123",
+		},
+		{
+			code:      "vit_vellore",
+			name:      "Vellore Institute of Technology (VIT)",
+			instType:  "university",
+			aishe:     "U-5566",
+			state:     "Tamil Nadu",
+			city:      "Vellore",
+			headName:  "Dr. G. Viswanathan",
+			headEmail: "chancellor@vit.ac.in",
+			headMob:   "9866778899",
+			adminUser: "vit_admin",
+			adminPass: "admin123",
+		},
+		{
+			code:      "loyola_chennai",
+			name:      "Loyola College Chennai",
+			instType:  "college",
+			aishe:     "C-7788",
+			state:     "Tamil Nadu",
+			city:      "Chennai",
+			headName:  "Rev. Dr. A. Thomas",
+			headEmail: "principal@loyolacollege.edu",
+			headMob:   "9877889900",
+			adminUser: "loyola_admin",
+			adminPass: "admin123",
+		},
+	}
+
+	adminHash, _ := bcrypt.GenerateFromPassword([]byte("admin123"), bcrypt.DefaultCost)
+	orgIDs := map[string]int64{}
+
+	for _, o := range orgs {
+		var oid int64
+		err := tx.QueryRowContext(ctx, `
+			INSERT INTO organizations(code, name, created_at)
+			VALUES($1, $2, NOW())
+			ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name
+			RETURNING id`,
+			o.code, o.name,
+		).Scan(&oid)
+		if err != nil {
+			log.Fatalf("seed org %s: %v", o.code, err)
+		}
+		orgIDs[o.code] = oid
+
+		// Wallet for organization
+		_, _ = tx.ExecContext(ctx, `
+			INSERT INTO wallets(org_id, balance_paise, updated_at)
+			VALUES($1, 100000, NOW())
+			ON CONFLICT (org_id) DO NOTHING`,
+			oid,
+		)
+
+		// University Admin user
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO users(username, password_hash, role, org_id, display_name, email, activated_at)
+			VALUES($1, $2, 'admin', $3, $4, $5, NOW())
+			ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash, org_id = EXCLUDED.org_id, role = 'admin'`,
+			o.adminUser, string(adminHash), oid, o.name+" Administrator", o.headEmail,
+		); err != nil {
+			log.Fatalf("seed admin %s: %v", o.adminUser, err)
+		}
+
+		// Operator user for this university
+		opUser := o.code + "_op1"
+		opHash, _ := bcrypt.GenerateFromPassword([]byte("pass123"), bcrypt.DefaultCost)
+		_, _ = tx.ExecContext(ctx, `
+			INSERT INTO users(username, password_hash, role, org_id, display_name, email, activated_at, spending_cap_paise, spent_paise)
+			VALUES($1, $2, 'client', $3, $4, $5, NOW(), 50000, 0)
+			ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash, org_id = EXCLUDED.org_id, role = 'client'`,
+			opUser, string(opHash), oid, o.name+" Operator 1", opUser+"@exam.local",
+		)
+
+		// Create matching approved institution application for rich metadata
+		var appId int64
+		err = tx.QueryRowContext(ctx, `SELECT id FROM institution_applications WHERE LOWER(TRIM(institution_name)) = LOWER(TRIM($1))`, o.name).Scan(&appId)
+		if err == sql.ErrNoRows {
+			_, _ = tx.ExecContext(ctx, `
+				INSERT INTO institution_applications(
+					status, institution_name, institution_type, aishe_code, state, city,
+					head_name, head_email, head_mobile, approx_student_count, address_line1, pin_code, head_designation, created_at, reviewed_at
+				) VALUES('approved', $1, $2, $3, $4, $5, $6, $7, $8, 5000, 'Campus Road', '110001', 'Head', NOW() - INTERVAL '5 days', NOW() - INTERVAL '4 days')`,
+				o.name, o.instType, o.aishe, o.state, o.city, o.headName, o.headEmail, o.headMob,
+			)
+		}
+	}
+
+	// ─────────────────────────────────────────────────────────────────────────
+	// 4. SEED SUBSCRIPTIONS & CLIENT BLANKET APPROVALS
+	// ─────────────────────────────────────────────────────────────────────────
+	log.Println("Seeding exam subscription requests & blanket approvals...")
+
+	// 4a. Manipal is blanket partner of NTA
+	ntaID := clientIDs["National Testing Agency (NTA)"]
+	manipalID := orgIDs["manipal_univ"]
+	_, _ = tx.ExecContext(ctx, `
+		INSERT INTO client_organization_approvals(client_id, org_id, approved_at, approved_by, note)
+		VALUES($1, $2, NOW() - INTERVAL '2 days', 1, 'Premier Institutional Accreditation Partner')
+		ON CONFLICT (client_id, org_id) DO NOTHING`,
+		ntaID, manipalID,
+	)
+
+	// Subscriptions table:
+	type subDef struct {
+		orgCode      string
+		examCode     string
+		status       string // "pending", "approved", "rejected"
+		approvalType string // "per_exam", "blanket_client", ""
+		note         string
+	}
+
+	subs := []subDef{
+		// St. Lawrence University (Pending 2 NTA exams)
+		{"st_lawrance_2", "NEET-UG-2026", "pending", "", ""},
+		{"st_lawrance_2", "JEE-MAIN-2026", "pending", "", ""},
+
+		// DTU (Pending 2 NTA exams)
+		{"dtu_delhi", "CUET-UG-2026", "pending", "", ""},
+		{"dtu_delhi", "JEE-MAIN-2026", "pending", "", ""},
+
+		// Amity (1 Pending NTA, 1 Approved Per-Exam NTA)
+		{"amity_univ", "NEET-UG-2026", "pending", "", ""},
+		{"amity_univ", "CUET-UG-2026", "approved", "per_exam", "Approved for campus verification venue"},
+
+		// Manipal (Blanket Partner — 2 Approved NTA exams)
+		{"manipal_univ", "CUET-UG-2026", "approved", "blanket_client", "Pre-approved via client partner status"},
+		{"manipal_univ", "NEET-UG-2026", "approved", "blanket_client", "Pre-approved via client partner status"},
+
+		// St. Xavier's (Pending NTA + Pending AIIMS)
+		{"xaviers_mumbai", "NEET-UG-2026", "pending", "", ""},
+		{"xaviers_mumbai", "INI-CET-2026", "pending", "", ""},
+
+		// BIT Mesra (Pending NTA + Pending UPSC)
+		{"bit_mesra", "JEE-MAIN-2026", "pending", "", ""},
+		{"bit_mesra", "CSE-PRELIMS-2026", "pending", "", ""},
+
+		// VIT (Pending 2 NTA exams)
+		{"vit_vellore", "NEET-UG-2026", "pending", "", ""},
+		{"vit_vellore", "JEE-MAIN-2026", "pending", "", ""},
+
+		// Loyola (1 Pending NTA + 1 Pending CBSE)
+		{"loyola_chennai", "CUET-UG-2026", "pending", "", ""},
+		{"loyola_chennai", "CTET-2026", "pending", "", ""},
+	}
+
+	for _, s := range subs {
+		oid := orgIDs[s.orgCode]
+		eid := examIDs[s.examCode]
+		if oid == 0 || eid == 0 {
+			continue
+		}
+
+		var reviewedAt any = nil
+		if s.status == "approved" || s.status == "rejected" {
+			reviewedAt = time.Now().Add(-24 * time.Hour)
+		}
+
+		_, err := tx.ExecContext(ctx, `
+			INSERT INTO organization_exam_subscriptions(
+				org_id, exam_id, status, approval_type, requested_at, subscribed_at, subscribed_by, reviewed_at, review_note
+			) VALUES($1, $2, $3, $4, NOW() - INTERVAL '1 day', NOW() - INTERVAL '1 day', 1, $5, $6)
+			ON CONFLICT (org_id, exam_id) DO UPDATE SET
+				status = EXCLUDED.status,
+				approval_type = EXCLUDED.approval_type,
+				reviewed_at = EXCLUDED.reviewed_at,
+				review_note = EXCLUDED.review_note`,
+			oid, eid, s.status, s.approvalType, reviewedAt, s.note,
+		)
+		if err != nil {
+			log.Fatalf("seed subscription %s -> %s: %v", s.orgCode, s.examCode, err)
+		}
 	}
 
 	if err := tx.Commit(); err != nil {
-		log.Fatal(err)
+		log.Fatalf("commit seed: %v", err)
 	}
 
-	fmt.Printf(`dev-seed complete
+	fmt.Println("\n================================================================================")
+	fmt.Println("  DATABASE SEEDED SUCCESSFULLY!")
+	fmt.Println("================================================================================")
+	fmt.Println("\n--- Superadmin ---")
+	fmt.Println("  URL:      http://localhost:5173/superadmin/login")
+	fmt.Println("  Username: super")
+	fmt.Println("  Password: super123")
 
-  organizations   %d  (GNDU27 wallet ₹500.00)
-  centers         %d
-  clients         %d
-  exams           %d
-  candidates      %d  (rolls 10001-%d)
-  verifications   %d  (last 14 days)
-
-logins
-  super  / superadmin123   superadmin
-  admin  / admin123        admin
-  client / client123       operator
-`, nOrgs, nCenters, nClients, nExams, nCands, rollSeq-1, nVerifs)
-}
-
-// seedTelemetry lays down the cross-organization data the superadmin
-// Overview charts read: several colleges, centres under each, and a
-// spread of verifications over the last 14 days.
-//
-// Volumes are deliberately uneven between organizations — a share chart
-// of five near-identical slices tells you nothing, and would be the kind
-// of chart that looks fine and says nothing.
-//
-// Idempotent: demo verifications are tagged client_app_version='dev-seed'
-// and cleared before re-inserting, so a re-run replaces rather than
-// compounds. Real rows written through the portal are never touched.
-func seedTelemetry(tx *sql.Tx, primaryOrgID int64) (int, int, int, error) {
-	if _, err := tx.Exec(
-		`DELETE FROM verifications WHERE client_app_version = 'dev-seed'`,
-	); err != nil {
-		return 0, 0, 0, err
+	fmt.Println("\n--- Client Reviewers (Use to test Reviewer Dashboard) ---")
+	fmt.Println("  URL: http://localhost:5173/reviewer/login")
+	for _, c := range clients {
+		fmt.Printf("  • %-45s -> Username: %-15s Password: %s\n", c.name, c.reviewerUser, c.reviewerPass)
 	}
 
-	type orgSpec struct {
-		code, name string
-		centers    []string
-		// weight drives this org's share of total volume.
-		weight int
-		// successRate in percent — varied so the per-org success column
-		// isn't a flat 90% down the table.
-		successRate int
+	fmt.Println("\n--- University Admins (Use to test Catalog & Subscriptions) ---")
+	fmt.Println("  URL: http://localhost:5173/admin/login")
+	for _, o := range orgs {
+		fmt.Printf("  • %-45s -> Username: %-18s Password: %s\n", o.name, o.adminUser, o.adminPass)
 	}
-	specs := []orgSpec{
-		{"GNDU27", "Guru Nanak Dev University",
-			[]string{"Saragarhi Memorial", "Khalsa College SS School"}, 34, 94},
-		{"PU-CHD", "Panjab University Chandigarh",
-			[]string{"Sector 14 Campus", "Sector 25 Annexe"}, 26, 91},
-		{"DU-NORTH", "Delhi University North Campus",
-			[]string{"Hansraj Hall", "Kirori Mal Block C"}, 19, 88},
-		{"BHU-VNS", "Banaras Hindu University",
-			[]string{"Main Examination Hall"}, 13, 82},
-		{"AMU-ALG", "Aligarh Muslim University",
-			[]string{"Kennedy Hall"}, 8, 76},
-	}
-
-	// Channel mix. Fingerprint dominates because it's the highest-assurance
-	// path and the one the operator flow tries first; manual is the small
-	// tail where no biometric matched but the operator passed the candidate.
-	channels := []struct {
-		via    string
-		weight int
-	}{
-		{"fingerprint", 62},
-		{"face", 21},
-		{"iris", 11},
-		{"manual", 6},
-	}
-
-	const totalVerifications = 1450
-	// Deterministic pseudo-random: a plain LCG rather than math/rand so a
-	// re-run produces byte-identical data and screenshots stay comparable.
-	seed := uint64(20260811)
-	next := func(n int) int {
-		seed = seed*6364136223846793005 + 1442695040888963407
-		return int((seed >> 33) % uint64(n))
-	}
-
-	nOrgs, nCenters, nVerifs := 0, 0, 0
-	totalWeight := 0
-	for _, s := range specs {
-		totalWeight += s.weight
-	}
-
-	for _, spec := range specs {
-		oid := primaryOrgID
-		if spec.code != "GNDU27" {
-			var err error
-			oid, err = upsertOrg(tx, spec.code, spec.name)
-			if err != nil {
-				return 0, 0, 0, err
-			}
-			// Every college gets a wallet so the admin view is coherent.
-			if _, err := tx.Exec(
-				`INSERT INTO wallets(org_id, balance_paise) VALUES(?, ?)
-				 ON CONFLICT(org_id) DO NOTHING`,
-				oid, 25000,
-			); err != nil {
-				return 0, 0, 0, err
-			}
-		}
-		nOrgs++
-
-		// An operator to attribute the verifications to. One per org.
-		opUser := "op_" + strings.ToLower(spec.code)
-		if err := upsertUser(tx, opUser, "client123", "client",
-			spec.name+" Operator", &oid); err != nil {
-			return 0, 0, 0, err
-		}
-		var opID int64
-		if err := tx.QueryRow(
-			`SELECT id FROM users WHERE username=?`, opUser,
-		).Scan(&opID); err != nil {
-			return 0, 0, 0, err
-		}
-
-		var centerIDs []int64
-		for i, cname := range spec.centers {
-			code := fmt.Sprintf("%s-C%d", spec.code, i+1)
-			if _, err := tx.Exec(
-				`INSERT INTO centers(org_id, code, name) VALUES(?,?,?)
-				 ON CONFLICT(org_id, code) DO UPDATE SET name = excluded.name`,
-				oid, code, cname,
-			); err != nil {
-				return 0, 0, 0, err
-			}
-			var cid int64
-			if err := tx.QueryRow(
-				`SELECT id FROM centers WHERE org_id=? AND code=?`, oid, code,
-			).Scan(&cid); err != nil {
-				return 0, 0, 0, err
-			}
-			centerIDs = append(centerIDs, cid)
-			nCenters++
-		}
-
-		count := totalVerifications * spec.weight / totalWeight
-		for i := 0; i < count; i++ {
-			verified := next(100) < spec.successRate
-			status := "denied"
-			if verified {
-				status = "verified"
-			}
-
-			// Weighted channel pick. Denied rows keep a channel too —
-			// the attempt happened, it just didn't clear threshold.
-			roll := next(100)
-			via := channels[len(channels)-1].via
-			acc := 0
-			for _, ch := range channels {
-				acc += ch.weight
-				if roll < acc {
-					via = ch.via
-					break
-				}
-			}
-
-			// Spread over 14 days with a weekday-ish rhythm: day 0 is
-			// today. Bias toward recent days so the trend line rises.
-			day := next(14)
-			if next(100) < 35 {
-				day = next(5) // recency bump
-			}
-			hour := 8 + next(11) // exam hours, 08:00-18:00
-			minute := next(60)
-
-			cid := centerIDs[next(len(centerIDs))]
-
-			fpScore := 0
-			if via == "fingerprint" {
-				if verified {
-					fpScore = 180 + next(320)
-				} else {
-					fpScore = next(35)
-				}
-			}
-			faceScore := 0.0
-			if via == "face" {
-				if verified {
-					faceScore = 0.990 + float64(next(9))/1000
-				} else {
-					faceScore = 0.70 + float64(next(250))/1000
-				}
-			}
-
-			if _, err := tx.Exec(
-				`INSERT INTO verifications
-					(roll_no, org_id, center_id, operator_id,
-					 face_match, fp_match, status, via,
-					 fp_match_score, face_match_score, match_threshold,
-					 decision_ms, client_app_version, created_at)
-				 VALUES (?,?,?,?,?,?,?,?,?,?,?,?, 'dev-seed',
-					 datetime('now', ?, ?, ?))`,
-				fmt.Sprintf("%d", 10001+next(500)),
-				oid, cid, opID,
-				boolInt(via == "face" && verified),
-				boolInt(via == "fingerprint" && verified),
-				status, via,
-				nullZeroInt(fpScore), nullZeroFloat(faceScore), 40,
-				1200+next(9000),
-				fmt.Sprintf("-%d days", day),
-				fmt.Sprintf("%d hours", hour-12),
-				fmt.Sprintf("%d minutes", minute),
-			); err != nil {
-				return 0, 0, 0, err
-			}
-			nVerifs++
-		}
-	}
-	return nOrgs, nCenters, nVerifs, nil
-}
-
-func boolInt(b bool) int {
-	if b {
-		return 1
-	}
-	return 0
-}
-
-// The dashboards treat 0 and NULL differently in a few averages, so keep
-// "not measured" as NULL rather than a real zero.
-func nullZeroInt(v int) any {
-	if v == 0 {
-		return nil
-	}
-	return v
-}
-
-func nullZeroFloat(v float64) any {
-	if v == 0 {
-		return nil
-	}
-	return v
-}
-
-func upsertOrg(tx *sql.Tx, code, name string) (int64, error) {
-	if _, err := tx.Exec(
-		`INSERT INTO organizations(code, name) VALUES(?,?)
-		 ON CONFLICT(code) DO UPDATE SET name = excluded.name`,
-		code, name,
-	); err != nil {
-		return 0, err
-	}
-	var id int64
-	err := tx.QueryRow(`SELECT id FROM organizations WHERE code=?`, code).Scan(&id)
-	return id, err
-}
-
-// upsertUser writes a login. password_plaintext is populated only for
-// the operator role, matching seed.go — the admin's "Operator access"
-// page reads that column to show the shared credential.
-func upsertUser(tx *sql.Tx, username, pwd, role, display string, orgID *int64) error {
-	hash, err := bcrypt.GenerateFromPassword([]byte(pwd), bcrypt.DefaultCost)
-	if err != nil {
-		return err
-	}
-	var plaintext any
-	if role == "client" {
-		plaintext = pwd
-	}
-	// created_at is backdated so seed.go's step-5 rotation sweep
-	// (which matches on activated_at = created_at) leaves these alone
-	// and we don't get bounced to the password-change screen on boot.
-	_, err = tx.Exec(
-		`INSERT INTO users
-			(username, password_hash, password_plaintext, role, org_id,
-			 display_name, created_at, activated_at, password_change_required)
-		 VALUES (?,?,?,?,?,?, datetime('now','-1 hour'), CURRENT_TIMESTAMP, 0)
-		 ON CONFLICT(username) DO UPDATE SET
-			password_hash            = excluded.password_hash,
-			password_plaintext       = excluded.password_plaintext,
-			role                     = excluded.role,
-			org_id                   = excluded.org_id,
-			password_change_required = 0,
-			disabled_at              = NULL`,
-		username, string(hash), plaintext, role, orgID, display)
-	return err
-}
-
-func upsertClient(tx *sql.Tx, name, notes string) (int64, error) {
-	var id int64
-	err := tx.QueryRow(`SELECT id FROM clients WHERE name=?`, name).Scan(&id)
-	if err == nil {
-		return id, nil
-	}
-	if err != sql.ErrNoRows {
-		return 0, err
-	}
-	res, err := tx.Exec(`INSERT INTO clients(name, notes) VALUES(?,?)`, name, notes)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
-}
-
-func upsertExam(tx *sql.Tx, clientID int64, name, code, trustview, from, to string) (int64, error) {
-	var id int64
-	err := tx.QueryRow(`SELECT id FROM exams WHERE exam_code=?`, code).Scan(&id)
-	if err == nil {
-		_, err = tx.Exec(
-			`UPDATE exams SET verification_from=?, verification_to=? WHERE id=?`,
-			from, to, id)
-		return id, err
-	}
-	if err != sql.ErrNoRows {
-		return 0, err
-	}
-	res, err := tx.Exec(
-		`INSERT INTO exams(client_id, name, exam_code, trustview_ref,
-		                   verification_from, verification_to)
-		 VALUES(?,?,?,?,?,?)`,
-		clientID, name, code, trustview, from, to)
-	if err != nil {
-		return 0, err
-	}
-	return res.LastInsertId()
+	fmt.Println("================================================================================\n")
 }

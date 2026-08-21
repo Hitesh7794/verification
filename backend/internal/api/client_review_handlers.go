@@ -348,3 +348,749 @@ func (s *Server) clientReviewerMe(w http.ResponseWriter, r *http.Request) {
 		"portal_enabled": portalEnabled,
 	})
 }
+
+// ── Exam Subscription Requests Reviewer Endpoints ──────────────────────
+
+type subscriptionRequestItem struct {
+	OrgID                 int64  `json:"org_id"`
+	ExamID                int64  `json:"exam_id"`
+	Status                string `json:"status"`
+	ApprovalType          string `json:"approval_type,omitempty"`
+	RequestedAt           string `json:"requested_at"`
+	ReviewedAt            string `json:"reviewed_at,omitempty"`
+	ReviewNote            string `json:"review_note,omitempty"`
+	OrgName               string `json:"org_name"`
+	OrgSlug               string `json:"org_slug"`
+	ExamName              string `json:"exam_name"`
+	ExamCode              string `json:"exam_code"`
+	VerificationFrom      string `json:"verification_from"`
+	VerificationTo        string `json:"verification_to"`
+	CandidateCount        int64  `json:"candidate_count"`
+	ClientBlanketApproved bool   `json:"client_blanket_approved"`
+	InstitutionType       string `json:"institution_type,omitempty"`
+	AisheCode             string `json:"aishe_code,omitempty"`
+	Pan                   string `json:"pan,omitempty"`
+	State                 string `json:"state,omitempty"`
+	City                  string `json:"city,omitempty"`
+	HeadName              string `json:"head_name,omitempty"`
+	HeadEmail             string `json:"head_email,omitempty"`
+	HeadMobile            string `json:"head_mobile,omitempty"`
+	ApproxStudentCount    int64  `json:"approx_student_count,omitempty"`
+}
+
+type subscriptionApproveReq struct {
+	Mode string `json:"mode"` // "per_exam" or "blanket_client"
+	Note string `json:"note"`
+}
+
+type subscriptionRejectReq struct {
+	Note string `json:"note"`
+}
+
+// ---------- GET /api/client/subscription-requests ----------
+func (s *Server) clientListSubscriptionRequests(w http.ResponseWriter, r *http.Request) {
+	clientID, ok := clientReviewerScope(r)
+	if !ok {
+		writeErr(w, http.StatusForbidden, "client reviewer context required")
+		return
+	}
+
+	q := r.URL.Query()
+	statusFilter := strings.TrimSpace(q.Get("status"))
+	if statusFilter == "" {
+		statusFilter = "pending"
+	}
+	examIDStr := strings.TrimSpace(q.Get("exam_id"))
+
+	where := []string{"e.client_id = $1"}
+	args := []any{clientID}
+
+	if statusFilter != "all" {
+		where = append(where, fmt.Sprintf("s.status = $%d", len(args)+1))
+		args = append(args, statusFilter)
+	}
+
+	if examIDStr != "" && examIDStr != "all" {
+		if eid, err := strconv.ParseInt(examIDStr, 10, 64); err == nil && eid > 0 {
+			where = append(where, fmt.Sprintf("e.id = $%d", len(args)+1))
+			args = append(args, eid)
+		}
+	}
+
+	whereClause := strings.Join(where, " AND ")
+
+	query := fmt.Sprintf(`
+		SELECT
+			s.org_id, s.exam_id, s.status, COALESCE(s.approval_type, ''),
+			s.requested_at, s.reviewed_at, COALESCE(s.review_note, ''),
+			o.name AS org_name, COALESCE(o.code, '') AS org_slug,
+			e.name AS exam_name, e.exam_code,
+			COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD'), ''),
+			COALESCE(TO_CHAR(e.verification_to, 'YYYY-MM-DD'), ''),
+			(SELECT COUNT(*) FROM exam_candidates ec WHERE ec.exam_id = e.id) AS candidate_count,
+			CASE WHEN coa.client_id IS NOT NULL THEN 1 ELSE 0 END AS client_blanket_approved,
+			COALESCE(app.institution_type, ''),
+			COALESCE(app.aishe_code, ''),
+			COALESCE(app.pan, ''),
+			COALESCE(app.state, ''),
+			COALESCE(app.city, ''),
+			COALESCE(app.head_name, ''),
+			COALESCE(app.head_email, ''),
+			COALESCE(app.head_mobile, ''),
+			COALESCE(app.approx_student_count, 0)
+		FROM organization_exam_subscriptions s
+		JOIN exams e ON e.id = s.exam_id
+		JOIN organizations o ON o.id = s.org_id
+		LEFT JOIN client_organization_approvals coa
+			ON coa.client_id = e.client_id AND coa.org_id = s.org_id
+		LEFT JOIN institution_applications app
+			ON LOWER(TRIM(app.institution_name)) = LOWER(TRIM(o.name))
+			AND app.status = 'approved'
+		WHERE %s
+		ORDER BY s.requested_at DESC`, whereClause)
+
+	rows, err := s.deps.DB.QueryContext(r.Context(), query, args...)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db list: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	items := []subscriptionRequestItem{}
+	for rows.Next() {
+		var it subscriptionRequestItem
+		var reqAt, revAt sql.NullTime
+		var blanketApproved int
+		var appStudentCount sql.NullInt64
+
+		if err := rows.Scan(
+			&it.OrgID, &it.ExamID, &it.Status, &it.ApprovalType,
+			&reqAt, &revAt, &it.ReviewNote,
+			&it.OrgName, &it.OrgSlug,
+			&it.ExamName, &it.ExamCode,
+			&it.VerificationFrom, &it.VerificationTo,
+			&it.CandidateCount,
+			&blanketApproved,
+			&it.InstitutionType,
+			&it.AisheCode,
+			&it.Pan,
+			&it.State,
+			&it.City,
+			&it.HeadName,
+			&it.HeadEmail,
+			&it.HeadMobile,
+			&appStudentCount,
+		); err != nil {
+			writeErr(w, http.StatusInternalServerError, "row scan: "+err.Error())
+			return
+		}
+		it.ClientBlanketApproved = blanketApproved == 1
+		if reqAt.Valid {
+			it.RequestedAt = reqAt.Time.UTC().Format("2006-01-02T15:04:05Z")
+		}
+		if revAt.Valid {
+			it.ReviewedAt = revAt.Time.UTC().Format("2006-01-02T15:04:05Z")
+		}
+		if appStudentCount.Valid {
+			it.ApproxStudentCount = appStudentCount.Int64
+		}
+		items = append(items, it)
+	}
+
+	// Calculate counts (scoped optionally by exam_id if filtering by single exam)
+	var pendingCount, approvedCount, rejectedCount int
+	countWhere := "e.client_id = $1"
+	countArgs := []any{clientID}
+	if examIDStr != "" && examIDStr != "all" {
+		if eid, err := strconv.ParseInt(examIDStr, 10, 64); err == nil && eid > 0 {
+			countWhere += " AND e.id = $2"
+			countArgs = append(countArgs, eid)
+		}
+	}
+
+	countQuery := fmt.Sprintf(`
+		SELECT
+			COALESCE(SUM(CASE WHEN s.status = 'pending' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN s.status = 'approved' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN s.status = 'rejected' THEN 1 ELSE 0 END), 0)
+		FROM organization_exam_subscriptions s
+		JOIN exams e ON e.id = s.exam_id
+		WHERE %s`, countWhere)
+
+	_ = s.deps.DB.QueryRowContext(r.Context(), countQuery, countArgs...).Scan(&pendingCount, &approvedCount, &rejectedCount)
+
+	// Fetch all visible client exams with their specific subscription counts
+	type clientExamItem struct {
+		ID               int64  `json:"id"`
+		ExamCode         string `json:"exam_code"`
+		Name             string `json:"name"`
+		VerificationFrom string `json:"verification_from"`
+		VerificationTo   string `json:"verification_to"`
+		CandidateCount   int64  `json:"candidate_count"`
+		PendingCount     int64  `json:"pending_count"`
+		ApprovedCount    int64  `json:"approved_count"`
+		RejectedCount    int64  `json:"rejected_count"`
+		TotalCount       int64  `json:"total_count"`
+	}
+	clientExams := []clientExamItem{}
+	examRows, err := s.deps.DB.QueryContext(r.Context(), `
+		SELECT
+			e.id, e.exam_code, e.name,
+			COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD'), ''),
+			COALESCE(TO_CHAR(e.verification_to, 'YYYY-MM-DD'), ''),
+			(SELECT COUNT(*) FROM exam_candidates ec WHERE ec.exam_id = e.id),
+			COALESCE((SELECT COUNT(*) FROM organization_exam_subscriptions s WHERE s.exam_id = e.id AND s.status = 'pending'), 0),
+			COALESCE((SELECT COUNT(*) FROM organization_exam_subscriptions s WHERE s.exam_id = e.id AND s.status = 'approved'), 0),
+			COALESCE((SELECT COUNT(*) FROM organization_exam_subscriptions s WHERE s.exam_id = e.id AND s.status = 'rejected'), 0)
+		FROM exams e
+		WHERE e.client_id = $1 AND e.visible = 1 AND e.closed = 0
+		ORDER BY e.verification_from ASC`, clientID)
+	if err == nil {
+		defer examRows.Close()
+		for examRows.Next() {
+			var ce clientExamItem
+			if err := examRows.Scan(
+				&ce.ID, &ce.ExamCode, &ce.Name,
+				&ce.VerificationFrom, &ce.VerificationTo,
+				&ce.CandidateCount,
+				&ce.PendingCount, &ce.ApprovedCount, &ce.RejectedCount,
+			); err == nil {
+				ce.TotalCount = ce.PendingCount + ce.ApprovedCount + ce.RejectedCount
+				clientExams = append(clientExams, ce)
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items":        items,
+		"client_exams": clientExams,
+		"counts": map[string]int{
+			"pending":  pendingCount,
+			"approved": approvedCount,
+			"rejected": rejectedCount,
+			"total":    pendingCount + approvedCount + rejectedCount,
+		},
+	})
+}
+
+// ---------- POST /api/client/subscription-requests/{org_id}/{exam_id}/approve ----------
+func (s *Server) clientApproveSubscriptionRequest(w http.ResponseWriter, r *http.Request) {
+	clientID, ok := clientReviewerScope(r)
+	if !ok {
+		writeErr(w, http.StatusForbidden, "client reviewer context required")
+		return
+	}
+	claims := claimsFrom(r)
+
+	orgID, err := parseInt64(chi.URLParam(r, "org_id"))
+	if err != nil || orgID <= 0 {
+		writeErr(w, http.StatusBadRequest, "invalid org_id")
+		return
+	}
+	examID, err := parseInt64(chi.URLParam(r, "exam_id"))
+	if err != nil || examID <= 0 {
+		writeErr(w, http.StatusBadRequest, "invalid exam_id")
+		return
+	}
+
+	var req subscriptionApproveReq
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	mode := strings.ToLower(strings.TrimSpace(req.Mode))
+	if mode != "blanket_client" {
+		mode = "per_exam"
+	}
+
+	// Verify exam belongs to caller's client_id
+	var examClientID int64
+	if err := s.deps.DB.QueryRowContext(r.Context(),
+		`SELECT client_id FROM exams WHERE id = $1`, examID,
+	).Scan(&examClientID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeErr(w, http.StatusNotFound, "exam not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "db read")
+		return
+	}
+	if examClientID != clientID {
+		writeErr(w, http.StatusNotFound, "exam not found")
+		return
+	}
+
+	tx, err := s.deps.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db begin: "+err.Error())
+		return
+	}
+	defer tx.Rollback()
+
+	if mode == "blanket_client" {
+		// 1. Insert or update client_organization_approvals to grant client-wide blanket approval.
+		// Any subsequent subscription by this organization for this client's exams will be auto-approved instantly.
+		if _, err := tx.ExecContext(r.Context(), `
+			INSERT INTO client_organization_approvals(client_id, org_id, approved_at, approved_by, note)
+			VALUES($1, $2, NOW(), $3, $4)
+			ON CONFLICT (client_id, org_id) DO UPDATE SET
+				approved_at = NOW(),
+				approved_by = EXCLUDED.approved_by,
+				note = EXCLUDED.note`,
+			clientID, orgID, claims.UserID, req.Note,
+		); err != nil {
+			writeErr(w, http.StatusInternalServerError, "db approval insert: "+err.Error())
+			return
+		}
+
+		// 2. Approve this requested exam only
+		res, err := tx.ExecContext(r.Context(), `
+			UPDATE organization_exam_subscriptions
+			SET status = 'approved',
+			    approval_type = 'blanket_client',
+			    reviewed_at = NOW(),
+			    reviewed_by = $1,
+			    review_note = $2
+			WHERE org_id = $3 AND exam_id = $4`,
+			claims.UserID, req.Note, orgID, examID,
+		)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "db subscription update: "+err.Error())
+			return
+		}
+		rowsAffected, _ := res.RowsAffected()
+		if rowsAffected == 0 {
+			if _, err := tx.ExecContext(r.Context(), `
+				INSERT INTO organization_exam_subscriptions(
+					org_id, exam_id, status, approval_type, subscribed_by, reviewed_at, reviewed_by, review_note
+				) VALUES($1, $2, 'approved', 'blanket_client', $3, NOW(), $3, $4)
+				ON CONFLICT (org_id, exam_id) DO UPDATE SET
+					status = 'approved',
+					approval_type = 'blanket_client',
+					reviewed_at = NOW(),
+					reviewed_by = EXCLUDED.reviewed_by,
+					review_note = EXCLUDED.review_note`,
+				orgID, examID, claims.UserID, req.Note,
+			); err != nil {
+				writeErr(w, http.StatusInternalServerError, "db insert: "+err.Error())
+				return
+			}
+		}
+	} else {
+		// Option A: Per-exam approval
+		res, err := tx.ExecContext(r.Context(), `
+			UPDATE organization_exam_subscriptions
+			SET status = 'approved',
+			    approval_type = 'per_exam',
+			    reviewed_at = NOW(),
+			    reviewed_by = $1,
+			    review_note = $2
+			WHERE org_id = $3 AND exam_id = $4`,
+			claims.UserID, req.Note, orgID, examID,
+		)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "db subscription update: "+err.Error())
+			return
+		}
+		rowsAffected, _ := res.RowsAffected()
+		if rowsAffected == 0 {
+			// Insert if not already present
+			if _, err := tx.ExecContext(r.Context(), `
+				INSERT INTO organization_exam_subscriptions(
+					org_id, exam_id, status, approval_type, subscribed_by, reviewed_at, reviewed_by, review_note
+				) VALUES($1, $2, 'approved', 'per_exam', $3, NOW(), $3, $4)
+				ON CONFLICT (org_id, exam_id) DO UPDATE SET
+					status = 'approved',
+					approval_type = 'per_exam',
+					reviewed_at = NOW(),
+					reviewed_by = EXCLUDED.reviewed_by,
+					review_note = EXCLUDED.review_note`,
+				orgID, examID, claims.UserID, req.Note,
+			); err != nil {
+				writeErr(w, http.StatusInternalServerError, "db insert: "+err.Error())
+				return
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db commit: "+err.Error())
+		return
+	}
+
+	s.auditFromRequest(r, "subscription.approve", "organization_exam_subscriptions", orgID, map[string]any{
+		"exam_id":   examID,
+		"client_id": clientID,
+		"mode":      mode,
+		"note":      req.Note,
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"status":  "approved",
+		"mode":    mode,
+		"org_id":  orgID,
+		"exam_id": examID,
+	})
+}
+
+// ---------- POST /api/client/subscription-requests/{org_id}/{exam_id}/reject ----------
+func (s *Server) clientRejectSubscriptionRequest(w http.ResponseWriter, r *http.Request) {
+	clientID, ok := clientReviewerScope(r)
+	if !ok {
+		writeErr(w, http.StatusForbidden, "client reviewer context required")
+		return
+	}
+	claims := claimsFrom(r)
+
+	orgID, err := parseInt64(chi.URLParam(r, "org_id"))
+	if err != nil || orgID <= 0 {
+		writeErr(w, http.StatusBadRequest, "invalid org_id")
+		return
+	}
+	examID, err := parseInt64(chi.URLParam(r, "exam_id"))
+	if err != nil || examID <= 0 {
+		writeErr(w, http.StatusBadRequest, "invalid exam_id")
+		return
+	}
+
+	var req subscriptionRejectReq
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	req.Note = strings.TrimSpace(req.Note)
+	if req.Note == "" {
+		writeErr(w, http.StatusBadRequest, "rejection note is required")
+		return
+	}
+
+	// Verify exam belongs to caller's client_id
+	var examClientID int64
+	if err := s.deps.DB.QueryRowContext(r.Context(),
+		`SELECT client_id FROM exams WHERE id = $1`, examID,
+	).Scan(&examClientID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeErr(w, http.StatusNotFound, "exam not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "db read")
+		return
+	}
+	if examClientID != clientID {
+		writeErr(w, http.StatusNotFound, "exam not found")
+		return
+	}
+
+	if _, err := s.deps.DB.ExecContext(r.Context(), `
+		UPDATE organization_exam_subscriptions
+		SET status = 'rejected',
+		    reviewed_at = NOW(),
+		    reviewed_by = $1,
+		    review_note = $2
+		WHERE org_id = $3 AND exam_id = $4`,
+		claims.UserID, req.Note, orgID, examID,
+	); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db update: "+err.Error())
+		return
+	}
+
+	s.auditFromRequest(r, "subscription.reject", "organization_exam_subscriptions", orgID, map[string]any{
+		"exam_id":   examID,
+		"client_id": clientID,
+		"note":      req.Note,
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"status":  "rejected",
+		"org_id":  orgID,
+		"exam_id": examID,
+	})
+}
+
+// ---------- POST /api/client/subscription-requests/{org_id}/{exam_id}/reset-pending ----------
+func (s *Server) clientResetSubscriptionRequestToPending(w http.ResponseWriter, r *http.Request) {
+	clientID, ok := clientReviewerScope(r)
+	if !ok {
+		writeErr(w, http.StatusForbidden, "client reviewer context required")
+		return
+	}
+	claims := claimsFrom(r)
+
+	orgID, err := parseInt64(chi.URLParam(r, "org_id"))
+	if err != nil || orgID <= 0 {
+		writeErr(w, http.StatusBadRequest, "invalid org_id")
+		return
+	}
+	examID, err := parseInt64(chi.URLParam(r, "exam_id"))
+	if err != nil || examID <= 0 {
+		writeErr(w, http.StatusBadRequest, "invalid exam_id")
+		return
+	}
+
+	// Verify exam belongs to caller's client_id
+	var examClientID int64
+	if err := s.deps.DB.QueryRowContext(r.Context(),
+		`SELECT client_id FROM exams WHERE id = $1`, examID,
+	).Scan(&examClientID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeErr(w, http.StatusNotFound, "exam not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "db read")
+		return
+	}
+	if examClientID != clientID {
+		writeErr(w, http.StatusNotFound, "exam not found")
+		return
+	}
+
+	if _, err := s.deps.DB.ExecContext(r.Context(), `
+		UPDATE organization_exam_subscriptions
+		SET status = 'pending',
+		    review_note = NULL,
+		    reviewed_at = NULL,
+		    reviewed_by = NULL
+		WHERE org_id = $1 AND exam_id = $2`,
+		orgID, examID,
+	); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db update: "+err.Error())
+		return
+	}
+
+	s.auditFromRequest(r, "subscription.reset_pending", "organization_exam_subscriptions", orgID, map[string]any{
+		"exam_id":     examID,
+		"client_id":   clientID,
+		"reopened_by": claims.UserID,
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"status":  "pending",
+		"org_id":  orgID,
+		"exam_id": examID,
+	})
+}
+
+// ── Bulk / Mass Operations ─────────────────────────────────────────────
+
+type subscriptionBulkApproveReq struct {
+	OrgIDs  []int64 `json:"org_ids"`
+	ExamIDs []int64 `json:"exam_ids"` // optional list of specific exams
+	Mode    string  `json:"mode"`     // "per_exam" or "blanket_client"
+	Note    string  `json:"note"`
+}
+
+type subscriptionBulkRejectReq struct {
+	OrgIDs  []int64 `json:"org_ids"`
+	ExamIDs []int64 `json:"exam_ids"` // optional list of specific exams
+	Note    string  `json:"note"`
+}
+
+// ---------- POST /api/client/subscription-requests/bulk-approve ----------
+func (s *Server) clientBulkApproveSubscriptionRequests(w http.ResponseWriter, r *http.Request) {
+	clientID, ok := clientReviewerScope(r)
+	if !ok {
+		writeErr(w, http.StatusForbidden, "client reviewer context required")
+		return
+	}
+	claims := claimsFrom(r)
+
+	var req subscriptionBulkApproveReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if len(req.OrgIDs) == 0 {
+		writeErr(w, http.StatusBadRequest, "org_ids list required")
+		return
+	}
+
+	mode := strings.ToLower(strings.TrimSpace(req.Mode))
+	if mode != "blanket_client" {
+		mode = "per_exam"
+	}
+
+	tx, err := s.deps.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db tx: "+err.Error())
+		return
+	}
+	defer tx.Rollback()
+
+	for _, orgID := range req.OrgIDs {
+		if orgID <= 0 {
+			continue
+		}
+
+		if mode == "blanket_client" {
+			// Grant blanket authorization for this client & organization
+			if _, err := tx.ExecContext(r.Context(), `
+				INSERT INTO client_organization_approvals(client_id, org_id, approved_at, approved_by, note)
+				VALUES($1, $2, NOW(), $3, $4)
+				ON CONFLICT (client_id, org_id) DO UPDATE SET
+					approved_at = NOW(),
+					approved_by = EXCLUDED.approved_by,
+					note = EXCLUDED.note`,
+				clientID, orgID, claims.UserID, req.Note,
+			); err != nil {
+				writeErr(w, http.StatusInternalServerError, "db blanket approval: "+err.Error())
+				return
+			}
+		}
+
+		// Update pending subscriptions for this org & client
+		approvalType := "per_exam"
+		if mode == "blanket_client" {
+			approvalType = "blanket_client"
+		}
+
+		if len(req.ExamIDs) > 0 {
+			for _, examID := range req.ExamIDs {
+				if examID <= 0 {
+					continue
+				}
+				if _, err := tx.ExecContext(r.Context(), `
+					UPDATE organization_exam_subscriptions
+					SET status = 'approved',
+					    approval_type = $1,
+					    reviewed_at = NOW(),
+					    reviewed_by = $2,
+					    review_note = $3
+					WHERE org_id = $4
+					  AND exam_id = $5
+					  AND status = 'pending'
+					  AND exam_id IN (SELECT id FROM exams WHERE client_id = $6)`,
+					approvalType, claims.UserID, req.Note, orgID, examID, clientID,
+				); err != nil {
+					writeErr(w, http.StatusInternalServerError, "db bulk approve: "+err.Error())
+					return
+				}
+			}
+		} else {
+			if _, err := tx.ExecContext(r.Context(), `
+				UPDATE organization_exam_subscriptions
+				SET status = 'approved',
+				    approval_type = $1,
+				    reviewed_at = NOW(),
+				    reviewed_by = $2,
+				    review_note = $3
+				WHERE org_id = $4
+				  AND status = 'pending'
+				  AND exam_id IN (SELECT id FROM exams WHERE client_id = $5)`,
+				approvalType, claims.UserID, req.Note, orgID, clientID,
+			); err != nil {
+				writeErr(w, http.StatusInternalServerError, "db bulk approve: "+err.Error())
+				return
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db commit: "+err.Error())
+		return
+	}
+
+	s.auditFromRequest(r, "subscription.bulk_approve", "organization_exam_subscriptions", 0, map[string]any{
+		"org_ids":   req.OrgIDs,
+		"exam_ids":  req.ExamIDs,
+		"client_id": clientID,
+		"mode":      mode,
+		"note":      req.Note,
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":             true,
+		"approved_count": len(req.OrgIDs),
+		"mode":           mode,
+	})
+}
+
+// ---------- POST /api/client/subscription-requests/bulk-reject ----------
+func (s *Server) clientBulkRejectSubscriptionRequests(w http.ResponseWriter, r *http.Request) {
+	clientID, ok := clientReviewerScope(r)
+	if !ok {
+		writeErr(w, http.StatusForbidden, "client reviewer context required")
+		return
+	}
+	claims := claimsFrom(r)
+
+	var req subscriptionBulkRejectReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if len(req.OrgIDs) == 0 {
+		writeErr(w, http.StatusBadRequest, "org_ids list required")
+		return
+	}
+	req.Note = strings.TrimSpace(req.Note)
+	if req.Note == "" {
+		writeErr(w, http.StatusBadRequest, "rejection note is required")
+		return
+	}
+
+	tx, err := s.deps.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db tx: "+err.Error())
+		return
+	}
+	defer tx.Rollback()
+
+	for _, orgID := range req.OrgIDs {
+		if orgID <= 0 {
+			continue
+		}
+
+		if len(req.ExamIDs) > 0 {
+			for _, examID := range req.ExamIDs {
+				if examID <= 0 {
+					continue
+				}
+				if _, err := tx.ExecContext(r.Context(), `
+					UPDATE organization_exam_subscriptions
+					SET status = 'rejected',
+					    reviewed_at = NOW(),
+					    reviewed_by = $1,
+					    review_note = $2
+					WHERE org_id = $3
+					  AND exam_id = $4
+					  AND status = 'pending'
+					  AND exam_id IN (SELECT id FROM exams WHERE client_id = $5)`,
+					claims.UserID, req.Note, orgID, examID, clientID,
+				); err != nil {
+					writeErr(w, http.StatusInternalServerError, "db bulk reject: "+err.Error())
+					return
+				}
+			}
+		} else {
+			if _, err := tx.ExecContext(r.Context(), `
+				UPDATE organization_exam_subscriptions
+				SET status = 'rejected',
+				    reviewed_at = NOW(),
+				    reviewed_by = $1,
+				    review_note = $2
+				WHERE org_id = $3
+				  AND status = 'pending'
+				  AND exam_id IN (SELECT id FROM exams WHERE client_id = $4)`,
+				claims.UserID, req.Note, orgID, clientID,
+			); err != nil {
+				writeErr(w, http.StatusInternalServerError, "db bulk reject: "+err.Error())
+				return
+			}
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db commit: "+err.Error())
+		return
+	}
+
+	s.auditFromRequest(r, "subscription.bulk_reject", "organization_exam_subscriptions", 0, map[string]any{
+		"org_ids":   req.OrgIDs,
+		"exam_ids":  req.ExamIDs,
+		"client_id": clientID,
+		"note":      req.Note,
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":             true,
+		"rejected_count": len(req.OrgIDs),
+	})
+}

@@ -13,7 +13,7 @@ var schemaSQL string
 // schemaVersion is the version stamped in schema_migrations after the
 // initial schema has been applied. Bump this only when new post-1
 // migrations are added below.
-const schemaVersion = 8
+const schemaVersion = 9
 
 // Migrate applies schema.sql to an empty database, or is a no-op if
 // the schema has already been applied. Safe to call on every startup.
@@ -87,7 +87,55 @@ func Migrate(d *sql.DB) error {
 		}
 	}
 
+	if !applied[9] {
+		if err := applyV9ExamSubscriptionApprovals(ctx, d); err != nil {
+			return fmt.Errorf("apply v9 exam_subscription_approvals: %w", err)
+		}
+	}
+
 	return nil
+}
+
+// applyV9ExamSubscriptionApprovals adds approval lifecycle fields to
+// organization_exam_subscriptions and creates client_organization_approvals
+// so Client Reviewers can approve subscriptions per-exam or blanket client-wide.
+func applyV9ExamSubscriptionApprovals(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmts := []string{
+		`ALTER TABLE organization_exam_subscriptions ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'approved'`,
+		`ALTER TABLE organization_exam_subscriptions ADD COLUMN IF NOT EXISTS approval_type TEXT`,
+		`ALTER TABLE organization_exam_subscriptions ADD COLUMN IF NOT EXISTS requested_at TIMESTAMPTZ NOT NULL DEFAULT NOW()`,
+		`ALTER TABLE organization_exam_subscriptions ADD COLUMN IF NOT EXISTS reviewed_at TIMESTAMPTZ`,
+		`ALTER TABLE organization_exam_subscriptions ADD COLUMN IF NOT EXISTS reviewed_by BIGINT REFERENCES users(id)`,
+		`ALTER TABLE organization_exam_subscriptions ADD COLUMN IF NOT EXISTS review_note TEXT`,
+		`CREATE TABLE IF NOT EXISTS client_organization_approvals (
+			client_id   BIGINT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
+			org_id      BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+			approved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
+			approved_by BIGINT REFERENCES users(id),
+			note        TEXT,
+			PRIMARY KEY (client_id, org_id)
+		)`,
+		`CREATE INDEX IF NOT EXISTS idx_client_org_approvals_org ON client_organization_approvals(org_id)`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.ExecContext(ctx, s); err != nil {
+			return fmt.Errorf("exec %q: %w", firstLine(s), err)
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)`,
+		9, "exam_subscription_approvals",
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // applyV8AllowCustomInstitutionType drops the CHECK constraint on

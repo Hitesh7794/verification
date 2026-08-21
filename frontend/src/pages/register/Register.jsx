@@ -276,7 +276,10 @@ export default function Register() {
     if (d) {
       setForm({ ...EMPTY_FORM, ...(d.form || {}) })
       setStep(d.step ?? 0)
-      setApplicationId(d.applicationId ?? null)
+      const validAppId = d.applicationId && !isNaN(Number(d.applicationId)) && Number(d.applicationId) > 0
+        ? Number(d.applicationId)
+        : null
+      setApplicationId(validAppId)
       setUploaded(d.uploaded ?? {})
       setEmailOtpToken(d.emailOtpToken ?? '')
       setMobileOtpToken(d.mobileOtpToken ?? '')
@@ -366,6 +369,35 @@ export default function Register() {
     return Object.keys(e).length === 0
   }
 
+  async function initApplicationDraft() {
+    const affiliation = form.affiliation_body === 'Other'
+      ? form.affiliation_body_other.trim()
+      : form.affiliation_body
+    const institutionType = form.institution_type === 'other'
+      ? (form.institution_type_other.trim() || 'other')
+      : form.institution_type
+    const payload = {
+      ...form,
+      institution_type: institutionType,
+      affiliation_body: affiliation,
+      year_established: Number(form.year_established) || 0,
+      approx_student_count: Number(form.approx_student_count) || 0,
+      expected_centres: Number(form.expected_centres) || 1,
+      email_otp_token: emailOtpToken,
+      mobile_otp_token: mobileOtpToken,
+      // Backend expects an int (or omit). Empty-string picker value
+      // → drop the key entirely so the app lands in the legacy
+      // superadmin queue rather than 400'ing on a NaN.
+      client_id: form.client_id ? Number(form.client_id) : undefined,
+    }
+    delete payload.affiliation_body_other // internal-only field
+    delete payload.institution_type_other // internal-only field
+    if (!payload.client_id) delete payload.client_id
+    const res = await registerInit(payload)
+    setApplicationId(res.application_id)
+    return res.application_id
+  }
+
   async function goToStep2() {
     if (!validateStep(S_ADDRESS)) return
 
@@ -381,35 +413,7 @@ export default function Register() {
     setSubmitting(true)
     setTopError('')
     try {
-      if (!applicationId) {
-        // If "Other" was picked for affiliation, send the free-text value
-        // as affiliation_body (backend takes any non-empty string).
-        const affiliation = form.affiliation_body === 'Other'
-          ? form.affiliation_body_other.trim()
-          : form.affiliation_body
-        const institutionType = form.institution_type === 'other'
-          ? (form.institution_type_other.trim() || 'other')
-          : form.institution_type
-        const payload = {
-          ...form,
-          institution_type: institutionType,
-          affiliation_body: affiliation,
-          year_established: Number(form.year_established) || 0,
-          approx_student_count: Number(form.approx_student_count) || 0,
-          expected_centres: Number(form.expected_centres) || 1,
-          email_otp_token: emailOtpToken,
-          mobile_otp_token: mobileOtpToken,
-          // Backend expects an int (or omit). Empty-string picker value
-          // → drop the key entirely so the app lands in the legacy
-          // superadmin queue rather than 400'ing on a NaN.
-          client_id: form.client_id ? Number(form.client_id) : undefined,
-        }
-        delete payload.affiliation_body_other // internal-only field
-        delete payload.institution_type_other // internal-only field
-        if (!payload.client_id) delete payload.client_id
-        const res = await registerInit(payload)
-        setApplicationId(res.application_id)
-      }
+      await initApplicationDraft()
       setStep(S_DOCUMENTS)
     } catch (err) {
       const msg = err.message || 'Registration failed'
@@ -433,10 +437,32 @@ export default function Register() {
     }
     setErrors((e) => ({ ...e, [docKind]: undefined }))
     setUploaded((u) => ({ ...u, [docKind]: { uploading: true, progress: 0, original_name: file.name } }))
+    
     try {
-      const res = await uploadDoc(applicationId, docKind, file, (pct) => {
-        setUploaded((u) => ({ ...u, [docKind]: { ...u[docKind], progress: pct } }))
-      })
+      let currentAppId = applicationId
+      if (!currentAppId || isNaN(Number(currentAppId)) || Number(currentAppId) <= 0) {
+        currentAppId = await initApplicationDraft()
+      }
+
+      let res
+      try {
+        res = await uploadDoc(currentAppId, docKind, file, (pct) => {
+          setUploaded((u) => ({ ...u, [docKind]: { ...u[docKind], progress: pct } }))
+        })
+      } catch (uploadErr) {
+        // If the backend reports invalid application ID / application not found (e.g. from local DB reset or stale draft),
+        // re-initialize the draft and retry once seamlessly.
+        const errMsg = String(uploadErr.message || '').toLowerCase()
+        if (errMsg.includes('application') || uploadErr.status === 400 || uploadErr.status === 404) {
+          const freshAppId = await initApplicationDraft()
+          res = await uploadDoc(freshAppId, docKind, file, (pct) => {
+            setUploaded((u) => ({ ...u, [docKind]: { ...u[docKind], progress: pct } }))
+          })
+        } else {
+          throw uploadErr
+        }
+      }
+
       setUploaded((u) => ({
         ...u,
         [docKind]: {
