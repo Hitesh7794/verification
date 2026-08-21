@@ -51,9 +51,13 @@ export async function registerInit(formData) {
 // onProgress(pct) lets the UI render a progress bar from XHR's
 // upload.onprogress event (fetch doesn't expose this).
 export async function uploadDoc(applicationId, docKind, file, onProgress) {
+  const appID = Number(applicationId)
+  if (!applicationId || isNaN(appID) || appID <= 0) {
+    throw new Error('Invalid or missing application ID. Please return to step 2 to re-confirm details.')
+  }
   return new Promise((resolve, reject) => {
     const xhr = new XMLHttpRequest()
-    xhr.open('POST', `${BASE}/register/${applicationId}/docs`)
+    xhr.open('POST', `${BASE}/register/${appID}/docs`)
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && onProgress) {
         onProgress(Math.round((e.loaded / e.total) * 100))
@@ -86,16 +90,26 @@ export async function uploadDoc(applicationId, docKind, file, onProgress) {
 }
 
 export async function deleteDoc(applicationId, docId) {
-  return call(`/register/${applicationId}/docs/${docId}`, { method: 'DELETE' })
+  const appID = Number(applicationId)
+  if (!applicationId || isNaN(appID) || appID <= 0) return
+  return call(`/register/${appID}/docs/${docId}`, { method: 'DELETE' })
 }
 
 // Final step: lock the application so it lands in the superadmin queue.
 export async function submitApplication(applicationId) {
-  return call(`/register/${applicationId}/submit`, { method: 'POST' })
+  const appID = Number(applicationId)
+  if (!applicationId || isNaN(appID) || appID <= 0) {
+    throw new Error('Invalid or missing application ID. Please return to step 2 to re-confirm details.')
+  }
+  return call(`/register/${appID}/submit`, { method: 'POST' })
 }
 
 export async function getApplicationStatus(applicationId) {
-  return call(`/register/${applicationId}`)
+  const appID = Number(applicationId)
+  if (!applicationId || isNaN(appID) || appID <= 0) {
+    throw new Error('Invalid or missing application ID.')
+  }
+  return call(`/register/${appID}`)
 }
 
 // ----- Set-password (magic-link landing) -----

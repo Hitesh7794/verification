@@ -11,42 +11,75 @@ import { getCatalog, subscribeExam, unsubscribeExam } from '../../lib/admin/exam
 import { dateRange } from '../../lib/dates.js'
 
 // Admin > Exam catalog — self-service. Browse every visible client and
-// their open exams. [Subscribe] adds an exam to this college's
+// their open exams. [Request Subscription] requests an exam for this college's
 // portfolio; [Unsubscribe] removes it (and cascades operator_exams).
 export default function Catalog() {
   const [clients, setClients] = useState([])
-  const [loading, setLoading] = useState(true)
+  const [initialLoading, setInitialLoading] = useState(true)
   const [err, setErr] = useState('')
   const [busy, setBusy] = useState(null) // exam_id currently being toggled
 
-  const refresh = useCallback(async () => {
-    setLoading(true)
+  const loadData = useCallback(async (silent = false) => {
+    if (!silent) setInitialLoading(true)
     setErr('')
     try {
-      setClients(await getCatalog())
+      const data = await getCatalog()
+      setClients(data || [])
     } catch (e) {
       setErr(e.message || 'Could not load catalog')
     } finally {
-      setLoading(false)
+      if (!silent) setInitialLoading(false)
     }
   }, [])
 
-  useEffect(() => { refresh() }, [refresh])
+  useEffect(() => {
+    loadData(false)
+  }, [loadData])
 
-  async function onToggle(examId, currentlySubscribed) {
+  async function onToggle(ev, examId, currentlySubscribed, isBlanketApproved) {
+    if (ev) {
+      ev.preventDefault()
+      ev.stopPropagation()
+    }
     setBusy(examId)
     setErr('')
+
+    // Optimistic local state update to prevent any jumping or flickering
+    setClients((prevClients) =>
+      prevClients.map((client) => ({
+        ...client,
+        exams: client.exams.map((exam) => {
+          if (exam.id !== examId) return exam
+          if (currentlySubscribed) {
+            return {
+              ...exam,
+              subscribed: false,
+              subscription_status: null,
+            }
+          }
+          return {
+            ...exam,
+            subscribed: isBlanketApproved,
+            subscription_status: isBlanketApproved ? 'approved' : 'pending',
+          }
+        }),
+      }))
+    )
+
     try {
       if (currentlySubscribed) {
         await unsubscribeExam(examId)
       } else {
         await subscribeExam(examId)
       }
-      await refresh()
+      // Silent background refresh to reconcile server timestamps and IDs
+      await loadData(true)
     } catch (e) {
       const status = e.status ? ` (HTTP ${e.status})` : ''
       const backend = e.body?.error ? `: ${e.body.error}` : ''
       setErr(`${e.message || 'Failed'}${status}${backend}`)
+      // Rollback on error
+      await loadData(true)
     } finally {
       setBusy(null)
     }
@@ -64,8 +97,11 @@ export default function Catalog() {
             {err}
           </div>
         )}
-        {loading ? (
-          <div className="p-10 text-center text-sm text-slate-500">Loading…</div>
+        {initialLoading ? (
+          <div className="p-16 text-center text-sm text-slate-500">
+            <div className="inline-block h-6 w-6 rounded-full border-2 border-slate-200 border-t-stone-900 animate-spin mb-3" />
+            <p>Loading exam catalog…</p>
+          </div>
         ) : clients.length === 0 ? (
           <Card><CardBody>
             <div className="p-6 text-center">
@@ -78,9 +114,18 @@ export default function Catalog() {
             {clients.map((c) => (
               <Card key={c.id}>
                 <CardBody className="p-0">
-                  <div className="px-5 py-3 border-b border-slate-100 bg-slate-50/50">
-                    <h3 className="text-sm font-semibold text-slate-900">{c.name}</h3>
-                    {c.notes && <p className="text-xs text-slate-500 mt-0.5">{c.notes}</p>}
+                  <div className="px-5 py-3 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between gap-3">
+                    <div>
+                      <div className="flex items-center gap-2">
+                        <h3 className="text-sm font-semibold text-slate-900">{c.name}</h3>
+                        {c.client_blanket_approved && (
+                          <Pill tone="emerald" size="sm">
+                            Blanket Approved
+                          </Pill>
+                        )}
+                      </div>
+                      {c.notes && <p className="text-xs text-slate-500 mt-0.5">{c.notes}</p>}
+                    </div>
                   </div>
                   {c.exams.length === 0 ? (
                     <div className="px-5 py-4 text-xs text-slate-500">No open exams under this client.</div>
@@ -93,44 +138,87 @@ export default function Catalog() {
                             <th className="px-5 py-2.5">Name</th>
                             <th className="px-5 py-2.5">Window</th>
                             <th className="px-5 py-2.5">Candidates</th>
-                            <th className="px-5 py-2.5 text-right">Subscription</th>
+                            <th className="px-5 py-2.5 text-right">Subscription Status</th>
                           </tr>
                         </thead>
                         <tbody>
-                          {c.exams.map((e) => (
-                            <tr key={e.id} className="border-b border-slate-100 last:border-none hover:bg-slate-50/40">
-                              <td className="px-5 py-3 font-mono text-xs text-slate-700 tabular-nums">{e.exam_code}</td>
-                              <td className="px-5 py-3 text-slate-900">{e.name}</td>
-                              <td className="px-5 py-3 text-xs text-slate-600 tabular-nums">
-                                {dateRange(e.verification_from, e.verification_to)}
-                              </td>
-                              <td className="px-5 py-3 text-slate-700 tabular-nums">{e.candidate_count}</td>
-                              <td className="px-5 py-3 text-right">
-                                {e.subscribed ? (
-                                  <div className="inline-flex items-center gap-2">
-                                    <Pill tone="emerald" dot>Subscribed</Pill>
+                          {c.exams.map((e) => {
+                            const isApproved = e.subscription_status === 'approved' || e.subscribed
+                            const isPending = e.subscription_status === 'pending'
+                            const isRejected = e.subscription_status === 'rejected'
+
+                            return (
+                              <tr key={e.id} className="border-b border-slate-100 last:border-none hover:bg-slate-50/40">
+                                <td className="px-5 py-3 font-mono text-xs text-slate-700 tabular-nums">{e.exam_code}</td>
+                                <td className="px-5 py-3 text-slate-900">
+                                  <div className="font-medium">{e.name}</div>
+                                  {isRejected && e.review_note && (
+                                    <p className="text-xs text-rose-600 mt-0.5">Note: {e.review_note}</p>
+                                  )}
+                                </td>
+                                <td className="px-5 py-3 text-xs text-slate-600 tabular-nums">
+                                  {dateRange(e.verification_from, e.verification_to)}
+                                </td>
+                                <td className="px-5 py-3 text-slate-700 tabular-nums">{e.candidate_count}</td>
+                                <td className="px-5 py-3 text-right">
+                                  {isApproved ? (
+                                    <div className="inline-flex items-center gap-2">
+                                      <Pill tone="emerald" dot>Subscribed</Pill>
+                                      <Button
+                                        type="button"
+                                        variant="secondary"
+                                        size="sm"
+                                        disabled={busy === e.id}
+                                        onClick={(ev) => onToggle(ev, e.id, true, c.client_blanket_approved)}
+                                        className="!text-rose-700 !border-rose-200 hover:!bg-rose-50 hover:!border-rose-300"
+                                      >
+                                        Unsubscribe
+                                      </Button>
+                                    </div>
+                                  ) : isPending ? (
+                                    <div className="inline-flex items-center gap-2">
+                                      <Pill tone="amber" dot>Pending Review</Pill>
+                                      <Button
+                                        type="button"
+                                        variant="secondary"
+                                        size="sm"
+                                        disabled={busy === e.id}
+                                        onClick={(ev) => onToggle(ev, e.id, true, c.client_blanket_approved)}
+                                        className="!text-slate-600 hover:!text-slate-900"
+                                      >
+                                        Cancel
+                                      </Button>
+                                    </div>
+                                  ) : isRejected ? (
+                                    <div className="inline-flex items-center gap-2">
+                                      <Pill tone="rose" dot>Rejected</Pill>
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        disabled={busy === e.id}
+                                        onClick={(ev) => onToggle(ev, e.id, false, c.client_blanket_approved)}
+                                      >
+                                        {busy === e.id ? 'Requesting…' : 'Re-Request'}
+                                      </Button>
+                                    </div>
+                                  ) : (
                                     <Button
-                                      variant="secondary"
+                                      type="button"
                                       size="sm"
                                       disabled={busy === e.id}
-                                      onClick={() => onToggle(e.id, true)}
-                                      className="!text-rose-700 !border-rose-200 hover:!bg-rose-50 hover:!border-rose-300"
+                                      onClick={(ev) => onToggle(ev, e.id, false, c.client_blanket_approved)}
                                     >
-                                      Unsubscribe
+                                      {busy === e.id
+                                        ? 'Submitting…'
+                                        : c.client_blanket_approved
+                                        ? 'Subscribe'
+                                        : 'Request Subscription'}
                                     </Button>
-                                  </div>
-                                ) : (
-                                  <Button
-                                    size="sm"
-                                    disabled={busy === e.id}
-                                    onClick={() => onToggle(e.id, false)}
-                                  >
-                                    {busy === e.id ? 'Adding…' : 'Subscribe'}
-                                  </Button>
-                                )}
-                              </td>
-                            </tr>
-                          ))}
+                                  )}
+                                </td>
+                              </tr>
+                            )
+                          })}
                         </tbody>
                       </table>
                     </div>

@@ -338,6 +338,14 @@ func (s *Server) Router() http.Handler {
 		r.Post("/api/client/applications/{id}/approve",      s.requireRole("client_reviewer")(s.clientApproveApplication))
 		r.Post("/api/client/applications/{id}/reject",       s.requireRole("client_reviewer")(s.clientRejectApplication))
 
+		// Client-reviewer subscription request management
+		r.Get("/api/client/subscription-requests",                                 s.requireRole("client_reviewer")(s.clientListSubscriptionRequests))
+		r.Post("/api/client/subscription-requests/bulk-approve",                    s.requireRole("client_reviewer")(s.clientBulkApproveSubscriptionRequests))
+		r.Post("/api/client/subscription-requests/bulk-reject",                     s.requireRole("client_reviewer")(s.clientBulkRejectSubscriptionRequests))
+		r.Post("/api/client/subscription-requests/{org_id}/{exam_id}/approve",     s.requireRole("client_reviewer")(s.clientApproveSubscriptionRequest))
+		r.Post("/api/client/subscription-requests/{org_id}/{exam_id}/reject",      s.requireRole("client_reviewer")(s.clientRejectSubscriptionRequest))
+		r.Post("/api/client/subscription-requests/{org_id}/{exam_id}/reset-pending", s.requireRole("client_reviewer")(s.clientResetSubscriptionRequestToPending))
+
 		// Superadmin management of the per-client portal — enable/disable
 		// the client's inbox and CRUD the reviewer users that log into it.
 		r.Post("/api/superadmin/clients/{id}/portal",              s.requireRole("superadmin")(s.superadminSetClientPortal))
