@@ -25,7 +25,6 @@ import {
   uploadDoc,
   deleteDoc,
   submitApplication,
-  listPublicClients,
   loadDraft,
   saveDraft,
   clearDraft,
@@ -263,12 +262,6 @@ export default function Register() {
   const [topError, setTopError] = useState('')
   const [emailOtpToken, setEmailOtpToken] = useState('')
   const [mobileOtpToken, setMobileOtpToken] = useState('')
-  // Exam boards currently accepting KYC via their own review portal.
-  // Loaded once on mount; the register form shows this as a dropdown
-  // in step 0. Empty list → dropdown hides entirely (system falls back
-  // to the legacy superadmin queue).
-  const [publicClients, setPublicClients] = useState([])
-  const [clientsLoaded, setClientsLoaded] = useState(false)
 
   // Restore draft on mount.
   useEffect(() => {
@@ -284,34 +277,6 @@ export default function Register() {
       setEmailOtpToken(d.emailOtpToken ?? '')
       setMobileOtpToken(d.mobileOtpToken ?? '')
     }
-    // Prefill client_id from URL (?client_id=42). Wins over any draft
-    // value — if the visitor arrived through a client-specific link,
-    // that intent is fresher than whatever was stashed in localStorage.
-    try {
-      const q = new URLSearchParams(window.location.search)
-      const cid = q.get('client_id')
-      if (cid && /^\d+$/.test(cid)) {
-        setForm((f) => ({ ...f, client_id: cid }))
-      }
-    } catch {}
-  }, [])
-
-  // Load the public client list once. Failures are non-fatal — we just
-  // hide the dropdown and route the application to the superadmin queue.
-  useEffect(() => {
-    let cancelled = false
-    listPublicClients()
-      .then((res) => {
-        if (cancelled) return
-        setPublicClients(Array.isArray(res?.clients) ? res.clients : [])
-        setClientsLoaded(true)
-      })
-      .catch(() => {
-        if (cancelled) return
-        setPublicClients([])
-        setClientsLoaded(true)
-      })
-    return () => { cancelled = true }
   }, [])
 
   useEffect(() => {
@@ -680,8 +645,6 @@ export default function Register() {
                       errors={errors}
                       update={update}
                       onBlurField={validateOnBlur}
-                      publicClients={publicClients}
-                      clientsLoaded={clientsLoaded}
                       onNext={() => {
                         if (validateStep(S_INSTITUTION)) setStep(S_ADDRESS)
                       }}
@@ -815,17 +778,12 @@ function StepSidebar({ step }) {
 
 // ─── Step 0 ────────────────────────────────────────────────────────────
 
-function Step0({ form, errors, update, onBlurField, onNext, publicClients = [], clientsLoaded = false }) {
+function Step0({ form, errors, update, onBlurField, onNext }) {
   const [otherDraft, setOtherDraft] = useState(form.institution_type_other || '')
 
   useEffect(() => {
     setOtherDraft(form.institution_type_other || '')
   }, [form.institution_type_other])
-
-  const showClientPicker = clientsLoaded && publicClients.length > 0
-  const selectedClient = publicClients.find(
-    (c) => String(c.id) === String(form.client_id),
-  )
 
   function handleAddOther() {
     const val = otherDraft.trim()
@@ -856,43 +814,6 @@ function Step0({ form, errors, update, onBlurField, onNext, publicClients = [], 
       </div>
 
       <div className="px-7 py-7 space-y-7">
-        {showClientPicker && (
-          <div className="rounded-xl border border-warm bg-[#F5EEDF]/60 px-5 py-4">
-            <div className="flex items-start gap-3">
-              <span className="mt-0.5 h-8 w-8 rounded-lg bg-white text-amber-800 flex items-center justify-center shrink-0 border border-warm">
-                <Icon.ShieldCheck className="h-4 w-4" />
-              </span>
-              <div className="min-w-0 flex-1">
-                <div className="flex items-baseline justify-between gap-2">
-                  <Label className="!mb-0 font-medium text-ink-900">Exam board reviewer</Label>
-                  <span className="text-[11px] uppercase tracking-wide text-warm-accent font-semibold">
-                    Optional
-                  </span>
-                </div>
-                <p className="text-xs text-stone-600 mt-1">
-                  Route this KYC to a specific board. If left blank, the
-                  platform's onboarding team reviews it.
-                </p>
-                <div className="mt-2.5">
-                  <Select
-                    value={form.client_id}
-                    onChange={(e) => update('client_id', e.target.value)}
-                    options={[
-                      { value: '', label: '— Platform onboarding team —' },
-                      ...publicClients.map((c) => ({ value: String(c.id), label: c.name })),
-                    ]}
-                  />
-                </div>
-                {selectedClient && (
-                  <p className="mt-2 text-xs text-amber-950 font-medium">
-                    <span>{selectedClient.name}</span> will review your documents and issue admin credentials on approval.
-                  </p>
-                )}
-              </div>
-            </div>
-          </div>
-        )}
-
         <div>
           <div className="flex items-baseline justify-between mb-2">
             <Label className="!mb-0 font-semibold text-ink-900">

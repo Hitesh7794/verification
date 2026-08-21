@@ -13,14 +13,12 @@ import {
   bulkApproveSubscriptionRequests,
   bulkRejectSubscriptionRequests,
   resetSubscriptionRequestToPending,
-  listReviewerApplications,
 } from '../../lib/reviewer/api.js'
 import { usePolling } from '../../lib/usePolling.js'
 import { dateRange } from '../../lib/dates.js'
 
 export default function ReviewerDashboard() {
   const [me, setMe] = useState(null)
-  const [activeTab, setActiveTab] = useState('subscriptions') // 'subscriptions' | 'kyc'
 
   // Subscription Requests state
   const [subItems, setSubItems] = useState([])
@@ -56,12 +54,6 @@ export default function ReviewerDashboard() {
   const [actionErr, setActionErr] = useState('')
   const [err, setErr] = useState('')
 
-  // Legacy KYC Applications state
-  const [kycItems, setKycItems] = useState([])
-  const [kycCounts, setKycCounts] = useState({ pending: 0, approved: 0, rejected: 0 })
-  const [kycStatus, setKycStatus] = useState('pending')
-  const [kycLoading, setKycLoading] = useState(false)
-
   useEffect(() => {
     let alive = true
     reviewerMe().then((r) => { if (alive) setMe(r) }).catch(() => { })
@@ -86,44 +78,13 @@ export default function ReviewerDashboard() {
     }
   }, [subStatus, selectedExamId])
 
-  // Load KYC Applications
-  const loadKYC = useCallback(async () => {
-    try {
-      const res = await listReviewerApplications({ status: kycStatus, limit: 50 })
-      setKycItems(res.items || [])
-      const [p, a, r] = await Promise.all([
-        listReviewerApplications({ status: 'pending', limit: 1 }).catch(() => ({ total: 0 })),
-        listReviewerApplications({ status: 'approved', limit: 1 }).catch(() => ({ total: 0 })),
-        listReviewerApplications({ status: 'rejected', limit: 1 }).catch(() => ({ total: 0 })),
-      ])
-      setKycCounts({ pending: p.total || 0, approved: a.total || 0, rejected: r.total || 0 })
-    } catch (e) {
-      setErr(e.message || 'Could not load KYC applications')
-    } finally {
-      setKycLoading(false)
-    }
-  }, [kycStatus])
-
-  const refreshAll = useCallback(() => {
-    if (activeTab === 'subscriptions') {
-      loadSubscriptions()
-    } else {
-      loadKYC()
-    }
-  }, [activeTab, loadSubscriptions, loadKYC])
-
-  usePolling(refreshAll, 8000)
+  usePolling(loadSubscriptions, 8000)
 
   useEffect(() => {
     setSelectedOrgIds(new Set())
-    if (activeTab === 'subscriptions') {
-      setSubLoading(true)
-      loadSubscriptions()
-    } else {
-      setKycLoading(true)
-      loadKYC()
-    }
-  }, [activeTab, subStatus, selectedExamId, kycStatus, loadSubscriptions, loadKYC])
+    setSubLoading(true)
+    loadSubscriptions()
+  }, [subStatus, selectedExamId, loadSubscriptions])
 
   // Selected Exam Object
   const currentExam = useMemo(() => {
@@ -389,9 +350,8 @@ export default function ReviewerDashboard() {
         right={
           <button
             onClick={() => {
-              if (activeTab === 'subscriptions') setSubLoading(true)
-              else setKycLoading(true)
-              refreshAll()
+              setSubLoading(true)
+              loadSubscriptions()
             }}
             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs"
           >
@@ -415,41 +375,6 @@ export default function ReviewerDashboard() {
         </div>
       )}
 
-      {/* Main View Tabs (Exam Subscriptions vs Institution KYC) */}
-      <div className="flex items-center gap-3 mb-6 border-b border-slate-200 pb-3">
-        <button
-          onClick={() => setActiveTab('subscriptions')}
-          className={`relative px-4 py-2 text-sm font-semibold rounded-lg transition-all flex items-center gap-2 ${activeTab === 'subscriptions'
-              ? 'bg-slate-900 text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-            }`}
-        >
-          <Icon.FileText className="h-4 w-4" />
-          <span>Exam Subscriptions</span>
-          {globalExamTotals.pending > 0 && (
-            <span className="ml-1.5 px-2 py-0.5 text-xs font-bold rounded-full bg-amber-500 text-white">
-              {globalExamTotals.pending}
-            </span>
-          )}
-        </button>
-
-        <button
-          onClick={() => setActiveTab('kyc')}
-          className={`relative px-4 py-2 text-sm font-semibold rounded-lg transition-all flex items-center gap-2 ${activeTab === 'kyc'
-              ? 'bg-slate-900 text-white shadow-xs'
-              : 'text-slate-600 hover:text-slate-900 hover:bg-slate-100'
-            }`}
-        >
-          <Icon.Building className="h-4 w-4" />
-          <span>Institution KYC</span>
-          {kycCounts.pending > 0 && (
-            <span className="ml-1.5 px-2 py-0.5 text-xs font-bold rounded-full bg-slate-700 text-white">
-              {kycCounts.pending}
-            </span>
-          )}
-        </button>
-      </div>
-
       {err && (
         <div className="mb-4 rounded-lg bg-rose-50 border border-rose-200 px-4 py-3 text-sm text-rose-800">
           {err}
@@ -457,10 +382,9 @@ export default function ReviewerDashboard() {
       )}
 
       {/* ========================================================================= */}
-      {/* VIEW 1: EXAM SUBSCRIPTIONS (SCREEN 1: EXAMS TABLE | SCREEN 2: WORKSPACE)  */}
+      {/* EXAM SUBSCRIPTIONS (SCREEN 1: EXAMS TABLE | SCREEN 2: WORKSPACE)          */}
       {/* ========================================================================= */}
-      {activeTab === 'subscriptions' && (
-        <FadeIn>
+      <FadeIn>
           {/* ───────────────────────────────────────────────────────────────────── */}
           {/* SCREEN 1: PUBLISHED EXAMS DIRECTORY TABLE (when selectedExamId is null) */}
           {/* ───────────────────────────────────────────────────────────────────── */}
@@ -1577,100 +1501,6 @@ export default function ReviewerDashboard() {
           </div>
         )}
       </FadeIn>
-    )}
-
-      {/* ========================================================================= */}
-      {/* VIEW 2: INSTITUTION KYC APPLICATIONS (REGULATORY APPROVALS)               */}
-      {/* ========================================================================= */}
-      {activeTab === 'kyc' && (
-        <FadeIn>
-          <Card className="mb-4">
-            <CardBody className="py-3">
-              <div className="flex flex-wrap items-center justify-between gap-3">
-                <div className="flex items-center gap-1 rounded-lg bg-slate-100 p-1">
-                  {[
-                    { value: 'pending', label: 'Pending Review', tone: 'amber', count: kycCounts.pending },
-                    { value: 'approved', label: 'Approved KYC', tone: 'emerald', count: kycCounts.approved },
-                    { value: 'rejected', label: 'Rejected', tone: 'rose', count: kycCounts.rejected },
-                  ].map((t) => (
-                    <button
-                      key={t.value}
-                      onClick={() => setKycStatus(t.value)}
-                      className={`inline-flex items-center gap-2 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${kycStatus === t.value
-                          ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200'
-                          : 'text-slate-600 hover:text-slate-900'
-                        }`}
-                    >
-                      {t.label}
-                      <span className="inline-flex items-center justify-center rounded-full px-1.5 min-w-[20px] text-xs font-semibold bg-slate-200 text-slate-700">
-                        {t.count}
-                      </span>
-                    </button>
-                  ))}
-                </div>
-                <p className="text-xs text-slate-500">
-                  New institution registration & regulatory document verifications.
-                </p>
-              </div>
-            </CardBody>
-          </Card>
-
-          <Card className="overflow-hidden">
-            {kycLoading ? (
-              <div className="py-16 text-center">
-                <div className="inline-block h-7 w-7 rounded-full border-2 border-slate-200 border-t-stone-900 animate-spin" />
-                <p className="mt-3 text-sm text-slate-500">Loading KYC applications…</p>
-              </div>
-            ) : kycItems.length === 0 ? (
-              <div className="py-16 text-center">
-                <div className="mx-auto h-12 w-12 rounded-full bg-slate-100 text-slate-400 flex items-center justify-center mb-3">
-                  <Icon.Search className="h-6 w-6" />
-                </div>
-                <p className="text-sm font-medium text-slate-700">No {kycStatus} KYC applications</p>
-                <p className="text-xs text-slate-500 mt-1">When colleges apply for institutional onboarding, they will appear here.</p>
-              </div>
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead className="bg-slate-50 border-b border-slate-100">
-                    <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
-                      <th className="px-5 py-3">Institution Name</th>
-                      <th className="px-5 py-3">Type & AISHE</th>
-                      <th className="px-5 py-3">Location</th>
-                      <th className="px-5 py-3">Head of Institution</th>
-                      <th className="px-5 py-3 text-right">Action</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {kycItems.map((app) => (
-                      <tr key={app.id} className="border-b border-slate-100 hover:bg-slate-50/50">
-                        <td className="px-5 py-4 font-semibold text-slate-900">{app.institution_name}</td>
-                        <td className="px-5 py-4">
-                          <span className="capitalize">{app.institution_type}</span>
-                          {app.aishe_code && <code className="ml-1 text-slate-600">({app.aishe_code})</code>}
-                        </td>
-                        <td className="px-5 py-4 text-slate-600">{app.city ? `${app.city}, ${app.state}` : app.state}</td>
-                        <td className="px-5 py-4">
-                          <div className="text-slate-800 font-medium">{app.head_name}</div>
-                          <div className="text-xs text-slate-500 font-mono">{app.head_email}</div>
-                        </td>
-                        <td className="px-5 py-4 text-right">
-                          <Link
-                            to={`/reviewer/applications/${app.id}`}
-                            className="inline-flex items-center gap-1 text-xs font-semibold text-sky-700 hover:underline"
-                          >
-                            Review Docs <Icon.ArrowRight className="h-3 w-3" />
-                          </Link>
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </Card>
-        </FadeIn>
-      )}
 
       {/* ========================================================================= */}
       {/* POP-UP MODAL: UNIVERSITY DETAILS INSPECTOR                                 */}
