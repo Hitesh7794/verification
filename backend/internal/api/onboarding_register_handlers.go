@@ -634,8 +634,27 @@ func validateInit(r *registerInitReq) error {
 	if r.Tier != "" && !allowedTiers[r.Tier] {
 		return errors.New("tier must be tier_1, tier_2 or tier_3")
 	}
-	if r.AisheCode == "" {
-		return errors.New("aishe_code is required")
+	isAcademic := r.InstitutionType == "college" || r.InstitutionType == "university"
+	if isAcademic {
+		if r.AisheCode == "" {
+			return errors.New("aishe_code is required")
+		}
+		if strings.TrimSpace(r.AffiliationBody) == "" {
+			return errors.New("affiliation_body is required")
+		}
+		if r.ApproxStudentCount <= 0 {
+			return errors.New("approx_student_count is required")
+		}
+	} else {
+		if r.AisheCode == "" {
+			return errors.New("registration / establishment reference number is required")
+		}
+		if strings.TrimSpace(r.AffiliationBody) == "" {
+			r.AffiliationBody = "Government / Recruitment Body"
+		}
+		if r.ApproxStudentCount <= 0 {
+			r.ApproxStudentCount = 1000
+		}
 	}
 	if r.PAN == "" {
 		return errors.New("pan is required")
@@ -667,19 +686,12 @@ func validateInit(r *registerInitReq) error {
 	if r.State = strings.TrimSpace(r.State); r.State == "" {
 		return errors.New("state required")
 	}
-	// year_established, affiliation_body, approx_student_count are
-	// required (form-level mandatory).
+	// year_established is required (form-level mandatory).
 	if r.YearEstablished == 0 {
 		return errors.New("year_established is required")
 	}
 	if r.YearEstablished < 1800 || r.YearEstablished > 2100 {
 		return errors.New("year_established out of range (1800-2100)")
-	}
-	if strings.TrimSpace(r.AffiliationBody) == "" {
-		return errors.New("affiliation_body is required")
-	}
-	if r.ApproxStudentCount <= 0 {
-		return errors.New("approx_student_count is required")
 	}
 	if r.ApproxStudentCount > 10_000_000 {
 		return errors.New("approx_student_count out of range")
