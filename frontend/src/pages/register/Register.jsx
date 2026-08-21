@@ -110,30 +110,69 @@ const INSTITUTION_TYPES = [
   {
     value: 'college',
     label: 'College',
+    blurb: 'Degree college or institute',
   },
   {
     value: 'university',
     label: 'University',
+    blurb: 'Central, state, deemed, or private university',
   },
   {
     value: 'other',
-    label: 'Other',
+    label: 'Govt Commission / Recruitment Body',
+    blurb: 'PSUs, commissions, & hiring agencies',
   },
 ]
+
 const AFFILIATION_BODIES = [
   'UGC', 'AICTE', 'CBSE', 'ICSE', 'State Board',
   'Deemed University', 'Autonomous', 'Other',
 ]
-const DESIGNATIONS = [
+
+const RECRUITMENT_SECTORS = [
+  'Central Government Commission / Ministry',
+  'State Public Service Commission (State PSC)',
+  'Public Sector Undertaking (PSU)',
+  'Banking / Financial Institution',
+  'Autonomous Recruitment Board / Agency',
+  'Corporate Employer',
+  'Other',
+]
+
+const ACADEMIC_DESIGNATIONS = [
   'Principal', 'Director', 'Registrar',
   'Vice-Chancellor', 'Dean', 'Owner', 'Trustee',
 ]
-const REQUIRED_DOCS = [
+
+const RECRUITER_DESIGNATIONS = [
+  'Controller of Examinations',
+  'Secretary / Under Secretary',
+  'Director (Recruitment / Personnel)',
+  'General Manager (HR)',
+  'Head of Human Resources / CHRO',
+  'Nodal Verification Officer',
+  'Verification Lead',
+]
+
+const DESIGNATIONS = [...ACADEMIC_DESIGNATIONS, ...RECRUITER_DESIGNATIONS]
+
+const REQUIRED_DOCS_ACADEMIC = [
   { kind: 'recognition_letter',   label: 'Recognition letter',  hint: 'From UGC / AICTE / state education board', required: true },
   { kind: 'pan_card',             label: 'PAN card scan',       hint: 'Of the institution / parent trust',         required: true },
   { kind: 'authorization_letter', label: 'Authorization letter', hint: 'On letterhead, signed by the head',         required: true },
   { kind: 'naac_certificate',     label: 'NAAC / NBA certificate', hint: 'Optional — strengthens your application', required: false },
 ]
+
+const REQUIRED_DOCS_RECRUITMENT = [
+  { kind: 'recognition_letter',   label: 'Gazette / Establishment / Mandate Proof',  hint: 'Gazette notification, Act reference, or Certificate of Incorporation', required: true },
+  { kind: 'pan_card',             label: 'Organization PAN / TAN scan',       hint: 'Copy of Organization PAN or TAN card',         required: true },
+  { kind: 'authorization_letter', label: 'Nodal Officer Authorization Letter', hint: 'On official letterhead, signed by Director / Secretary / Head of HR', required: true },
+  { kind: 'naac_certificate',     label: 'Additional Accreditation / License', hint: 'Optional — trade license, ISO, or supporting order', required: false },
+]
+
+function getRequiredDocs(form) {
+  return form?.institution_type === 'other' ? REQUIRED_DOCS_RECRUITMENT : REQUIRED_DOCS_ACADEMIC
+}
 
 // ─── Field rules ───────────────────────────────────────────────────────
 //
@@ -145,16 +184,22 @@ const REQUIRED_DOCS = [
 //   - for the whole step, when Continue is pressed
 //
 // Each rule returns an error string, or undefined when the value is
-// acceptable. `form` is passed for the couple of rules that depend on a
-// sibling field (affiliation "Other").
+// acceptable. `form` is passed for rules that depend on sibling/dynamic fields.
 const FIELD_RULES = {
-  institution_name: (v) =>
-    v.trim().length < 3 ? 'Required (at least 3 characters)' : undefined,
+  institution_name: (v, form) =>
+    v.trim().length < 3
+      ? (form?.institution_type === 'other' ? 'Required (at least 3 characters)' : 'Required (at least 3 characters)')
+      : undefined,
   institution_type: (v) =>
     INSTITUTION_TYPES.find((t) => t.value === v) ? undefined : 'Pick a type',
   institution_type_other: (v, form) =>
-    form.institution_type === 'other' && !v?.trim() ? 'Please specify institution type' : undefined,
-  aishe_code: (v) => (!v.trim() ? 'Required' : undefined),
+    form?.institution_type === 'other' && !v?.trim() ? 'Please specify category or sector' : undefined,
+  aishe_code: (v, form) => {
+    if (!v.trim()) {
+      return form?.institution_type === 'other' ? 'Required (Govt Ref / Notification / CIN)' : 'Required (AISHE code)'
+    }
+    return undefined
+  },
   pan: (v) => {
     if (!v.trim()) return 'Required'
     return /^[A-Z]{5}[0-9]{4}[A-Z]$/i.test(v.trim()) ? undefined : 'Format: ABCDE1234F'
@@ -165,29 +210,33 @@ const FIELD_RULES = {
     const now = new Date().getFullYear()
     return year < 1800 || year > now ? `Must be between 1800 and ${now}` : undefined
   },
-  affiliation_body: (v) => (!v ? 'Required' : undefined),
+  affiliation_body: (v, form) => {
+    if (!v) {
+      return form?.institution_type === 'other' ? 'Please select organization sector' : 'Required'
+    }
+    return undefined
+  },
   affiliation_body_other: (v, form) =>
-    form.affiliation_body === 'Other' && !v.trim() ? 'Please specify' : undefined,
-  approx_student_count: (v) => {
+    form?.affiliation_body === 'Other' && !v.trim() ? 'Please specify' : undefined,
+  approx_student_count: (v, form) => {
     const n = Number(v)
-    if (!v || !n) return 'Required'
+    if (!v || !n) {
+      return form?.institution_type === 'other' ? 'Required (Expected annual verifications)' : 'Required'
+    }
     return n < 1 || n > 10_000_000 ? 'Must be a positive number' : undefined
   },
   address_line1: (v) => (!v.trim() ? 'Required' : undefined),
   city: (v) => (!v.trim() ? 'Required' : undefined),
   state: (v) => (!v.trim() ? 'Required' : undefined),
   pin_code: (v) => (/^[0-9]{6}$/.test(v.trim()) ? undefined : 'PIN must be 6 digits'),
-  head_name: (v) => (v.trim().length < 2 ? 'Required' : undefined),
+  head_name: (v, form) =>
+    v.trim().length < 2 ? (form?.institution_type === 'other' ? 'Nodal officer name required' : 'Required') : undefined,
   head_email: (v) =>
     /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()) ? undefined : 'Invalid email',
   head_mobile: (v) => {
     // Indian mobile format:
     //   - 10 digits total
-    //   - first digit must be 6, 7, 8 or 9 (TRAI mobile ranges;
-    //     landline numbers start with 2-5 and don't belong here)
-    // The input onChange normaliser has already stripped country codes,
-    // leading 0, spaces, dashes and parens so what lands here is a bare
-    // digit string of length 0..10.
+    //   - first digit must be 6, 7, 8 or 9 (TRAI mobile ranges)
     return /^[6-9][0-9]{9}$/.test(v.trim())
       ? undefined
       : 'Enter a 10-digit Indian mobile starting with 6, 7, 8 or 9'
@@ -469,7 +518,8 @@ export default function Register() {
   // applicant can't reach a review page that claims they're ready when
   // they aren't.
   function goToReview() {
-    const missing = REQUIRED_DOCS.filter((d) => d.required && !uploaded[d.kind]?.doc_id)
+    const activeDocs = getRequiredDocs(form)
+    const missing = activeDocs.filter((d) => d.required && !uploaded[d.kind]?.doc_id)
     if (missing.length) {
       setTopError('Please upload: ' + missing.map((d) => d.label).join(', '))
       return
@@ -488,7 +538,8 @@ export default function Register() {
       setStep(badStep)
       return
     }
-    const missing = REQUIRED_DOCS.filter((d) => d.required && !uploaded[d.kind]?.doc_id)
+    const activeDocs = getRequiredDocs(form)
+    const missing = activeDocs.filter((d) => d.required && !uploaded[d.kind]?.doc_id)
     if (missing.length) {
       setTopError('Please upload: ' + missing.map((d) => d.label).join(', '))
       setStep(S_DOCUMENTS)
@@ -667,6 +718,7 @@ export default function Register() {
                   )}
                   {step === S_DOCUMENTS && (
                     <Step2
+                      form={form}
                       applicationId={applicationId}
                       uploaded={uploaded}
                       errors={errors}
@@ -780,6 +832,7 @@ function StepSidebar({ step }) {
 
 function Step0({ form, errors, update, onBlurField, onNext }) {
   const [otherDraft, setOtherDraft] = useState(form.institution_type_other || '')
+  const isRecruiter = form.institution_type === 'other'
 
   useEffect(() => {
     setOtherDraft(form.institution_type_other || '')
@@ -808,8 +861,14 @@ function Step0({ form, errors, update, onBlurField, onNext }) {
           <Icon.Building className="h-5 w-5" />
         </span>
         <div className="min-w-0">
-          <h2 className="text-base font-semibold text-ink-900">Institution details</h2>
-          <p className="text-sm text-stone-500 mt-0.5">Type, identifiers, and history of your institution.</p>
+          <h2 className="text-base font-semibold text-ink-900">
+            {isRecruiter ? 'Organization details' : 'Institution details'}
+          </h2>
+          <p className="text-sm text-stone-500 mt-0.5">
+            {isRecruiter
+              ? 'Category, government identifiers, and recruitment sector.'
+              : 'Type, identifiers, and history of your institution.'}
+          </p>
         </div>
       </div>
 
@@ -817,7 +876,7 @@ function Step0({ form, errors, update, onBlurField, onNext }) {
         <div>
           <div className="flex items-baseline justify-between mb-2">
             <Label className="!mb-0 font-semibold text-ink-900">
-              Type of Institution <span className="text-rose-600 ml-0.5">*</span>
+              Organization Category <span className="text-rose-600 ml-0.5">*</span>
             </Label>
             <span className="text-xs text-stone-400">Select institutional category</span>
           </div>
@@ -839,10 +898,18 @@ function Step0({ form, errors, update, onBlurField, onNext }) {
                     if (t.value !== 'other') {
                       update('institution_type_other', '')
                       setOtherDraft('')
+                      if (RECRUITER_DESIGNATIONS.includes(form.head_designation)) {
+                        update('head_designation', 'Principal')
+                      }
+                    } else {
+                      if (ACADEMIC_DESIGNATIONS.includes(form.head_designation)) {
+                        update('head_designation', 'Nodal Verification Officer')
+                      }
                     }
                   }}
                   icon={IconComp}
                   label={t.label}
+                  blurb={t.blurb}
                   customValue={customVal}
                 />
               )
@@ -859,7 +926,7 @@ function Step0({ form, errors, update, onBlurField, onNext }) {
             >
               <div className="flex items-center justify-between">
                 <Label className="!mb-0 text-xs font-semibold text-ink-900">
-                  Specify institution type <span className="text-rose-600">*</span>
+                  Specify Organization Category <span className="text-rose-600">*</span>
                 </Label>
                 {form.institution_type_other && (
                   <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full inline-flex items-center gap-1">
@@ -879,7 +946,7 @@ function Step0({ form, errors, update, onBlurField, onNext }) {
                       handleAddOther()
                     }
                   }}
-                  placeholder="e.g. Autonomous Institute, Academy, School"
+                  placeholder="e.g. Government Commission, PSU, Recruitment Board"
                   maxLength={80}
                   autoFocus
                   className="flex-1 bg-white"
@@ -904,24 +971,39 @@ function Step0({ form, errors, update, onBlurField, onNext }) {
         <Divider label="Identifiers & history" />
 
         <div className="grid grid-cols-1 sm:grid-cols-6 gap-x-6 gap-y-5">
-          <Field className="sm:col-span-6" label="Institution name" required error={errors.institution_name}>
+          <Field
+            className="sm:col-span-6"
+            label={isRecruiter ? 'Organization / Commission name' : 'Institution name'}
+            required
+            error={errors.institution_name}
+          >
             <Input
               value={form.institution_name}
               onChange={(e) => update('institution_name', e.target.value)}
               onBlur={() => onBlurField('institution_name')}
-              placeholder="e.g. Saragarhi Memorial College of Eminence"
+              placeholder={isRecruiter ? 'e.g. Staff Selection Commission (SSC) / ONGC / State PSC' : 'e.g. Saragarhi Memorial College of Eminence'}
             />
           </Field>
-          <Field className="sm:col-span-2" label="AISHE code" required error={errors.aishe_code}>
+          <Field
+            className="sm:col-span-2"
+            label={isRecruiter ? 'Govt Gazette / Ref / CIN' : 'AISHE code'}
+            required
+            error={errors.aishe_code}
+          >
             <InputWithIcon
-              icon={Icon.ShieldCheck}
+              icon={isRecruiter ? Icon.FileText : Icon.ShieldCheck}
               value={form.aishe_code}
               onChange={(e) => update('aishe_code', e.target.value)}
               onBlur={() => onBlurField('aishe_code')}
-              placeholder="C-12345"
+              placeholder={isRecruiter ? 'e.g. Gazette No. / Act Ref / CIN' : 'C-12345'}
             />
           </Field>
-          <Field className="sm:col-span-2" label="PAN" required error={errors.pan}>
+          <Field
+            className="sm:col-span-2"
+            label={isRecruiter ? 'Organization PAN / TAN' : 'PAN'}
+            required
+            error={errors.pan}
+          >
             <InputWithIcon
               icon={Icon.File}
               value={form.pan}
@@ -938,13 +1020,18 @@ function Step0({ form, errors, update, onBlurField, onNext }) {
               placeholder="Pick year"
             />
           </Field>
-          <Field className="sm:col-span-4" label="Affiliation body" required error={errors.affiliation_body}>
+          <Field
+            className="sm:col-span-4"
+            label={isRecruiter ? 'Sector / Category' : 'Affiliation body'}
+            required
+            error={errors.affiliation_body}
+          >
             <Select
               value={form.affiliation_body}
               onChange={(e) => update('affiliation_body', e.target.value)}
               options={[
                 { value: '', label: '— Pick one —' },
-                ...AFFILIATION_BODIES.map((b) => ({ value: b, label: b })),
+                ...(isRecruiter ? RECRUITMENT_SECTORS : AFFILIATION_BODIES).map((b) => ({ value: b, label: b })),
               ]}
             />
             {form.affiliation_body === 'Other' && (
@@ -953,7 +1040,7 @@ function Step0({ form, errors, update, onBlurField, onNext }) {
                   value={form.affiliation_body_other}
                   onChange={(e) => update('affiliation_body_other', e.target.value)}
                   onBlur={() => onBlurField('affiliation_body_other')}
-                  placeholder="Specify affiliation body"
+                  placeholder={isRecruiter ? 'Specify sector / category' : 'Specify affiliation body'}
                   maxLength={80}
                 />
                 {errors.affiliation_body_other && (
@@ -962,14 +1049,19 @@ function Step0({ form, errors, update, onBlurField, onNext }) {
               </div>
             )}
           </Field>
-          <Field className="sm:col-span-2" label="Student count" required error={errors.approx_student_count}>
+          <Field
+            className="sm:col-span-2"
+            label={isRecruiter ? 'Expected Verifications' : 'Student count'}
+            required
+            error={errors.approx_student_count}
+          >
             <InputWithIcon
               icon={Icon.Sparkles}
               type="number"
               value={form.approx_student_count}
               onChange={(e) => update('approx_student_count', e.target.value)}
               onBlur={() => onBlurField('approx_student_count')}
-              placeholder="500"
+              placeholder={isRecruiter ? 'e.g. 5000' : '500'}
             />
           </Field>
         </div>
@@ -1051,6 +1143,7 @@ function CompactChoice({ selected, onSelect, icon: IconComp, label, blurb, custo
 // returning to the review page is just Continue, and the draft keeps
 // the answers, so a correction is a few seconds' round trip.
 function ReviewStep({ form, uploaded, onEdit, onBack, onSubmit, submitting }) {
+  const isRecruiter = form.institution_type === 'other'
   const affiliation =
     form.affiliation_body === 'Other'
       ? form.affiliation_body_other
@@ -1058,7 +1151,7 @@ function ReviewStep({ form, uploaded, onEdit, onBack, onSubmit, submitting }) {
 
   const typeLabel =
     form.institution_type === 'other'
-      ? (form.institution_type_other?.trim() || 'Other')
+      ? (form.institution_type_other?.trim() || 'Govt Commission / Recruitment Body')
       : (INSTITUTION_TYPES.find((t) => t.value === form.institution_type)?.label || form.institution_type)
 
   const address = [
@@ -1068,7 +1161,8 @@ function ReviewStep({ form, uploaded, onEdit, onBack, onSubmit, submitting }) {
     [form.state, form.pin_code].filter(Boolean).join(' — '),
   ].filter((l) => l && l.trim())
 
-  const docs = REQUIRED_DOCS.filter((d) => uploaded[d.kind]?.doc_id)
+  const activeDocs = getRequiredDocs(form)
+  const docs = activeDocs.filter((d) => uploaded[d.kind]?.doc_id)
 
   return (
     <AestheticCard>
@@ -1089,21 +1183,21 @@ function ReviewStep({ form, uploaded, onEdit, onBack, onSubmit, submitting }) {
 
       <div className="px-7 py-6 space-y-6">
         <ReviewGroup
-          title="Institution"
+          title={isRecruiter ? 'Organization' : 'Institution'}
           onEdit={() => onEdit(S_INSTITUTION)}
           rows={[
-            ['Name', form.institution_name],
+            [isRecruiter ? 'Organization name' : 'Name', form.institution_name],
             ['Type', typeLabel],
-            ['AISHE code', form.aishe_code],
-            ['PAN', form.pan?.toUpperCase()],
+            [isRecruiter ? 'Govt / CIN Ref' : 'AISHE code', form.aishe_code],
+            [isRecruiter ? 'Organization PAN / TAN' : 'PAN', form.pan?.toUpperCase()],
             ['Year established', form.year_established],
-            ['Affiliation', affiliation],
-            ['Approx. students', form.approx_student_count],
+            [isRecruiter ? 'Sector / Category' : 'Affiliation', affiliation],
+            [isRecruiter ? 'Expected verifications' : 'Approx. students', form.approx_student_count],
           ]}
         />
 
         <ReviewGroup
-          title="Campus address"
+          title={isRecruiter ? 'Registered office' : 'Campus address'}
           onEdit={() => onEdit(S_ADDRESS)}
           rows={[
             ['Address', address.join('\n')],
@@ -1112,7 +1206,7 @@ function ReviewStep({ form, uploaded, onEdit, onBack, onSubmit, submitting }) {
         />
 
         <ReviewGroup
-          title="Head of institution"
+          title={isRecruiter ? 'Nodal verification officer' : 'Head of institution'}
           onEdit={() => onEdit(S_ADDRESS)}
           rows={[
             ['Name', form.head_name],
@@ -1359,12 +1453,15 @@ function Step1({
   mobileOtpToken,
   setMobileOtpToken,
 }) {
+  const isRecruiter = form.institution_type === 'other'
+  const designationList = isRecruiter ? RECRUITER_DESIGNATIONS : ACADEMIC_DESIGNATIONS
+
   return (
     <div className="space-y-5">
       <SectionCard
         icon={Icon.MapPin}
-        title="Campus address"
-        subtitle="Where the institution is physically located."
+        title={isRecruiter ? 'Registered office address' : 'Campus address'}
+        subtitle={isRecruiter ? 'Physical headquarters or official recruitment office.' : 'Where the institution is physically located.'}
       >
         <Field label="Address line 1" required error={errors.address_line1}>
           <InputWithIcon
@@ -1436,27 +1533,27 @@ function Step1({
 
       <SectionCard
         icon={Icon.ShieldCheck}
-        title="Head of institution"
-        subtitle="We send the activation link to this person after approval."
+        title={isRecruiter ? 'Nodal Verification Officer / Authorized Signatory' : 'Head of institution'}
+        subtitle={isRecruiter ? 'We send the activation credentials to this official after approval.' : 'We send the activation link to this person after approval.'}
       >
         <CalloutNote>
           The email and mobile below will receive OTP verification codes to confirm
           authenticity, and the email will receive the one-time activation link upon approval.
         </CalloutNote>
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-5">
-          <Field label="Full name" required error={errors.head_name}>
+          <Field label={isRecruiter ? 'Nodal Officer / Signatory name' : 'Full name'} required error={errors.head_name}>
             <Input
               value={form.head_name}
               onChange={(e) => update('head_name', e.target.value)}
               onBlur={() => onBlurField('head_name')}
-              placeholder="Dr. Rajesh Kumar"
+              placeholder={isRecruiter ? 'e.g. Shri Rajesh Verma' : 'Dr. Rajesh Kumar'}
             />
           </Field>
           <Field label="Designation" required>
             <Select
               value={form.head_designation}
               onChange={(e) => update('head_designation', e.target.value)}
-              options={DESIGNATIONS.map((d) => ({ value: d, label: d }))}
+              options={designationList.map((d) => ({ value: d, label: d }))}
             />
           </Field>
         </div>
@@ -1469,7 +1566,7 @@ function Step1({
             value={form.head_email}
             onChange={(e) => update('head_email', e.target.value)}
             onBlur={() => onBlurField('head_email')}
-            placeholder="principal@college.ac.in"
+            placeholder={isRecruiter ? 'nodal.exam@gov.in / hr@ongc.in' : 'principal@college.ac.in'}
             error={errors.head_email}
             isVerified={Boolean(emailOtpToken)}
             onVerified={(token) => setEmailOtpToken(token)}
@@ -1551,9 +1648,10 @@ function CalloutNote({ children }) {
   )
 }
 
-function Step2({ applicationId, uploaded, errors, handleFile, removeDoc, onBack, onSubmit, submitting }) {
-  const requiredCount = REQUIRED_DOCS.filter((d) => d.required).length
-  const uploadedRequiredCount = REQUIRED_DOCS.filter((d) => d.required && uploaded[d.kind]?.doc_id).length
+function Step2({ form, applicationId, uploaded, errors, handleFile, removeDoc, onBack, onSubmit, submitting }) {
+  const activeDocs = getRequiredDocs(form)
+  const requiredCount = activeDocs.filter((d) => d.required).length
+  const uploadedRequiredCount = activeDocs.filter((d) => d.required && uploaded[d.kind]?.doc_id).length
   return (
     <AestheticCard>
       <div className="px-6 py-5 border-b border-warm flex items-start gap-3">
@@ -1574,7 +1672,7 @@ function Step2({ applicationId, uploaded, errors, handleFile, removeDoc, onBack,
         </Pill>
       </div>
       <div className="px-6 py-6 space-y-3">
-        {REQUIRED_DOCS.map((d) => (
+        {activeDocs.map((d) => (
           <DocUploadRow
             key={d.kind}
             kind={d.kind}

@@ -36,6 +36,10 @@ export default function ReviewerDashboard() {
   const [examPage, setExamPage] = useState(1)
   const [examPageSize, setExamPageSize] = useState(5)
 
+  // Pending Requests Table Pagination State
+  const [pendingPage, setPendingPage] = useState(1)
+  const [pendingPageSize, setPendingPageSize] = useState(10)
+
   // Approved Institutions Table Pagination State
   const [approvedPage, setApprovedPage] = useState(1)
   const [approvedPageSize, setApprovedPageSize] = useState(10)
@@ -197,8 +201,17 @@ export default function ReviewerDashboard() {
     })
   }, [institutions, searchQuery])
 
-  // Selection Helpers for Pending tab
-  const visibleOrgIds = useMemo(() => filteredInstitutions.map((i) => i.org_id), [filteredInstitutions])
+  // Pending Institutions Pagination Calculation
+  const totalPendingPages = Math.max(1, Math.ceil(filteredInstitutions.length / pendingPageSize))
+  const currentPendingPage = Math.min(pendingPage, totalPendingPages)
+
+  const paginatedPendingInstitutions = useMemo(() => {
+    const start = (currentPendingPage - 1) * pendingPageSize
+    return filteredInstitutions.slice(start, start + pendingPageSize)
+  }, [filteredInstitutions, currentPendingPage, pendingPageSize])
+
+  // Selection Helpers for Pending tab (current page visible orgs)
+  const visibleOrgIds = useMemo(() => paginatedPendingInstitutions.map((i) => i.org_id), [paginatedPendingInstitutions])
   const isAllSelected = visibleOrgIds.length > 0 && visibleOrgIds.every((id) => selectedOrgIds.has(id))
   const isSomeSelected = selectedOrgIds.size > 0 && !isAllSelected
 
@@ -764,11 +777,37 @@ export default function ReviewerDashboard() {
                 <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
                   {/* Status Tabs */}
                   <div className="flex items-center gap-1.5 rounded-xl bg-slate-100 p-1 overflow-x-auto">
-                    {/* Tab 1: Pending */}
+                    {/* Tab 1: All Universities */}
+                    <button
+                      type="button"
+                      onClick={() => {
+                        setSubStatus('all')
+                        setPendingPage(1)
+                        setApprovedPage(1)
+                        setSelectedOrgIds(new Set())
+                      }}
+                      className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-all ${
+                        subStatus === 'all'
+                          ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200'
+                          : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
+                      }`}
+                    >
+                      <Icon.FileText className="h-4 w-4 text-slate-500" />
+                      <span>All Universities</span>
+                      <span className={`inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold tabular-nums ${
+                        subStatus === 'all' ? 'bg-slate-900 text-white' : 'bg-slate-200 text-slate-700'
+                      }`}>
+                        {activeTabCounts.total}
+                      </span>
+                    </button>
+
+                    {/* Tab 2: Pending Requests */}
                     <button
                       type="button"
                       onClick={() => {
                         setSubStatus('pending')
+                        setPendingPage(1)
+                        setApprovedPage(1)
                         setSelectedOrgIds(new Set())
                       }}
                       className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-all ${
@@ -786,11 +825,13 @@ export default function ReviewerDashboard() {
                       </span>
                     </button>
 
-                    {/* Tab 2: Approved */}
+                    {/* Tab 3: Approved */}
                     <button
                       type="button"
                       onClick={() => {
                         setSubStatus('approved')
+                        setPendingPage(1)
+                        setApprovedPage(1)
                         setSelectedOrgIds(new Set())
                       }}
                       className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-all ${
@@ -808,11 +849,13 @@ export default function ReviewerDashboard() {
                       </span>
                     </button>
 
-                    {/* Tab 3: Rejected */}
+                    {/* Tab 4: Rejected */}
                     <button
                       type="button"
                       onClick={() => {
                         setSubStatus('rejected')
+                        setPendingPage(1)
+                        setApprovedPage(1)
                         setSelectedOrgIds(new Set())
                       }}
                       className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-all ${
@@ -829,28 +872,6 @@ export default function ReviewerDashboard() {
                         {activeTabCounts.rejected}
                       </span>
                     </button>
-
-                    {/* Tab 4: All */}
-                    <button
-                      type="button"
-                      onClick={() => {
-                        setSubStatus('all')
-                        setSelectedOrgIds(new Set())
-                      }}
-                      className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-all ${
-                        subStatus === 'all'
-                          ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200'
-                          : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
-                      }`}
-                    >
-                      <Icon.FileText className="h-4 w-4 text-slate-500" />
-                      <span>All Universities</span>
-                      <span className={`inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold tabular-nums ${
-                        subStatus === 'all' ? 'bg-slate-900 text-white' : 'bg-slate-200 text-slate-700'
-                      }`}>
-                        {activeTabCounts.total}
-                      </span>
-                    </button>
                   </div>
 
                   {/* Instant Search Bar */}
@@ -859,14 +880,22 @@ export default function ReviewerDashboard() {
                     <input
                       type="text"
                       value={searchQuery}
-                      onChange={(e) => setSearchQuery(e.target.value)}
+                      onChange={(e) => {
+                        setSearchQuery(e.target.value)
+                        setPendingPage(1)
+                        setApprovedPage(1)
+                      }}
                       placeholder="Search university, AISHE, city, email..."
                       className="w-full pl-9 pr-8 py-2 text-xs rounded-xl border border-slate-300 bg-slate-50/50 text-slate-900 placeholder:text-slate-400 focus:outline-hidden focus:ring-2 focus:ring-slate-900 focus:bg-white transition-all"
                     />
                     {searchQuery && (
                       <button
                         type="button"
-                        onClick={() => setSearchQuery('')}
+                        onClick={() => {
+                          setSearchQuery('')
+                          setPendingPage(1)
+                          setApprovedPage(1)
+                        }}
                         className="absolute right-2.5 top-1/2 -translate-y-1/2 text-slate-400 hover:text-slate-600"
                       >
                         <Icon.X className="h-3.5 w-3.5" />
@@ -928,7 +957,6 @@ export default function ReviewerDashboard() {
                         }}
                         className="!bg-emerald-600 hover:!bg-emerald-700 !text-white text-xs font-semibold shadow-xs"
                       >
-                        <Icon.Check className="h-3.5 w-3.5 mr-1" />
                         Approve Selected ({selectedOrgIds.size})
                       </Button>
 
@@ -943,7 +971,6 @@ export default function ReviewerDashboard() {
                         }}
                         className="!bg-rose-900/80 !text-rose-100 hover:!bg-rose-900 !border-rose-700 text-xs"
                       >
-                        <Icon.X className="h-3.5 w-3.5 mr-1" />
                         Reject Selected ({selectedOrgIds.size})
                       </Button>
 
@@ -1012,178 +1039,277 @@ export default function ReviewerDashboard() {
                 /* 1. SUB-VIEW: PENDING REQUESTS                                             */
                 /* ========================================================================= */
                 subStatus === 'pending' ? (
-                  <div className="overflow-x-auto">
-                    <table className="w-full text-sm">
-                      <thead className="bg-slate-50/90 sticky top-0 z-10 border-b border-slate-200">
-                        <tr className="text-left text-xs uppercase tracking-wider text-slate-500">
-                          <th className="px-4 py-3.5 w-12 text-center">
-                            <input
-                              type="checkbox"
-                              checked={isAllSelected}
-                              ref={(el) => {
-                                if (el) el.indeterminate = isSomeSelected
-                              }}
-                              onChange={toggleSelectAll}
-                              className="h-4 w-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
-                              title="Select all universities"
-                            />
-                          </th>
-                          <th className="px-5 py-3.5 font-bold text-slate-700">University Details</th>
-                          {selectedExamId === 'all' && (
-                            <th className="px-5 py-3.5 font-bold text-slate-700">Requested Exams & Window</th>
-                          )}
-                          <th className="px-5 py-3.5 text-right font-bold text-slate-700">Institutional Action</th>
-                        </tr>
-                      </thead>
-                      <tbody>
-                        {filteredInstitutions.map((org, i) => {
-                          const isSelected = selectedOrgIds.has(org.org_id)
-                          const isBlanket = org.client_blanket_approved
+                  <div>
+                    <div className="overflow-x-auto">
+                      <table className="w-full text-sm">
+                        <thead className="bg-slate-50/90 sticky top-0 z-10 border-b border-slate-200">
+                          <tr className="text-left text-xs uppercase tracking-wider text-slate-500">
+                            <th className="px-4 py-3.5 w-12 text-center">
+                              <input
+                                type="checkbox"
+                                checked={isAllSelected}
+                                ref={(el) => {
+                                  if (el) el.indeterminate = isSomeSelected
+                                }}
+                                onChange={toggleSelectAll}
+                                className="h-4 w-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
+                                title="Select all on this page"
+                              />
+                            </th>
+                            <th className="px-5 py-3.5 font-bold text-slate-700">University Details</th>
+                            {selectedExamId === 'all' && (
+                              <th className="px-5 py-3.5 font-bold text-slate-700">Requested Exams</th>
+                            )}
+                            <th className="px-5 py-3.5 text-right font-bold text-slate-700">Institutional Action</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {paginatedPendingInstitutions.map((org, i) => {
+                            const isSelected = selectedOrgIds.has(org.org_id)
+                            const isBlanket = org.client_blanket_approved
+                            const pendingExams = org.pending_exams || []
 
-                          return (
-                            <motion.tr
-                              key={org.org_id}
-                              initial={{ opacity: 0, y: 4 }}
-                              animate={{ opacity: 1, y: 0 }}
-                              transition={{ duration: 0.18, delay: Math.min(i * 0.02, 0.3) }}
-                              className={`border-b border-slate-100 last:border-none transition-colors ${
-                                isSelected ? 'bg-amber-50/50' : 'hover:bg-slate-50/60'
-                              }`}
-                            >
-                              {/* Row Checkbox */}
-                              <td className="px-4 py-4 text-center align-top">
-                                <input
-                                  type="checkbox"
-                                  checked={isSelected}
-                                  onChange={() => toggleSelectOrg(org.org_id)}
-                                  className="h-4 w-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500 cursor-pointer mt-1"
-                                />
-                              </td>
+                            return (
+                              <motion.tr
+                                key={org.org_id}
+                                initial={{ opacity: 0, y: 4 }}
+                                animate={{ opacity: 1, y: 0 }}
+                                transition={{ duration: 0.15, delay: Math.min(i * 0.02, 0.2) }}
+                                className={`border-b border-slate-100 last:border-none transition-colors ${
+                                  isSelected ? 'bg-amber-50/60' : 'hover:bg-slate-50/70'
+                                }`}
+                              >
+                                {/* Row Checkbox */}
+                                <td className="px-4 py-4 text-center align-middle">
+                                  <input
+                                    type="checkbox"
+                                    checked={isSelected}
+                                    onChange={() => toggleSelectOrg(org.org_id)}
+                                    className="h-4 w-4 rounded border-slate-300 text-amber-600 focus:ring-amber-500 cursor-pointer"
+                                  />
+                                </td>
 
-                              {/* University Details */}
-                              <td className="px-5 py-4 align-top max-w-[320px]">
-                                <div className="flex items-start gap-3">
-                                  <span className="h-10 w-10 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 flex items-center justify-center font-bold text-sm shrink-0 mt-0.5 shadow-2xs">
-                                    {(org.org_name || '?').slice(0, 1).toUpperCase()}
-                                  </span>
-                                  <div className="min-w-0 flex-1 space-y-1">
-                                    <div>
-                                      <div className="font-bold text-slate-900 text-sm leading-snug">
+                                {/* University Details */}
+                                <td className="px-5 py-4 align-middle">
+                                  <div
+                                    onClick={() => setSelectedUniversityForDetails(org)}
+                                    className="flex items-center gap-3 cursor-pointer group"
+                                    title="Click to view institution profile & contact details"
+                                  >
+                                    <span className="h-10 w-10 rounded-xl bg-amber-50 border border-amber-200 text-amber-900 flex items-center justify-center font-bold text-sm shrink-0 shadow-2xs group-hover:scale-105 transition-transform">
+                                      {(org.org_name || '?').slice(0, 1).toUpperCase()}
+                                    </span>
+                                    <div className="min-w-0 flex-1">
+                                      <div className="font-bold text-slate-900 text-sm leading-snug group-hover:text-amber-950 transition-colors">
                                         {org.org_name}
                                       </div>
-                                      <div className="text-[11px] text-slate-500 font-medium capitalize mt-0.5">
-                                        {org.institution_type || 'University'}
+                                      <div className="text-[11px] text-slate-500 font-medium capitalize mt-0.5 flex items-center gap-1.5 flex-wrap">
+                                        <span>{org.institution_type || 'University'}</span>
                                         {org.aishe_code && (
                                           <span className="text-slate-400">
-                                            {' '}• AISHE: <code className="text-slate-700 font-mono font-semibold">{org.aishe_code}</code>
+                                            • AISHE: <code className="text-slate-700 font-mono font-semibold">{org.aishe_code}</code>
+                                          </span>
+                                        )}
+                                        {(org.city || org.state) && (
+                                          <span className="text-slate-400">
+                                            • {org.city ? `${org.city}, ${org.state}` : org.state}
                                           </span>
                                         )}
                                       </div>
                                     </div>
-
-                                    {/* Location & Contact Meta */}
-                                    <div className="space-y-1 text-xs text-slate-600 border-t border-slate-100 pt-1.5">
-                                      <div className="flex items-center gap-1.5 text-slate-700">
-                                        <Icon.MapPin className="h-3 w-3 text-slate-400 shrink-0" />
-                                        <span className="truncate">{org.city ? `${org.city}, ${org.state}` : org.state || '—'}</span>
-                                      </div>
-                                      {org.head_name && (
-                                        <div className="flex items-center gap-1.5 text-slate-600">
-                                          <Icon.User className="h-3 w-3 text-slate-400 shrink-0" />
-                                          <span className="truncate text-slate-700">{org.head_name}</span>
-                                        </div>
-                                      )}
-                                      {org.head_email && (
-                                        <div className="flex items-center gap-1.5 text-slate-600">
-                                          <Icon.Mail className="h-3 w-3 text-slate-400 shrink-0" />
-                                          <span className="truncate font-mono text-[11px] text-slate-600" title={org.head_email}>
-                                            {org.head_email}
-                                          </span>
-                                        </div>
-                                      )}
-                                    </div>
-                                  </div>
-                                </div>
-                              </td>
-
-                              {/* Requested Pending Exams (Rendered ONLY when in 'All Institutes' view) */}
-                              {selectedExamId === 'all' && (
-                                <td className="px-5 py-4 align-top">
-                                  <div className="space-y-2 max-w-md">
-                                    {org.pending_exams.map((e) => (
-                                      <div
-                                        key={e.exam_id}
-                                        className="p-2.5 rounded-xl bg-amber-50/70 border border-amber-200 text-xs shadow-2xs"
-                                      >
-                                        <div className="flex items-center gap-1.5 font-bold text-slate-900 font-mono">
-                                          <Icon.Clock className="h-3.5 w-3.5 text-amber-600 shrink-0" />
-                                          <span>{e.exam_code} — {e.exam_name}</span>
-                                        </div>
-                                        {e.verification_from && (
-                                          <div className="text-[11px] text-amber-900 font-medium pl-5 mt-0.5">
-                                            📅 Window: {dateRange(e.verification_from, e.verification_to)}
-                                          </div>
-                                        )}
-                                      </div>
-                                    ))}
                                   </div>
                                 </td>
-                              )}
 
-                              {/* Institutional Action (Blanket Approve on top, Approve/Reject stacked vertically below) */}
-                              <td className="px-5 py-4 align-top text-right whitespace-nowrap">
-                                <div className="flex flex-col items-end gap-2.5">
-                                  {/* Blanket Approve Button */}
-                                  <Button
-                                    size="xs"
-                                    disabled={portalOff || isBlanket}
-                                    onClick={() => openBlanketApprove(org)}
-                                    className="!bg-slate-900 hover:!bg-slate-800 !text-white text-xs font-semibold !py-1.5 !px-3 shadow-2xs w-36 justify-center"
-                                    title="Authorizes this university for ALL present and future exams under your board"
-                                  >
-                                    {isBlanket ? 'Blanket Approved' : 'Blanket Approve'}
-                                  </Button>
+                                {/* Requested Exams (When in 'All Institutes' mode) */}
+                                {selectedExamId === 'all' && (
+                                  <td className="px-5 py-4 align-middle">
+                                    <div className="flex flex-wrap gap-1.5 max-w-xs">
+                                      {pendingExams.map((e) => (
+                                        <span
+                                          key={e.exam_id}
+                                          className="px-2 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-900 font-mono text-[11px] font-bold"
+                                          title={e.exam_name}
+                                        >
+                                          {e.exam_code}
+                                        </span>
+                                      ))}
+                                    </div>
+                                  </td>
+                                )}
 
-                                  {/* Per-Exam Action Buttons (Stacked Vertically below Blanket Approve) */}
-                                  <div className="space-y-2 w-36">
-                                    {org.pending_exams.map((e) => (
-                                      <div key={e.exam_id} className="flex flex-col gap-1.5 border-t border-slate-100 pt-1.5">
-                                        {selectedExamId === 'all' && (
-                                          <span className="text-[10px] font-mono font-bold text-slate-500 text-center truncate" title={e.exam_code}>
-                                            {e.exam_code}
-                                          </span>
-                                        )}
-                                        <Button
-                                          size="xs"
+                                {/* Institutional Action */}
+                                <td className="px-5 py-4 align-middle text-right whitespace-nowrap">
+                                  {selectedExamId !== 'all' ? (
+                                    /* Single Exam Workspace View: Clean Horizontal Buttons with matching height */
+                                    <div className="flex items-center justify-end gap-2">
+                                      {/* Approve Button */}
+                                      <button
+                                        type="button"
+                                        disabled={portalOff}
+                                        onClick={() => {
+                                          const targetExam = (pendingExams && pendingExams[0]) || currentExam
+                                          if (targetExam) openSingleExamApprove(org, targetExam)
+                                        }}
+                                        className="h-8 px-3.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs inline-flex items-center justify-center transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                        title={`Approve subscription for ${currentExam?.exam_code || 'this exam'}`}
+                                      >
+                                        <span>Approve</span>
+                                      </button>
+
+                                      {/* Reject Button */}
+                                      <button
+                                        type="button"
+                                        disabled={portalOff}
+                                        onClick={() => {
+                                          const targetExam = (pendingExams && pendingExams[0]) || currentExam
+                                          if (targetExam) openSingleExamReject(org, targetExam)
+                                        }}
+                                        className="h-8 px-3.5 rounded-lg text-xs font-semibold bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 hover:border-rose-300 inline-flex items-center justify-center transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                        title={`Reject subscription for ${currentExam?.exam_code || 'this exam'}`}
+                                      >
+                                        <span>Reject</span>
+                                      </button>
+
+                                      {/* Blanket Action Badge / Button */}
+                                      {isBlanket ? (
+                                        <span className="h-8 px-3 rounded-lg text-xs font-semibold bg-emerald-50 border border-emerald-200 text-emerald-800 inline-flex items-center justify-center">
+                                          <span>Blanket Approved</span>
+                                        </span>
+                                      ) : (
+                                        <button
+                                          type="button"
                                           disabled={portalOff}
-                                          onClick={() => openSingleExamApprove(org, e)}
-                                          className="!bg-emerald-600 hover:!bg-emerald-700 !text-white text-xs font-semibold !py-1 !px-2.5 w-full justify-center shadow-2xs"
-                                          title={`Approve subscription for ${e.exam_code}`}
+                                          onClick={() => openBlanketApprove(org)}
+                                          className="h-8 px-3.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs inline-flex items-center justify-center transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                          title="Authorizes this university for ALL present and future exams under your board"
                                         >
-                                          <Icon.Check className="h-3 w-3 mr-1" />
-                                          Approve
-                                        </Button>
-                                        <Button
-                                          size="xs"
-                                          variant="secondary"
-                                          disabled={portalOff}
-                                          onClick={() => openSingleExamReject(org, e)}
-                                          className="!text-rose-700 !border-rose-200 hover:!bg-rose-50 text-xs font-medium !py-1 !px-2.5 w-full justify-center"
-                                          title={`Reject ${e.exam_code}`}
-                                        >
-                                          <Icon.X className="h-3 w-3 mr-1" />
-                                          Reject
-                                        </Button>
+                                          <span>Blanket Approve</span>
+                                        </button>
+                                      )}
+                                    </div>
+                                  ) : (
+                                    /* All Institutes Overview Mode */
+                                    <div className="flex flex-col items-end gap-2">
+                                      {/* Blanket Approve Button */}
+                                      <button
+                                        type="button"
+                                        disabled={portalOff || isBlanket}
+                                        onClick={() => openBlanketApprove(org)}
+                                        className={`h-7 px-3 rounded-lg text-xs font-semibold inline-flex items-center justify-center transition-all ${
+                                          isBlanket
+                                            ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 cursor-default'
+                                            : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs'
+                                        }`}
+                                        title="Authorizes this university for ALL present and future exams under your board"
+                                      >
+                                        <span>{isBlanket ? 'Blanket Approved' : 'Blanket Approve'}</span>
+                                      </button>
+
+                                      {/* Per-Exam Action Buttons */}
+                                      <div className="space-y-1.5 w-full">
+                                        {pendingExams.map((e) => (
+                                          <div key={e.exam_id} className="flex items-center justify-end gap-2 pt-1 border-t border-slate-100 first:border-none first:pt-0">
+                                            <span className="text-xs font-mono font-bold text-slate-700 truncate max-w-[100px]" title={e.exam_code}>
+                                              {e.exam_code}
+                                            </span>
+                                            <button
+                                              type="button"
+                                              disabled={portalOff}
+                                              onClick={() => openSingleExamApprove(org, e)}
+                                              className="h-7 px-3 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs inline-flex items-center justify-center transition-all"
+                                              title={`Approve subscription for ${e.exam_code}`}
+                                            >
+                                              <span>Approve</span>
+                                            </button>
+                                            <button
+                                              type="button"
+                                              disabled={portalOff}
+                                              onClick={() => openSingleExamReject(org, e)}
+                                              className="h-7 px-3 rounded-lg text-xs font-semibold bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 inline-flex items-center justify-center transition-all"
+                                              title={`Reject ${e.exam_code}`}
+                                            >
+                                              <span>Reject</span>
+                                            </button>
+                                          </div>
+                                        ))}
                                       </div>
-                                    ))}
-                                  </div>
-                                </div>
-                              </td>
-                            </motion.tr>
-                          )
-                        })}
-                      </tbody>
-                    </table>
+                                    </div>
+                                  )}
+                                </td>
+                              </motion.tr>
+                            )
+                          })}
+                        </tbody>
+                      </table>
+                    </div>
+
+                    {/* Pending Requests Pagination Controls */}
+                    {filteredInstitutions.length > 0 && (
+                      <div className="p-3.5 border-t border-slate-200 bg-slate-50/60 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs text-slate-600">
+                        <div className="flex items-center gap-2">
+                          <span>
+                            Showing{' '}
+                            <strong>{(currentPendingPage - 1) * pendingPageSize + 1}</strong>{' '}
+                            to{' '}
+                            <strong>{Math.min(currentPendingPage * pendingPageSize, filteredInstitutions.length)}</strong>{' '}
+                            of <strong>{filteredInstitutions.length}</strong> pending requests
+                          </span>
+
+                          <select
+                            value={pendingPageSize}
+                            onChange={(e) => {
+                              setPendingPageSize(Number(e.target.value))
+                              setPendingPage(1)
+                            }}
+                            className="ml-2 text-xs rounded-lg border border-slate-300 bg-white px-2 py-1 text-slate-700 font-medium focus:outline-hidden focus:ring-1 focus:ring-slate-900"
+                          >
+                            <option value={5}>5 per page</option>
+                            <option value={10}>10 per page</option>
+                            <option value={20}>20 per page</option>
+                          </select>
+                        </div>
+
+                        <div className="flex items-center gap-1.5">
+                          <button
+                            type="button"
+                            disabled={currentPendingPage <= 1}
+                            onClick={() => setPendingPage((p) => Math.max(1, p - 1))}
+                            className="px-2.5 py-1 rounded-lg border border-slate-300 bg-white text-slate-700 font-medium hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                          >
+                            Previous
+                          </button>
+
+                          <div className="flex items-center gap-1">
+                            {Array.from({ length: totalPendingPages }).map((_, idx) => {
+                              const pageNum = idx + 1
+                              return (
+                                <button
+                                  key={pageNum}
+                                  type="button"
+                                  onClick={() => setPendingPage(pageNum)}
+                                  className={`min-w-[28px] h-7 px-2 rounded-lg text-xs font-bold transition-all ${
+                                    currentPendingPage === pageNum
+                                      ? 'bg-slate-900 text-white shadow-2xs'
+                                      : 'bg-white border border-slate-300 text-slate-700 hover:bg-slate-100'
+                                  }`}
+                                >
+                                  {pageNum}
+                                </button>
+                              )
+                            })}
+                          </div>
+
+                          <button
+                            type="button"
+                            disabled={currentPendingPage >= totalPendingPages}
+                            onClick={() => setPendingPage((p) => Math.min(totalPendingPages, p + 1))}
+                            className="px-2.5 py-1 rounded-lg border border-slate-300 bg-white text-slate-700 font-medium hover:bg-slate-50 disabled:opacity-40 disabled:cursor-not-allowed transition-all"
+                          >
+                            Next
+                          </button>
+                        </div>
+                      </div>
+                    )}
                   </div>
                 ) : /* ========================================================================= */
                   /* 2. SUB-VIEW: APPROVED DIRECTORY (PAGINATED TABLE + POP-UP MODAL)           */
