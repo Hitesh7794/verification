@@ -26,13 +26,6 @@ const MODALITIES = [
     requires: (exam) => exam.requires_face !== false,
   },
   {
-    key:   'fp-images',
-    label: 'Fingerprint images',
-    hint:  'BMP / WSQ / JPG · raw fingerprint capture · filename = <roll>.<ext>',
-    exts:  '.bmp,.wsq,.jpg,.jpeg,.png',
-    requires: (exam) => !!exam.requires_fp,
-  },
-  {
     key:   'fp-templates',
     label: 'Fingerprint templates',
     hint:  'ISO / FMR / ANSI · pre-extracted template · filename = <roll>.<ext>',

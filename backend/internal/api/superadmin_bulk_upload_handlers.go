@@ -1,9 +1,15 @@
 package api
 
 // Bulk zip upload for candidate biometrics. Superadmin picks one
-// modality at a time (photos.zip, fp-images.zip, fp-templates.zip,
-// iris.zip) and every entry inside the zip lands directly in S3 under
-// the exam's per-modality prefix. No local-disk hop, no reindex.
+// modality at a time (photos.zip, fp-templates.zip, iris.zip) and every
+// entry inside the zip lands directly in S3 under the exam's
+// per-modality prefix. No local-disk hop, no reindex.
+//
+// Raw fingerprint IMAGES (BMP/WSQ) used to be a fourth modality but
+// were removed 2026-08-22 — the runtime only ever consumes the
+// pre-extracted templates (fp-templates), so raw images were dead
+// storage. Kept a note here so anyone finding "fp-images" in old logs
+// knows why the modality vanished.
 //
 // Filename convention is STRICT: each entry must be exactly
 //   <roll_no>.<ext>
@@ -34,7 +40,7 @@ import (
 // modality is the flat enum the handlers switch on. One card in the UI
 // maps to exactly one modality here.
 type modality struct {
-	name       string          // "photos" | "fp-images" | "fp-templates" | "iris"
+	name       string          // "photos" | "fp-templates" | "iris"
 	dbFlag     string          // exam_candidates column to flip on success
 	allowedExt map[string]bool // lowercase, dot-prefixed (".jpg", ".iso")
 	mime       func(ext string) string
@@ -67,16 +73,6 @@ var bulkModalities = map[string]modality{
 			// on the way in avoids operators wondering why 20002.png
 			// isn't found when they uploaded 20002.png.
 			return fmt.Sprintf("%s/photos/%s.jpg", safeSegmentForBulk(examCode), safeSegmentForBulk(roll))
-		},
-	},
-	"fp-images": {
-		name:       "fp-images",
-		dbFlag:     "has_fp_image",
-		allowedExt: map[string]bool{".bmp": true, ".jpg": true, ".jpeg": true, ".png": true, ".wsq": true},
-		mime:       mimeFromExt,
-		keyFor: func(examCode, roll, ext string) string {
-			return fmt.Sprintf("%s/fingerprints/images/%s%s",
-				safeSegmentForBulk(examCode), safeSegmentForBulk(roll), ext)
 		},
 	},
 	"fp-templates": {
@@ -151,7 +147,7 @@ func (s *Server) superadminBulkUpload(w http.ResponseWriter, r *http.Request) {
 	m, ok := bulkModalities[modalityName]
 	if !ok {
 		writeErr(w, http.StatusBadRequest,
-			"unknown modality — must be one of photos, fp-images, fp-templates, iris")
+			"unknown modality — must be one of photos, fp-templates, iris")
 		return
 	}
 
@@ -340,9 +336,11 @@ func (s *Server) superadminBulkUpload(w http.ResponseWriter, r *http.Request) {
 	// candidate we JUST uploaded — confusing and easy to miss.
 	if len(successfulRolls) > 0 && s.deps.Index != nil {
 		for _, roll := range successfulRolls {
+			// Second positional arg (has_fp_image) is left false —
+			// the fp-images modality was removed 2026-08-22.
 			s.deps.Index.Upsert(roll,
 				m.name == "photos",
-				m.name == "fp-images",
+				false,
 				m.name == "fp-templates",
 				m.name == "iris",
 			)
@@ -507,7 +505,7 @@ func bulkModalityAllowedForExam(mod string, reqFace, reqFp, reqIris bool) error 
 			return fmt.Errorf(
 				"this exam has requires_face=false; enable it in exam settings before uploading photos")
 		}
-	case "fp-images", "fp-templates":
+	case "fp-templates":
 		if !reqFp {
 			return fmt.Errorf(
 				"this exam has requires_fp=false; enable it in exam settings before uploading fingerprints")
