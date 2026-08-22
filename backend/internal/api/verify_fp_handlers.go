@@ -1,14 +1,18 @@
 package api
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"log"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
+	"github.com/veni/neet-verification/internal/storage"
 	"github.com/veni/neet-verification/internal/trustview"
 )
 
@@ -36,6 +40,11 @@ type fpMatchReq struct {
 	RollNo   string `json:"roll_no"`
 	ProbeB64 string `json:"probe_b64"`
 	FpVendor string `json:"fp_vendor"`
+	// Optional: clients that want the raw probe stored for audit send
+	// the same idempotency_key here that they used on /face-match.
+	// The server writes the FP template to `_captures_temp/<key>/fp.<ext>`
+	// so /verifications submit can promote it. Empty = no audit.
+	IdempotencyKey string `json:"idempotency_key"`
 }
 
 // fpMatchResp echoes everything the dashboard needs to surface inline.
@@ -133,6 +142,28 @@ func (s *Server) fpMatch(w http.ResponseWriter, r *http.Request) {
 		writeTrustViewErr(w, err)
 		return
 	}
+
+	// V10: stash the raw probe template to S3 under a temp key keyed
+	// by idempotency_key so /verifications submit can promote it to
+	// the institute-scoped audit path. Skipped when the client didn't
+	// send an idempotency_key (older clients) or storage is
+	// unconfigured. Fire-and-forget goroutine — never stalls the
+	// operator's match response.
+	if k := safeSlug(req.IdempotencyKey); k != "" && k != "file" &&
+		s.storage != nil && s.storage.Enabled() {
+		bytesCopy := append([]byte(nil), probe...)
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := s.storage.PutBiometric(ctx,
+				storage.CaptureTempKey(k, "fp", "iso"),
+				bytesCopy, "application/octet-stream",
+			); err != nil {
+				log.Printf("captures: fp probe s3-temp put failed idem=%s: %v", k, err)
+			}
+		}()
+	}
+
 	writeJSON(w, http.StatusOK, fpMatchResp{
 		RollNo:    roll,
 		Score:     res.Score,

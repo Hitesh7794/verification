@@ -13,7 +13,7 @@ var schemaSQL string
 // schemaVersion is the version stamped in schema_migrations after the
 // initial schema has been applied. Bump this only when new post-1
 // migrations are added below.
-const schemaVersion = 9
+const schemaVersion = 10
 
 // Migrate applies schema.sql to an empty database, or is a no-op if
 // the schema has already been applied. Safe to call on every startup.
@@ -93,7 +93,53 @@ func Migrate(d *sql.DB) error {
 		}
 	}
 
+	if !applied[10] {
+		if err := applyV10CaptureAuditS3Keys(ctx, d); err != nil {
+			return fmt.Errorf("apply v10 capture_audit_s3_keys: %w", err)
+		}
+	}
+
 	return nil
+}
+
+// applyV10CaptureAuditS3Keys adds nullable columns to `verifications`
+// pointing at S3 keys where the captured (probe) biometric bytes for
+// that verification live — face frame, FP template, iris payload.
+//
+// Layout the API side writes to (see internal/storage/captures.go):
+//
+//	<ORG_CODE>/<EXAM_CODE>/captures/YYYY-MM/<verification_id>/{face.jpg,fp.<ext>,iris.<ext>,meta.json}
+//
+// One prefix scan per institute gives a regulator every capture that
+// institute ever took, which is why the layout is institute-scoped
+// rather than exam-scoped (matches user's preference — see
+// [[project-s3-photo-storage]] audit-blob discussion 2026-08-22).
+// Columns are nullable + additive so existing rows (including the 3
+// pre-V10 verifications with disk-only probe paths) stay valid.
+func applyV10CaptureAuditS3Keys(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmts := []string{
+		`ALTER TABLE verifications ADD COLUMN IF NOT EXISTS face_probe_s3_key TEXT`,
+		`ALTER TABLE verifications ADD COLUMN IF NOT EXISTS fp_probe_s3_key   TEXT`,
+		`ALTER TABLE verifications ADD COLUMN IF NOT EXISTS iris_probe_s3_key TEXT`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.ExecContext(ctx, s); err != nil {
+			return fmt.Errorf("exec %q: %w", firstLine(s), err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)`,
+		10, "capture_audit_s3_keys",
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // applyV9ExamSubscriptionApprovals adds approval lifecycle fields to

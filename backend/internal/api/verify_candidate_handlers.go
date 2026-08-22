@@ -1,11 +1,13 @@
 package api
 
 import (
+	"context"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -16,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/veni/neet-verification/internal/auth"
+	"github.com/veni/neet-verification/internal/storage"
 )
 
 // channels the verifications.via column can record. "manual" means the
@@ -336,11 +339,156 @@ func (s *Server) createVerification(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// V10: promote any capture blobs the match endpoints stashed to
+	// S3 (temp key `_captures_temp/<idem>/...`) into the institute-
+	// scoped audit path (`<ORG>/<EXAM>/captures/YYYY-MM/<id>/...`).
+	// Runs in a goroutine — the operator's create-verification
+	// response has already gone out; S3 hiccups mustn't block it.
+	if req.IdempotencyKey != "" && id > 0 && s.storage != nil && s.storage.Enabled() {
+		go s.promoteCaptureBlobs(req, id, claims.UserID)
+	}
+
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":     id,
 		"status": req.Status,
 		"via":    req.Via,
 	})
+}
+
+// promoteCaptureBlobs copies each modality's temp S3 blob to its
+// permanent institute-scoped location, writes a small meta.json
+// alongside them, updates the verifications row with the S3 keys, and
+// deletes the temp objects. Each step is best-effort — a partial
+// success still leaves audit evidence findable at either the temp or
+// final key. Runs in its own goroutine (called async by the
+// createVerification handler).
+func (s *Server) promoteCaptureBlobs(req verifyReq, verifID, operatorID int64) {
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
+	defer cancel()
+
+	idem := safeSlug(req.IdempotencyKey)
+	if idem == "" || idem == "file" {
+		return
+	}
+
+	// Look up the org's code + the exam's code so we can build the
+	// institute-scoped final key. Primary lookup joins through
+	// exam_candidates; if that misses (sample-data / disk-index rolls
+	// with no DB row) we fall back to a simpler "org from operator +
+	// exam_code from any exam this org is subscribed to" — better than
+	// dropping the audit blob because a legacy candidate lacks a
+	// exam_candidates row.
+	var (
+		orgCode  string
+		examCode string
+	)
+	if err := s.deps.DB.QueryRowContext(ctx,
+		`SELECT o.code, e.exam_code
+		   FROM verifications v
+		   JOIN organizations o ON o.id = v.org_id
+		   JOIN exam_candidates ec ON ec.roll_no = v.roll_no
+		   JOIN exams e ON e.id = ec.exam_id
+		  WHERE v.id = $1
+		  LIMIT 1`,
+		verifID,
+	).Scan(&orgCode, &examCode); err != nil {
+		if err2 := s.deps.DB.QueryRowContext(ctx,
+			`SELECT o.code
+			   FROM organizations o
+			   JOIN users u ON u.org_id = o.id
+			  WHERE u.id = $1 LIMIT 1`, operatorID,
+		).Scan(&orgCode); err2 != nil {
+			log.Printf("captures: promote failed for verif=%d (org lookup): %v", verifID, err2)
+			return
+		}
+		examCode = "unknown-exam"
+	}
+
+	when := time.Now().UTC()
+
+	type modality struct {
+		name      string
+		ext       string
+		mime      string
+		column    string // verifications column to UPDATE with the s3 key
+	}
+	modalities := []modality{
+		{"face", "jpg", "image/jpeg", "face_probe_s3_key"},
+		{"fp", "iso", "application/octet-stream", "fp_probe_s3_key"},
+		{"iris", "k7", "application/octet-stream", "iris_probe_s3_key"},
+	}
+
+	promoted := map[string]string{} // modality → final key
+
+	for _, m := range modalities {
+		tempKey := storage.CaptureTempKey(idem, m.name, m.ext)
+		finalKey := storage.CaptureFinalKey(orgCode, examCode, verifID, m.name, m.ext, when)
+
+		if err := s.storage.CopyObject(ctx, tempKey, finalKey); err != nil {
+			// Not-found on CopyObject is expected for modalities the
+			// operator didn't capture (e.g. iris on a face-only exam).
+			// Only log at debug level.
+			continue
+		}
+		promoted[m.column] = finalKey
+
+		// Best-effort temp cleanup. A leftover temp object is harmless
+		// (S3 lifecycle rule can prune _captures_temp/ after 24 h).
+		if err := s.storage.DeleteObject(ctx, tempKey); err != nil {
+			log.Printf("captures: temp delete failed key=%s: %v", tempKey, err)
+		}
+	}
+
+	// meta.json — regulator opens this next to the raw blobs to see
+	// scores, device, operator, timestamps at a glance.
+	meta := map[string]any{
+		"verification_id":   verifID,
+		"roll_no":           req.RollNo,
+		"org_code":          orgCode,
+		"exam_code":         examCode,
+		"operator_user_id":  operatorID,
+		"created_at":        when.Format(time.RFC3339),
+		"status":            req.Status,
+		"via":               req.Via,
+		"face_match":        req.FaceMatch,
+		"fp_match":          req.FpMatch,
+		"face_match_score":  req.FaceMatchScore,
+		"fp_match_score":    req.FpMatchScore,
+		"iris_left_score":   req.IrisLeftScore,
+		"device_serial":     req.DeviceSerial,
+		"device_model":      req.DeviceModel,
+		"fp_vendor":         req.FpVendor,
+		"fp_template_format": req.FpTemplateFormat,
+		"client_app_version": req.ClientAppVersion,
+		"idempotency_key":   req.IdempotencyKey,
+	}
+	if metaBytes, err := json.Marshal(meta); err == nil {
+		metaKey := storage.CaptureMetaKey(orgCode, examCode, verifID, when)
+		if err := s.storage.PutJSON(ctx, metaKey, metaBytes); err != nil {
+			log.Printf("captures: meta.json put failed key=%s: %v", metaKey, err)
+		}
+	}
+
+	// Update the verifications row with whichever keys landed. Empty
+	// map = nothing to update (no temp blobs found — pure fingerprint-
+	// only flow from a client that didn't audit anything).
+	if len(promoted) == 0 {
+		return
+	}
+	setClauses := make([]string, 0, len(promoted))
+	args := make([]any, 0, len(promoted)+1)
+	i := 1
+	for col, key := range promoted {
+		setClauses = append(setClauses, fmt.Sprintf("%s = $%d", col, i))
+		args = append(args, key)
+		i++
+	}
+	args = append(args, verifID)
+	q := fmt.Sprintf(`UPDATE verifications SET %s WHERE id = $%d`,
+		strings.Join(setClauses, ", "), i)
+	if _, err := s.deps.DB.ExecContext(ctx, q, args...); err != nil {
+		log.Printf("captures: db update s3 keys failed verif=%d: %v", verifID, err)
+	}
 }
 
 // promoteProbePhoto moves the temp probe file (dropped by the

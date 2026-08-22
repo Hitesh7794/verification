@@ -6,10 +6,12 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
@@ -200,6 +202,23 @@ func (s *Server) faceMatch(w http.ResponseWriter, r *http.Request) {
 		tempDir := filepath.Join(s.deps.Cfg.ArtifactDir, "probes", "temp")
 		if err := os.MkdirAll(tempDir, 0o755); err == nil {
 			_ = os.WriteFile(filepath.Join(tempDir, k+".jpg"), probeBytes, 0o644)
+		}
+		// V10: also stash to S3 under a temp key so the /verifications
+		// submit step can promote it to the institute-scoped audit
+		// path. Fire-and-forget goroutine so a slow S3 PUT doesn't
+		// stall the operator's face-match response.
+		if s.storage != nil && s.storage.Enabled() {
+			bytesCopy := append([]byte(nil), probeBytes...)
+			go func() {
+				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+				defer cancel()
+				if err := s.storage.PutBiometric(ctx,
+					storage.CaptureTempKey(k, "face", "jpg"),
+					bytesCopy, "image/jpeg",
+				); err != nil {
+					log.Printf("captures: face probe s3-temp put failed idem=%s: %v", k, err)
+				}
+			}()
 		}
 	}
 

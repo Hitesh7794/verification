@@ -1,15 +1,19 @@
 package api
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
+	"log"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/go-chi/chi/v5"
 
 	"github.com/veni/neet-verification/internal/data"
+	"github.com/veni/neet-verification/internal/storage"
 	"github.com/veni/neet-verification/internal/trustview"
 )
 
@@ -34,6 +38,11 @@ type irisMatchReq struct {
 	ProbeB64     string `json:"probe_b64"`
 	DeviceSerial string `json:"device_serial"`
 	DeviceModel  string `json:"device_model"`
+	// Optional — same idempotency_key the client used on /face-match.
+	// When present the server stashes the iris probe under
+	// `_captures_temp/<key>/iris.<ext>` for later promotion by
+	// /verifications submit. Empty = no audit storage for this capture.
+	IdempotencyKey string `json:"idempotency_key"`
 }
 
 // irisMatchResp mirrors the face + fp response shapes with two twists:
@@ -104,11 +113,42 @@ func (s *Server) irisMatch(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Decode the probe up front (was previously done after the gallery
+	// lookup) so the V10 audit stash below can run even when the
+	// gallery is missing — a capture with no gallery still deserves
+	// the audit blob so a regulator can see it happened.
+	probeBytes, err := decodeIrisProbe(req.ProbeB64)
+	if err != nil || len(probeBytes) == 0 {
+		writeErr(w, http.StatusBadRequest, "probe_b64 not valid base64")
+		return
+	}
+
+	// V10: stash the raw iris payload to S3 under a temp key so the
+	// /verifications submit step can promote it to the institute-
+	// scoped audit path. Fire-and-forget goroutine — never stalls
+	// the operator's iris-match response. Empty idempotency_key
+	// (older clients) → skipped silently.
+	if k := safeSlug(req.IdempotencyKey); k != "" && k != "file" &&
+		s.storage != nil && s.storage.Enabled() {
+		bytesCopy := append([]byte(nil), probeBytes...)
+		go func() {
+			ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			if err := s.storage.PutBiometric(ctx,
+				storage.CaptureTempKey(k, "iris", "k7"),
+				bytesCopy, "application/octet-stream",
+			); err != nil {
+				log.Printf("captures: iris probe s3-temp put failed idem=%s: %v", k, err)
+			}
+		}()
+	}
+
 	// Iris gallery lookup: filesystem indexer surfaces enrolled iris
 	// bytes at data/gndu27/**/<centre>/iris/<roll>.<iso|k7|bmp>. If no
 	// file is on disk for this roll we return matched=null +
 	// gallery_missing=true so the operator UI records the capture for
-	// audit without a bogus pass/fail.
+	// audit without a bogus pass/fail. (The probe was already stashed
+	// to S3 above so the audit trail still gets the raw bytes.)
 	galleryBytes, ok := s.irisGalleryFor(roll, c)
 	if !ok {
 		writeJSON(w, http.StatusOK, irisMatchResp{
@@ -119,12 +159,6 @@ func (s *Server) irisMatch(w http.ResponseWriter, r *http.Request) {
 			DeviceSerial:   strings.TrimSpace(req.DeviceSerial),
 			DeviceModel:    strings.TrimSpace(req.DeviceModel),
 		})
-		return
-	}
-
-	probeBytes, err := decodeIrisProbe(req.ProbeB64)
-	if err != nil || len(probeBytes) == 0 {
-		writeErr(w, http.StatusBadRequest, "probe_b64 not valid base64")
 		return
 	}
 	if s.trustview == nil {
