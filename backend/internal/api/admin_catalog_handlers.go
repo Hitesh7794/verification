@@ -45,7 +45,7 @@ type catalogExam struct {
 	VerificationTo     string `json:"verification_to"`
 	CandidateCount     int64  `json:"candidate_count"`
 	Subscribed         bool   `json:"subscribed"` // true if status == "approved"
-	SubscriptionStatus string `json:"subscription_status"` // "none", "pending", "approved", "rejected"
+	SubscriptionStatus string `json:"subscription_status"` // "none", "pending", "approved", "rejected", "revoked"
 	ReviewNote         string `json:"review_note,omitempty"`
 	RequestedAt        string `json:"requested_at,omitempty"`
 }

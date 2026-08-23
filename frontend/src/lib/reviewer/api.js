@@ -100,3 +100,17 @@ export async function resetSubscriptionRequestToPending(orgId, examId) {
     method: 'POST',
   })
 }
+
+// POST /api/client/subscription-requests/{org_id}/{exam_id}/revoke
+// Flip a previously-approved subscription to 'revoked'. Note is
+// required — surfaces to the college admin so they know why access
+// was pulled. Also cascades operator_exams cleanup so operators can't
+// verify against this exam any more. College admin can then hit
+// "Resubscribe" from their catalog, which sends the row back to
+// 'pending'.
+export async function revokeSubscription(orgId, examId, { note = '' } = {}) {
+  return api(`/client/subscription-requests/${orgId}/${examId}/revoke`, {
+    method: 'POST',
+    body: { note },
+  })
+}

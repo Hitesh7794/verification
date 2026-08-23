@@ -373,6 +373,7 @@ type subscriptionRequestItem struct {
 	State                 string `json:"state,omitempty"`
 	City                  string `json:"city,omitempty"`
 	HeadName              string `json:"head_name,omitempty"`
+	HeadDesignation       string `json:"head_designation,omitempty"`
 	HeadEmail             string `json:"head_email,omitempty"`
 	HeadMobile            string `json:"head_mobile,omitempty"`
 	ApproxStudentCount    int64  `json:"approx_student_count,omitempty"`
@@ -435,6 +436,7 @@ func (s *Server) clientListSubscriptionRequests(w http.ResponseWriter, r *http.R
 			COALESCE(app.state, ''),
 			COALESCE(app.city, ''),
 			COALESCE(app.head_name, ''),
+			COALESCE(app.head_designation, ''),
 			COALESCE(app.head_email, ''),
 			COALESCE(app.head_mobile, ''),
 			COALESCE(app.approx_student_count, 0)
@@ -477,6 +479,7 @@ func (s *Server) clientListSubscriptionRequests(w http.ResponseWriter, r *http.R
 			&it.State,
 			&it.City,
 			&it.HeadName,
+			&it.HeadDesignation,
 			&it.HeadEmail,
 			&it.HeadMobile,
 			&appStudentCount,
@@ -799,6 +802,142 @@ func (s *Server) clientRejectSubscriptionRequest(w http.ResponseWriter, r *http.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":      true,
 		"status":  "rejected",
+		"org_id":  orgID,
+		"exam_id": examID,
+	})
+}
+
+// ---------- POST /api/client/subscription-requests/{org_id}/{exam_id}/revoke ----------
+//
+// Reviewer had previously approved this org for the exam, now wants
+// to pull that back. Semantically distinct from 'rejected' (which
+// means "never approved"): 'revoked' preserves the audit story that
+// the row was live for some period.
+//
+// Side effects on revoke:
+//   - status = 'revoked', reviewed_at + reviewed_by + review_note stamped
+//   - operator_exams cascade: every operator in this org loses this
+//     exam from their allowed list (matches adminUnsubscribe's
+//     cleanup pattern). Operators can still log in, they just can't
+//     verify against this exam.
+//
+// The college admin can Resubscribe from the catalog page; that
+// path (adminSubscribe) uses ON CONFLICT DO UPDATE which flips this
+// row back to 'pending' (or straight to 'approved' if the client
+// has a blanket approval for the org).
+func (s *Server) clientRevokeSubscriptionRequest(w http.ResponseWriter, r *http.Request) {
+	clientID, ok := clientReviewerScope(r)
+	if !ok {
+		writeErr(w, http.StatusForbidden, "client reviewer context required")
+		return
+	}
+	claims := claimsFrom(r)
+
+	orgID, err := parseInt64(chi.URLParam(r, "org_id"))
+	if err != nil || orgID <= 0 {
+		writeErr(w, http.StatusBadRequest, "invalid org_id")
+		return
+	}
+	examID, err := parseInt64(chi.URLParam(r, "exam_id"))
+	if err != nil || examID <= 0 {
+		writeErr(w, http.StatusBadRequest, "invalid exam_id")
+		return
+	}
+
+	var req subscriptionRejectReq
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	req.Note = strings.TrimSpace(req.Note)
+	if req.Note == "" {
+		writeErr(w, http.StatusBadRequest, "revoke note is required so the college admin sees why access was pulled")
+		return
+	}
+
+	// Verify exam belongs to caller's client_id (same scope check
+	// as approve/reject to keep reviewers walled off from other
+	// clients' exams).
+	var examClientID int64
+	if err := s.deps.DB.QueryRowContext(r.Context(),
+		`SELECT client_id FROM exams WHERE id = $1`, examID,
+	).Scan(&examClientID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeErr(w, http.StatusNotFound, "exam not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "db read")
+		return
+	}
+	if examClientID != clientID {
+		writeErr(w, http.StatusNotFound, "exam not found")
+		return
+	}
+
+	// Guard: only 'approved' rows can be revoked. A pending or
+	// rejected one should use the existing reject flow.
+	var currentStatus string
+	if err := s.deps.DB.QueryRowContext(r.Context(),
+		`SELECT status FROM organization_exam_subscriptions WHERE org_id = $1 AND exam_id = $2`,
+		orgID, examID,
+	).Scan(&currentStatus); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeErr(w, http.StatusNotFound, "subscription not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "db read")
+		return
+	}
+	if currentStatus != "approved" {
+		writeErr(w, http.StatusConflict,
+			fmt.Sprintf("can only revoke an approved subscription; this one is %s", currentStatus))
+		return
+	}
+
+	tx, err := s.deps.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db begin")
+		return
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(r.Context(), `
+		UPDATE organization_exam_subscriptions
+		SET status = 'revoked',
+		    reviewed_at = NOW(),
+		    reviewed_by = $1,
+		    review_note = $2
+		WHERE org_id = $3 AND exam_id = $4`,
+		claims.UserID, req.Note, orgID, examID,
+	); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db update: "+err.Error())
+		return
+	}
+
+	// Cascade: pull this exam from every operator_exams row for
+	// operators in this org so they can't verify against it any
+	// more. Mirrors adminUnsubscribe's cleanup — see line 338.
+	if _, err := tx.ExecContext(r.Context(), `
+		DELETE FROM operator_exams
+		 WHERE exam_id = $1
+		   AND user_id IN (SELECT id FROM users WHERE org_id = $2)`,
+		examID, orgID,
+	); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db cascade: "+err.Error())
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db commit")
+		return
+	}
+
+	s.auditFromRequest(r, "subscription.revoke", "organization_exam_subscriptions", orgID, map[string]any{
+		"exam_id":   examID,
+		"client_id": clientID,
+		"note":      req.Note,
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"status":  "revoked",
 		"org_id":  orgID,
 		"exam_id": examID,
 	})

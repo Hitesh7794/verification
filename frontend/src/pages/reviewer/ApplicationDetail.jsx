@@ -416,6 +416,12 @@ export default function ReviewerApplicationDetail() {
 // Password is echoed once by the API and is not retrievable later,
 // so a persistent visible card is intentional.
 function ApprovalResultCard({ result }) {
+  // Operator credentials only appear for legacy approvals — the
+  // auto-created default operator was removed 2026-08-23. New
+  // approvals hand back an empty operator_username / password and
+  // this section trims to just the admin + magic link (the admin
+  // creates real, per-exam operators from the Operators page).
+  const hasLegacyOperator = !!result.operator_username
   return (
     <div className="mb-6 rounded-xl bg-emerald-50 border border-emerald-200 p-4">
       <div className="flex items-start gap-3">
@@ -426,15 +432,19 @@ function ApprovalResultCard({ result }) {
           <p className="text-sm font-semibold text-emerald-900">Institution activated</p>
           <p className="mt-1 text-xs text-emerald-800">
             An admin account has been created. Send the head of institution the magic
-            link below to set their password. Share the operator credential with the
-            centre staff who will run verifications.
+            link below to set their password. They will create verification agents
+            (one per exam) from the admin dashboard after signing in.
           </p>
 
           <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
             <CredBlock label="Admin username" value={result.admin_username} mono />
             <CredBlock label="Magic link (one-time)" value={result.magic_link_url} link />
-            <CredBlock label="Verification agent username" value={result.operator_username} mono />
-            <CredBlock label="Verification agent password" value={result.operator_password} mono warn />
+            {hasLegacyOperator && (
+              <>
+                <CredBlock label="Verification agent username" value={result.operator_username} mono />
+                <CredBlock label="Verification agent password" value={result.operator_password} mono warn />
+              </>
+            )}
           </div>
         </div>
       </div>

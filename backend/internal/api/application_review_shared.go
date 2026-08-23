@@ -199,22 +199,16 @@ func (s *Server) approveApplication(
 		return nil, fmt.Errorf("user insert: %w", err)
 	}
 
-	// Shared operator. See migration_010 for why we store plaintext.
-	operatorUsername := slugifyUsername(instName) + "_" + strconv.FormatInt(appID, 10) + "_op"
-	operatorPassword := generateOperatorPassword()
-	operatorHash, err := bcrypt.GenerateFromPassword([]byte(operatorPassword), bcrypt.DefaultCost)
-	if err != nil {
-		return nil, fmt.Errorf("operator bcrypt: %w", err)
-	}
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO users(username, password_hash, password_plaintext, role,
-		                   org_id, display_name, activated_at)
-		 VALUES($1, $2, $3, 'client', $4, $5, CURRENT_TIMESTAMP)`,
-		operatorUsername, string(operatorHash), operatorPassword,
-		orgID, "Centre Operator",
-	); err != nil {
-		return nil, fmt.Errorf("operator insert: %w", err)
-	}
+	// Auto-created default "Centre Operator" retired 2026-08-23. Under
+	// the post-V9 subscription-approval flow operators must be assigned
+	// to specific exams via operator_exams; a default one with zero
+	// assignments was just noise on the admin's Operators page. Admin
+	// creates real, exam-scoped operators after logging in via the
+	// magic link below.
+	//
+	// The OperatorUsername / OperatorPassword fields on the response
+	// struct stay for wire-shape compatibility (existing FE reads them,
+	// now gets empty strings and hides its CredBlocks).
 
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("db commit: %w", err)
@@ -246,8 +240,9 @@ func (s *Server) approveApplication(
 		AdminUserID:      userID,
 		AdminUsername:    username,
 		MagicLinkURL:     linkURL,
-		OperatorUsername: operatorUsername,
-		OperatorPassword: operatorPassword,
+		// OperatorUsername + OperatorPassword deliberately empty —
+		// auto-created default operator was removed 2026-08-23. See
+		// note above the Commit call.
 		InstitutionName:  instName,
 		HeadName:         headName,
 		HeadEmail:        headEmail,

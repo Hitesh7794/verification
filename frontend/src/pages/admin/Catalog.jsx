@@ -146,6 +146,7 @@ export default function Catalog() {
                             const isApproved = e.subscription_status === 'approved' || e.subscribed
                             const isPending = e.subscription_status === 'pending'
                             const isRejected = e.subscription_status === 'rejected'
+                            const isRevoked = e.subscription_status === 'revoked'
 
                             return (
                               <tr key={e.id} className="border-b border-slate-100 last:border-none hover:bg-slate-50/40">
@@ -154,6 +155,11 @@ export default function Catalog() {
                                   <div className="font-medium">{e.name}</div>
                                   {isRejected && e.review_note && (
                                     <p className="text-xs text-rose-600 mt-0.5">Note: {e.review_note}</p>
+                                  )}
+                                  {isRevoked && e.review_note && (
+                                    <p className="text-xs text-orange-700 mt-0.5">
+                                      Access revoked — reason: {e.review_note}
+                                    </p>
                                   )}
                                 </td>
                                 <td className="px-5 py-3 text-xs text-slate-600 tabular-nums">
@@ -199,6 +205,18 @@ export default function Catalog() {
                                         onClick={(ev) => onToggle(ev, e.id, false, c.client_blanket_approved)}
                                       >
                                         {busy === e.id ? 'Requesting…' : 'Re-Request'}
+                                      </Button>
+                                    </div>
+                                  ) : isRevoked ? (
+                                    <div className="inline-flex items-center gap-2">
+                                      <Pill tone="amber" dot>Access Revoked</Pill>
+                                      <Button
+                                        type="button"
+                                        size="sm"
+                                        disabled={busy === e.id}
+                                        onClick={(ev) => onToggle(ev, e.id, false, c.client_blanket_approved)}
+                                      >
+                                        {busy === e.id ? 'Requesting…' : 'Resubscribe'}
                                       </Button>
                                     </div>
                                   ) : (

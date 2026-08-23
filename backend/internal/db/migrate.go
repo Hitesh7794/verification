@@ -13,7 +13,7 @@ var schemaSQL string
 // schemaVersion is the version stamped in schema_migrations after the
 // initial schema has been applied. Bump this only when new post-1
 // migrations are added below.
-const schemaVersion = 10
+const schemaVersion = 11
 
 // Migrate applies schema.sql to an empty database, or is a no-op if
 // the schema has already been applied. Safe to call on every startup.
@@ -99,7 +99,59 @@ func Migrate(d *sql.DB) error {
 		}
 	}
 
+	if !applied[11] {
+		if err := applyV11SubscriptionRevoked(ctx, d); err != nil {
+			return fmt.Errorf("apply v11 subscription_revoked: %w", err)
+		}
+	}
+
 	return nil
+}
+
+// applyV11SubscriptionRevoked widens the CHECK constraint on
+// organization_exam_subscriptions.status to include 'revoked' — a
+// state distinct from 'rejected'. A reviewer approves an org for
+// their exam, then later flips the row to 'revoked' to pull that
+// access back. The college admin can then resubscribe (the existing
+// UPSERT flow re-sets status='pending'), separating "was approved
+// then taken back" from "never approved in the first place". Notes:
+//
+//   - rejected: reviewer said no at the first review pass. Historical.
+//   - revoked:  reviewer changed their mind after approving. Also historical
+//               but the row was live for some period; audit trail matters.
+//
+// Existing rows all keep their current status; only the CHECK is
+// widened. Backward-compat: any old client sending status='rejected'
+// still works.
+func applyV11SubscriptionRevoked(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Postgres has no ALTER CHECK — drop + re-add. Constraint name
+	// comes from the auto-generated name Rahul's V9 produced;
+	// DROP IF EXISTS keeps the rename-safe.
+	stmts := []string{
+		`ALTER TABLE organization_exam_subscriptions
+		    DROP CONSTRAINT IF EXISTS organization_exam_subscriptions_status_check`,
+		`ALTER TABLE organization_exam_subscriptions
+		    ADD CONSTRAINT organization_exam_subscriptions_status_check
+		    CHECK (status IN ('pending','approved','rejected','revoked'))`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.ExecContext(ctx, s); err != nil {
+			return fmt.Errorf("exec %q: %w", firstLine(s), err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)`,
+		11, "subscription_revoked",
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // applyV10CaptureAuditS3Keys adds nullable columns to `verifications`

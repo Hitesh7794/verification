@@ -344,6 +344,7 @@ func (s *Server) Router() http.Handler {
 		r.Post("/api/client/subscription-requests/bulk-reject",                     s.requireRole("client_reviewer")(s.clientBulkRejectSubscriptionRequests))
 		r.Post("/api/client/subscription-requests/{org_id}/{exam_id}/approve",     s.requireRole("client_reviewer")(s.clientApproveSubscriptionRequest))
 		r.Post("/api/client/subscription-requests/{org_id}/{exam_id}/reject",      s.requireRole("client_reviewer")(s.clientRejectSubscriptionRequest))
+		r.Post("/api/client/subscription-requests/{org_id}/{exam_id}/revoke",      s.requireRole("client_reviewer")(s.clientRevokeSubscriptionRequest))
 		r.Post("/api/client/subscription-requests/{org_id}/{exam_id}/reset-pending", s.requireRole("client_reviewer")(s.clientResetSubscriptionRequestToPending))
 
 		// Superadmin management of the per-client portal — enable/disable

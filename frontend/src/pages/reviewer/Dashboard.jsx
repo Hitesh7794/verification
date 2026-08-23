@@ -13,6 +13,7 @@ import {
   bulkApproveSubscriptionRequests,
   bulkRejectSubscriptionRequests,
   resetSubscriptionRequestToPending,
+  revokeSubscription,
 } from '../../lib/reviewer/api.js'
 import { usePolling } from '../../lib/usePolling.js'
 import { dateRange } from '../../lib/dates.js'
@@ -1731,7 +1732,9 @@ export default function ReviewerDashboard() {
                         <div className="font-bold text-slate-900 text-sm">
                           {selectedUniversityForDetails.head_name || 'Authorized Representative'}
                         </div>
-                        <div className="text-xs text-slate-500">Vice Chancellor / Registrar / Principal</div>
+                        <div className="text-xs text-slate-500">
+                          {selectedUniversityForDetails.head_designation || 'Head of Institution'}
+                        </div>
                       </div>
                     </div>
 
@@ -1777,7 +1780,7 @@ export default function ReviewerDashboard() {
                         key={e.exam_id}
                         className="p-3 rounded-xl border flex items-center justify-between gap-3 text-xs bg-slate-50 border-slate-200"
                       >
-                        <div>
+                        <div className="min-w-0">
                           <div className="font-bold text-slate-900 font-mono">
                             {e.exam_code} — {e.exam_name}
                           </div>
@@ -1786,14 +1789,61 @@ export default function ReviewerDashboard() {
                               📅 Window: {dateRange(e.verification_from, e.verification_to)}
                             </div>
                           )}
+                          {e.status === 'revoked' && e.review_note && (
+                            <div className="text-[11px] text-rose-700 mt-1">
+                              Revoke reason: {e.review_note}
+                            </div>
+                          )}
                         </div>
 
-                        <span className={`px-2.5 py-1 rounded-full text-xs font-bold capitalize ${e.status === 'approved' ? 'bg-emerald-100 text-emerald-800' :
-                            e.status === 'pending' ? 'bg-amber-100 text-amber-800' :
-                              'bg-rose-100 text-rose-800'
-                          }`}>
-                          {e.status}
-                        </span>
+                        <div className="flex items-center gap-2 shrink-0">
+                          <span className={`px-2.5 py-1 rounded-full text-xs font-bold capitalize ${
+                              e.status === 'approved' ? 'bg-emerald-100 text-emerald-800' :
+                              e.status === 'pending'  ? 'bg-amber-100 text-amber-800' :
+                              e.status === 'revoked'  ? 'bg-orange-100 text-orange-800' :
+                                                        'bg-rose-100 text-rose-800'
+                            }`}>
+                            {e.status}
+                          </span>
+                          {e.status === 'approved' && (
+                            <button
+                              type="button"
+                              onClick={async (ev) => {
+                                ev.stopPropagation()
+                                const note = window.prompt(
+                                  `Revoke ${selectedUniversityForDetails.org_name} access to ${e.exam_code}?\n\nEnter a note the college admin will see:`,
+                                  '',
+                                )
+                                if (note === null) return
+                                const trimmed = note.trim()
+                                if (!trimmed) {
+                                  alert('Revoke note is required.')
+                                  return
+                                }
+                                try {
+                                  await revokeSubscription(
+                                    selectedUniversityForDetails.org_id,
+                                    e.exam_id,
+                                    { note: trimmed },
+                                  )
+                                  // Refresh the detail view + parent list.
+                                  setSelectedUniversityForDetails(null)
+                                  if (typeof loadSubscriptions === 'function') {
+                                    loadSubscriptions()
+                                  } else {
+                                    window.location.reload()
+                                  }
+                                } catch (err) {
+                                  alert(`Revoke failed: ${err.message || err}`)
+                                }
+                              }}
+                              className="px-2 py-1 rounded-md text-[11px] font-semibold text-rose-700 hover:bg-rose-100 border border-rose-200 transition-colors"
+                              title="Pull this org's access to this exam. They can resubscribe from their catalog."
+                            >
+                              Revoke
+                            </button>
+                          )}
+                        </div>
                       </div>
                     ))}
                   </div>
