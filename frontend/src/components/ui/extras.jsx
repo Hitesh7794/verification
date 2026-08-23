@@ -127,7 +127,7 @@ export function StatTile({ label, value, accent, icon: IconComp, hint, onClick, 
         <div className="flex items-center justify-between gap-3">
           <div className="flex items-center gap-2 min-w-0">
             <span className={`h-1.5 w-1.5 rounded-full ${p.dot} shrink-0`} aria-hidden="true" />
-            <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 truncate">
+            <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500 leading-tight">
               {label}
             </p>
           </div>

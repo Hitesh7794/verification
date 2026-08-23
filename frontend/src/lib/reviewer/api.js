@@ -5,6 +5,7 @@
 // returns 404 with the same shape as "unknown application", so a
 // reviewer can't probe for other clients' applications.
 import { api } from '../api.js'
+import { getStoredToken } from '../authStorage.js'
 
 // GET /api/client/me
 // Small header payload — client's display name + visibility flags.
@@ -113,4 +114,44 @@ export async function revokeSubscription(orgId, examId, { note = '' } = {}) {
     method: 'POST',
     body: { note },
   })
+}
+
+// GET /api/client/subscription-requests/export.csv
+// Fetches the CSV of all approved subscriptions + institution details
+// for the current reviewer's client, then triggers a browser download.
+// Kept outside api() because api() always JSON-parses the response;
+// this endpoint streams text/csv which we hand off to the browser as
+// a blob.
+export async function downloadApprovedSubscriptionsCsv() {
+  const token = getStoredToken('reviewer')
+  const res = await fetch('/api/client/subscription-requests/export.csv', {
+    headers: { Authorization: `Bearer ${token}` },
+  })
+  if (!res.ok) {
+    // Try to surface a friendly message from the JSON error envelope
+    // the backend uses on failures (Content-Type would flip to json).
+    let msg = `HTTP ${res.status}`
+    try {
+      const j = await res.json()
+      if (j?.error) msg = j.error
+    } catch {}
+    throw new Error(msg)
+  }
+  const blob = await res.blob()
+  // Server sets Content-Disposition with a timestamped filename; parse
+  // it so the downloaded file uses that name instead of a generic one.
+  const disp = res.headers.get('Content-Disposition') || ''
+  const m = disp.match(/filename="?([^";]+)"?/)
+  const filename = m ? m[1] : 'approved-subscriptions.csv'
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = filename
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  // Free the blob URL — do this after the click has kicked off the
+  // download but not before, or Chrome cancels the download mid-flight.
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+  return filename
 }

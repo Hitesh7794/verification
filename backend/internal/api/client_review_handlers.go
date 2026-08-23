@@ -23,6 +23,7 @@ package api
 
 import (
 	"database/sql"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -804,6 +805,121 @@ func (s *Server) clientRejectSubscriptionRequest(w http.ResponseWriter, r *http.
 		"status":  "rejected",
 		"org_id":  orgID,
 		"exam_id": examID,
+	})
+}
+
+// ---------- GET /api/client/subscription-requests/export.csv ----------
+//
+// Streams a CSV of every APPROVED subscription for this reviewer's
+// client, one row per (org, exam) pair, joined with the institution's
+// KYC record so the download carries the full head-of-institution +
+// address contact block a compliance sweep would care about.
+//
+// Column set intentionally flat + human-readable (no JSON in cells,
+// no nested structures) so the file opens cleanly in Excel /
+// LibreOffice / anything.
+//
+// Institution details are LEFT JOINed against
+// institution_applications so orgs that were seeded directly (no KYC
+// row) still export with blank fields instead of dropping the row.
+func (s *Server) clientExportApprovedSubscriptionsCSV(w http.ResponseWriter, r *http.Request) {
+	clientID, ok := clientReviewerScope(r)
+	if !ok {
+		writeErr(w, http.StatusForbidden, "client reviewer context required")
+		return
+	}
+
+	rows, err := s.deps.DB.QueryContext(r.Context(), `
+		SELECT
+			COALESCE(o.code, ''),
+			o.name,
+			COALESCE(app.institution_type, ''),
+			COALESCE(app.aishe_code, ''),
+			COALESCE(app.pan, ''),
+			COALESCE(app.state, ''),
+			COALESCE(app.city, ''),
+			COALESCE(app.approx_student_count, 0),
+			COALESCE(app.head_name, ''),
+			COALESCE(app.head_designation, ''),
+			COALESCE(app.head_email, ''),
+			COALESCE(app.head_mobile, ''),
+			e.exam_code,
+			e.name,
+			COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD'), ''),
+			COALESCE(TO_CHAR(e.verification_to,   'YYYY-MM-DD'), ''),
+			COALESCE(s.approval_type, ''),
+			COALESCE(TO_CHAR(s.reviewed_at  AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI'), ''),
+			COALESCE(TO_CHAR(s.requested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI'), '')
+		FROM organization_exam_subscriptions s
+		JOIN exams e         ON e.id = s.exam_id
+		JOIN organizations o ON o.id = s.org_id
+		LEFT JOIN institution_applications app
+			ON LOWER(TRIM(app.institution_name)) = LOWER(TRIM(o.name))
+			AND app.status = 'approved'
+		WHERE e.client_id = $1 AND s.status = 'approved'
+		ORDER BY o.name, e.exam_code
+	`, clientID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db list: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	// Stream directly to the client. Content-Disposition includes a
+	// timestamp so repeat downloads don't overwrite each other in
+	// Downloads/.
+	fname := fmt.Sprintf("approved-subscriptions-%s.csv",
+		time.Now().UTC().Format("20060102-150405"))
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition",
+		fmt.Sprintf(`attachment; filename="%s"`, fname))
+
+	cw := csv.NewWriter(w)
+	defer cw.Flush()
+
+	// Header row. Snake_case + explicit units so a compliance analyst
+	// pulling this into Excel isn't guessing at columns.
+	_ = cw.Write([]string{
+		"org_code", "institution_name", "institution_type",
+		"aishe_code", "pan", "state", "city", "approx_student_count",
+		"head_name", "head_designation", "head_email", "head_mobile",
+		"exam_code", "exam_name", "verification_from", "verification_to",
+		"approval_type", "approved_at_utc", "requested_at_utc",
+	})
+
+	rowCount := 0
+	for rows.Next() {
+		var (
+			orgCode, orgName, instType                       string
+			aishe, pan, state, city                          string
+			studentCount                                     int64
+			headName, headDesig, headEmail, headMobile       string
+			examCode, examName, vFrom, vTo                   string
+			apprType, apprAt, reqAt                          string
+		)
+		if err := rows.Scan(
+			&orgCode, &orgName, &instType,
+			&aishe, &pan, &state, &city, &studentCount,
+			&headName, &headDesig, &headEmail, &headMobile,
+			&examCode, &examName, &vFrom, &vTo,
+			&apprType, &apprAt, &reqAt,
+		); err != nil {
+			// Skip bad rows silently — better to give the reviewer a
+			// partial CSV than fail the download.
+			continue
+		}
+		_ = cw.Write([]string{
+			orgCode, orgName, instType,
+			aishe, pan, state, city, strconv.FormatInt(studentCount, 10),
+			headName, headDesig, headEmail, headMobile,
+			examCode, examName, vFrom, vTo,
+			apprType, apprAt, reqAt,
+		})
+		rowCount++
+	}
+
+	s.auditFromRequest(r, "subscription.export_csv", "client", clientID, map[string]any{
+		"rows": rowCount,
 	})
 }
 

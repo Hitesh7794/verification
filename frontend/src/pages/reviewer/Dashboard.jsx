@@ -14,6 +14,7 @@ import {
   bulkRejectSubscriptionRequests,
   resetSubscriptionRequestToPending,
   revokeSubscription,
+  downloadApprovedSubscriptionsCsv,
 } from '../../lib/reviewer/api.js'
 import { usePolling } from '../../lib/usePolling.js'
 import { dateRange } from '../../lib/dates.js'
@@ -362,16 +363,19 @@ export default function ReviewerDashboard() {
           ? `Review and manage university exam subscription requests for ${me.name}.`
           : 'Review and manage university exam subscription requests.'}
         right={
-          <button
-            onClick={() => {
-              setSubLoading(true)
-              loadSubscriptions()
-            }}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs"
-          >
-            <Icon.Refresh className="h-4 w-4" />
-            Refresh
-          </button>
+          <div className="flex items-center gap-2">
+            <ExportCsvButton />
+            <button
+              onClick={() => {
+                setSubLoading(true)
+                loadSubscriptions()
+              }}
+              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs"
+            >
+              <Icon.Refresh className="h-4 w-4" />
+              Refresh
+            </button>
+          </div>
         }
       />
 
@@ -443,7 +447,7 @@ export default function ReviewerDashboard() {
                 </StaggerItem>
                 <StaggerItem>
                   <StatTile
-                    label="Total Registered Candidates"
+                    label="Registered Candidates"
                     value={globalExamTotals.candidates}
                     accent="slate"
                     icon={Icon.User}
@@ -1969,5 +1973,48 @@ export default function ReviewerDashboard() {
         )}
       </AnimatePresence>
     </ReviewerShell>
+  )
+}
+
+// Compact "Download CSV" button rendered next to the approved-list
+// count. Streams the /export.csv endpoint through the fetch+blob dance
+// (the api() helper always JSON-parses so we call fetch directly via
+// the downloadApprovedSubscriptionsCsv lib helper).
+function ExportCsvButton() {
+  const [busy, setBusy] = useState(false)
+  const [msg, setMsg] = useState('')
+  async function onClick() {
+    if (busy) return
+    setBusy(true)
+    setMsg('')
+    try {
+      const name = await downloadApprovedSubscriptionsCsv()
+      setMsg(`Downloaded ${name}`)
+      setTimeout(() => setMsg(''), 3000)
+    } catch (e) {
+      setMsg(`Failed: ${e.message || e}`)
+      setTimeout(() => setMsg(''), 5000)
+    } finally {
+      setBusy(false)
+    }
+  }
+  return (
+    <div className="flex items-center gap-2">
+      {msg && (
+        <span className={`text-xs font-medium ${msg.startsWith('Failed') ? 'text-rose-600' : 'text-emerald-700'}`}>
+          {msg}
+        </span>
+      )}
+      <button
+        type="button"
+        onClick={onClick}
+        disabled={busy}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-400 transition-colors shadow-2xs disabled:opacity-60"
+        title="Download every approved subscription with the institution's contact + address details"
+      >
+        <Icon.Download className="h-4 w-4" />
+        {busy ? 'Preparing…' : 'Download CSV'}
+      </button>
+    </div>
   )
 }
