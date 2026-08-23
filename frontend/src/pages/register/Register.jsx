@@ -167,7 +167,6 @@ const REQUIRED_DOCS_RECRUITMENT = [
   { kind: 'recognition_letter',   label: 'Gazette / Establishment / Mandate Proof',  hint: 'Gazette notification, Act reference, or Certificate of Incorporation', required: true },
   { kind: 'pan_card',             label: 'Organization PAN / TAN scan',       hint: 'Copy of Organization PAN or TAN card',         required: true },
   { kind: 'authorization_letter', label: 'Nodal Officer Authorization Letter', hint: 'On official letterhead, signed by Director / Secretary / Head of HR', required: true },
-  { kind: 'naac_certificate',     label: 'Additional Accreditation / License', hint: 'Optional — trade license, ISO, or supporting order', required: false },
 ]
 
 function getRequiredDocs(form) {
@@ -192,17 +191,22 @@ const FIELD_RULES = {
       : undefined,
   institution_type: (v) =>
     INSTITUTION_TYPES.find((t) => t.value === v) ? undefined : 'Pick a type',
-  institution_type_other: (v, form) =>
-    form?.institution_type === 'other' && !v?.trim() ? 'Please specify category or sector' : undefined,
+  institution_type_other: () => undefined,
   aishe_code: (v, form) => {
     if (!v.trim()) {
       return form?.institution_type === 'other' ? 'Required (Govt Ref / Notification / CIN)' : 'Required (AISHE code)'
     }
     return undefined
   },
-  pan: (v) => {
+  pan: (v, form) => {
     if (!v.trim()) return 'Required'
-    return /^[A-Z]{5}[0-9]{4}[A-Z]$/i.test(v.trim()) ? undefined : 'Format: ABCDE1234F'
+    const clean = v.trim().toUpperCase()
+    const isPan = /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(clean)
+    const isTan = /^[A-Z]{4}[0-9]{5}[A-Z]$/.test(clean)
+    if (form?.institution_type === 'other') {
+      return (isPan || isTan) ? undefined : 'Format: PAN (ABCDE1234F) or TAN (ABCD12345E)'
+    }
+    return (isPan || isTan) ? undefined : 'Format: ABCDE1234F'
   },
   year_established: (v) => {
     const year = Number(v)
@@ -219,10 +223,9 @@ const FIELD_RULES = {
   affiliation_body_other: (v, form) =>
     form?.affiliation_body === 'Other' && !v.trim() ? 'Please specify' : undefined,
   approx_student_count: (v, form) => {
+    if (form?.institution_type === 'other') return undefined
     const n = Number(v)
-    if (!v || !n) {
-      return form?.institution_type === 'other' ? 'Required (Expected annual verifications)' : 'Required'
-    }
+    if (!v || !n) return 'Required'
     return n < 1 || n > 10_000_000 ? 'Must be a positive number' : undefined
   },
   address_line1: (v) => (!v.trim() ? 'Required' : undefined),
@@ -831,27 +834,7 @@ function StepSidebar({ step }) {
 // ─── Step 0 ────────────────────────────────────────────────────────────
 
 function Step0({ form, errors, update, onBlurField, onNext }) {
-  const [otherDraft, setOtherDraft] = useState(form.institution_type_other || '')
   const isRecruiter = form.institution_type === 'other'
-
-  useEffect(() => {
-    setOtherDraft(form.institution_type_other || '')
-  }, [form.institution_type_other])
-
-  function handleAddOther() {
-    const val = otherDraft.trim()
-    update('institution_type_other', val)
-    if (!val && onBlurField) {
-      onBlurField('institution_type_other')
-    }
-  }
-
-  function handleContinue() {
-    if (form.institution_type === 'other' && otherDraft.trim()) {
-      update('institution_type_other', otherDraft.trim())
-    }
-    onNext()
-  }
 
   return (
     <AestheticCard>
@@ -888,7 +871,6 @@ function Step0({ form, errors, update, onBlurField, onNext }) {
                 other: Icon.FileText,
               }
               const IconComp = iconMap[t.value] || Icon.Building
-              const customVal = t.value === 'other' ? form.institution_type_other : undefined
               return (
                 <CompactChoice
                   key={t.value}
@@ -897,7 +879,6 @@ function Step0({ form, errors, update, onBlurField, onNext }) {
                     update('institution_type', t.value)
                     if (t.value !== 'other') {
                       update('institution_type_other', '')
-                      setOtherDraft('')
                       if (RECRUITER_DESIGNATIONS.includes(form.head_designation)) {
                         update('head_designation', 'Principal')
                       }
@@ -910,61 +891,12 @@ function Step0({ form, errors, update, onBlurField, onNext }) {
                   icon={IconComp}
                   label={t.label}
                   blurb={t.blurb}
-                  customValue={customVal}
                 />
               )
             })}
           </div>
           {errors.institution_type && (
             <p className="mt-1.5 text-xs text-rose-600 font-medium">{errors.institution_type}</p>
-          )}
-          {form.institution_type === 'other' && (
-            <motion.div
-              initial={{ opacity: 0, y: -4 }}
-              animate={{ opacity: 1, y: 0 }}
-              className="mt-3.5 max-w-lg p-4 rounded-xl border border-warm bg-[#F5EEDF]/40 space-y-2.5"
-            >
-              <div className="flex items-center justify-between">
-                <Label className="!mb-0 text-xs font-semibold text-ink-900">
-                  Specify Organization Category <span className="text-rose-600">*</span>
-                </Label>
-                {form.institution_type_other && (
-                  <span className="text-[11px] font-semibold text-emerald-800 bg-emerald-50 border border-emerald-200 px-2.5 py-0.5 rounded-full inline-flex items-center gap-1">
-                    <Icon.Check className="h-3 w-3 stroke-[2.5]" /> Added: {form.institution_type_other}
-                  </span>
-                )}
-              </div>
-              <div className="flex items-center gap-2">
-                <Input
-                  value={otherDraft}
-                  onChange={(e) => {
-                    setOtherDraft(e.target.value)
-                  }}
-                  onKeyDown={(e) => {
-                    if (e.key === 'Enter') {
-                      e.preventDefault()
-                      handleAddOther()
-                    }
-                  }}
-                  placeholder="e.g. Government Commission, PSU, Recruitment Board"
-                  maxLength={80}
-                  autoFocus
-                  className="flex-1 bg-white"
-                />
-                <Button
-                  type="button"
-                  size="md"
-                  onClick={handleAddOther}
-                  disabled={!otherDraft.trim()}
-                  className="shrink-0 font-medium px-4"
-                >
-                  {form.institution_type_other === otherDraft.trim() && form.institution_type_other ? 'Selected' : 'Add'}
-                </Button>
-              </div>
-              {errors.institution_type_other && (
-                <p className="text-xs text-rose-600 font-medium">{errors.institution_type_other}</p>
-              )}
-            </motion.div>
           )}
         </div>
 
@@ -1009,7 +941,7 @@ function Step0({ form, errors, update, onBlurField, onNext }) {
               value={form.pan}
               onChange={(e) => update('pan', e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10))}
               onBlur={() => onBlurField('pan')}
-              placeholder="ABCDE1234F"
+              placeholder={isRecruiter ? 'PAN/TAN (e.g. ABCD12345E)' : 'ABCDE1234F'}
               maxLength={10}
             />
           </Field>
@@ -1021,7 +953,7 @@ function Step0({ form, errors, update, onBlurField, onNext }) {
             />
           </Field>
           <Field
-            className="sm:col-span-4"
+            className={isRecruiter ? 'sm:col-span-6' : 'sm:col-span-4'}
             label={isRecruiter ? 'Sector / Category' : 'Affiliation body'}
             required
             error={errors.affiliation_body}
@@ -1049,21 +981,23 @@ function Step0({ form, errors, update, onBlurField, onNext }) {
               </div>
             )}
           </Field>
-          <Field
-            className="sm:col-span-2"
-            label={isRecruiter ? 'Expected Verifications' : 'Student count'}
-            required
-            error={errors.approx_student_count}
-          >
-            <InputWithIcon
-              icon={Icon.Sparkles}
-              type="number"
-              value={form.approx_student_count}
-              onChange={(e) => update('approx_student_count', e.target.value)}
-              onBlur={() => onBlurField('approx_student_count')}
-              placeholder={isRecruiter ? 'e.g. 5000' : '500'}
-            />
-          </Field>
+          {!isRecruiter && (
+            <Field
+              className="sm:col-span-2"
+              label="Student count"
+              required
+              error={errors.approx_student_count}
+            >
+              <InputWithIcon
+                icon={Icon.Sparkles}
+                type="number"
+                value={form.approx_student_count}
+                onChange={(e) => update('approx_student_count', e.target.value)}
+                onBlur={() => onBlurField('approx_student_count')}
+                placeholder="500"
+              />
+            </Field>
+          )}
         </div>
       </div>
 
@@ -1071,7 +1005,7 @@ function Step0({ form, errors, update, onBlurField, onNext }) {
         <span className="text-xs text-stone-500">
           Required fields marked with <span className="text-rose-600 font-semibold">*</span>
         </span>
-        <Button onClick={handleContinue} size="lg">
+        <Button onClick={onNext} size="lg">
           Continue
           <Icon.ChevronRight className="ml-1.5 h-4 w-4" />
         </Button>
@@ -1080,7 +1014,7 @@ function Step0({ form, errors, update, onBlurField, onNext }) {
   )
 }
 
-function CompactChoice({ selected, onSelect, icon: IconComp, label, blurb, customValue }) {
+function CompactChoice({ selected, onSelect, icon: IconComp, label, blurb }) {
   return (
     <motion.button
       type="button"
@@ -1093,7 +1027,7 @@ function CompactChoice({ selected, onSelect, icon: IconComp, label, blurb, custo
           : 'border-warm bg-warm-surface hover:border-warm-strong hover:bg-white'
       }`}
     >
-      <div className={`flex gap-3 ${customValue ? 'items-start' : 'items-center'}`}>
+      <div className="flex gap-3 items-center">
         <span
           className={`h-9 w-9 rounded-lg flex items-center justify-center shrink-0 transition-all ${
             selected ? 'bg-amber-700 text-white shadow-xs' : 'bg-[#F5EEDF] text-stone-700 border border-warm'
@@ -1105,11 +1039,7 @@ function CompactChoice({ selected, onSelect, icon: IconComp, label, blurb, custo
           <p className={`text-sm font-bold tracking-tight ${selected ? 'text-amber-950' : 'text-ink-900'}`}>
             {label}
           </p>
-          {customValue ? (
-            <p className="text-xs mt-0.5 font-semibold text-amber-900 truncate" title={customValue}>
-              {customValue}
-            </p>
-          ) : blurb ? (
+          {blurb ? (
             <p className={`text-xs mt-0.5 leading-snug ${selected ? 'text-amber-900/80' : 'text-stone-500'}`}>
               {blurb}
             </p>
@@ -1121,7 +1051,7 @@ function CompactChoice({ selected, onSelect, icon: IconComp, label, blurb, custo
           initial={{ scale: 0 }}
           animate={{ scale: 1 }}
           transition={{ duration: 0.15, ease: [0.22, 1.5, 0.36, 1] }}
-          className={`absolute right-3 ${customValue ? 'top-3.5' : 'top-1/2 -translate-y-1/2'} h-4 w-4 rounded-full bg-amber-700 text-white flex items-center justify-center shadow-xs`}
+          className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 rounded-full bg-amber-700 text-white flex items-center justify-center shadow-xs"
         >
           <Icon.Check className="h-2.5 w-2.5 stroke-[2.5]" />
         </motion.span>
@@ -1150,9 +1080,7 @@ function ReviewStep({ form, uploaded, onEdit, onBack, onSubmit, submitting }) {
       : form.affiliation_body
 
   const typeLabel =
-    form.institution_type === 'other'
-      ? (form.institution_type_other?.trim() || 'Govt Commission / Recruitment Body')
-      : (INSTITUTION_TYPES.find((t) => t.value === form.institution_type)?.label || form.institution_type)
+    INSTITUTION_TYPES.find((t) => t.value === form.institution_type)?.label || form.institution_type
 
   const address = [
     form.address_line1,
@@ -1192,8 +1120,8 @@ function ReviewStep({ form, uploaded, onEdit, onBack, onSubmit, submitting }) {
             [isRecruiter ? 'Organization PAN / TAN' : 'PAN', form.pan?.toUpperCase()],
             ['Year established', form.year_established],
             [isRecruiter ? 'Sector / Category' : 'Affiliation', affiliation],
-            [isRecruiter ? 'Expected verifications' : 'Approx. students', form.approx_student_count],
-          ]}
+            !isRecruiter ? ['Approx. students', form.approx_student_count] : null,
+          ].filter(Boolean)}
         />
 
         <ReviewGroup
