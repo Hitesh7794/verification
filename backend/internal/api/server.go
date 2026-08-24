@@ -177,6 +177,7 @@ func (s *Server) Router() http.Handler {
 	// These are intentionally unauthenticated — anyone with the form
 	// can apply. Spam/abuse defence is per-IP rate limiting + honeypot
 	// + superadmin manual review before any side-effect lands.
+	r.Post("/api/register/check", s.registerCheckIdentifiers)
 	r.Post("/api/register/init", s.registerInit)
 	r.Post("/api/register/{id}/docs", s.registerUploadDoc)
 	r.Delete("/api/register/{id}/docs/{doc_id}", s.registerDeleteDoc)
@@ -195,10 +196,12 @@ func (s *Server) Router() http.Handler {
 	// supported. All fields are display / soft-tuning; no secrets.
 	r.Get("/api/mobile/config", s.mobileConfig)
 
-	// ----- public set-password landing -----
-	// Backs the magic-link the head clicks after approval.
+	// ----- public password recovery & set-password endpoints -----
+	r.Post("/api/auth/forgot-password", s.forgotPassword)
 	r.Get("/api/set-password/verify", s.setPasswordVerify)
 	r.Post("/api/set-password", s.setPassword)
+	r.Get("/api/reset-password/verify", s.setPasswordVerify)
+	r.Post("/api/reset-password", s.setPassword)
 
 	// ----- public Razorpay webhook -----
 	// Razorpay POSTs payment events here directly (server-to-server, no

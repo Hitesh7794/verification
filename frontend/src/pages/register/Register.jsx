@@ -21,6 +21,7 @@ import {
 } from '../../components/ui/motion.jsx'
 import { PortalHeader } from '../../components/ui/brand.jsx'
 import {
+  checkRegistrationIdentifiers,
   registerInit,
   uploadDoc,
   deleteDoc,
@@ -158,7 +159,7 @@ const DESIGNATIONS = [...ACADEMIC_DESIGNATIONS, ...RECRUITER_DESIGNATIONS]
 
 const REQUIRED_DOCS_ACADEMIC = [
   { kind: 'recognition_letter',   label: 'Recognition letter',  hint: 'From UGC / AICTE / state education board', required: true },
-  { kind: 'pan_card',             label: 'PAN card scan',       hint: 'Of the institution / parent trust',         required: true },
+  { kind: 'pan_card',             label: 'PAN / TAN card scan', hint: 'Of the institution / parent trust (PAN or TAN)', required: true },
   { kind: 'authorization_letter', label: 'Authorization letter', hint: 'On letterhead, signed by the head',         required: true },
   { kind: 'naac_certificate',     label: 'NAAC / NBA certificate', hint: 'Optional — strengthens your application', required: false },
 ]
@@ -198,15 +199,12 @@ const FIELD_RULES = {
     }
     return undefined
   },
-  pan: (v, form) => {
+  pan: (v) => {
     if (!v.trim()) return 'Required'
     const clean = v.trim().toUpperCase()
     const isPan = /^[A-Z]{5}[0-9]{4}[A-Z]$/.test(clean)
     const isTan = /^[A-Z]{4}[0-9]{5}[A-Z]$/.test(clean)
-    if (form?.institution_type === 'other') {
-      return (isPan || isTan) ? undefined : 'Format: PAN (ABCDE1234F) or TAN (ABCD12345E)'
-    }
-    return (isPan || isTan) ? undefined : 'Format: ABCDE1234F'
+    return (isPan || isTan) ? undefined : 'Format: PAN (ABCDE1234F) or TAN (ABCD12345E)'
   },
   year_established: (v) => {
     const year = Number(v)
@@ -314,6 +312,7 @@ export default function Register() {
   const [topError, setTopError] = useState('')
   const [emailOtpToken, setEmailOtpToken] = useState('')
   const [mobileOtpToken, setMobileOtpToken] = useState('')
+  const [checkingStep0, setCheckingStep0] = useState(false)
 
   // Restore draft on mount.
   useEffect(() => {
@@ -363,15 +362,35 @@ export default function Register() {
   // Blur handler. Stays silent on a field the user tabbed straight
   // through without typing — flagging "Required" on something they
   // haven't reached yet reads as nagging. Continue still catches those.
-  function validateOnBlur(field) {
+  async function validateOnBlur(field) {
     const raw = form[field]
     if (raw === undefined || String(raw).trim() === '') return
     const msg = FIELD_RULES[field]?.(String(raw), form)
+    if (msg) {
+      setErrors((e) => ({ ...e, [field]: msg }))
+      return
+    }
     setErrors((e) => {
-      if (msg === e[field]) return e
+      if (!e[field]) return e
       const { [field]: _drop, ...rest } = e
-      return msg ? { ...rest, [field]: msg } : rest
+      return rest
     })
+
+    // Instant async pre-check for AISHE code or PAN/TAN uniqueness
+    if (field === 'aishe_code' || field === 'pan') {
+      try {
+        const payload = field === 'aishe_code'
+          ? { aishe_code: String(raw).trim() }
+          : { pan: String(raw).trim().toUpperCase() }
+        const res = await checkRegistrationIdentifiers(payload)
+        if (field === 'aishe_code' && res?.aishe_code && !res.aishe_code.available) {
+          setErrors((e) => ({ ...e, aishe_code: res.aishe_code.reason }))
+        }
+        if (field === 'pan' && res?.pan && !res.pan.available) {
+          setErrors((e) => ({ ...e, pan: res.pan.reason }))
+        }
+      } catch {}
+    }
   }
 
   // Whole-step sweep on Continue — this one DOES flag empty required
@@ -384,6 +403,35 @@ export default function Register() {
     }
     setErrors(e)
     return Object.keys(e).length === 0
+  }
+
+  async function goToStep1() {
+    if (!validateStep(S_INSTITUTION)) return
+    setCheckingStep0(true)
+    setTopError('')
+    try {
+      const res = await checkRegistrationIdentifiers({
+        aishe_code: form.aishe_code.trim(),
+        pan: form.pan.trim().toUpperCase(),
+      })
+      const errs = {}
+      if (res?.aishe_code && !res.aishe_code.available) {
+        errs.aishe_code = res.aishe_code.reason
+      }
+      if (res?.pan && !res.pan.available) {
+        errs.pan = res.pan.reason
+      }
+      if (Object.keys(errs).length > 0) {
+        setErrors((prev) => ({ ...prev, ...errs }))
+        setTopError('This institution or identifier is already registered or under review.')
+        return
+      }
+      setStep(S_ADDRESS)
+    } catch {
+      setStep(S_ADDRESS)
+    } finally {
+      setCheckingStep0(false)
+    }
   }
 
   async function initApplicationDraft() {
@@ -699,9 +747,8 @@ export default function Register() {
                       errors={errors}
                       update={update}
                       onBlurField={validateOnBlur}
-                      onNext={() => {
-                        if (validateStep(S_INSTITUTION)) setStep(S_ADDRESS)
-                      }}
+                      onNext={goToStep1}
+                      checking={checkingStep0}
                     />
                   )}
                   {step === S_ADDRESS && (
@@ -833,7 +880,7 @@ function StepSidebar({ step }) {
 
 // ─── Step 0 ────────────────────────────────────────────────────────────
 
-function Step0({ form, errors, update, onBlurField, onNext }) {
+function Step0({ form, errors, update, onBlurField, onNext, checking = false }) {
   const isRecruiter = form.institution_type === 'other'
 
   return (
@@ -932,7 +979,7 @@ function Step0({ form, errors, update, onBlurField, onNext }) {
           </Field>
           <Field
             className="sm:col-span-2"
-            label={isRecruiter ? 'Organization PAN / TAN' : 'PAN'}
+            label={isRecruiter ? 'Organization PAN / TAN' : 'PAN / TAN'}
             required
             error={errors.pan}
           >
@@ -941,7 +988,7 @@ function Step0({ form, errors, update, onBlurField, onNext }) {
               value={form.pan}
               onChange={(e) => update('pan', e.target.value.toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 10))}
               onBlur={() => onBlurField('pan')}
-              placeholder={isRecruiter ? 'PAN/TAN (e.g. ABCD12345E)' : 'ABCDE1234F'}
+              placeholder={isRecruiter ? 'PAN/TAN (e.g. ABCD12345E)' : 'e.g. ABCDE1234F / ABCD12345E'}
               maxLength={10}
             />
           </Field>
@@ -1005,9 +1052,9 @@ function Step0({ form, errors, update, onBlurField, onNext }) {
         <span className="text-xs text-stone-500">
           Required fields marked with <span className="text-rose-600 font-semibold">*</span>
         </span>
-        <Button onClick={onNext} size="lg">
-          Continue
-          <Icon.ChevronRight className="ml-1.5 h-4 w-4" />
+        <Button onClick={onNext} disabled={checking} size="lg">
+          {checking ? 'Checking availability…' : 'Continue'}
+          {!checking && <Icon.ChevronRight className="ml-1.5 h-4 w-4" />}
         </Button>
       </FooterBar>
     </AestheticCard>
@@ -1117,7 +1164,7 @@ function ReviewStep({ form, uploaded, onEdit, onBack, onSubmit, submitting }) {
             [isRecruiter ? 'Organization name' : 'Name', form.institution_name],
             ['Type', typeLabel],
             [isRecruiter ? 'Govt / CIN Ref' : 'AISHE code', form.aishe_code],
-            [isRecruiter ? 'Organization PAN / TAN' : 'PAN', form.pan?.toUpperCase()],
+            [isRecruiter ? 'Organization PAN / TAN' : 'PAN / TAN', form.pan?.toUpperCase()],
             ['Year established', form.year_established],
             [isRecruiter ? 'Sector / Category' : 'Affiliation', affiliation],
             !isRecruiter ? ['Approx. students', form.approx_student_count] : null,

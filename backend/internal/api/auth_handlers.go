@@ -3,12 +3,16 @@ package api
 import (
 	"database/sql"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/veni/neet-verification/internal/auth"
+	"github.com/veni/neet-verification/internal/email"
+	"github.com/veni/neet-verification/internal/magiclink"
 )
 
 type loginReq struct {
@@ -339,4 +343,112 @@ func (s *Server) authRefresh(w http.ResponseWriter, r *http.Request) {
 			"client_id":    claims.ClientID,
 		},
 	})
+}
+
+type forgotPasswordReq struct {
+	Email string `json:"email"`
+	Role  string `json:"role,omitempty"`
+}
+
+// POST /api/auth/forgot-password
+// Generates a one-time password reset link for the user and emails it.
+func (s *Server) forgotPassword(w http.ResponseWriter, r *http.Request) {
+	ip := clientIP(r)
+	if shouldRateLimit(ip) && !globalRegisterLimiter.allow(ip) {
+		writeErr(w, http.StatusTooManyRequests, "too many attempts; try again later")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	var req forgotPasswordReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	input := strings.TrimSpace(req.Email)
+	if input == "" {
+		writeErr(w, http.StatusBadRequest, "email or username required")
+		return
+	}
+
+	inputLower := strings.ToLower(input)
+	roleFilter := strings.TrimSpace(req.Role)
+
+	var (
+		userID      int64
+		username    string
+		displayName string
+		emailAddr   sql.NullString
+		userRole    string
+		disabledAt  sql.NullTime
+	)
+
+	query := `SELECT id, username, display_name, email, role, disabled_at
+	            FROM users
+	           WHERE (LOWER(email) = $1 OR LOWER(username) = $1)`
+	args := []any{inputLower}
+
+	if roleFilter != "" {
+		query += ` AND role = $2`
+		args = append(args, roleFilter)
+	} else {
+		query += ` AND role IN ('admin', 'client_reviewer', 'client', 'superadmin', 'ops_admin')`
+	}
+	query += ` LIMIT 1`
+
+	err := s.deps.DB.QueryRowContext(r.Context(), query, args...).Scan(
+		&userID, &username, &displayName, &emailAddr, &userRole, &disabledAt,
+	)
+
+	// If user exists, is not disabled, and has a registered email -> send reset token
+	if err == nil && !disabledAt.Valid && emailAddr.Valid && strings.TrimSpace(emailAddr.String) != "" {
+		token, genErr := s.magicLinks.Generate(r.Context(), userID, magiclink.PurposeResetPassword, 2*time.Hour)
+		if genErr == nil && s.emailer != nil {
+			resetURL := s.buildResetPasswordURL(r, token)
+			subject := "Reset your Verification Portal password"
+			body := fmt.Sprintf("Hello %s,\n\nWe received a request to reset the password for your account (%s).\n\nClick the link below to set a new password:\n%s\n\nThis link is valid for 2 hours. If you did not request a password reset, you can safely ignore this email.\n\n— Verification Portal Team",
+				displayName, username, resetURL)
+
+			_ = s.emailer.Send(r.Context(), email.Message{
+				To:      emailAddr.String,
+				Subject: subject,
+				Body:    body,
+			})
+
+			s.auditAnonymous(r, "auth.forgot_password_requested", map[string]any{
+				"user_id": userID,
+				"role":    userRole,
+				"email":   emailAddr.String,
+			})
+		}
+	}
+
+	// Always return generic safe message to prevent email enumeration
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":      true,
+		"message": "If an account matching this email or username exists, a password reset link has been sent to the registered email address.",
+	})
+}
+
+// buildResetPasswordURL composes the URL the recipient clicks to reset their password.
+func (s *Server) buildResetPasswordURL(r *http.Request, token string) string {
+	path := "/reset-password?token=" + token
+	if base := s.deps.Cfg.PublicBaseURL; base != "" {
+		return strings.TrimRight(base, "/") + path
+	}
+	if fwdHost := r.Header.Get("X-Forwarded-Host"); fwdHost != "" {
+		scheme := r.Header.Get("X-Forwarded-Proto")
+		if scheme == "" {
+			scheme = "https"
+		}
+		return scheme + "://" + fwdHost + path
+	}
+	origin := r.Header.Get("Origin")
+	if origin == "" {
+		scheme := "http"
+		if r.TLS != nil {
+			scheme = "https"
+		}
+		return scheme + "://" + r.Host + path
+	}
+	return strings.TrimRight(origin, "/") + path
 }

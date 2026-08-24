@@ -315,6 +315,155 @@ type registerInitResp struct {
 	MaxFileBytes  int      `json:"max_file_bytes"`
 }
 
+// ----- POST /api/register/check -----
+
+type checkIdentifiersReq struct {
+	AisheCode string `json:"aishe_code"`
+	PAN       string `json:"pan"`
+	Email     string `json:"email"`
+	Mobile    string `json:"mobile"`
+}
+
+type checkFieldResult struct {
+	Available bool   `json:"available"`
+	Reason    string `json:"reason,omitempty"`
+}
+
+type checkIdentifiersResp struct {
+	AisheCode *checkFieldResult `json:"aishe_code,omitempty"`
+	PAN       *checkFieldResult `json:"pan,omitempty"`
+	Email     *checkFieldResult `json:"email,omitempty"`
+	Mobile    *checkFieldResult `json:"mobile,omitempty"`
+}
+
+func (s *Server) registerCheckIdentifiers(w http.ResponseWriter, r *http.Request) {
+	var req checkIdentifiersReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+
+	resp := checkIdentifiersResp{}
+
+	if aishe := strings.TrimSpace(req.AisheCode); aishe != "" {
+		var status string
+		err := s.deps.DB.QueryRowContext(r.Context(),
+			`SELECT status FROM institution_applications WHERE LOWER(TRIM(aishe_code)) = LOWER(TRIM($1)) AND status IN ('approved', 'pending') LIMIT 1`,
+			aishe,
+		).Scan(&status)
+		if err == nil {
+			if status == "approved" {
+				resp.AisheCode = &checkFieldResult{
+					Available: false,
+					Reason:    "This AISHE / Ref code is already registered to an active institution.",
+				}
+			} else {
+				resp.AisheCode = &checkFieldResult{
+					Available: false,
+					Reason:    "An application with this AISHE / Ref code is already under review.",
+				}
+			}
+		} else {
+			resp.AisheCode = &checkFieldResult{Available: true}
+		}
+	}
+
+	if pan := strings.ToUpper(strings.TrimSpace(req.PAN)); pan != "" {
+		var status string
+		err := s.deps.DB.QueryRowContext(r.Context(),
+			`SELECT status FROM institution_applications WHERE UPPER(TRIM(pan)) = UPPER(TRIM($1)) AND status IN ('approved', 'pending') LIMIT 1`,
+			pan,
+		).Scan(&status)
+		if err == nil {
+			if status == "approved" {
+				resp.PAN = &checkFieldResult{
+					Available: false,
+					Reason:    "This PAN / TAN is already registered to an active institution.",
+				}
+			} else {
+				resp.PAN = &checkFieldResult{
+					Available: false,
+					Reason:    "An application with this PAN / TAN is already under review.",
+				}
+			}
+		} else {
+			resp.PAN = &checkFieldResult{Available: true}
+		}
+	}
+
+	if email := strings.ToLower(strings.TrimSpace(req.Email)); email != "" {
+		var status string
+		// 1. Check existing active users
+		var userID int64
+		err := s.deps.DB.QueryRowContext(r.Context(),
+			`SELECT id FROM users WHERE LOWER(TRIM(email)) = $1 AND disabled_at IS NULL LIMIT 1`,
+			email,
+		).Scan(&userID)
+		if err == nil {
+			resp.Email = &checkFieldResult{
+				Available: false,
+				Reason:    "This email is already registered to an active institution administrator.",
+			}
+		} else {
+			// 2. Check institution applications
+			err = s.deps.DB.QueryRowContext(r.Context(),
+				`SELECT status FROM institution_applications WHERE LOWER(TRIM(head_email)) = $1 AND status IN ('approved', 'pending') LIMIT 1`,
+				email,
+			).Scan(&status)
+			if err == nil {
+				if status == "approved" {
+					resp.Email = &checkFieldResult{
+						Available: false,
+						Reason:    "This email is already registered to an active institution.",
+					}
+				} else {
+					resp.Email = &checkFieldResult{
+						Available: false,
+						Reason:    "An application with this email is already under review.",
+					}
+				}
+			} else {
+				resp.Email = &checkFieldResult{Available: true}
+			}
+		}
+	}
+
+	if mobile := strings.TrimSpace(req.Mobile); mobile != "" {
+		if strings.HasPrefix(mobile, "+91") {
+			mobile = strings.TrimPrefix(mobile, "+91")
+		} else if strings.HasPrefix(mobile, "91") && len(mobile) == 12 {
+			mobile = mobile[2:]
+		}
+		mobile = strings.TrimSpace(mobile)
+
+		var status string
+		err := s.deps.DB.QueryRowContext(r.Context(),
+			`SELECT status FROM institution_applications 
+			 WHERE (head_mobile = $1 OR head_mobile = '+91' || $1 OR head_mobile = '91' || $1) 
+			   AND status IN ('approved', 'pending') 
+			 LIMIT 1`,
+			mobile,
+		).Scan(&status)
+		if err == nil {
+			if status == "approved" {
+				resp.Mobile = &checkFieldResult{
+					Available: false,
+					Reason:    "This mobile number is already registered to an active institution admin.",
+				}
+			} else {
+				resp.Mobile = &checkFieldResult{
+					Available: false,
+					Reason:    "An application with this mobile number is already under review.",
+				}
+			}
+		} else {
+			resp.Mobile = &checkFieldResult{Available: true}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
 // ----- POST /api/register/init -----
 
 func (s *Server) registerInit(w http.ResponseWriter, r *http.Request) {

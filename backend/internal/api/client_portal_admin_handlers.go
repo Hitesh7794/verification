@@ -165,6 +165,17 @@ func (s *Server) superadminCreateReviewer(w http.ResponseWriter, r *http.Request
 		return
 	}
 
+	// Enforce 1 client = 1 reviewer rule before attempting insert
+	var existingCount int
+	err = s.deps.DB.QueryRowContext(r.Context(),
+		`SELECT COUNT(*) FROM users WHERE role = 'client_reviewer' AND client_id = $1 AND disabled_at IS NULL`,
+		clientID,
+	).Scan(&existingCount)
+	if err == nil && existingCount > 0 {
+		writeErr(w, http.StatusConflict, "this client already has an assigned reviewer; each exam board is restricted to exactly one reviewer account")
+		return
+	}
+
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "bcrypt")
@@ -181,6 +192,10 @@ func (s *Server) superadminCreateReviewer(w http.ResponseWriter, r *http.Request
 		req.Username, string(hash), clientID, req.DisplayName, nullable(req.Email),
 	).Scan(&userID)
 	if err != nil {
+		if strings.Contains(err.Error(), "ux_users_client_reviewer_single") || strings.Contains(err.Error(), "client_reviewer") {
+			writeErr(w, http.StatusConflict, "this client already has an active reviewer account; only one reviewer is permitted per client")
+			return
+		}
 		if strings.Contains(err.Error(), "duplicate") || strings.Contains(err.Error(), "unique") {
 			writeErr(w, http.StatusConflict, "username already taken")
 			return

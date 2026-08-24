@@ -450,13 +450,20 @@ function ReviewPortalPanel({ client, onChanged }) {
             <div>
               <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Reviewer accounts</p>
               <p className="text-xs text-slate-500 mt-0.5">
-                {loading ? 'Loading…' : `${reviewers.length} account${reviewers.length === 1 ? '' : 's'}`}
+                {loading ? 'Loading…' : `${reviewers.length} / 1 account assigned`}
               </p>
             </div>
-            <Button size="sm" onClick={() => setShowAdd((v) => !v)}>
-              <Icon.Plus className="h-3.5 w-3.5 mr-1" />
-              {showAdd ? 'Cancel' : 'Add reviewer'}
-            </Button>
+            {reviewers.length === 0 ? (
+              <Button size="sm" onClick={() => setShowAdd((v) => !v)}>
+                <Icon.Plus className="h-3.5 w-3.5 mr-1" />
+                {showAdd ? 'Cancel' : 'Add reviewer'}
+              </Button>
+            ) : (
+              <span className="text-xs font-semibold text-emerald-700 bg-emerald-50 border border-emerald-200 px-2.5 py-1 rounded-md inline-flex items-center gap-1.5">
+                <span className="h-1.5 w-1.5 rounded-full bg-emerald-600" />
+                1 / 1 Reviewer Configured
+              </span>
+            )}
           </div>
 
           {freshCred && (

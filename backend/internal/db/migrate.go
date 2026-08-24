@@ -93,7 +93,42 @@ func Migrate(d *sql.DB) error {
 		}
 	}
 
+	if !applied[10] {
+		if err := applyV10SingleClientReviewerConstraint(ctx, d); err != nil {
+			return fmt.Errorf("apply v10 single_client_reviewer: %w", err)
+		}
+	}
+
 	return nil
+}
+
+// applyV10SingleClientReviewerConstraint enforces that each client can have at most
+// one active reviewer account (role='client_reviewer').
+func applyV10SingleClientReviewerConstraint(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmts := []string{
+		`CREATE UNIQUE INDEX IF NOT EXISTS ux_users_client_reviewer_single
+		    ON users(client_id)
+		    WHERE role = 'client_reviewer' AND disabled_at IS NULL`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.ExecContext(ctx, s); err != nil {
+			return fmt.Errorf("exec %q: %w", firstLine(s), err)
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)`,
+		10, "single_client_reviewer",
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // applyV9ExamSubscriptionApprovals adds approval lifecycle fields to

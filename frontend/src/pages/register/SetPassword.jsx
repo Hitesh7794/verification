@@ -32,7 +32,12 @@ export default function SetPassword() {
       .then((res) => {
         if (!alive) return
         if (res?.valid) {
-          setIdentity({ username: res.username, displayName: res.display_name })
+          setIdentity({
+            username: res.username,
+            displayName: res.display_name,
+            role: res.role,
+            purpose: res.purpose,
+          })
           setPhase('ready')
         } else {
           setPhase('invalid')
@@ -53,14 +58,20 @@ export default function SetPassword() {
     }
     setPhase('submitting')
     try {
-      await setPassword(token, password)
+      const res = await setPassword(token, password)
       setPhase('done')
-      setTimeout(() => nav('/admin/login?just_activated=1'), 2000)
+      const targetRole = res?.role || identity?.role
+      const targetPath = targetRole === 'client_reviewer'
+        ? '/reviewer/login?password_reset=1'
+        : '/admin/login?password_reset=1'
+      setTimeout(() => nav(targetPath), 1800)
     } catch (e) {
       setErr(e.message || 'Failed to set password')
       setPhase('ready')
     }
   }
+
+  const isReset = identity?.purpose === 'reset_password'
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-slate-50 to-slate-100 flex items-center justify-center px-4 py-10">
@@ -70,7 +81,9 @@ export default function SetPassword() {
           <span className="h-10 w-10 rounded-xl bg-gradient-to-br from-indigo-600 to-violet-600 text-white flex items-center justify-center shadow-sm">
             <Icon.ShieldCheck className="h-5 w-5" />
           </span>
-          <span className="text-sm font-medium">Set Account Password</span>
+          <span className="text-sm font-medium">
+            {isReset ? 'Reset Your Password' : 'Set Account Password'}
+          </span>
         </div>
 
         <EnhancedCard accent="indigo">
@@ -78,7 +91,7 @@ export default function SetPassword() {
             {phase === 'checking' && (
               <div className="text-center py-8">
                 <div className="inline-block h-6 w-6 rounded-full border-2 border-slate-200 border-t-indigo-600 animate-spin" />
-                <p className="mt-3 text-sm text-slate-500">Verifying activation link…</p>
+                <p className="mt-3 text-sm text-slate-500">Verifying link security token…</p>
               </div>
             )}
 
@@ -91,8 +104,8 @@ export default function SetPassword() {
                   Link no longer valid
                 </h2>
                 <p className="text-center text-sm text-slate-600 max-w-sm mx-auto">
-                  Activation links expire after 7 days and can only be used once.
-                  Contact your portal administrator to request a fresh one.
+                  Password reset links are time-limited for security and can only be used once.
+                  Please request a fresh reset link from your portal sign-in page.
                 </p>
                 <div className="mt-6 text-center">
                   <Link to="/" className="text-sm font-medium text-indigo-600 hover:underline">
@@ -106,13 +119,15 @@ export default function SetPassword() {
               <form onSubmit={submit} className="space-y-5">
                 <div>
                   <h1 className="text-xl font-semibold text-slate-900">
-                    Welcome, {firstName(identity.displayName)}
+                    {isReset ? 'Create New Password' : `Welcome, ${firstName(identity.displayName)}`}
                   </h1>
                   <p className="mt-1 text-sm text-slate-600">
-                    Choose a strong password for your admin account.
+                    {isReset
+                      ? `Choose a new secure password for your account.`
+                      : 'Choose a strong password for your admin account.'}
                   </p>
                   <div className="mt-3 inline-flex items-center gap-1.5 rounded-md bg-slate-100 px-2 py-1 text-xs text-slate-700">
-                    Username: <code className="font-mono text-slate-900">{identity.username}</code>
+                    Account username: <code className="font-mono text-slate-900 font-semibold">{identity.username}</code>
                   </div>
                 </div>
 
@@ -141,7 +156,7 @@ export default function SetPassword() {
                 </div>
 
                 <div>
-                  <Label>Confirm password</Label>
+                  <Label>Confirm new password</Label>
                   <Input
                     type={showPw ? 'text' : 'password'}
                     value={confirm}
@@ -163,7 +178,7 @@ export default function SetPassword() {
                   className="w-full"
                   size="lg"
                 >
-                  {phase === 'submitting' ? 'Setting…' : 'Set password & sign in'}
+                  {phase === 'submitting' ? 'Updating…' : (isReset ? 'Reset password & sign in' : 'Set password & sign in')}
                 </Button>
 
                 <p className="text-center text-xs text-slate-500">
@@ -177,8 +192,8 @@ export default function SetPassword() {
                 <div className="mx-auto h-14 w-14 rounded-full bg-gradient-to-br from-emerald-400 to-teal-600 text-white flex items-center justify-center shadow-lg">
                   <Icon.Check className="h-7 w-7" />
                 </div>
-                <h2 className="mt-4 text-lg font-semibold text-slate-900">Password set</h2>
-                <p className="mt-1 text-sm text-slate-500">Redirecting to admin login…</p>
+                <h2 className="mt-4 text-lg font-semibold text-slate-900">Password updated!</h2>
+                <p className="mt-1 text-sm text-slate-500">Redirecting to sign in screen…</p>
               </div>
             )}
           </div>
