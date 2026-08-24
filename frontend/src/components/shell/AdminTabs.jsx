@@ -18,14 +18,16 @@ import AvatarMenu from './AvatarMenu.jsx'
 // state is a cream wash. Amber accent on the "ADMIN" wordmark keeps
 // the two-tone story with the ink-black primary actions.
 
+// Exam-catalog + my-exams tabs removed 2026-08-24 — exam access is now
+// minted at KYC-approval time (V15 flow) rather than admin-picked from
+// a catalog. The org's per-exam subscriptions still drive agent
+// assignment; they're just no longer visible or editable from here.
 const tabs = [
-  { to: '/admin',           label: 'Overview',     end: true  },
-  { to: '/admin/catalog',   label: 'Exam catalog', end: false },
-  { to: '/admin/my-exams',  label: 'My exams',     end: false },
-  { to: '/admin/operators', label: 'Agents',         end: false },
-  { to: '/admin/history',   label: 'History',      end: false },
-  { to: '/admin/products',  label: 'Products',     end: false },
-  { to: '/admin/downloads', label: 'Downloads',    end: false },
+  { to: '/admin',           label: 'Overview',   end: true  },
+  { to: '/admin/operators', label: 'Agents',     end: false },
+  { to: '/admin/history',   label: 'History',    end: false },
+  { to: '/admin/products',  label: 'Products',   end: false },
+  { to: '/admin/downloads', label: 'Downloads',  end: false },
 ]
 
 export default function AdminTabs({ walletRefreshKey, onWalletBalanceChange }) {

@@ -97,9 +97,11 @@ func (s *Server) approveApplication(
 	//
 	// The scope predicate is folded into the same UPDATE so a reviewer
 	// out-of-scope can't even race a superadmin — the row simply
-	// doesn't match their WHERE clause.
+	// doesn't match their WHERE clause. pending_reviewer is nulled out
+	// on approve since the row is now terminal.
 	q := `UPDATE institution_applications
 	         SET status = 'approved',
+	             pending_reviewer = NULL,
 	             reviewed_by_user_id = $1,
 	             reviewed_at = CURRENT_TIMESTAMP,
 	             review_note = $2,
@@ -147,11 +149,12 @@ func (s *Server) approveApplication(
 	var (
 		instName, headName, headEmail, headDesignation string
 		aishe                                          sql.NullString
+		appClientID                                    sql.NullInt64
 	)
 	err = tx.QueryRowContext(ctx,
-		`SELECT institution_name, head_name, head_email, head_designation, aishe_code
+		`SELECT institution_name, head_name, head_email, head_designation, aishe_code, client_id
 		   FROM institution_applications WHERE id = $1`, appID,
-	).Scan(&instName, &headName, &headEmail, &headDesignation, &aishe)
+	).Scan(&instName, &headName, &headEmail, &headDesignation, &aishe, &appClientID)
 	if err != nil {
 		return nil, fmt.Errorf("db read: %w", err)
 	}
@@ -209,6 +212,37 @@ func (s *Server) approveApplication(
 	// The OperatorUsername / OperatorPassword fields on the response
 	// struct stay for wire-shape compatibility (existing FE reads them,
 	// now gets empty strings and hides its CredBlocks).
+
+	// V15 exam fan-out: if the application was routed through a
+	// specific client (kyc_review_mode routing put a client_id on this
+	// row), auto-grant the newly-created org access to every visible +
+	// open exam under that client. This is the replacement for the old
+	// admin-driven exam-subscribe flow — the admin no longer has a UI
+	// to subscribe, so subscription is minted here at approval time.
+	// Existing pre-V15 approvals had client_id=NULL and hit no rows;
+	// this only fires for post-V15 rows.
+	if appClientID.Valid {
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO organization_exam_subscriptions(
+			    org_id, exam_id, status, approval_type,
+			    subscribed_by, requested_at,
+			    reviewed_at, reviewed_by, review_note)
+			SELECT $1, e.id, 'approved', 'blanket_client',
+			       $2, NOW(),
+			       NOW(), $2, 'Auto-granted on KYC approval (V15)'
+			  FROM exams e
+			 WHERE e.client_id = $3 AND e.visible = 1 AND e.closed = 0
+			ON CONFLICT (org_id, exam_id) DO UPDATE SET
+			    status = 'approved',
+			    approval_type = EXCLUDED.approval_type,
+			    reviewed_at = EXCLUDED.reviewed_at,
+			    reviewed_by = EXCLUDED.reviewed_by,
+			    review_note = EXCLUDED.review_note`,
+			orgID, reviewerUserID, appClientID.Int64,
+		); err != nil {
+			return nil, fmt.Errorf("exam fan-out: %w", err)
+		}
+	}
 
 	if err := tx.Commit(); err != nil {
 		return nil, fmt.Errorf("db commit: %w", err)
@@ -295,6 +329,7 @@ func (s *Server) rejectApplication(
 	if _, err := s.deps.DB.ExecContext(ctx,
 		`UPDATE institution_applications
 		    SET status = 'rejected',
+		        pending_reviewer = NULL,
 		        reviewed_by_user_id = $1,
 		        reviewed_at = CURRENT_TIMESTAMP,
 		        review_note = $2,
@@ -336,6 +371,82 @@ func mapReviewErrorToHTTP(err error) (int, string) {
 			"this board's review portal is currently disabled — contact the platform team"
 	}
 	return http.StatusInternalServerError, err.Error()
+}
+
+// applicationReviewMode returns (mode, client_id) for the given app.
+// mode is the destination client's kyc_review_mode ('admin'|'client'|'both')
+// or "admin" if the app has no client_id. client_id is nil if unset.
+// Errors: sql.ErrNoRows if the application doesn't exist.
+func (s *Server) applicationReviewMode(ctx context.Context, appID int64) (string, *int64, error) {
+	var clientID sql.NullInt64
+	if err := s.deps.DB.QueryRowContext(ctx,
+		`SELECT client_id FROM institution_applications WHERE id = $1`, appID,
+	).Scan(&clientID); err != nil {
+		return "", nil, err
+	}
+	if !clientID.Valid {
+		return "admin", nil, nil
+	}
+	var mode string
+	if err := s.deps.DB.QueryRowContext(ctx,
+		`SELECT kyc_review_mode FROM clients WHERE id = $1`, clientID.Int64,
+	).Scan(&mode); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			// Orphaned client_id — treat like unattached.
+			return "admin", nil, nil
+		}
+		return "", nil, err
+	}
+	cid := clientID.Int64
+	return mode, &cid, nil
+}
+
+// advanceApplicationToClientQueue is the "both" mode intermediate
+// step: superadmin has said yes, hand it off to the client reviewer.
+// Only pre-condition is that the row is currently in the admin queue
+// (status='pending', pending_reviewer='admin'). The org and admin user
+// are NOT created here — that happens when the client reviewer also
+// approves (via approveApplication).
+//
+// note (if non-empty) is stored in review_note so the client reviewer
+// can see the superadmin's context. reviewed_by_user_id / reviewed_at
+// are left untouched so a later `client_reviewer` approve can stamp
+// them with the FINAL approver's identity.
+func (s *Server) advanceApplicationToClientQueue(ctx context.Context, appID, superadminUserID int64, note string) error {
+	res, err := s.deps.DB.ExecContext(ctx,
+		`UPDATE institution_applications
+		    SET pending_reviewer = 'client',
+		        review_note = COALESCE(NULLIF($1, ''), review_note),
+		        updated_at = CURRENT_TIMESTAMP
+		  WHERE id = $2
+		    AND status = 'pending'
+		    AND (pending_reviewer IS NULL OR pending_reviewer = 'admin')`,
+		note, appID,
+	)
+	if err != nil {
+		return fmt.Errorf("advance to client queue: %w", err)
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		// Either the row doesn't exist, isn't pending, or has already
+		// moved out of the admin queue.
+		var status, pendingReviewer sql.NullString
+		if err := s.deps.DB.QueryRowContext(ctx,
+			`SELECT status, pending_reviewer FROM institution_applications WHERE id = $1`,
+			appID,
+		).Scan(&status, &pendingReviewer); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				return errAppNotFound
+			}
+			return err
+		}
+		if status.Valid && status.String != "pending" {
+			return fmt.Errorf("%w (currently %s)", errAppNotPending, status.String)
+		}
+		return errAppNotFound
+	}
+	_ = superadminUserID // reserved for future audit column
+	return nil
 }
 
 // checkPortalEnabled returns errAppPortalDisabled if the given client's

@@ -10,9 +10,11 @@ import AdminDashboard from './pages/admin/Dashboard.jsx'
 import AdminHistory from './pages/admin/History.jsx'
 import AdminDownloads from './pages/admin/Downloads.jsx'
 import AdminProducts from './pages/admin/Products.jsx'
-import AdminCatalog from './pages/admin/Catalog.jsx'
-import AdminMyExams from './pages/admin/MyExams.jsx'
 import AdminOperators from './pages/admin/Operators.jsx'
+// Removed 2026-08-24: AdminCatalog + AdminMyExams. Exam access is now
+// minted automatically at KYC-approval time (V15 flow). Existing
+// subscriptions still resolve via the backend API for agent
+// assignment; admins just have no self-service page any more.
 
 import SuperLogin from './pages/superadmin/Login.jsx'
 import SuperDashboard from './pages/superadmin/Dashboard.jsx'
@@ -25,6 +27,7 @@ import SuperExamDetail from './pages/superadmin/ExamDetail.jsx'
 import ReviewerLogin from './pages/reviewer/Login.jsx'
 import ReviewerDashboard from './pages/reviewer/Dashboard.jsx'
 import ReviewerApplicationDetail from './pages/reviewer/ApplicationDetail.jsx'
+import ReviewerKycInbox from './pages/reviewer/KycInbox.jsx'
 
 import Register from './pages/register/Register.jsx'
 import SetPassword from './pages/register/SetPassword.jsx'
@@ -183,16 +186,11 @@ export default function App() {
             }
           />
 
-          {/* Phase-2 admin surface: self-service catalog + subscriptions
-              + per-operator management (cap, date window, exam list). */}
-          <Route
-            path="/admin/catalog"
-            element={<RequireRole role="admin"><AdminCatalog /></RequireRole>}
-          />
-          <Route
-            path="/admin/my-exams"
-            element={<RequireRole role="admin"><AdminMyExams /></RequireRole>}
-          />
+          {/* Admin's exam-catalog + my-exams pages removed 2026-08-24.
+              Under the V15 flow, org exam access is minted automatically
+              at KYC-approval time — the admin no longer chooses which
+              exams to subscribe to. Only the agents (operators)
+              management page remains. */}
           <Route
             path="/admin/operators"
             element={<RequireRole role="admin"><AdminOperators /></RequireRole>}
@@ -234,6 +232,14 @@ export default function App() {
             element={
               <RequireRole role="client_reviewer">
                 <ReviewerDashboard />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/reviewer/kyc"
+            element={
+              <RequireRole role="client_reviewer">
+                <ReviewerKycInbox />
               </RequireRole>
             }
           />

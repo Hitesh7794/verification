@@ -349,6 +349,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/superadmin/applications/{id}/docs/{doc_id}", s.requireRole("superadmin", "ops_admin")(s.superadminDownloadDoc))
 		r.Post("/api/superadmin/applications/{id}/approve", s.requireRole("superadmin", "ops_admin")(s.superadminApproveApplication))
 		r.Post("/api/superadmin/applications/{id}/reject", s.requireRole("superadmin", "ops_admin")(s.superadminRejectApplication))
+		r.Post("/api/superadmin/applications/{id}/route",  s.requireRole("superadmin", "ops_admin")(s.superadminRouteApplication))
 		r.Post("/api/superadmin/applications/{id}/resend-admin-link", s.requireRole("superadmin", "ops_admin")(s.superadminResendAdminLink))
 
 		// ── Client-reviewer portal (per-client KYC inbox)
