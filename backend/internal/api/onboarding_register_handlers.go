@@ -109,6 +109,7 @@ var (
 	// against bad API clients / direct curl calls.
 	reMobile = regexp.MustCompile(`^[6-9][0-9]{9}$`)
 	rePAN    = regexp.MustCompile(`^[A-Z]{5}[0-9]{4}[A-Z]$`)
+	reTAN    = regexp.MustCompile(`^[A-Z]{4}[0-9]{5}[A-Z]$`)
 	rePIN    = regexp.MustCompile(`^[0-9]{6}$`)
 )
 
@@ -657,8 +658,8 @@ func validateInit(r *registerInitReq) error {
 	if r.PAN == "" {
 		return errors.New("pan is required")
 	}
-	if !rePAN.MatchString(r.PAN) {
-		return errors.New("pan format is invalid (expected ABCDE1234F)")
+	if !rePAN.MatchString(r.PAN) && !reTAN.MatchString(r.PAN) {
+		return errors.New("pan/tan format is invalid (expected PAN: ABCDE1234F or TAN: ABCD12345E)")
 	}
 	if r.HeadName = strings.TrimSpace(r.HeadName); len(r.HeadName) < 2 || len(r.HeadName) > 120 {
 		return errors.New("head_name required (2-120 chars)")

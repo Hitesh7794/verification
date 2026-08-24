@@ -531,15 +531,15 @@ export default function ReviewerDashboard() {
                   <div className="overflow-x-auto">
                     <table className="w-full text-xs">
                       <thead className="bg-slate-100/80 text-slate-600 uppercase tracking-wider font-semibold border-b border-slate-200">
-                        <tr className="text-left">
-                          <th className="px-5 py-3.5 w-32">Exam Code</th>
-                          <th className="px-5 py-3.5 min-w-[240px]">Exam Name</th>
-                          <th className="px-5 py-3.5">Verification Window</th>
+                        <tr>
+                          <th className="px-5 py-3.5 w-32 text-center">Exam Code</th>
+                          <th className="px-5 py-3.5 min-w-[240px] text-left">Exam Name</th>
+                          <th className="px-5 py-3.5 text-center">Verification Window</th>
                           <th className="px-4 py-3.5 text-center">Candidates</th>
                           <th className="px-4 py-3.5 text-center">Pending</th>
                           <th className="px-4 py-3.5 text-center">Approved</th>
                           <th className="px-4 py-3.5 text-center">Rejected</th>
-                          <th className="px-5 py-3.5 text-right">Action</th>
+                          <th className="px-5 py-3.5 text-center">Action</th>
                         </tr>
                       </thead>
                       <tbody>
@@ -558,23 +558,23 @@ export default function ReviewerDashboard() {
                               className="border-b border-slate-100 last:border-none cursor-pointer hover:bg-sky-50/50 transition-colors group"
                             >
                               {/* Exam Code (Plain, clean font without background pill) */}
-                              <td className="px-5 py-4 align-middle">
+                              <td className="px-5 py-4 align-middle text-center">
                                 <span className="font-mono font-bold text-xs text-slate-900 tracking-tight">
                                   {exam.exam_code}
                                 </span>
                               </td>
 
                               {/* Exam Name */}
-                              <td className="px-5 py-4 align-middle">
+                              <td className="px-5 py-4 align-middle text-left">
                                 <div className="font-semibold text-slate-900 text-xs leading-snug truncate max-w-sm" title={exam.name}>
                                   {exam.name}
                                 </div>
                               </td>
 
                               {/* Verification Window (Start on line 1, End on line 2, No calendar icon) */}
-                              <td className="px-5 py-4 align-middle">
+                              <td className="px-5 py-4 align-middle text-center">
                                 {exam.verification_from ? (
-                                  <div className="flex flex-col gap-0.5 text-[11px] font-mono leading-tight whitespace-nowrap">
+                                  <div className="flex flex-col items-center gap-0.5 text-[11px] font-mono leading-tight whitespace-nowrap">
                                     <span className="font-semibold text-slate-800">
                                       {new Date(exam.verification_from).toLocaleDateString('en-IN', { day: '2-digit', month: 'short', year: 'numeric' })}
                                     </span>
@@ -626,7 +626,7 @@ export default function ReviewerDashboard() {
                               </td>
 
                               {/* Action Button */}
-                              <td className="px-5 py-4 align-middle text-right whitespace-nowrap">
+                              <td className="px-5 py-4 align-middle text-center whitespace-nowrap">
                                 <button
                                   type="button"
                                   onClick={(e) => {
@@ -634,7 +634,7 @@ export default function ReviewerDashboard() {
                                     setSelectedExamId(exam.id)
                                     setSelectedOrgIds(new Set())
                                   }}
-                                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-slate-300 text-slate-700 hover:bg-slate-900 hover:text-white hover:border-slate-900 transition-all shadow-2xs inline-flex items-center gap-1"
+                                  className="px-3 py-1.5 rounded-lg text-xs font-semibold bg-white border border-slate-300 text-slate-700 hover:bg-slate-900 hover:text-white hover:border-slate-900 transition-all shadow-2xs inline-flex items-center justify-center gap-1"
                                 >
                                   View Requests <Icon.ChevronRight className="h-3 w-3" />
                                 </button>
@@ -907,11 +907,10 @@ export default function ReviewerDashboard() {
                 {/* Workspace Header Subtitle */}
                 <div className="mt-3 pt-2.5 border-t border-slate-100 flex flex-wrap items-center justify-between gap-2 text-xs text-slate-500">
                   <div className="flex items-center gap-2">
-                    <span className="font-semibold text-slate-700">
-                      {currentExam ? `${currentExam.exam_code} — ${currentExam.name}` : 'All Published Exams Overview'}
-                    </span>
-                    {currentExam?.verification_from && (
-                      <span>• Active Window: {dateRange(currentExam.verification_from, currentExam.verification_to)}</span>
+                    {currentExam?.verification_from ? (
+                      <span>Active Verification Window: <strong className="text-slate-700 font-medium">{dateRange(currentExam.verification_from, currentExam.verification_to)}</strong></span>
+                    ) : (
+                      <span>Review and manage institution subscription requests</span>
                     )}
                   </div>
                   <div>
@@ -1043,7 +1042,7 @@ export default function ReviewerDashboard() {
                     <div className="overflow-x-auto">
                       <table className="w-full text-sm">
                         <thead className="bg-slate-50/90 sticky top-0 z-10 border-b border-slate-200">
-                          <tr className="text-left text-xs uppercase tracking-wider text-slate-500">
+                          <tr className="text-xs uppercase tracking-wider text-slate-500">
                             <th className="px-4 py-3.5 w-12 text-center">
                               <input
                                 type="checkbox"
@@ -1056,11 +1055,8 @@ export default function ReviewerDashboard() {
                                 title="Select all on this page"
                               />
                             </th>
-                            <th className="px-5 py-3.5 font-bold text-slate-700">University Details</th>
-                            {selectedExamId === 'all' && (
-                              <th className="px-5 py-3.5 font-bold text-slate-700">Requested Exams</th>
-                            )}
-                            <th className="px-5 py-3.5 text-right font-bold text-slate-700">Institutional Action</th>
+                            <th className="px-6 py-3.5 text-left font-bold text-slate-700">University Details</th>
+                            <th className="px-6 py-3.5 text-center font-bold text-slate-700 whitespace-nowrap w-[340px]">Institutional Action</th>
                           </tr>
                         </thead>
                         <tbody>
@@ -1068,6 +1064,7 @@ export default function ReviewerDashboard() {
                             const isSelected = selectedOrgIds.has(org.org_id)
                             const isBlanket = org.client_blanket_approved
                             const pendingExams = org.pending_exams || []
+                            const targetExam = (pendingExams && pendingExams[0]) || currentExam
 
                             return (
                               <motion.tr
@@ -1090,7 +1087,7 @@ export default function ReviewerDashboard() {
                                 </td>
 
                                 {/* University Details */}
-                                <td className="px-5 py-4 align-middle">
+                                <td className="px-6 py-4 align-middle text-left">
                                   <div
                                     onClick={() => setSelectedUniversityForDetails(org)}
                                     className="flex items-center gap-3 cursor-pointer group"
@@ -1120,121 +1117,50 @@ export default function ReviewerDashboard() {
                                   </div>
                                 </td>
 
-                                {/* Requested Exams (When in 'All Institutes' mode) */}
-                                {selectedExamId === 'all' && (
-                                  <td className="px-5 py-4 align-middle">
-                                    <div className="flex flex-wrap gap-1.5 max-w-xs">
-                                      {pendingExams.map((e) => (
-                                        <span
-                                          key={e.exam_id}
-                                          className="px-2 py-0.5 rounded-md bg-amber-50 border border-amber-200 text-amber-900 font-mono text-[11px] font-bold"
-                                          title={e.exam_name}
-                                        >
-                                          {e.exam_code}
-                                        </span>
-                                      ))}
-                                    </div>
-                                  </td>
-                                )}
+                                {/* Institutional Action: Centered Horizontal Buttons matching Header */}
+                                <td className="px-6 py-4 align-middle text-center whitespace-nowrap w-[340px]">
+                                  <div className="flex items-center justify-center gap-2">
+                                    {/* Approve Button */}
+                                    <button
+                                      type="button"
+                                      disabled={portalOff}
+                                      onClick={() => {
+                                        if (targetExam) openSingleExamApprove(org, targetExam)
+                                      }}
+                                      className="h-8 px-3.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs inline-flex items-center justify-center transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                      <span>Approve</span>
+                                    </button>
 
-                                {/* Institutional Action */}
-                                <td className="px-5 py-4 align-middle text-right whitespace-nowrap">
-                                  {selectedExamId !== 'all' ? (
-                                    /* Single Exam Workspace View: Clean Horizontal Buttons with matching height */
-                                    <div className="flex items-center justify-end gap-2">
-                                      {/* Approve Button */}
+                                    {/* Reject Button */}
+                                    <button
+                                      type="button"
+                                      disabled={portalOff}
+                                      onClick={() => {
+                                        if (targetExam) openSingleExamReject(org, targetExam)
+                                      }}
+                                      className="h-8 px-3.5 rounded-lg text-xs font-semibold bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 hover:border-rose-300 inline-flex items-center justify-center transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                    >
+                                      <span>Reject</span>
+                                    </button>
+
+                                    {/* Blanket Action Badge / Button */}
+                                    {isBlanket ? (
+                                      <span className="h-8 px-3.5 rounded-lg text-xs font-semibold bg-emerald-50 border border-emerald-200 text-emerald-800 inline-flex items-center justify-center">
+                                        <span>Blanket Approved</span>
+                                      </span>
+                                    ) : (
                                       <button
                                         type="button"
                                         disabled={portalOff}
-                                        onClick={() => {
-                                          const targetExam = (pendingExams && pendingExams[0]) || currentExam
-                                          if (targetExam) openSingleExamApprove(org, targetExam)
-                                        }}
-                                        className="h-8 px-3.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs inline-flex items-center justify-center transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                                        title={`Approve subscription for ${currentExam?.exam_code || 'this exam'}`}
-                                      >
-                                        <span>Approve</span>
-                                      </button>
-
-                                      {/* Reject Button */}
-                                      <button
-                                        type="button"
-                                        disabled={portalOff}
-                                        onClick={() => {
-                                          const targetExam = (pendingExams && pendingExams[0]) || currentExam
-                                          if (targetExam) openSingleExamReject(org, targetExam)
-                                        }}
-                                        className="h-8 px-3.5 rounded-lg text-xs font-semibold bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 hover:border-rose-300 inline-flex items-center justify-center transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                                        title={`Reject subscription for ${currentExam?.exam_code || 'this exam'}`}
-                                      >
-                                        <span>Reject</span>
-                                      </button>
-
-                                      {/* Blanket Action Badge / Button */}
-                                      {isBlanket ? (
-                                        <span className="h-8 px-3 rounded-lg text-xs font-semibold bg-emerald-50 border border-emerald-200 text-emerald-800 inline-flex items-center justify-center">
-                                          <span>Blanket Approved</span>
-                                        </span>
-                                      ) : (
-                                        <button
-                                          type="button"
-                                          disabled={portalOff}
-                                          onClick={() => openBlanketApprove(org)}
-                                          className="h-8 px-3.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs inline-flex items-center justify-center transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                                          title="Authorizes this university for ALL present and future exams under your board"
-                                        >
-                                          <span>Blanket Approve</span>
-                                        </button>
-                                      )}
-                                    </div>
-                                  ) : (
-                                    /* All Institutes Overview Mode */
-                                    <div className="flex flex-col items-end gap-2">
-                                      {/* Blanket Approve Button */}
-                                      <button
-                                        type="button"
-                                        disabled={portalOff || isBlanket}
                                         onClick={() => openBlanketApprove(org)}
-                                        className={`h-7 px-3 rounded-lg text-xs font-semibold inline-flex items-center justify-center transition-all ${
-                                          isBlanket
-                                            ? 'bg-emerald-50 text-emerald-800 border border-emerald-200 cursor-default'
-                                            : 'bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs'
-                                        }`}
+                                        className="h-8 px-3.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs inline-flex items-center justify-center transition-all disabled:opacity-50 disabled:cursor-not-allowed"
                                         title="Authorizes this university for ALL present and future exams under your board"
                                       >
-                                        <span>{isBlanket ? 'Blanket Approved' : 'Blanket Approve'}</span>
+                                        <span>Blanket Approve</span>
                                       </button>
-
-                                      {/* Per-Exam Action Buttons */}
-                                      <div className="space-y-1.5 w-full">
-                                        {pendingExams.map((e) => (
-                                          <div key={e.exam_id} className="flex items-center justify-end gap-2 pt-1 border-t border-slate-100 first:border-none first:pt-0">
-                                            <span className="text-xs font-mono font-bold text-slate-700 truncate max-w-[100px]" title={e.exam_code}>
-                                              {e.exam_code}
-                                            </span>
-                                            <button
-                                              type="button"
-                                              disabled={portalOff}
-                                              onClick={() => openSingleExamApprove(org, e)}
-                                              className="h-7 px-3 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs inline-flex items-center justify-center transition-all"
-                                              title={`Approve subscription for ${e.exam_code}`}
-                                            >
-                                              <span>Approve</span>
-                                            </button>
-                                            <button
-                                              type="button"
-                                              disabled={portalOff}
-                                              onClick={() => openSingleExamReject(org, e)}
-                                              className="h-7 px-3 rounded-lg text-xs font-semibold bg-rose-50 border border-rose-200 text-rose-700 hover:bg-rose-100 inline-flex items-center justify-center transition-all"
-                                              title={`Reject ${e.exam_code}`}
-                                            >
-                                              <span>Reject</span>
-                                            </button>
-                                          </div>
-                                        ))}
-                                      </div>
-                                    </div>
-                                  )}
+                                    )}
+                                  </div>
                                 </td>
                               </motion.tr>
                             )
@@ -1319,17 +1245,16 @@ export default function ReviewerDashboard() {
                       <div className="overflow-x-auto">
                         <table className="w-full text-sm">
                           <thead className="bg-slate-50/90 sticky top-0 z-10 border-b border-slate-200">
-                            <tr className="text-left text-xs uppercase tracking-wider text-slate-500">
-                              <th className="px-5 py-3.5 font-bold text-slate-700">Institution Details</th>
-                              <th className="px-5 py-3.5 font-bold text-slate-700">Location</th>
-                              <th className="px-5 py-3.5 font-bold text-slate-700">Head of Institution</th>
-                              <th className="px-5 py-3.5 font-bold text-slate-700">Approved Subscriptions</th>
-                              <th className="px-5 py-3.5 text-right font-bold text-slate-700">Action</th>
+                            <tr className="text-xs uppercase tracking-wider text-slate-500">
+                              <th className="px-5 py-3.5 text-left font-bold text-slate-700">Institution Details</th>
+                              <th className="px-5 py-3.5 text-left font-bold text-slate-700">Location</th>
+                              <th className="px-5 py-3.5 text-left font-bold text-slate-700">Head of Institution</th>
+                              <th className="px-5 py-3.5 text-center font-bold text-slate-700">Approved Subscriptions</th>
+                              <th className="px-5 py-3.5 text-center font-bold text-slate-700">Action</th>
                             </tr>
                           </thead>
                           <tbody>
                             {paginatedApprovedInstitutions.map((org) => {
-                              const isBlanket = org.client_blanket_approved
                               const approvedList = org.approved_exams || []
 
                               return (
@@ -1339,7 +1264,7 @@ export default function ReviewerDashboard() {
                                   className="border-b border-slate-100 last:border-none hover:bg-emerald-50/40 cursor-pointer transition-colors group"
                                 >
                                   {/* Institution Details */}
-                                  <td className="px-5 py-4 align-middle max-w-[280px]">
+                                  <td className="px-5 py-4 align-middle text-left max-w-[280px]">
                                     <div className="flex items-center gap-3">
                                       <span className="h-10 w-10 rounded-xl bg-emerald-50 border border-emerald-200 text-emerald-900 flex items-center justify-center font-bold text-sm shrink-0 shadow-2xs group-hover:scale-105 transition-transform">
                                         {(org.org_name || '?').slice(0, 1).toUpperCase()}
@@ -1361,7 +1286,7 @@ export default function ReviewerDashboard() {
                                   </td>
 
                                   {/* Location */}
-                                  <td className="px-5 py-4 align-middle text-xs text-slate-700">
+                                  <td className="px-5 py-4 align-middle text-left text-xs text-slate-700">
                                     <div className="flex items-center gap-1.5">
                                       <Icon.MapPin className="h-3.5 w-3.5 text-slate-400 shrink-0" />
                                       <span>{org.city ? `${org.city}, ${org.state}` : org.state || '—'}</span>
@@ -1369,7 +1294,7 @@ export default function ReviewerDashboard() {
                                   </td>
 
                                   {/* Head of Institution */}
-                                  <td className="px-5 py-4 align-middle text-xs text-slate-700">
+                                  <td className="px-5 py-4 align-middle text-left text-xs text-slate-700">
                                     <div className="font-semibold text-slate-900">{org.head_name || '—'}</div>
                                     {org.head_email && (
                                       <div className="font-mono text-[11px] text-slate-500 truncate max-w-xs">{org.head_email}</div>
@@ -1377,13 +1302,8 @@ export default function ReviewerDashboard() {
                                   </td>
 
                                   {/* Approved Subscriptions */}
-                                  <td className="px-5 py-4 align-middle">
-                                    <div className="flex items-center gap-1.5 flex-wrap">
-                                      {isBlanket && (
-                                        <span className="px-2 py-0.5 rounded-full text-[11px] font-bold bg-sky-100 text-sky-800 ring-1 ring-sky-300">
-                                          Blanket Authorized
-                                        </span>
-                                      )}
+                                  <td className="px-5 py-4 align-middle text-center">
+                                    <div className="flex items-center justify-center gap-1.5 flex-wrap">
                                       {approvedList.map((e) => (
                                         <span
                                           key={e.exam_id}
@@ -1397,7 +1317,7 @@ export default function ReviewerDashboard() {
                                   </td>
 
                                   {/* Action */}
-                                  <td className="px-5 py-4 align-middle text-right whitespace-nowrap">
+                                  <td className="px-5 py-4 align-middle text-center whitespace-nowrap">
                                     <Button
                                       size="xs"
                                       variant="secondary"
@@ -1405,7 +1325,7 @@ export default function ReviewerDashboard() {
                                         e.stopPropagation()
                                         setSelectedUniversityForDetails(org)
                                       }}
-                                      className="text-xs font-semibold hover:!bg-emerald-600 hover:!text-white hover:!border-emerald-600 transition-all shadow-2xs"
+                                      className="text-xs font-semibold hover:!bg-emerald-600 hover:!text-white hover:!border-emerald-600 transition-all shadow-2xs inline-flex items-center justify-center"
                                     >
                                       <Icon.Eye className="h-3.5 w-3.5 mr-1" />
                                       Inspect Details
@@ -1493,18 +1413,18 @@ export default function ReviewerDashboard() {
                       <div className="overflow-x-auto">
                         <table className="w-full text-sm">
                           <thead className="bg-slate-50/90 sticky top-0 z-10 border-b border-slate-200">
-                            <tr className="text-left text-xs uppercase tracking-wider text-slate-500">
-                              <th className="px-5 py-3.5 font-bold text-slate-700">University Details</th>
-                              <th className="px-5 py-3.5 font-bold text-slate-700">Rejected Exam</th>
-                              <th className="px-5 py-3.5 font-bold text-slate-700">Rejection Reason & Date</th>
-                              <th className="px-5 py-3.5 text-right font-bold text-slate-700">Action</th>
+                            <tr className="text-xs uppercase tracking-wider text-slate-500">
+                              <th className="px-5 py-3.5 text-left font-bold text-slate-700">University Details</th>
+                              <th className="px-5 py-3.5 text-left font-bold text-slate-700">Rejected Exam</th>
+                              <th className="px-5 py-3.5 text-left font-bold text-slate-700">Rejection Reason & Date</th>
+                              <th className="px-5 py-3.5 text-center font-bold text-slate-700">Action</th>
                             </tr>
                           </thead>
                           <tbody>
                             {filteredInstitutions.map((org) => (
                               <tr key={org.org_id} className="border-b border-slate-100 hover:bg-slate-50/50">
                                 {/* University Details */}
-                                <td className="px-5 py-4 align-top">
+                                <td className="px-5 py-4 align-top text-left">
                                   <div className="font-bold text-slate-900">{org.org_name}</div>
                                   <div className="text-xs text-slate-500 mt-0.5">
                                     {org.institution_type || 'University'} • {org.city ? `${org.city}, ${org.state}` : org.state}
@@ -1512,7 +1432,7 @@ export default function ReviewerDashboard() {
                                 </td>
 
                                 {/* Rejected Exam Info */}
-                                <td className="px-5 py-4 align-top">
+                                <td className="px-5 py-4 align-top text-left">
                                   <div className="space-y-1">
                                     {org.rejected_exams.map((e) => (
                                       <div key={e.exam_id} className="font-mono text-xs font-bold text-rose-900">
@@ -1523,7 +1443,7 @@ export default function ReviewerDashboard() {
                                 </td>
 
                                 {/* Rejection Reason */}
-                                <td className="px-5 py-4 align-top">
+                                <td className="px-5 py-4 align-top text-left">
                                   <div className="space-y-1">
                                     {org.rejected_exams.map((e) => (
                                       <div key={e.exam_id} className="text-xs text-slate-700 bg-rose-50 border border-rose-200 p-2 rounded-lg">
@@ -1539,14 +1459,14 @@ export default function ReviewerDashboard() {
                                 </td>
 
                                 {/* Move to Pending Action Button */}
-                                <td className="px-5 py-4 align-top text-right">
+                                <td className="px-5 py-4 align-top text-center">
                                   {org.rejected_exams.map((e) => (
                                     <Button
                                       key={e.exam_id}
                                       size="xs"
                                       disabled={portalOff}
                                       onClick={() => handleResetToPending(org.org_id, e.exam_id)}
-                                      className="!bg-amber-600 hover:!bg-amber-700 !text-white text-xs font-semibold shadow-2xs"
+                                      className="!bg-amber-600 hover:!bg-amber-700 !text-white text-xs font-semibold shadow-2xs inline-flex items-center justify-center"
                                       title={`Move ${e.exam_code} request back to Pending queue`}
                                     >
                                       <Icon.Clock className="h-3 w-3 mr-1" />
@@ -1566,17 +1486,17 @@ export default function ReviewerDashboard() {
                       <div className="overflow-x-auto">
                         <table className="w-full text-sm">
                           <thead className="bg-slate-50/90 sticky top-0 z-10 border-b border-slate-200">
-                            <tr className="text-left text-xs uppercase tracking-wider text-slate-500">
-                              <th className="px-5 py-3.5 font-bold text-slate-700">University Details</th>
-                              <th className="px-5 py-3.5 font-bold text-slate-700">Exam Subscriptions & Status</th>
-                              <th className="px-5 py-3.5 text-right font-bold text-slate-700">Details</th>
+                            <tr className="text-xs uppercase tracking-wider text-slate-500">
+                              <th className="px-5 py-3.5 text-left font-bold text-slate-700">University Details</th>
+                              <th className="px-5 py-3.5 text-center font-bold text-slate-700">Exam Subscriptions & Status</th>
+                              <th className="px-5 py-3.5 text-center font-bold text-slate-700">Details</th>
                             </tr>
                           </thead>
                           <tbody>
                             {filteredInstitutions.map((org) => (
                               <tr key={org.org_id} className="border-b border-slate-100 hover:bg-slate-50/50">
                                 {/* University Details */}
-                                <td className="px-5 py-4 align-top max-w-[280px]">
+                                <td className="px-5 py-4 align-top text-left max-w-[280px]">
                                   <div className="font-bold text-slate-900">{org.org_name}</div>
                                   <div className="text-xs text-slate-500 mt-0.5">
                                     {org.institution_type || 'University'} {org.aishe_code && `• AISHE: ${org.aishe_code}`}
@@ -1587,8 +1507,8 @@ export default function ReviewerDashboard() {
                                 </td>
 
                                 {/* Exam Status Chips */}
-                                <td className="px-5 py-4 align-top">
-                                  <div className="flex flex-wrap gap-2">
+                                <td className="px-5 py-4 align-top text-center">
+                                  <div className="flex items-center justify-center flex-wrap gap-2">
                                     {org.all_exams.map((e) => (
                                       <span
                                         key={e.exam_id}
@@ -1605,12 +1525,12 @@ export default function ReviewerDashboard() {
                                 </td>
 
                                 {/* View Details Button */}
-                                <td className="px-5 py-4 align-top text-right">
+                                <td className="px-5 py-4 align-top text-center">
                                   <Button
                                     size="xs"
                                     variant="secondary"
                                     onClick={() => setSelectedUniversityForDetails(org)}
-                                    className="text-xs font-medium"
+                                    className="text-xs font-medium inline-flex items-center justify-center"
                                   >
                                     <Icon.Eye className="h-3 w-3 mr-1" />
                                     Inspect
