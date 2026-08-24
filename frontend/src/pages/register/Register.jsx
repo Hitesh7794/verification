@@ -1142,7 +1142,10 @@ function ReviewStep({ form, uploaded, onEdit, onBack, onSubmit, submitting }) {
   ].filter((l) => l && l.trim())
 
   const activeDocs = getRequiredDocs(form)
-  const docs = activeDocs.filter((d) => uploaded[d.kind]?.doc_id)
+  // Files live in memory until Submit (the "defer all DB writes to
+  // Submit" flow), so key off `.file` — `.doc_id` only appears after
+  // the actual upload call, which happens AFTER this Review screen.
+  const docs = activeDocs.filter((d) => uploaded[d.kind]?.file)
 
   return (
     <AestheticCard>
@@ -1631,7 +1634,11 @@ function CalloutNote({ children }) {
 function Step2({ form, applicationId, uploaded, errors, handleFile, removeDoc, onBack, onSubmit, submitting }) {
   const activeDocs = getRequiredDocs(form)
   const requiredCount = activeDocs.filter((d) => d.required).length
-  const uploadedRequiredCount = activeDocs.filter((d) => d.required && uploaded[d.kind]?.doc_id).length
+  // Count picked-in-memory files, not server-issued doc_ids — the
+  // Submit-time upload is what mints doc_id. Pre-refactor this counter
+  // read the wrong field and stuck at 0/N even after all files were
+  // picked, blocking the whole flow.
+  const uploadedRequiredCount = activeDocs.filter((d) => d.required && uploaded[d.kind]?.file).length
   return (
     <AestheticCard>
       <div className="px-6 py-5 border-b border-warm flex items-start gap-3">
@@ -1683,7 +1690,10 @@ function Step2({ form, applicationId, uploaded, errors, handleFile, removeDoc, o
 function DocUploadRow({ kind, label, hint, required, state, error, onFile, onRemove }) {
   const inputId = `file_${kind}`
   const uploading = state?.uploading
-  const done = state?.doc_id && !uploading
+  // `done` = a file is picked (kept in memory until Submit). Pre-refactor
+  // this waited on state.doc_id, which never arrived pre-Submit, so rows
+  // stayed unmarked even after the applicant chose files.
+  const done = !!state?.file && !uploading
 
   return (
     <motion.div
