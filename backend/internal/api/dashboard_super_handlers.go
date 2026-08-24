@@ -68,3 +68,4 @@ func (s *Server) superOrganizations(w http.ResponseWriter, r *http.Request) {
 func (s *Server) superTopCenters(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, []any{})
 }
+

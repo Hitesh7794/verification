@@ -9,9 +9,14 @@
 // init() succeeds, so a retried upload after a network blip just hits
 // the same row's /docs endpoint again.
 
+import { toFriendlyError } from '../errors.js'
+
 const BASE = '/api'
 
 // Wraps fetch with consistent error shape + automatic JSON parsing.
+// The thrown Error carries a user-safe .message (existing register.jsx
+// setErr(e.message) sites render friendly copy automatically) plus
+// .status, .body, and .rawMessage for anything that needs the original.
 async function call(path, opts = {}) {
   const res = await fetch(BASE + path, opts)
   let body = null
@@ -21,10 +26,12 @@ async function call(path, opts = {}) {
     // Some endpoints (file downloads) don't return JSON; that's fine.
   }
   if (!res.ok) {
-    const msg = body?.error || res.statusText || `HTTP ${res.status}`
-    const err = new Error(msg)
+    const raw = body?.error || res.statusText || `HTTP ${res.status}`
+    const err = new Error(raw)
     err.status = res.status
     err.body = body
+    err.rawMessage = raw
+    err.message = toFriendlyError(err)
     throw err
   }
   return body
@@ -73,14 +80,17 @@ export async function uploadDoc(applicationId, docKind, file, onProgress) {
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve(body)
       } else {
-        const err = new Error(body?.error || `upload failed (HTTP ${xhr.status})`)
+        const raw = body?.error || `upload failed (HTTP ${xhr.status})`
+        const err = new Error(raw)
         err.status = xhr.status
         err.body = body
+        err.rawMessage = raw
+        err.message = toFriendlyError(err)
         reject(err)
       }
     }
-    xhr.onerror = () => reject(new Error('network error while uploading'))
-    xhr.ontimeout = () => reject(new Error('upload timed out'))
+    xhr.onerror = () => reject(new Error('Cannot reach the server. Please check your internet connection and try again.'))
+    xhr.ontimeout = () => reject(new Error('The upload took too long and was cancelled. Please try again.'))
     xhr.timeout = 5 * 60 * 1000 // 5 min absolute cap for a 10 MB upload
     const form = new FormData()
     form.append('doc_kind', docKind)

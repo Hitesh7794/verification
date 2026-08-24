@@ -646,9 +646,11 @@ export default function ClientDashboard() {
           </CardHeader>
           <CardBody>
             <p className="text-sm text-slate-600 mb-4">
-              Prove you're a real person in front of the camera. Free of
-              charge — no wallet debit for this step. If it fails, keep
-              retrying; there's no cap.
+              Prove you're a real person in front of the camera. This is
+              the payable step — the wallet is charged when the liveness
+              check passes (₹ per verification; same-roll retries within
+              5 minutes are free). Failed attempts don't cost anything —
+              retry as many times as you need.
             </p>
             <LivenessPanel
               rollNo={candidate.roll_no}
@@ -656,17 +658,21 @@ export default function ClientDashboard() {
               onPass={() => {
                 setLivenessResult({ pass: true })
                 if (step < S_FACE) setStep(S_FACE)
+                // Wallet debit fires on the liveness pass now; refresh
+                // the header pill so the operator sees the debited
+                // balance immediately.
+                refreshWallet()
               }}
             />
           </CardBody>
         </Card>
       )}
 
-      {/* Step 2 — face capture only. Candidate summary is deliberately
+      {/* Step 2 — face capture. Candidate summary is deliberately
           hidden here: the operator must capture a face before the
-          enrolled record is revealed (and before the wallet is
-          charged). This nudges "person in front of me first, then
-          look at their record" rather than the other way round. */}
+          enrolled record is revealed. Wallet debit already happened
+          on the liveness step, so this panel is a pure biometric
+          match with no billing side-effects. */}
       {step === S_FACE && candidate && (
         <Card>
           <CardHeader>
@@ -674,10 +680,9 @@ export default function ClientDashboard() {
           </CardHeader>
           <CardBody>
             <p className="text-sm text-slate-600 mb-4">
-              Capture the candidate's face to unlock their enrolled record.
-              This is the payable step — the wallet is charged when the
-              face capture is submitted (₹ per lookup, same-roll retries
-              are free within 5 minutes).
+              Capture the candidate's face to match against the enrolled
+              photo. No additional wallet charge — you paid on the
+              liveness step above.
             </p>
             <FaceMatchPanel
               rollNo={candidate.roll_no}
@@ -686,10 +691,6 @@ export default function ClientDashboard() {
                 setFaceResult(r)
                 setSnap(r?.snapshot ?? null)
                 if (step < S_FINGERPRINT) setStep(S_FINGERPRINT)
-                // Face-match is the wallet-charged event; refresh the
-                // header pill so the operator sees the debited balance
-                // immediately without waiting for a page reload.
-                refreshWallet()
               }}
             />
           </CardBody>

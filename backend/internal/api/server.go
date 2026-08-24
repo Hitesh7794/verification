@@ -214,14 +214,17 @@ func (s *Server) Router() http.Handler {
 		r.Post("/api/me/change-password", s.changePassword)
 		r.Post("/api/auth/refresh", s.authRefresh)
 
-		// Client portal — FACE-FIRST FLOW:
+		// Client portal — LIVENESS-GATED FLOW:
 		//   Candidate lookup is FREE for everyone (operator confirms a
-		//   roll exists before opening the webcam; no incentive to
+		//   roll exists before starting the flow; no incentive to
 		//   avoid the confirmation).
-		//   The chargeable event is the face-match itself: the wallet
-		//   is debited on every face capture, regardless of match
-		//   outcome — the operator committed to spending by capturing.
-		//   Same-roll 5-min cache still applies for retries.
+		//   The chargeable event is the *liveness pass* (see the
+		//   /liveness-check route below and wallet_middleware.go for
+		//   the details on the X-Wallet-Skip skip-charge signal).
+		//   Debiting at liveness covers face-only, fp-only, iris-only,
+		//   and multi-modality exams uniformly — every real session
+		//   pays exactly once. Same-roll 5-min cache still applies
+		//   for retries, so a retake within the window is free.
 		r.Get("/api/candidates/{roll}",
 			s.requireRole("client", "admin", "superadmin")(s.getCandidate))
 		r.Get("/api/candidates/{roll}/photo", s.requireRole("client", "admin", "superadmin")(s.getCandidatePhoto))
@@ -232,15 +235,28 @@ func (s *Server) Router() http.Handler {
 		// New URL-scoped routes so the wallet middleware can extract
 		// {roll} for the same-roll 5-min cache. Old body-based routes
 		// stay wired below for anything still calling them.
-		// Active-liveness gate. Runs BEFORE face-match — the operator's
-		// browser records a short blink challenge, we forward the frame
-		// sequence to luxand-service, and on pass we stash a
-		// liveness_checks row keyed by session_id (same key the browser
-		// will use on the follow-up /face-match). No wallet charge —
-		// liveness is a gate; the payable event stays at /face-match.
+		// Active-liveness gate. Runs BEFORE face/fp/iris match — the
+		// operator records a short blink challenge, we forward frames
+		// to luxand-service, and on pass we stash a liveness_checks
+		// row keyed by session_id (same key the biometric matchers
+		// use as idempotency_key).
+		//
+		// WALLET DEBIT LIVES HERE (2026-08-24 change). Previously the
+		// charge fired on /face-match, which meant fingerprint-only
+		// or iris-only exams (`requires_face=false`) were completely
+		// free — the app never called /face-match. Moving the charge
+		// to /liveness-check fixes that: liveness always fires for
+		// any biometric session (see FlowRouting.kt + Dashboard.jsx
+		// unconditional S_LIVENESS), so every real verification pays
+		// exactly once.
+		//
+		// Failed liveness attempts do NOT charge — the handler sets
+		// X-Wallet-Skip:1 on the pass:false path and walletCharge
+		// honors it. Retries are free until the operator clears the
+		// gate. Same-roll 5-min cache continues to apply.
 		r.Post("/api/candidates/{roll}/liveness-check",
-			s.requireRole("client")(s.livenessCheck))
-		r.Post("/api/candidates/{roll}/face-match", s.requireRole("client")(s.walletCharge(s.faceMatch)))
+			s.requireRole("client")(s.walletCharge(s.livenessCheck)))
+		r.Post("/api/candidates/{roll}/face-match", s.requireRole("client")(s.faceMatch))
 		r.Post("/api/candidates/{roll}/fp-match",   s.requireRole("client")(s.fpMatch))
 		// Iris moved server-side with the TrustView migration — used to
 		// live entirely on the operator laptop against the Marvis daemon.
@@ -253,6 +269,12 @@ func (s *Server) Router() http.Handler {
 		r.Post("/api/face-match", s.requireRole("client")(s.faceMatch))
 		r.Post("/api/fp-match",   s.requireRole("client")(s.fpMatch))
 		r.Post("/api/verifications", s.requireRole("client")(s.createVerification))
+		// Mobile app calls the candidate-scoped URL for symmetry with
+		// /face-match, /fp-match, /iris-match, /liveness-check — all
+		// of which live under /api/candidates/{roll}/. Alias so the
+		// mobile client works without a rebuild; handler reads roll
+		// from the request body and ignores the path param.
+		r.Post("/api/candidates/{roll}/verifications", s.requireRole("client")(s.createVerification))
 		r.Patch("/api/verifications/{id}", s.requireRole("client")(s.patchVerification))
 
 		// Wallet — admin sees own org, superadmin sees any org via ?org_id=N.

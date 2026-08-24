@@ -6,6 +6,7 @@
 // reviewer can't probe for other clients' applications.
 import { api } from '../api.js'
 import { getStoredToken } from '../authStorage.js'
+import { toFriendlyError } from '../errors.js'
 
 // GET /api/client/me
 // Small header payload — client's display name + visibility flags.
@@ -130,12 +131,18 @@ export async function downloadApprovedSubscriptionsCsv() {
   if (!res.ok) {
     // Try to surface a friendly message from the JSON error envelope
     // the backend uses on failures (Content-Type would flip to json).
-    let msg = `HTTP ${res.status}`
+    let raw = `HTTP ${res.status}`
+    let body = null
     try {
-      const j = await res.json()
-      if (j?.error) msg = j.error
+      body = await res.json()
+      if (body?.error) raw = body.error
     } catch {}
-    throw new Error(msg)
+    const err = new Error(raw)
+    err.status = res.status
+    err.body = body
+    err.rawMessage = raw
+    err.message = toFriendlyError(err)
+    throw err
   }
   const blob = await res.blob()
   // Server sets Content-Disposition with a timestamped filename; parse

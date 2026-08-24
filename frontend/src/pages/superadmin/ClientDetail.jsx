@@ -787,9 +787,7 @@ function NewExamForm({ clientId, onCancel, onCreated }) {
       })
       onCreated(examId)
     } catch (e) {
-      const status = e.status ? ` (HTTP ${e.status})` : ''
-      const backend = e.body?.error ? `: ${e.body.error}` : ''
-      setErr(`${e.message || 'Could not create exam'}${status}${backend}`)
+      setErr(e.message || 'Could not create exam. Please try again.')
     } finally {
       setSaving(false)
     }

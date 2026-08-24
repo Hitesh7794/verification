@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"log"
 	"net/http"
 	"strings"
 
@@ -21,7 +22,29 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// friendlyServerError is what every 5xx returns to the client. Real
+// engineering context (constraint names, driver messages, stack traces)
+// stays in the server logs — the user just needs to know that this
+// isn't their fault and that a retry is safe.
+const friendlyServerError = "Something went wrong on our end. Please try again in a moment."
+
+// writeErr sends {"error": msg} at the given status code. For any 5xx
+// status it forces a friendly generic string on the wire and pushes
+// the caller's technical detail into the server log, so a stray
+// `writeErr(w, 500, "db error: " + err.Error())` can no longer leak
+// pg constraint names / driver strings to a non-technical user.
+//
+// 4xx messages pass through unchanged — those are deliberately
+// user-facing copy per handler (uniqueness collisions, validation
+// hints, "please verify OTP first" etc.).
 func writeErr(w http.ResponseWriter, status int, msg string) {
+	if status >= 500 {
+		if msg != "" && msg != friendlyServerError {
+			log.Printf("[5xx %d] %s", status, msg)
+		}
+		writeJSON(w, status, map[string]string{"error": friendlyServerError})
+		return
+	}
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
@@ -29,13 +52,13 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		h := r.Header.Get("Authorization")
 		if !strings.HasPrefix(h, "Bearer ") {
-			writeErr(w, http.StatusUnauthorized, "missing token")
+			writeErr(w, http.StatusUnauthorized, "Your session has expired. Please sign in again.")
 			return
 		}
 		tok := strings.TrimPrefix(h, "Bearer ")
 		c, err := s.deps.JWT.Parse(tok)
 		if err != nil {
-			writeErr(w, http.StatusUnauthorized, "invalid token")
+			writeErr(w, http.StatusUnauthorized, "Your session has expired. Please sign in again.")
 			return
 		}
 
@@ -53,7 +76,7 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			`SELECT role, disabled_at FROM users WHERE id = $1`, c.UserID,
 		).Scan(&dbRole, &disabledAt)
 		if errors.Is(err, sql.ErrNoRows) {
-			writeErr(w, http.StatusUnauthorized, "account no longer exists")
+			writeErr(w, http.StatusUnauthorized, "Your account is no longer available. Please contact your administrator.")
 			return
 		}
 		if err != nil {
@@ -61,13 +84,13 @@ func (s *Server) authMiddleware(next http.Handler) http.Handler {
 			return
 		}
 		if disabledAt.Valid {
-			writeErr(w, http.StatusUnauthorized, "account disabled")
+			writeErr(w, http.StatusUnauthorized, "Your account has been disabled. Please contact your administrator.")
 			return
 		}
 		if dbRole != c.Role {
 			// Role changed since JWT was issued — force re-login so
 			// the new role is reflected in the claims.
-			writeErr(w, http.StatusUnauthorized, "session role mismatch — please sign in again")
+			writeErr(w, http.StatusUnauthorized, "Your session has expired. Please sign in again.")
 			return
 		}
 
@@ -90,7 +113,7 @@ func (s *Server) requireRole(roles ...string) func(http.HandlerFunc) http.Handle
 		return func(w http.ResponseWriter, r *http.Request) {
 			c := claimsFrom(r)
 			if c == nil || !allowed[c.Role] {
-				writeErr(w, http.StatusForbidden, "forbidden")
+				writeErr(w, http.StatusForbidden, "You don't have access to that.")
 				return
 			}
 			next(w, r)

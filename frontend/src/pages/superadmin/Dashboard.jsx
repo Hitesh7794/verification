@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import {
-  Area, AreaChart, CartesianGrid,
+  Bar, BarChart, CartesianGrid, Cell,
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import { Link } from 'react-router-dom'
@@ -24,30 +24,25 @@ import { usePolling } from '../../lib/usePolling.js'
 //   - Organizations table is the source-of-truth at the bottom.
 
 const SERIES = ['#B45309', '#4D7C0F', '#9F1239', '#5B21B6', '#0F766E', '#CA8A04']
-const STATUS_GOOD = '#059669'
-const STATUS_BAD  = '#B91C1C'
-const AXIS_MUTED  = '#A8A29E'
-const GRID_LINE   = '#E7E5E4'
+const AXIS_MUTED = '#A8A29E'
+const GRID_LINE  = '#E7E5E4'
 
 const nf = new Intl.NumberFormat('en-IN')
 
 export default function SuperDashboard() {
   const [stats, setStats] = useState(null)
   const [orgs, setOrgs] = useState([])
-  const [timeline, setTimeline] = useState([])
   const [err, setErr] = useState('')
   const [loaded, setLoaded] = useState(false)
 
   usePolling(async () => {
     try {
-      const [s, o, tl] = await Promise.all([
+      const [s, o] = await Promise.all([
         api('/super/stats'),
         api('/super/organizations'),
-        api('/admin/timeline'),
       ])
       setStats(s)
       setOrgs(o)
-      setTimeline(tl)
       setErr('')
       setLoaded(true)
     } catch (e) {
@@ -66,13 +61,6 @@ export default function SuperDashboard() {
     const stable = [...orgs].map((o) => o.id).sort((a, b) => a - b)
     return SERIES[stable.indexOf(id) % SERIES.length]
   }
-
-  const trend = timeline.map((d) => ({
-    date: d.date,
-    label: (d.date || '').slice(5),
-    verified: d.verified,
-    denied: d.denied,
-  }))
 
   const rankedOrgs = [...orgs].sort((a, b) => b.total - a.total)
 
@@ -130,7 +118,7 @@ export default function SuperDashboard() {
       </section>
 
       <div className="grid gap-4 lg:grid-cols-3 mb-8">
-        <TrendCard trend={trend} />
+        <OrgBarsCard orgs={orgs} loaded={loaded} colourFor={colourFor} />
         <ShareCard orgs={rankedOrgs} total={total} loaded={loaded} colourFor={colourFor} />
       </div>
 
@@ -184,12 +172,6 @@ function RingHero({ pct, verified, denied, loaded }) {
             </span>
             <span className="tabular-nums text-lg font-semibold text-rose-800">
               {nf.format(denied)}
-            </span>
-          </li>
-          <li className="flex items-baseline justify-between">
-            <span className="text-[11px] uppercase tracking-widest text-stone-500">Processed</span>
-            <span className="tabular-nums text-lg font-semibold text-ink-900">
-              {nf.format(verified + denied)}
             </span>
           </li>
         </ul>
@@ -256,62 +238,87 @@ function BigStat({ label, value, loaded, delay = 0, onClick, hint }) {
   )
 }
 
-// ── TrendCard ────────────────────────────────────────────────────────
-function TrendCard({ trend }) {
+// ── OrgBarsCard ──────────────────────────────────────────────────────
+// Horizontal bar chart of top-N organizations by verification volume.
+// Replaces the "Daily volume" area chart (2026-08-24) — with few
+// orgs and low throughput, per-org rank is the story that reads at
+// a glance, not day-over-day trend.
+function OrgBarsCard({ orgs, loaded, colourFor }) {
+  const top = [...(orgs || [])]
+    .filter((o) => o.total > 0)
+    .sort((a, b) => b.total - a.total)
+    .slice(0, 6)
+    .map((o) => {
+      const label = (o.name || o.code || '—').trim()
+      return {
+        name: label.length > 22 ? label.slice(0, 21) + '…' : label,
+        fullName: o.name || o.code || '—',
+        code: o.code,
+        total: o.total,
+        verified: o.verified,
+        denied: o.denied,
+        color: colourFor(o.id),
+      }
+    })
+
   return (
     <div className="lg:col-span-2 rounded-2xl border border-warm bg-warm-surface shadow-sm overflow-hidden">
-      <div className="flex items-baseline justify-between px-5 pt-4 pb-2">
-        <div>
-          <h3 className="text-[13px] font-semibold text-ink-900 tracking-tight">Daily volume</h3>
-          <p className="text-[11px] text-stone-500 mt-0.5">Last {trend.length || 14} days · stacked by outcome</p>
-        </div>
-        <div className="flex items-center gap-4 text-[11px]">
-          <span className="inline-flex items-center gap-1.5 text-stone-600">
-            <span className="h-2 w-2 rounded-full" style={{ background: STATUS_GOOD }} />
-            Verified
-          </span>
-          <span className="inline-flex items-center gap-1.5 text-stone-600">
-            <span className="h-2 w-2 rounded-full" style={{ background: STATUS_BAD }} />
-            Denied
-          </span>
-        </div>
+      <div className="px-5 pt-4 pb-3 border-b border-warm">
+        <h3 className="text-[13px] font-semibold text-ink-900 tracking-tight">Volume by organization</h3>
+        <p className="text-[11px] text-stone-500 mt-0.5">
+          {top.length > 0 ? `Top ${top.length} — total verifications lifetime` : 'Ranked by verification count'}
+        </p>
       </div>
-      <div className="p-5 pt-1">
-        {trend.length === 0 ? (
-          <ChartEmpty />
-        ) : (
-          <div className="h-56">
+      {!loaded ? (
+        <div className="p-5"><LoadingSkeleton rows={4} height="h-6" /></div>
+      ) : top.length === 0 ? (
+        <div className="h-56 flex items-center justify-center text-sm text-stone-400 italic">
+          No verifications yet
+        </div>
+      ) : (
+        <div className="p-4">
+          <div style={{ height: Math.max(200, top.length * 44) }}>
             <ResponsiveContainer>
-              <AreaChart data={trend} margin={{ top: 8, right: 8, left: -18, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="gVerified" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={STATUS_GOOD} stopOpacity={0.30} />
-                    <stop offset="100%" stopColor={STATUS_GOOD} stopOpacity={0.02} />
-                  </linearGradient>
-                  <linearGradient id="gDenied" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor={STATUS_BAD} stopOpacity={0.28} />
-                    <stop offset="100%" stopColor={STATUS_BAD} stopOpacity={0.02} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid stroke={GRID_LINE} vertical={false} />
-                <XAxis dataKey="label" stroke={GRID_LINE}
+              <BarChart data={top} layout="vertical" margin={{ top: 8, right: 24, left: 8, bottom: 4 }}>
+                <CartesianGrid stroke={GRID_LINE} horizontal={false} />
+                <XAxis type="number" stroke={GRID_LINE}
                   tick={{ fill: AXIS_MUTED, fontSize: 11 }}
-                  tickLine={false} interval="preserveStartEnd" minTickGap={16} />
-                <YAxis stroke={GRID_LINE}
-                  tick={{ fill: AXIS_MUTED, fontSize: 11 }}
-                  tickLine={false} axisLine={false} width={48} />
-                <Tooltip content={<TrendTooltip />} cursor={{ stroke: GRID_LINE }} />
-                <Area type="monotone" dataKey="verified" stackId="1"
-                  stroke={STATUS_GOOD} strokeWidth={2}
-                  fill="url(#gVerified)" />
-                <Area type="monotone" dataKey="denied" stackId="1"
-                  stroke={STATUS_BAD} strokeWidth={2}
-                  fill="url(#gDenied)" />
-              </AreaChart>
+                  tickLine={false} axisLine={false}
+                  allowDecimals={false} />
+                <YAxis type="category" dataKey="name" stroke={GRID_LINE}
+                  tick={{ fill: '#57534E', fontSize: 12, fontWeight: 600 }}
+                  tickLine={false} axisLine={false} width={170} />
+                <Tooltip content={<OrgBarTooltip />} cursor={{ fill: '#FBF7F0' }} />
+                <Bar dataKey="total" radius={[0, 6, 6, 0]} barSize={20}>
+                  {top.map((row) => (
+                    <Cell key={row.name} fill={row.color} />
+                  ))}
+                </Bar>
+              </BarChart>
             </ResponsiveContainer>
           </div>
-        )}
-      </div>
+        </div>
+      )}
+    </div>
+  )
+}
+
+function OrgBarTooltip({ active, payload }) {
+  if (!active || !payload?.length) return null
+  const row = payload[0].payload
+  const pct = row.total ? (row.verified / row.total) * 100 : 0
+  return (
+    <div className="rounded-lg bg-stone-900 text-white shadow-lg px-3 py-2 text-xs border border-stone-700 min-w-[160px] max-w-[280px]">
+      <p className="font-medium mb-0.5 text-stone-100 break-words">{row.fullName || row.name}</p>
+      {row.code && row.code !== row.fullName && (
+        <p className="text-[10px] font-mono text-stone-400 mb-1">{row.code}</p>
+      )}
+      <p className="tabular-nums text-stone-200">{nf.format(row.total)} verifications</p>
+      <p className="tabular-nums text-emerald-300 text-[11px]">{nf.format(row.verified)} verified</p>
+      <p className="tabular-nums text-rose-300 text-[11px]">{nf.format(row.denied)} denied</p>
+      <p className="tabular-nums text-stone-400 text-[11px] border-t border-stone-700 pt-1 mt-1">
+        {pct.toFixed(1)}% success
+      </p>
     </div>
   )
 }
@@ -412,21 +419,6 @@ function OrgsTable({ orgs, loaded, colourFor }) {
           </tbody>
         </table>
       </div>
-    </div>
-  )
-}
-
-function TrendTooltip({ active, payload, label }) {
-  if (!active || !payload?.length) return null
-  const verified = payload.find((p) => p.dataKey === 'verified')?.value ?? 0
-  const denied   = payload.find((p) => p.dataKey === 'denied')?.value ?? 0
-  const total = verified + denied
-  return (
-    <div className="rounded-lg bg-stone-900 text-white shadow-lg px-3 py-2 text-xs border border-stone-700">
-      <p className="font-medium mb-1 text-stone-200">{label}</p>
-      <p className="tabular-nums"><span className="text-emerald-300">■</span> {nf.format(verified)} verified</p>
-      <p className="tabular-nums"><span className="text-rose-300">■</span> {nf.format(denied)} denied</p>
-      <p className="tabular-nums text-stone-400 border-t border-stone-700 pt-1 mt-1">{nf.format(total)} total</p>
     </div>
   )
 }

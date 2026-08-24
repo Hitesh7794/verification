@@ -379,10 +379,13 @@ func (s *Server) superadminCreateExam(w http.ResponseWriter, r *http.Request) {
 		clientID, name, code, nullable(strings.TrimSpace(req.TrustviewRef)),
 		from, to,
 		boolToInt(rFace), boolToInt(rFP), boolToInt(rIris)).Scan(&id); err != nil {
-		if isUniqueViolation(err) && strings.Contains(strings.ToLower(err.Error()), "exam_code") {
-			writeErr(w, http.StatusConflict,
-				"exam_code already used by another exam; pick a different code")
-			return
+		if isUniqueViolation(err) {
+			el := strings.ToLower(err.Error())
+			if strings.Contains(el, "exam_code") || strings.Contains(el, "idx_exams_code") {
+				writeErr(w, http.StatusConflict,
+					"An exam with this code already exists. Please choose a different code.")
+				return
+			}
 		}
 		writeErr(w, http.StatusInternalServerError, "db insert: "+err.Error())
 		return

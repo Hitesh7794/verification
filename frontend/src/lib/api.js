@@ -42,10 +42,16 @@ function onUnauthorized() {
   }
 }
 
+import { toFriendlyError } from './errors.js'
+
 // ApiError carries the HTTP status code and parsed body alongside the
 // error message — callers that need to branch on status code (e.g. the
 // candidate-lookup handler needs to detect 402 to open the deposit
 // modal) can do `e instanceof ApiError && e.status === 402`.
+//
+// .message is the friendly, user-safe string (so existing setErr(e.message)
+// call sites get non-technical copy automatically). .rawMessage is the
+// original server/network string for dev debugging.
 export class ApiError extends Error {
   constructor(message, { status, body, headers } = {}) {
     super(message)
@@ -53,6 +59,9 @@ export class ApiError extends Error {
     this.status = status
     this.body = body       // the parsed JSON body (or null)
     this.headers = headers // the response Headers object (or null)
+    this.rawMessage = message
+    // Compute the friendly version once at throw time.
+    this.message = toFriendlyError(this)
   }
 }
 
@@ -218,12 +227,18 @@ export async function downloadVerificationPDF(id) {
     headers: { Authorization: `Bearer ${getToken()}` },
   })
   if (!res.ok) {
-    let msg = `PDF download failed (HTTP ${res.status})`
+    let raw = `PDF download failed (HTTP ${res.status})`
+    let body = null
     try {
-      const j = await res.json()
-      if (j.error) msg = j.error
+      body = await res.json()
+      if (body?.error) raw = body.error
     } catch (_) { /* PDF errors usually aren't JSON */ }
-    throw new Error(msg)
+    const err = new Error(raw)
+    err.status = res.status
+    err.body = body
+    err.rawMessage = raw
+    err.message = toFriendlyError(err)
+    throw err
   }
   const blob = await res.blob()
   const objUrl = URL.createObjectURL(blob)
@@ -259,7 +274,13 @@ export async function uploadExamCSV(examID, kind, file) {
   })
   const j = await res.json().catch(() => ({}))
   if (!res.ok && res.status !== 422) {
-    throw new Error(j.error || `upload failed (HTTP ${res.status})`)
+    const raw = j.error || `upload failed (HTTP ${res.status})`
+    const err = new Error(raw)
+    err.status = res.status
+    err.body = j
+    err.rawMessage = raw
+    err.message = toFriendlyError(err)
+    throw err
   }
   return { status: res.status, body: j }
 }

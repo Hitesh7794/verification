@@ -69,6 +69,28 @@ func (s *Server) getCandidate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Exam active-window enforcement — only for operators.
+	// Admin / superadmin / ops_admin can still fetch a candidate
+	// outside the exam window for audit or review; the operator
+	// (client role) can't because that's where a new verification
+	// would begin. Empty From/To strings mean "no window set" and
+	// are treated as always-on for backward compat with legacy rows.
+	if claims.Role == "client" {
+		today := time.Now().UTC().Format("2006-01-02")
+		if ec.VerificationFrom != "" && today < ec.VerificationFrom {
+			writeErr(w, http.StatusForbidden,
+				fmt.Sprintf("This exam (%s) opens on %s. Verifications can't be started before then.",
+					ec.ExamCode, ec.VerificationFrom))
+			return
+		}
+		if ec.VerificationTo != "" && today > ec.VerificationTo {
+			writeErr(w, http.StatusForbidden,
+				fmt.Sprintf("This exam (%s) closed on %s. Verifications are no longer accepted.",
+					ec.ExamCode, ec.VerificationTo))
+			return
+		}
+	}
+
 	// Optionally attach the legacy filesystem indexer's metadata so the
 	// operator UI can still surface has_photo / has_iso_template flags
 	// without a separate HEAD request. Filesystem is our biometric
@@ -804,6 +826,14 @@ type examCandidateRow struct {
 	RequiresFace bool
 	RequiresFP   bool
 	RequiresIris bool
+
+	// Exam active-window (YYYY-MM-DD). Enforced for operators in
+	// getCandidate — a client-role lookup outside [From, To] returns
+	// 403 so the operator can't start a verification for an exam
+	// that hasn't opened or has already closed. Empty string when
+	// the exam has no window set (legacy rows) — treated as always-on.
+	VerificationFrom string
+	VerificationTo   string
 }
 
 // lookupExamCandidate finds a candidate the caller is allowed to see.
@@ -840,7 +870,9 @@ func (s *Server) lookupExamCandidate(r *http.Request, claims *authClaims, roll s
 		       COALESCE(ec.registration_id, ''), COALESCE(ec.father_name, ''),
 		       COALESCE(ec.dob::text, ''),       COALESCE(ec.gender, ''),
 		       COALESCE(ec.shift_name, ''),      COALESCE(ec.centre_code, ''),
-		       e.requires_face, e.requires_fp, e.requires_iris
+		       e.requires_face, e.requires_fp, e.requires_iris,
+		       COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD'), ''),
+		       COALESCE(TO_CHAR(e.verification_to,   'YYYY-MM-DD'), '')
 		  FROM exam_candidates ec
 		  JOIN exams   e ON e.id = ec.exam_id
 		  JOIN clients c ON c.id = e.client_id
@@ -887,6 +919,7 @@ func (s *Server) lookupExamCandidate(r *http.Request, claims *authClaims, roll s
 		&out.RegistrationID, &out.FatherName, &out.DOB,
 		&out.Gender, &out.ShiftName, &out.CentreCode,
 		&out.RequiresFace, &out.RequiresFP, &out.RequiresIris,
+		&out.VerificationFrom, &out.VerificationTo,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil

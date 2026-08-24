@@ -115,6 +115,11 @@ func (s *Server) livenessCheck(w http.ResponseWriter, r *http.Request) {
 		// found", "too few frames"). Pass it straight through so the
 		// operator sees actionable text without the JS layer inventing
 		// its own translations.
+		// X-Wallet-Skip tells the walletCharge middleware wrapping this
+		// endpoint NOT to debit — a failed challenge is retryable and
+		// the wallet only pays for a passing liveness gate. Header is
+		// stripped by the middleware before the response leaves.
+		w.Header().Set("X-Wallet-Skip", "1")
 		writeJSON(w, http.StatusOK, livenessCheckResp{
 			SessionID:        req.SessionID,
 			Pass:             false,

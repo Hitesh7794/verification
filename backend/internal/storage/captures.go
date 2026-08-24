@@ -42,17 +42,23 @@ import (
 
 // CaptureTempKey is the temp-slot key used by /X-match handlers before
 // the verification_id exists.
+//
+// normExt() returns ext WITH the leading dot ("jpg" → ".jpg"), so the
+// format string joins <modality><ext> — no extra separator, or the
+// key comes out as "face..jpg" (regression seen 2026-08-24 on
+// verification 76 vs the earlier correct 70/71).
 func CaptureTempKey(idemKey, modality, ext string) string {
 	ext = normExt(ext)
-	return fmt.Sprintf("_captures_temp/%s/%s.%s",
+	return fmt.Sprintf("_captures_temp/%s/%s%s",
 		safeSegment(idemKey), safeSegment(modality), ext)
 }
 
 // CaptureFinalKey is the institute-scoped audit key promoted to on
-// /verifications submit.
+// /verifications submit. Same <modality><ext> joining rule as
+// CaptureTempKey — normExt owns the leading dot.
 func CaptureFinalKey(orgCode, examCode string, verifID int64, modality, ext string, when time.Time) string {
 	ext = normExt(ext)
-	return fmt.Sprintf("%s/%s/captures/%s/%d/%s.%s",
+	return fmt.Sprintf("%s/%s/captures/%s/%d/%s%s",
 		safeSegment(orgCode), safeSegment(examCode),
 		when.UTC().Format("2006-01"),
 		verifID,

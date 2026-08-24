@@ -630,10 +630,6 @@ export default function Register() {
 
       <main className="relative mx-auto max-w-6xl px-4 sm:px-6 pt-8 pb-16">
         <div className="mb-6">
-          <div className="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-[#F5EEDF] border border-warm text-xs font-semibold text-amber-900 mb-3 shadow-2xs">
-            <span className="h-1.5 w-1.5 rounded-full bg-amber-600 animate-pulse" />
-            Institutional Accreditation & Onboarding
-          </div>
           <motion.h1
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
@@ -873,7 +869,7 @@ function Step0({ form, errors, update, onBlurField, onNext, onTypeSelect }) {
             </Label>
             <span className="text-xs text-stone-400">Select institutional category</span>
           </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 max-w-2xl">
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-5 max-w-4xl">
             {INSTITUTION_TYPES.map((t) => {
               const iconMap = {
                 college: Icon.Building,
@@ -1019,26 +1015,26 @@ function CompactChoice({ selected, onSelect, icon: IconComp, label, blurb }) {
       onClick={onSelect}
       whileHover={{ y: -1.5, transition: { duration: 0.15 } }}
       whileTap={{ scale: 0.98 }}
-      className={`relative text-left p-3.5 rounded-xl border transition-all ${
+      className={`relative text-left px-5 py-4 rounded-xl border transition-all ${
         selected
           ? 'border-amber-700 bg-amber-50/70 ring-2 ring-amber-600/20 shadow-xs'
           : 'border-warm bg-warm-surface hover:border-warm-strong hover:bg-white'
       }`}
     >
-      <div className="flex gap-3 items-center">
+      <div className="flex items-start gap-3">
         <span
-          className={`h-9 w-9 rounded-lg flex items-center justify-center shrink-0 transition-all ${
+          className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 transition-all ${
             selected ? 'bg-amber-700 text-white shadow-xs' : 'bg-[#F5EEDF] text-stone-700 border border-warm'
           }`}
         >
           {IconComp && <IconComp className="h-4 w-4" />}
         </span>
-        <div className="min-w-0 flex-1 pr-4">
-          <p className={`text-sm font-bold tracking-tight ${selected ? 'text-amber-950' : 'text-ink-900'}`}>
+        <div className="min-w-0 flex-1 pr-6">
+          <p className={`text-sm font-bold tracking-tight leading-snug ${selected ? 'text-amber-950' : 'text-ink-900'}`}>
             {label}
           </p>
           {blurb ? (
-            <p className={`text-xs mt-0.5 leading-snug ${selected ? 'text-amber-900/80' : 'text-stone-500'}`}>
+            <p className={`text-xs leading-snug mt-1 ${selected ? 'text-amber-900/80' : 'text-stone-500'}`}>
               {blurb}
             </p>
           ) : null}
@@ -1049,7 +1045,7 @@ function CompactChoice({ selected, onSelect, icon: IconComp, label, blurb }) {
           initial={{ scale: 0 }}
           animate={{ scale: 1 }}
           transition={{ duration: 0.15, ease: [0.22, 1.5, 0.36, 1] }}
-          className="absolute right-3 top-1/2 -translate-y-1/2 h-4 w-4 rounded-full bg-amber-700 text-white flex items-center justify-center shadow-xs"
+          className="absolute right-3 top-3 h-4 w-4 rounded-full bg-amber-700 text-white flex items-center justify-center shadow-xs"
         >
           <Icon.Check className="h-2.5 w-2.5 stroke-[2.5]" />
         </motion.span>

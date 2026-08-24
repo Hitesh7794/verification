@@ -3,6 +3,7 @@
 // pages stay UI-only.
 import { api, ApiError } from '../api.js'
 import { getStoredToken } from '../authStorage.js'
+import { toFriendlyError } from '../errors.js'
 
 // ── Clients ───────────────────────────────────────────────────────────
 
@@ -150,9 +151,12 @@ export function bulkUploadBiometrics(examId, modality, zipFile, onProgress) {
       if (xhr.status >= 200 && xhr.status < 300) {
         resolve(body)
       } else {
-        const err = new Error(body?.error || `HTTP ${xhr.status}`)
+        const raw = body?.error || `HTTP ${xhr.status}`
+        const err = new Error(raw)
         err.status = xhr.status
         err.body = body
+        err.rawMessage = raw
+        err.message = toFriendlyError(err)
         reject(err)
       }
     }
@@ -163,14 +167,14 @@ export function bulkUploadBiometrics(examId, modality, zipFile, onProgress) {
         reject(err)
         return
       }
-      reject(new Error('network error while uploading'))
+      reject(new Error('Cannot reach the server. Please check your internet connection and try again.'))
     }
     xhr.onabort = () => {
       const err = new Error('canceled')
       err.canceled = true
       reject(err)
     }
-    xhr.ontimeout = () => reject(new Error('upload timed out'))
+    xhr.ontimeout = () => reject(new Error('The upload took too long and was cancelled. Please try again.'))
     // Big zips (up to 2 GB) can legitimately take a long time on a
     // typical centre uplink — a 2 GB upload at ~4 MB/s is ~8 min, at
     // ~1 MB/s (a slower line) is ~35 min. 60-min ceiling so a slow
@@ -241,7 +245,7 @@ export async function downloadRawCSV(uploadId, filename) {
   const res = await fetch(`/api/superadmin/uploads/${uploadId}/raw`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   })
-  if (!res.ok) throw new Error(`download failed: ${res.status}`)
+  if (!res.ok) throw new Error(res.status === 404 ? 'That file could not be found.' : 'Download failed. Please try again.')
   const blob = await res.blob()
   const url = URL.createObjectURL(blob)
   const a = document.createElement('a')

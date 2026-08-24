@@ -144,6 +144,19 @@ func (s *Server) walletCharge(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
+		// 4a. Inner handler succeeded but explicitly opted OUT of the
+		// debit via X-Wallet-Skip. Used by the liveness endpoint on
+		// its 200 { pass:false } path: the request completed cleanly
+		// (nothing to error on), but the operator's session never
+		// actually got liveness clearance — charging would let the
+		// wallet burn on every failed challenge attempt. Header is
+		// stripped before flushing so it never leaks to the client.
+		if buf.hdr.Get("X-Wallet-Skip") == "1" {
+			buf.hdr.Del("X-Wallet-Skip")
+			buf.flush()
+			return
+		}
+
 		// 5. Inner handler succeeded → debit. Atomic UPDATE handles
 		// concurrent debits; the only realistic failure is a race
 		// where another operator drained the wallet between our
