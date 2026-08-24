@@ -100,7 +100,8 @@ export default function App() {
         <Route path="/" element={<Navigate to="/superadmin/applications" replace />} />
       )}
 
-      {/* SIGNUP MODE — public institution registration flow */}
+      {/* SIGNUP & RECOVERY — public institution registration & password reset flows */}
+      <Route path="/reset-password" element={<SetPassword />} />
       {includes('signup') && (
         <>
           <Route path="/register/institution" element={<Register />} />

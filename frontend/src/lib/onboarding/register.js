@@ -45,6 +45,15 @@ export async function listPublicClients() {
   return call('/clients/public')
 }
 
+// Pre-check availability of identifiers (AISHE code, PAN/TAN, email, mobile).
+export async function checkRegistrationIdentifiers(identifiers) {
+  return call('/register/check', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(identifiers),
+  })
+}
+
 // Step 1+2: submit the form data.
 export async function registerInit(formData) {
   return call('/register/init', {
@@ -122,16 +131,24 @@ export async function getApplicationStatus(applicationId) {
   return call(`/register/${appID}`)
 }
 
-// ----- Set-password (magic-link landing) -----
+// ----- Set-password & Reset-password (magic-link landing) -----
 export async function verifyMagicLink(token) {
-  return call(`/set-password/verify?token=${encodeURIComponent(token)}`)
+  return call(`/reset-password/verify?token=${encodeURIComponent(token)}`)
 }
 
 export async function setPassword(token, password) {
-  return call('/set-password', {
+  return call('/reset-password', {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({ token, password }),
+  })
+}
+
+export async function requestForgotPassword(email, role) {
+  return call('/auth/forgot-password', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ email, role }),
   })
 }
 

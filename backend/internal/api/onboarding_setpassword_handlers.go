@@ -24,9 +24,11 @@ type setPasswordVerifyResp struct {
 	Valid       bool   `json:"valid"`
 	Username    string `json:"username,omitempty"`
 	DisplayName string `json:"display_name,omitempty"`
+	Role        string `json:"role,omitempty"`
+	Purpose     string `json:"purpose,omitempty"`
 }
 
-// GET /api/set-password/verify?token=...
+// GET /api/set-password/verify?token=... or /api/reset-password/verify?token=...
 func (s *Server) setPasswordVerify(w http.ResponseWriter, r *http.Request) {
 	ip := clientIP(r)
 	if shouldRateLimit(ip) && !globalRegisterLimiter.allow(ip) {
@@ -38,7 +40,12 @@ func (s *Server) setPasswordVerify(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "token required")
 		return
 	}
-	link, err := s.magicLinks.Verify(r.Context(), token, magiclink.PurposeSetPassword)
+	link, err := s.magicLinks.Verify(r.Context(), token, magiclink.PurposeResetPassword)
+	purpose := magiclink.PurposeResetPassword
+	if errors.Is(err, magiclink.ErrInvalid) {
+		link, err = s.magicLinks.Verify(r.Context(), token, magiclink.PurposeSetPassword)
+		purpose = magiclink.PurposeSetPassword
+	}
 	if errors.Is(err, magiclink.ErrInvalid) {
 		// Always return the same JSON shape so the frontend can show a
 		// clean "this link is no longer valid" message without exposing
@@ -50,10 +57,10 @@ func (s *Server) setPasswordVerify(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "verify error")
 		return
 	}
-	var username, displayName string
+	var username, displayName, role string
 	if err := s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT username, display_name FROM users WHERE id = $1`, link.UserID,
-	).Scan(&username, &displayName); err != nil {
+		`SELECT username, display_name, role FROM users WHERE id = $1`, link.UserID,
+	).Scan(&username, &displayName, &role); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeJSON(w, http.StatusOK, setPasswordVerifyResp{Valid: false})
 			return
@@ -65,6 +72,8 @@ func (s *Server) setPasswordVerify(w http.ResponseWriter, r *http.Request) {
 		Valid:       true,
 		Username:    username,
 		DisplayName: displayName,
+		Role:        role,
+		Purpose:     string(purpose),
 	})
 }
 
@@ -73,7 +82,7 @@ type setPasswordReq struct {
 	Password string `json:"password"`
 }
 
-// POST /api/set-password
+// POST /api/set-password or /api/reset-password
 //
 // Consumes the token atomically with the password update inside one
 // DB transaction. If anything fails — bcrypt blow-up, DB error — the
@@ -106,21 +115,27 @@ func (s *Server) setPassword(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	err = s.magicLinks.Consume(r.Context(), req.Token, magiclink.PurposeSetPassword,
+	// Detect which purpose the token matches
+	purpose := magiclink.PurposeResetPassword
+	_, verifyErr := s.magicLinks.Verify(r.Context(), req.Token, magiclink.PurposeResetPassword)
+	if errors.Is(verifyErr, magiclink.ErrInvalid) {
+		purpose = magiclink.PurposeSetPassword
+	}
+
+	var userRole string
+	err = s.magicLinks.Consume(r.Context(), req.Token, purpose,
 		func(tx *sql.Tx, userID int64) error {
-			// Stamp activated_at on first password set so the admin's
-			// operator list can distinguish "Pending invite" from
-			// "Active" without inspecting bcrypt hashes. Idempotent:
-			// COALESCE preserves the original activation time on
-			// password *resets* (when activated_at is already set).
-			_, err := tx.ExecContext(r.Context(),
+			// Stamp activated_at on password set/reset and clear any
+			// mandatory password change flags.
+			return tx.QueryRowContext(r.Context(),
 				`UPDATE users
 				 SET password_hash = $1,
-				     activated_at  = COALESCE(activated_at, CURRENT_TIMESTAMP)
-				 WHERE id = $2`,
+				     activated_at  = COALESCE(activated_at, CURRENT_TIMESTAMP),
+				     password_change_required = 0
+				 WHERE id = $2
+				 RETURNING role`,
 				string(hash), userID,
-			)
-			return err
+			).Scan(&userRole)
 		})
 	if errors.Is(err, magiclink.ErrInvalid) {
 		writeErr(w, http.StatusBadRequest, "link is invalid or expired")
@@ -132,7 +147,8 @@ func (s *Server) setPassword(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":      true,
-		"message": "Password set. Sign in at /admin/login.",
+		"role":    userRole,
+		"message": "Password successfully updated. You can now sign in with your new password.",
 	})
 }
 

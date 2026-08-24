@@ -105,7 +105,51 @@ func Migrate(d *sql.DB) error {
 		}
 	}
 
+	// V12 was V10 on Rahul's branch, but our V10/V11 shipped first and
+	// are already applied on prod. Renumbered on merge so the migration
+	// still runs on any DB that missed the rahul-branch slot.
+	if !applied[12] {
+		if err := applyV12SingleClientReviewerConstraint(ctx, d); err != nil {
+			return fmt.Errorf("apply v12 single_client_reviewer: %w", err)
+		}
+	}
+
 	return nil
+}
+
+// applyV12SingleClientReviewerConstraint enforces that each client can
+// have at most one active reviewer account (role='client_reviewer').
+//
+// Was V10 on Rahul's branch, renumbered to V12 on merge because V10
+// and V11 slots were already taken by veni-dev migrations shipped to
+// prod earlier this session. `ON users(client_id) WHERE role=... AND
+// disabled_at IS NULL` — partial unique index so a soft-deleted
+// reviewer (disabled_at set) doesn't block a fresh one from being
+// created, matching the pattern V4 uses for head_mobile.
+func applyV12SingleClientReviewerConstraint(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmts := []string{
+		`CREATE UNIQUE INDEX IF NOT EXISTS ux_users_client_reviewer_single
+		    ON users(client_id)
+		    WHERE role = 'client_reviewer' AND disabled_at IS NULL`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.ExecContext(ctx, s); err != nil {
+			return fmt.Errorf("exec %q: %w", firstLine(s), err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)`,
+		12, "single_client_reviewer",
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // applyV11SubscriptionRevoked widens the CHECK constraint on
