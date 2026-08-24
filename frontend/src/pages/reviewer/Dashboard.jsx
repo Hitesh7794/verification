@@ -15,6 +15,7 @@ import {
   resetSubscriptionRequestToPending,
   revokeSubscription,
   downloadApprovedSubscriptionsCsv,
+  bulkDecideSubscriptionsCsv,
 } from '../../lib/reviewer/api.js'
 import { usePolling } from '../../lib/usePolling.js'
 import { dateRange } from '../../lib/dates.js'
@@ -364,17 +365,9 @@ export default function ReviewerDashboard() {
           : 'Review and manage university exam subscription requests.'}
         right={
           <div className="flex items-center gap-2">
+            <BulkCsvUploadButton onDone={() => { setSubLoading(true); loadSubscriptions() }} />
             <ExportCsvButton />
-            <button
-              onClick={() => {
-                setSubLoading(true)
-                loadSubscriptions()
-              }}
-              className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs"
-            >
-              <Icon.Refresh className="h-4 w-4" />
-              Refresh
-            </button>
+            <RefreshButton onClick={loadSubscriptions} />
           </div>
         }
       />
@@ -1328,7 +1321,7 @@ export default function ReviewerDashboard() {
                                       className="text-xs font-semibold hover:!bg-emerald-600 hover:!text-white hover:!border-emerald-600 transition-all shadow-2xs inline-flex items-center justify-center"
                                     >
                                       <Icon.Eye className="h-3.5 w-3.5 mr-1" />
-                                      Inspect Details
+                                      View Details
                                     </Button>
                                   </td>
                                 </tr>
@@ -1533,7 +1526,7 @@ export default function ReviewerDashboard() {
                                     className="text-xs font-medium inline-flex items-center justify-center"
                                   >
                                     <Icon.Eye className="h-3 w-3 mr-1" />
-                                    Inspect
+                                    View
                                   </Button>
                                 </td>
                               </tr>
@@ -1931,5 +1924,291 @@ function ExportCsvButton() {
         {busy ? 'Preparing…' : 'Download CSV'}
       </button>
     </div>
+  )
+}
+
+// ── BulkCsvUploadButton ────────────────────────────────────────────────
+// Reviewer uploads a CSV of (aishe_code, institution_name, approve) rows
+// and the backend approves/rejects pending subscription requests
+// matching by aishe_code. Full response is shown in a modal so the
+// reviewer can see exactly what changed vs. what was skipped.
+//
+// Single source of truth for the sample CSV text — used BOTH in the
+// modal preview AND for the "Sample CSV" download so what the reviewer
+// downloads is exactly what they see. Includes a mix of true/false/yes
+// so the reviewer can see the accepted decision spellings at a glance.
+const SAMPLE_CSV_TEXT =
+`aishe_code,institution_name,approve
+H-3454,Innovatiview,true
+T-1234,Test College,false
+C-12345,Some University,yes`
+
+function downloadSampleCsv() {
+  // Prepend a UTF-8 BOM so Excel opens the CSV in the correct encoding
+  // without garbling accented characters. Purely cosmetic — the parser
+  // strips it — but standard for Excel-friendly CSV downloads.
+  const blob = new Blob(['﻿' + SAMPLE_CSV_TEXT], { type: 'text/csv;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'subscription-decisions-sample.csv'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
+function BulkCsvUploadButton({ onDone }) {
+  const [open, setOpen] = useState(false)
+  const [file, setFile] = useState(null)
+  const [busy, setBusy] = useState(false)
+  const [result, setResult] = useState(null) // { total_rows, approved, rejected, skipped, rows }
+  const [error, setError] = useState('')
+
+  function reset() {
+    setFile(null); setBusy(false); setResult(null); setError('')
+  }
+  function close() {
+    if (busy) return
+    reset(); setOpen(false)
+  }
+
+  async function submit() {
+    if (!file || busy) return
+    setBusy(true); setError('')
+    try {
+      const r = await bulkDecideSubscriptionsCsv(file)
+      setResult(r)
+      // Refresh the parent list so newly-approved rows appear.
+      onDone?.()
+    } catch (e) {
+      setError(e.message || 'Upload failed')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        onClick={() => { reset(); setOpen(true) }}
+        className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-400 transition-colors shadow-2xs"
+        title="Bulk approve or reject subscription requests via CSV upload"
+      >
+        <Icon.Upload className="h-4 w-4" />
+        Bulk CSV
+      </button>
+
+      <AnimatePresence>
+        {open && (
+          <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+            <div className="absolute inset-0 bg-slate-900/50" onClick={close} />
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 8 }}
+              transition={{ duration: 0.18 }}
+              className="relative w-full max-w-2xl rounded-2xl bg-white shadow-2xl border border-slate-200 overflow-hidden"
+            >
+              <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
+                <div>
+                  <h2 className="text-base font-semibold text-slate-900">
+                    Bulk decide subscription requests
+                  </h2>
+                  <p className="text-xs text-slate-500 mt-0.5">
+                    Upload a CSV with three columns: aishe_code, institution_name, approve.
+                  </p>
+                </div>
+                <button
+                  onClick={close}
+                  disabled={busy}
+                  className="text-slate-400 hover:text-slate-600 disabled:opacity-50"
+                  aria-label="Close"
+                >
+                  <Icon.X className="h-5 w-5" />
+                </button>
+              </div>
+
+              {result == null ? (
+                <div className="px-6 py-5 space-y-4">
+                  <div className="rounded-lg bg-slate-50 border border-slate-200 p-3 text-xs text-slate-600">
+                    <div className="flex items-start justify-between gap-2 mb-1">
+                      <p className="font-semibold text-slate-700">Format</p>
+                      <button
+                        type="button"
+                        onClick={downloadSampleCsv}
+                        className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-400 transition-colors"
+                        title="Download a ready-to-edit sample CSV"
+                      >
+                        <Icon.Download className="h-3 w-3" />
+                        Sample CSV
+                      </button>
+                    </div>
+                    <p className="mb-2">
+                      One row per organisation. The <span className="font-mono">approve</span> column
+                      accepts <span className="font-mono">true/false</span>, <span className="font-mono">yes/no</span>,
+                      or <span className="font-mono">1/0</span>. A header row is optional (auto-detected).
+                    </p>
+                    <pre className="bg-white border border-slate-200 rounded p-2 overflow-x-auto text-[11px] text-slate-700">
+{SAMPLE_CSV_TEXT}
+                    </pre>
+                  </div>
+
+                  <div>
+                    <Label htmlFor="csv-file">Choose CSV file</Label>
+                    <input
+                      id="csv-file"
+                      type="file"
+                      accept=".csv,.txt,text/csv"
+                      disabled={busy}
+                      onChange={(e) => { setFile(e.target.files?.[0] || null); setError('') }}
+                      className="mt-1 block w-full text-sm text-slate-700 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-sm file:font-medium file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200"
+                    />
+                    {file && (
+                      <p className="text-xs text-slate-500 mt-1">
+                        Selected: <span className="font-mono">{file.name}</span> ({Math.round(file.size / 1024)} KB)
+                      </p>
+                    )}
+                  </div>
+
+                  {error && (
+                    <div className="rounded-lg border border-rose-200 bg-rose-50 px-3 py-2 text-sm text-rose-700">
+                      {error}
+                    </div>
+                  )}
+
+                  <div className="flex justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={close}
+                      disabled={busy}
+                      className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-50"
+                    >
+                      Cancel
+                    </button>
+                    <Button onClick={submit} disabled={!file || busy}>
+                      {busy ? 'Uploading…' : 'Upload & apply'}
+                    </Button>
+                  </div>
+                </div>
+              ) : (
+                <div className="px-6 py-5 space-y-4">
+                  <div className="grid grid-cols-4 gap-3">
+                    <SummaryTile label="Rows"     value={result.total_rows} tone="slate" />
+                    <SummaryTile label="Approved" value={result.approved}   tone="emerald" />
+                    <SummaryTile label="Rejected" value={result.rejected}   tone="rose" />
+                    <SummaryTile label="Skipped"  value={result.skipped}    tone="amber" />
+                  </div>
+
+                  <div className="max-h-72 overflow-y-auto rounded-lg border border-slate-200">
+                    <table className="w-full text-xs">
+                      <thead className="bg-slate-50 sticky top-0">
+                        <tr className="text-slate-600">
+                          <th className="text-left px-3 py-2 font-medium">Line</th>
+                          <th className="text-left px-3 py-2 font-medium">AISHE</th>
+                          <th className="text-left px-3 py-2 font-medium">Institution</th>
+                          <th className="text-left px-3 py-2 font-medium">Outcome</th>
+                          <th className="text-left px-3 py-2 font-medium">Detail</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100">
+                        {(result.rows || []).map((row) => (
+                          <tr key={row.line_no} className="hover:bg-slate-50">
+                            <td className="px-3 py-1.5 tabular-nums text-slate-500">{row.line_no}</td>
+                            <td className="px-3 py-1.5 font-mono text-slate-700">{row.aishe_code}</td>
+                            <td className="px-3 py-1.5 text-slate-700 truncate max-w-[180px]">
+                              {row.institution_name || '—'}
+                            </td>
+                            <td className="px-3 py-1.5">
+                              <OutcomePill outcome={row.outcome} />
+                            </td>
+                            <td className="px-3 py-1.5 text-slate-500">
+                              {row.detail || (row.subscriptions_affected
+                                ? `${row.subscriptions_affected} subscription${row.subscriptions_affected === 1 ? '' : 's'}`
+                                : '')}
+                            </td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+
+                  <div className="flex justify-end gap-2">
+                    <button
+                      type="button"
+                      onClick={() => reset()}
+                      className="rounded-lg border border-slate-300 bg-white px-4 py-2 text-sm font-medium text-slate-700 hover:bg-slate-50"
+                    >
+                      Upload another
+                    </button>
+                    <Button onClick={close}>Done</Button>
+                  </div>
+                </div>
+              )}
+            </motion.div>
+          </div>
+        )}
+      </AnimatePresence>
+    </>
+  )
+}
+
+function SummaryTile({ label, value, tone }) {
+  const map = {
+    slate:   'bg-slate-50 text-slate-700 ring-slate-200',
+    emerald: 'bg-emerald-50 text-emerald-800 ring-emerald-200',
+    rose:    'bg-rose-50 text-rose-800 ring-rose-200',
+    amber:   'bg-amber-50 text-amber-800 ring-amber-200',
+  }
+  return (
+    <div className={`rounded-lg ring-1 px-3 py-2 ${map[tone] || map.slate}`}>
+      <p className="text-[10px] uppercase tracking-widest font-semibold opacity-70">{label}</p>
+      <p className="text-lg font-bold tabular-nums">{value}</p>
+    </div>
+  )
+}
+
+function OutcomePill({ outcome }) {
+  const cfg = outcome === 'approved' ? { bg: 'bg-emerald-100', fg: 'text-emerald-800', dot: 'bg-emerald-500', label: 'Approved' }
+            : outcome === 'rejected' ? { bg: 'bg-rose-100',    fg: 'text-rose-800',    dot: 'bg-rose-500',    label: 'Rejected' }
+            :                          { bg: 'bg-amber-100',   fg: 'text-amber-800',   dot: 'bg-amber-500',   label: 'Skipped'  }
+  return (
+    <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[10px] font-semibold ${cfg.bg} ${cfg.fg}`}>
+      <span className={`h-1.5 w-1.5 rounded-full ${cfg.dot}`} />
+      {cfg.label}
+    </span>
+  )
+}
+
+// ── RefreshButton ──────────────────────────────────────────────────────
+// Wraps the parent's async loader so the button itself shows a spinner
+// while the request is in flight. Previously the click called
+// setSubLoading(true) + loadSubscriptions() but the loading UI only
+// renders a skeleton when the list is EMPTY, so a refresh on a
+// populated list felt like a no-op (bug reported 2026-08-24). Local
+// busy state guarantees visible feedback even for a 50 ms round-trip.
+function RefreshButton({ onClick }) {
+  const [busy, setBusy] = useState(false)
+  async function handle() {
+    if (busy) return
+    setBusy(true)
+    try {
+      await onClick?.()
+    } finally {
+      // Small min-visible window so a fast round-trip still flashes
+      // the spinner instead of a jitter that reads as "click missed".
+      setTimeout(() => setBusy(false), 250)
+    }
+  }
+  return (
+    <button
+      onClick={handle}
+      disabled={busy}
+      className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors shadow-2xs disabled:opacity-60"
+    >
+      <Icon.Refresh className={`h-4 w-4 ${busy ? 'animate-spin' : ''}`} />
+      {busy ? 'Refreshing…' : 'Refresh'}
+    </button>
   )
 }

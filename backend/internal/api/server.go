@@ -364,6 +364,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/client/subscription-requests",                                 s.requireRole("client_reviewer")(s.clientListSubscriptionRequests))
 		r.Post("/api/client/subscription-requests/bulk-approve",                    s.requireRole("client_reviewer")(s.clientBulkApproveSubscriptionRequests))
 		r.Post("/api/client/subscription-requests/bulk-reject",                     s.requireRole("client_reviewer")(s.clientBulkRejectSubscriptionRequests))
+		r.Post("/api/client/subscription-requests/bulk-csv-decide",                 s.requireRole("client_reviewer")(s.clientBulkDecideSubscriptionRequestsCSV))
 		r.Post("/api/client/subscription-requests/{org_id}/{exam_id}/approve",     s.requireRole("client_reviewer")(s.clientApproveSubscriptionRequest))
 		r.Post("/api/client/subscription-requests/{org_id}/{exam_id}/reject",      s.requireRole("client_reviewer")(s.clientRejectSubscriptionRequest))
 		r.Post("/api/client/subscription-requests/{org_id}/{exam_id}/revoke",      s.requireRole("client_reviewer")(s.clientRevokeSubscriptionRequest))

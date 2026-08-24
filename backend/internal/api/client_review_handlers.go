@@ -1349,3 +1349,261 @@ func (s *Server) clientBulkRejectSubscriptionRequests(w http.ResponseWriter, r *
 		"rejected_count": len(req.OrgIDs),
 	})
 }
+
+// ---------- POST /api/client/subscription-requests/bulk-csv-decide ----------
+//
+// CSV upload → bulk approve/reject subscription requests.
+//
+// Reviewer uploads a CSV with three columns:
+//
+//	aishe_code, institution_name, decision
+//
+// where `decision` is a truthy or falsy token (true / false / yes / no /
+// 1 / 0 / approve / reject / y / n — case-insensitive). A header row is
+// permitted (auto-detected) but not required. The institution_name
+// column is display-only — the AISHE code is what drives the match.
+//
+// For each row:
+//   - Normalise the AISHE code — accept both bare ("H-3454") and the
+//     internal prefixed form ("AISHE_H-3454") the register handler
+//     stores on organizations.code.
+//   - Look up the organization by code.
+//   - Find PENDING subscription requests for that org under the
+//     reviewer's client_id (across every exam the client owns).
+//   - approve=true → mark them approved, reviewed_by=<caller>.
+//     approve=false → mark them rejected.
+//   - Rows with an unknown code or no pending requests are counted
+//     separately and returned to the client so the reviewer can see
+//     what the batch actually touched vs. what it dropped.
+//
+// The whole batch runs in one transaction — a per-row DB error aborts
+// the entire operation so the reviewer never lands in a half-applied
+// state.
+func (s *Server) clientBulkDecideSubscriptionRequestsCSV(w http.ResponseWriter, r *http.Request) {
+	clientID, ok := clientReviewerScope(r)
+	if !ok {
+		writeErr(w, http.StatusForbidden, "client reviewer context required")
+		return
+	}
+	claims := claimsFrom(r)
+
+	// Cap the multipart body — a real bulk CSV of a few thousand rows
+	// is well under 1 MB. 2 MB gives generous headroom for a spreadsheet
+	// export that includes stray BOMs / blank tail rows.
+	const maxCSVBytes = 2 << 20
+	r.Body = http.MaxBytesReader(w, r.Body, maxCSVBytes+16<<10)
+	if err := r.ParseMultipartForm(maxCSVBytes + 16<<10); err != nil {
+		writeErr(w, http.StatusBadRequest,
+			"upload too large or malformed — CSV must be under 2 MB")
+		return
+	}
+	file, hdr, err := r.FormFile("file")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "file is required (multipart field 'file')")
+		return
+	}
+	defer file.Close()
+
+	// Basic filename check — surface the mistake early rather than
+	// letting csv.Reader silently accept a JSON blob.
+	if ext := strings.ToLower(strings.TrimSpace(hdr.Filename)); ext != "" &&
+		!strings.HasSuffix(ext, ".csv") && !strings.HasSuffix(ext, ".txt") {
+		writeErr(w, http.StatusBadRequest,
+			"expected a .csv file — got "+hdr.Filename)
+		return
+	}
+
+	rd := csv.NewReader(file)
+	rd.FieldsPerRecord = -1 // allow ragged rows; we validate per-row
+	rd.LazyQuotes = true    // Excel-style CSVs sometimes emit weird quoting
+
+	records, err := rd.ReadAll()
+	if err != nil {
+		writeErr(w, http.StatusBadRequest,
+			"could not parse CSV — check for unmatched quotes: "+err.Error())
+		return
+	}
+	if len(records) == 0 {
+		writeErr(w, http.StatusBadRequest, "CSV is empty")
+		return
+	}
+
+	// Header auto-detection: if the first row's first cell looks like a
+	// header (contains "aishe" or "code" — case-insensitive) drop it.
+	if len(records) > 0 && len(records[0]) > 0 {
+		first := strings.ToLower(strings.TrimSpace(records[0][0]))
+		if strings.Contains(first, "aishe") || first == "code" ||
+			first == "aishe_code" || first == "org_code" {
+			records = records[1:]
+		}
+	}
+
+	type csvRow struct {
+		LineNo       int    `json:"line_no"`
+		AisheInput   string `json:"aishe_code"`
+		OrgName      string `json:"institution_name"`
+		Approve      bool   `json:"approve"`
+		Outcome      string `json:"outcome"` // "approved" | "rejected" | "skipped"
+		Detail       string `json:"detail,omitempty"`
+		OrgCode      string `json:"org_code,omitempty"`
+		OrgID        int64  `json:"org_id,omitempty"`
+		SubsAffected int    `json:"subscriptions_affected"`
+	}
+	out := make([]csvRow, 0, len(records))
+
+	tx, err := s.deps.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db tx: "+err.Error())
+		return
+	}
+	defer tx.Rollback()
+
+	var approved, rejected, skipped int
+
+	for i, row := range records {
+		lineNo := i + 1 // header, if any, was popped above
+		if len(row) == 0 {
+			continue
+		}
+		aisheInput := strings.TrimSpace(row[0])
+		if aisheInput == "" {
+			// blank line — silently ignore, don't count against the
+			// reviewer's stats
+			continue
+		}
+		orgName := ""
+		if len(row) > 1 {
+			orgName = strings.TrimSpace(row[1])
+		}
+		decisionRaw := ""
+		if len(row) > 2 {
+			decisionRaw = strings.TrimSpace(row[2])
+		}
+
+		item := csvRow{
+			LineNo: lineNo, AisheInput: aisheInput, OrgName: orgName,
+		}
+
+		approve, ok := parseDecisionToken(decisionRaw)
+		if !ok {
+			item.Outcome = "skipped"
+			item.Detail = "decision column must be true/false (got '" + decisionRaw + "')"
+			skipped++
+			out = append(out, item)
+			continue
+		}
+		item.Approve = approve
+
+		// Resolve org — try the bare AISHE input first, then the
+		// "AISHE_" prefixed form used by application_review_shared.go.
+		candidates := []string{aisheInput, "AISHE_" + aisheInput}
+		var orgID int64
+		var orgCode string
+		for _, c := range candidates {
+			err := tx.QueryRowContext(r.Context(),
+				`SELECT id, code FROM organizations WHERE code = $1`, c,
+			).Scan(&orgID, &orgCode)
+			if err == nil {
+				break
+			}
+			if !errors.Is(err, sql.ErrNoRows) {
+				writeErr(w, http.StatusInternalServerError,
+					fmt.Sprintf("db org lookup line %d: %s", lineNo, err.Error()))
+				return
+			}
+		}
+		if orgID == 0 {
+			item.Outcome = "skipped"
+			item.Detail = "no organisation found for aishe_code '" + aisheInput + "'"
+			skipped++
+			out = append(out, item)
+			continue
+		}
+		item.OrgID = orgID
+		item.OrgCode = orgCode
+
+		// Update pending subscription requests for this org under this
+		// reviewer's client. Whether approving or rejecting, we scope
+		// to exams the client OWNS — a rogue CSV can never touch
+		// another exam board's subscriptions.
+		targetStatus := "rejected"
+		auditAction := "subscription.bulk_csv_reject"
+		if approve {
+			targetStatus = "approved"
+			auditAction = "subscription.bulk_csv_approve"
+		}
+		_ = auditAction // per-row audit is optional; batch audit below covers it
+
+		res, err := tx.ExecContext(r.Context(), `
+			UPDATE organization_exam_subscriptions
+			   SET status = $1,
+			       approval_type = 'per_exam',
+			       reviewed_at = NOW(),
+			       reviewed_by = $2,
+			       review_note = $3
+			 WHERE org_id = $4
+			   AND status = 'pending'
+			   AND exam_id IN (SELECT id FROM exams WHERE client_id = $5)`,
+			targetStatus, claims.UserID,
+			"Bulk CSV upload by reviewer",
+			orgID, clientID,
+		)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError,
+				fmt.Sprintf("db update line %d: %s", lineNo, err.Error()))
+			return
+		}
+		n, _ := res.RowsAffected()
+		item.SubsAffected = int(n)
+		if n == 0 {
+			// The row wasn't wrong — it just had nothing pending under
+			// this client. Common on repeat uploads. Skipped, not
+			// approved/rejected, so the reviewer sees the reality.
+			item.Outcome = "skipped"
+			item.Detail = "no PENDING subscription for this org under this client"
+			skipped++
+		} else if approve {
+			item.Outcome = "approved"
+			approved++
+		} else {
+			item.Outcome = "rejected"
+			rejected++
+		}
+		out = append(out, item)
+	}
+
+	if err := tx.Commit(); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db commit: "+err.Error())
+		return
+	}
+
+	s.auditFromRequest(r, "subscription.bulk_csv_decide", "organization_exam_subscriptions", 0, map[string]any{
+		"client_id":  clientID,
+		"filename":   hdr.Filename,
+		"total_rows": len(out),
+		"approved":   approved,
+		"rejected":   rejected,
+		"skipped":    skipped,
+	})
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"ok":         true,
+		"total_rows": len(out),
+		"approved":   approved,
+		"rejected":   rejected,
+		"skipped":    skipped,
+		"rows":       out,
+	})
+}
+
+// parseDecisionToken maps a wide range of "yes/no" spellings to a bool.
+// Returns (bool, false) when the token doesn't match any known form.
+func parseDecisionToken(s string) (bool, bool) {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "true", "t", "yes", "y", "1", "approve", "approved", "ok":
+		return true, true
+	case "false", "f", "no", "n", "0", "reject", "rejected", "deny", "denied":
+		return false, true
+	}
+	return false, false
+}

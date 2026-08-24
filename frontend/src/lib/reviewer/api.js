@@ -162,3 +162,38 @@ export async function downloadApprovedSubscriptionsCsv() {
   setTimeout(() => URL.revokeObjectURL(url), 1000)
   return filename
 }
+
+// POST /api/client/subscription-requests/bulk-csv-decide
+//
+// Multipart body: `file` = a CSV with columns (aishe_code,
+// institution_name, approve). A header row is auto-detected. The
+// server matches by aishe_code, finds PENDING subscription requests
+// for the reviewer's client, and marks them approved or rejected.
+//
+// Returns:
+//   { ok, total_rows, approved, rejected, skipped, rows: [...] }
+// where each row includes the outcome + a `detail` string when the
+// row was skipped (unknown code, invalid decision token, or no
+// pending subscription for that org).
+export async function bulkDecideSubscriptionsCsv(file) {
+  const token = getStoredToken('reviewer')
+  const fd = new FormData()
+  fd.append('file', file, file.name)
+  const res = await fetch('/api/client/subscription-requests/bulk-csv-decide', {
+    method: 'POST',
+    headers: token ? { Authorization: `Bearer ${token}` } : {},
+    body: fd,
+  })
+  let body = null
+  try { body = await res.json() } catch { /* leave null */ }
+  if (!res.ok) {
+    const raw = body?.error || `HTTP ${res.status}`
+    const err = new Error(raw)
+    err.status = res.status
+    err.body = body
+    err.rawMessage = raw
+    err.message = toFriendlyError(err)
+    throw err
+  }
+  return body
+}
