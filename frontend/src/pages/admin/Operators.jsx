@@ -27,6 +27,33 @@ import { uploadExamCSV } from '../../lib/api.js'
 // has: username, password, display name, optional spending cap,
 // optional date window, and a subset of the college's subscribed
 // exams they're allowed to verify against.
+
+// Sample CSV content — one row per required column plus one example
+// operator row using safe placeholder values. Kept as a module-level
+// constant so the download and any future inline preview can share
+// the same source of truth.
+const OPERATOR_SAMPLE_CSV =
+`username,password,first_name,last_name,email,phone
+jdoe.op,ChangeMe123!,John,Doe,jdoe@example.com,+919999999999
+asharma.op,ChangeMe123!,Aditi,Sharma,asharma@example.com,+919888888888`
+
+function downloadOperatorSampleCsv() {
+  // Excel-friendly UTF-8 BOM so the file opens with the right
+  // encoding on double-click. Purely cosmetic — the backend parser
+  // strips it — but standard for CSV downloads.
+  const blob = new Blob(['﻿' + OPERATOR_SAMPLE_CSV], {
+    type: 'text/csv;charset=utf-8',
+  })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'verification-agents-sample.csv'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 1000)
+}
+
 export default function Operators() {
   const [operators, setOperators] = useState([])
   const [subs, setSubs] = useState([])
@@ -112,12 +139,23 @@ export default function Operators() {
         {bulking && (
           <Card className="mb-4">
             <CardBody>
-              <h3 className="text-sm font-semibold text-slate-900 mb-1">Bulk-upload verification agents from CSV</h3>
+              <div className="flex items-start justify-between gap-3 mb-1">
+                <h3 className="text-sm font-semibold text-slate-900">Bulk-upload verification agents from CSV</h3>
+                <button
+                  type="button"
+                  onClick={downloadOperatorSampleCsv}
+                  className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-400 transition-colors shrink-0"
+                  title="Download a ready-to-edit sample CSV with the required columns"
+                >
+                  Sample CSV
+                </button>
+              </div>
               <p className="text-xs text-slate-500 mb-3">
                 Required columns: <code>username</code>, <code>password</code>, <code>first_name</code>,
                 {' '}<code>last_name</code>, <code>email</code>. Extra columns (<code>phone</code>,
                 {' '}<code>centre_code</code>, <code>lab_code</code>, <code>config_name</code>,
-                {' '}<code>max_sessions</code>) are recognised but not stored.
+                {' '}<code>max_sessions</code>) are recognised but not stored. Comma OR tab-separated
+                files both work — pick whichever your spreadsheet exports.
               </p>
               <form onSubmit={onBulkUpload} className="grid gap-3 sm:grid-cols-3 sm:items-end">
                 <div>
@@ -139,7 +177,7 @@ export default function Operators() {
                   <Label>CSV file</Label>
                   <input
                     type="file"
-                    accept=".csv,text/csv"
+                    accept=".csv,.txt,.tsv,text/csv,text/tab-separated-values"
                     onChange={(e) => setBulkFile(e.target.files?.[0] || null)}
                     className="block w-full text-sm text-slate-700 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200"
                   />

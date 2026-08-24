@@ -72,9 +72,19 @@ type operatorAssignment struct {
 
 // parseOperatorsCSV is strict on the required fields but tolerant of
 // the extra NEET-ops columns (they get reported back in SkippedCols).
+// Auto-detects delimiter (comma / tab / semicolon) — Excel and Sheets
+// commonly export "Tab delimited" or European-locale semicolon CSVs
+// under a .csv extension. Same helper the reviewer bulk-CSV endpoint
+// uses (see sniffCSVDelimiter in client_review_handlers.go).
 func parseOperatorsCSV(buf []byte) ([]parsedOperator, []string, []csvValidationErr) {
+	head := buf
+	if len(head) > 4096 {
+		head = head[:4096]
+	}
 	rd := csv.NewReader(strings.NewReader(string(buf)))
+	rd.Comma = sniffCSVDelimiter(head)
 	rd.FieldsPerRecord = -1
+	rd.LazyQuotes = true
 
 	header, err := rd.Read()
 	if err != nil {

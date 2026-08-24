@@ -630,8 +630,10 @@ func (s *Server) clientApproveSubscriptionRequest(w http.ResponseWriter, r *http
 	defer tx.Rollback()
 
 	if mode == "blanket_client" {
-		// 1. Insert or update client_organization_approvals to grant client-wide blanket approval.
-		// Any subsequent subscription by this organization for this client's exams will be auto-approved instantly.
+		// 1. Insert or update client_organization_approvals to grant
+		//    client-wide blanket approval. Any subsequent subscription
+		//    by this organization for this client's exams will be
+		//    auto-approved instantly via adminSubscribe.
 		if _, err := tx.ExecContext(r.Context(), `
 			INSERT INTO client_organization_approvals(client_id, org_id, approved_at, approved_by, note)
 			VALUES($1, $2, NOW(), $3, $4)
@@ -645,38 +647,45 @@ func (s *Server) clientApproveSubscriptionRequest(w http.ResponseWriter, r *http
 			return
 		}
 
-		// 2. Approve this requested exam only
-		res, err := tx.ExecContext(r.Context(), `
+		// 2. Back-fill: approve EVERY currently-pending subscription
+		//    for this org under this client's exams — not just the one
+		//    the reviewer clicked. Blanket semantic is "always approve
+		//    this org for anything I offer"; leaving sibling pending
+		//    rows as pending contradicts the badge the UI shows next
+		//    to them (fixed 2026-08-24). If the clicked exam already
+		//    has a pending row this update covers it; the fallback
+		//    INSERT below handles the case where NO pending row
+		//    exists yet for the clicked exam (bulk-approve called
+		//    before the sub arrived).
+		if _, err := tx.ExecContext(r.Context(), `
 			UPDATE organization_exam_subscriptions
 			SET status = 'approved',
 			    approval_type = 'blanket_client',
 			    reviewed_at = NOW(),
 			    reviewed_by = $1,
 			    review_note = $2
-			WHERE org_id = $3 AND exam_id = $4`,
-			claims.UserID, req.Note, orgID, examID,
-		)
-		if err != nil {
+			WHERE org_id = $3
+			  AND status = 'pending'
+			  AND exam_id IN (SELECT id FROM exams WHERE client_id = $4)`,
+			claims.UserID, req.Note, orgID, clientID,
+		); err != nil {
 			writeErr(w, http.StatusInternalServerError, "db subscription update: "+err.Error())
 			return
 		}
-		rowsAffected, _ := res.RowsAffected()
-		if rowsAffected == 0 {
-			if _, err := tx.ExecContext(r.Context(), `
-				INSERT INTO organization_exam_subscriptions(
-					org_id, exam_id, status, approval_type, subscribed_by, reviewed_at, reviewed_by, review_note
-				) VALUES($1, $2, 'approved', 'blanket_client', $3, NOW(), $3, $4)
-				ON CONFLICT (org_id, exam_id) DO UPDATE SET
-					status = 'approved',
-					approval_type = 'blanket_client',
-					reviewed_at = NOW(),
-					reviewed_by = EXCLUDED.reviewed_by,
-					review_note = EXCLUDED.review_note`,
-				orgID, examID, claims.UserID, req.Note,
-			); err != nil {
-				writeErr(w, http.StatusInternalServerError, "db insert: "+err.Error())
-				return
-			}
+
+		// 3. If the reviewer clicked an exam that has NO existing
+		//    subscription row (rare — usually they'd click one that
+		//    was pending), create it approved so the click still
+		//    lands on something concrete.
+		if _, err := tx.ExecContext(r.Context(), `
+			INSERT INTO organization_exam_subscriptions(
+				org_id, exam_id, status, approval_type, subscribed_by, reviewed_at, reviewed_by, review_note
+			) VALUES($1, $2, 'approved', 'blanket_client', $3, NOW(), $3, $4)
+			ON CONFLICT (org_id, exam_id) DO NOTHING`,
+			orgID, examID, claims.UserID, req.Note,
+		); err != nil {
+			writeErr(w, http.StatusInternalServerError, "db insert: "+err.Error())
+			return
 		}
 	} else {
 		// Option A: Per-exam approval
@@ -1196,7 +1205,15 @@ func (s *Server) clientBulkApproveSubscriptionRequests(w http.ResponseWriter, r 
 			approvalType = "blanket_client"
 		}
 
-		if len(req.ExamIDs) > 0 {
+		// Blanket mode ignores req.ExamIDs — blanket means "approve
+		// this org for every exam under the client, present and
+		// future," so limiting the flip to a subset of exam_ids
+		// would leave sibling pending rows contradicting the
+		// blanket badge on the UI (fixed 2026-08-24). Per-exam
+		// mode WITH exam_ids scopes to those; per-exam mode with
+		// no exam_ids falls through to the org-wide branch too.
+		orgWide := mode == "blanket_client" || len(req.ExamIDs) == 0
+		if !orgWide {
 			for _, examID := range req.ExamIDs {
 				if examID <= 0 {
 					continue
@@ -1413,7 +1430,23 @@ func (s *Server) clientBulkDecideSubscriptionRequestsCSV(w http.ResponseWriter, 
 		return
 	}
 
+	// Sniff the delimiter — Excel/Sheets often export "Tab delimited"
+	// or "Semicolon delimited" (European locales) with a .csv extension.
+	// We peek at the first 4 KB, count candidate separators outside
+	// double-quotes, and pick whichever is most common. Falls back to
+	// comma when nothing wins so the "did the operator forget to save
+	// as CSV" case still surfaces the field-count error clearly.
+	head := make([]byte, 4096)
+	n, _ := file.Read(head)
+	head = head[:n]
+	if _, err := file.Seek(0, 0); err != nil {
+		writeErr(w, http.StatusInternalServerError, "csv seek: "+err.Error())
+		return
+	}
+	delim := sniffCSVDelimiter(head)
+
 	rd := csv.NewReader(file)
+	rd.Comma = delim
 	rd.FieldsPerRecord = -1 // allow ragged rows; we validate per-row
 	rd.LazyQuotes = true    // Excel-style CSVs sometimes emit weird quoting
 
@@ -1606,4 +1639,51 @@ func parseDecisionToken(s string) (bool, bool) {
 		return false, true
 	}
 	return false, false
+}
+
+// sniffCSVDelimiter picks between comma, tab, and semicolon by counting
+// occurrences in the header portion of the file, ignoring anything
+// inside double quotes. Falls back to comma on a tie or empty sample.
+//
+// Motivation: Excel and Sheets commonly export "Tab delimited" or
+// "Semicolon delimited" (European locales) under a .csv extension.
+// Without sniffing, the Go csv reader — which defaults to comma —
+// would read each row as one giant field, producing a single-row
+// upload with the header + data mashed together (bug seen
+// 2026-08-24 on a bulk-decide TSV upload).
+func sniffCSVDelimiter(sample []byte) rune {
+	if len(sample) == 0 {
+		return ','
+	}
+	counts := map[rune]int{',': 0, '\t': 0, ';': 0}
+	inQuote := false
+	for _, b := range sample {
+		c := rune(b)
+		if c == '"' {
+			inQuote = !inQuote
+			continue
+		}
+		if inQuote {
+			continue
+		}
+		if c == '\n' {
+			// Only score the first line — mixed delimiters across
+			// rows can happen in messy exports; header row is the
+			// authoritative signal.
+			break
+		}
+		if _, ok := counts[c]; ok {
+			counts[c]++
+		}
+	}
+	best := ','
+	bestN := counts[',']
+	if counts['\t'] > bestN {
+		best = '\t'
+		bestN = counts['\t']
+	}
+	if counts[';'] > bestN {
+		best = ';'
+	}
+	return best
 }

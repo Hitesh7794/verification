@@ -1113,6 +1113,35 @@ export default function ReviewerDashboard() {
                                 {/* Institutional Action: Centered Horizontal Buttons matching Header */}
                                 <td className="px-6 py-4 align-middle text-center whitespace-nowrap w-[340px]">
                                   <div className="flex items-center justify-center gap-2">
+                                    {/* When the org is ALREADY blanket-approved for this
+                                        client, showing Approve + Reject + a "Blanket
+                                        Approved" pill next to a pending row is a
+                                        contradiction — blanket means "always approve this
+                                        org." Collapse to a single "Apply approval" primary
+                                        that just flips the pending row + a Blanket
+                                        Approved marker so the reviewer knows why. */}
+                                    {isBlanket ? (
+                                      <>
+                                        <button
+                                          type="button"
+                                          disabled={portalOff}
+                                          onClick={() => {
+                                            if (targetExam) openSingleExamApprove(org, targetExam)
+                                          }}
+                                          className="h-8 px-3.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs inline-flex items-center justify-center transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                          title="Apply the existing blanket approval to this pending exam"
+                                        >
+                                          <span>Apply approval</span>
+                                        </button>
+                                        <span
+                                          className="h-8 px-3.5 rounded-lg text-xs font-semibold bg-emerald-50 border border-emerald-200 text-emerald-800 inline-flex items-center justify-center"
+                                          title="This organisation was previously blanket-approved for this exam board"
+                                        >
+                                          <span>Blanket Approved</span>
+                                        </span>
+                                      </>
+                                    ) : (
+                                    <>
                                     {/* Approve Button */}
                                     <button
                                       type="button"
@@ -1137,21 +1166,22 @@ export default function ReviewerDashboard() {
                                       <span>Reject</span>
                                     </button>
 
-                                    {/* Blanket Action Badge / Button */}
-                                    {isBlanket ? (
-                                      <span className="h-8 px-3.5 rounded-lg text-xs font-semibold bg-emerald-50 border border-emerald-200 text-emerald-800 inline-flex items-center justify-center">
-                                        <span>Blanket Approved</span>
-                                      </span>
-                                    ) : (
-                                      <button
-                                        type="button"
-                                        disabled={portalOff}
-                                        onClick={() => openBlanketApprove(org)}
-                                        className="h-8 px-3.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs inline-flex items-center justify-center transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-                                        title="Authorizes this university for ALL present and future exams under your board"
-                                      >
-                                        <span>Blanket Approve</span>
-                                      </button>
+                                    {/* Blanket Approve — offers the "authorise this
+                                        org for all exams" shortcut. In the isBlanket
+                                        branch above we already show the "Blanket
+                                        Approved" badge and a single "Apply approval"
+                                        button, so this only renders when NO blanket
+                                        exists yet. */}
+                                    <button
+                                      type="button"
+                                      disabled={portalOff}
+                                      onClick={() => openBlanketApprove(org)}
+                                      className="h-8 px-3.5 rounded-lg text-xs font-semibold bg-emerald-600 hover:bg-emerald-700 text-white shadow-2xs inline-flex items-center justify-center transition-all disabled:opacity-50 disabled:cursor-not-allowed"
+                                      title="Authorizes this university for ALL present and future exams under your board"
+                                    >
+                                      <span>Blanket Approve</span>
+                                    </button>
+                                    </>
                                     )}
                                   </div>
                                 </td>
