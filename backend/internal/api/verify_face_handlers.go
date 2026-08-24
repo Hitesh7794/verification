@@ -110,7 +110,13 @@ func (s *Server) faceMatch(w http.ResponseWriter, r *http.Request) {
 	if chi.URLParam(r, "roll") != "" {
 		claims := claimsFrom(r)
 		if claims != nil && claims.OrgID != nil {
-			key := strings.TrimSpace(req.IdempotencyKey)
+			// Strip the mobile retake suffix `-r<N>` before the gate
+			// lookup — the liveness_checks row is keyed on the base
+			// session_id, but retake-suffixed keys are used for S3
+			// temp-blob paths so promoteCaptureBlobs picks the right
+			// retake's audit artifacts. Retakes reuse the same
+			// liveness pass (operator only re-does the biometric).
+			key := stripRetakeSuffix(strings.TrimSpace(req.IdempotencyKey))
 			passed, err := s.livenessGatePassed(r.Context(),
 				*claims.OrgID, roll, key)
 			if err != nil {

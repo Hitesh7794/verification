@@ -789,7 +789,7 @@ export default function ReviewerDashboard() {
                           : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
                       }`}
                     >
-                      <span>All Universities</span>
+                      <span>All Subscriptions</span>
                       <span className={`inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold tabular-nums ${
                         subStatus === 'all' ? 'bg-slate-900 text-white' : 'bg-slate-200 text-slate-700'
                       }`}>

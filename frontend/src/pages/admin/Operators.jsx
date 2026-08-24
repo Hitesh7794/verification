@@ -516,8 +516,33 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
   const emailUnchanged = isEdit && Boolean(initialEmail) && email.trim().toLowerCase() === initialEmail
   const isEmailVerified = emailUnchanged || Boolean(emailOtpToken)
 
+  // Live cap validation — the wallet middleware enforces the runtime
+  // limits anyway (see /liveness-check), but blocking obviously-broken
+  // caps at form-submit surfaces the mistake before Save.
+  //
+  //   capOverWallet — cap > current wallet balance (admin needs to top
+  //                   up first, or lower the cap)
+  //   capBelowFee   — cap < ₹1 fee-per-lookup (operator can't verify
+  //                   even one candidate — pointless "half-rupee" caps
+  //                   like 0.10 used to slip past the min="0"/step="0.01"
+  //                   input constraints; caught here now).
+  const FEE_PAISE = 100 // matches WalletFeePerLookupPaise default; UI-only.
+  const capPaiseLive = capRupees.trim() ? Math.round(Number(capRupees) * 100) : null
+  const capOverWallet =
+    walletBalancePaise != null && capPaiseLive != null && capPaiseLive > walletBalancePaise
+  const capBelowFee = capPaiseLive != null && capPaiseLive < FEE_PAISE
+  const capInvalid = capOverWallet || capBelowFee
+
   async function onSubmit(e) {
     e.preventDefault()
+    if (capBelowFee) {
+      setErr("Spending cap must be at least ₹1 (one verification). Leave blank for no cap.")
+      return
+    }
+    if (capOverWallet) {
+      setErr(`Spending cap can't exceed the wallet balance (${formatRupees(walletBalancePaise)}). Top up the wallet first or lower the cap.`)
+      return
+    }
     setSaving(true)
     setErr('')
     try {
@@ -631,28 +656,31 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
           </div>
         </div>
         <div>
-          <Label>Spending cap (₹, leave blank = no cap)</Label>
+          <Label>Spending cap (₹, whole rupees; leave blank = no cap)</Label>
           <Input
             type="number"
-            min="0"
-            step="0.01"
+            min="1"
+            step="1"
             value={capRupees}
             onChange={(e) => setCapRupees(e.target.value)}
             placeholder="e.g. 10"
           />
-          {walletBalancePaise != null && (
-            (() => {
-              const capPaise = capRupees.trim() ? Math.round(Number(capRupees) * 100) : null
-              const overBalance = capPaise != null && capPaise > walletBalancePaise
-              return (
-                <p className={`text-[11px] mt-1 ${overBalance ? 'text-rose-600 font-medium' : 'text-slate-500'}`}>
-                  {overBalance
-                    ? `Cap exceeds wallet balance ${formatRupees(walletBalancePaise)}. Top up the wallet first, or lower the cap.`
-                    : `Wallet balance: ${formatRupees(walletBalancePaise)} — cap must be ≤ this.`}
-                </p>
-              )
-            })()
-          )}
+          {(() => {
+            const showHint = walletBalancePaise != null || capBelowFee
+            if (!showHint) return null
+            let msg = ''
+            let tone = 'text-slate-500'
+            if (capBelowFee) {
+              msg = 'Cap must be at least ₹1 — one verification costs ₹1.'
+              tone = 'text-rose-600 font-medium'
+            } else if (capOverWallet) {
+              msg = `Cap exceeds wallet balance ${formatRupees(walletBalancePaise)}. Top up the wallet first, or lower the cap.`
+              tone = 'text-rose-600 font-medium'
+            } else if (walletBalancePaise != null) {
+              msg = `Wallet balance: ${formatRupees(walletBalancePaise)} — cap must be ≤ this.`
+            }
+            return <p className={`text-[11px] mt-1 ${tone}`}>{msg}</p>
+          })()}
         </div>
         <div>
           <Label>Valid from</Label>
@@ -692,7 +720,7 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
 
       <div className="flex justify-end gap-2">
         <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>
-        <Button type="submit" disabled={saving || examIds.length === 0 || !isEmailVerified}>
+        <Button type="submit" disabled={saving || examIds.length === 0 || !isEmailVerified || capInvalid}>
           {saving ? 'Saving…' : (isEdit ? 'Save changes' : 'Create operator')}
         </Button>
       </div>

@@ -7,6 +7,7 @@ import (
 	"errors"
 	"log"
 	"net/http"
+	"regexp"
 	"strings"
 
 	"github.com/veni/neet-verification/internal/auth"
@@ -27,6 +28,21 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // stays in the server logs — the user just needs to know that this
 // isn't their fault and that a retry is safe.
 const friendlyServerError = "Something went wrong on our end. Please try again in a moment."
+
+// retakeSuffixRe strips the mobile retake marker `-r<N>` off the tail
+// of an idempotency key. Mobile appends this on every retake so each
+// attempt's temp-probe blob lands under its own S3 path (letting
+// promoteCaptureBlobs pick the right one), but the liveness_checks
+// row is keyed on the BASE session_id — the operator only redoes the
+// biometric on a retake, not the blink challenge. Backend gate
+// lookups therefore need to strip the suffix before querying.
+var retakeSuffixRe = regexp.MustCompile(`-r\d+$`)
+
+// stripRetakeSuffix returns key with any trailing `-r<N>` removed.
+// Idempotent on keys that don't have the suffix.
+func stripRetakeSuffix(key string) string {
+	return retakeSuffixRe.ReplaceAllString(key, "")
+}
 
 // writeErr sends {"error": msg} at the given status code. For any 5xx
 // status it forces a friendly generic string on the wire and pushes

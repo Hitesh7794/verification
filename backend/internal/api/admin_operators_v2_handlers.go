@@ -302,8 +302,12 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 	if req.DisplayName == "" {
 		req.DisplayName = req.Username
 	}
-	if req.SpendingCapPaise != nil && *req.SpendingCapPaise <= 0 {
-		writeErr(w, http.StatusBadRequest, "spending_cap_paise must be > 0 or omitted")
+	if req.SpendingCapPaise != nil && *req.SpendingCapPaise < int64(s.deps.Cfg.WalletFeePerLookupPaise) {
+		// Cap below one fee = operator can't verify a single roll,
+		// which is never what the admin intends. Match the frontend
+		// validation (min ₹1) so a direct API call can't bypass.
+		writeErr(w, http.StatusBadRequest,
+			"Spending cap must be at least ₹1 (one verification), or omitted for no cap.")
 		return
 	}
 	if err := s.checkCapAgainstWallet(r, orgID, req.SpendingCapPaise); err != nil {
@@ -514,8 +518,9 @@ func (s *Server) adminPatchOperator(w http.ResponseWriter, r *http.Request) {
 	if req.ClearSpendingCap {
 		sets = append(sets, "spending_cap_paise = NULL")
 	} else if req.SpendingCapPaise != nil {
-		if *req.SpendingCapPaise <= 0 {
-			writeErr(w, http.StatusBadRequest, "spending_cap_paise must be > 0 (use clear_spending_cap to remove)")
+		if *req.SpendingCapPaise < int64(s.deps.Cfg.WalletFeePerLookupPaise) {
+			writeErr(w, http.StatusBadRequest,
+				"Spending cap must be at least ₹1 (one verification), or use clear_spending_cap to remove.")
 			return
 		}
 		if err := s.checkCapAgainstWallet(r, orgID, req.SpendingCapPaise); err != nil {

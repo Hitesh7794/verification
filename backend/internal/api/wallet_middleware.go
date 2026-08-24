@@ -85,23 +85,16 @@ func (s *Server) walletCharge(next http.HandlerFunc) http.HandlerFunc {
 			return
 		}
 
-		// 1. Same-roll cache: any operator in this org already paid for
-		// this roll recently → no debit, run the handler normally.
-		// Cap doesn't apply here — this operator (or a colleague at the
-		// same org) already paid.
-		if cacheMin := s.deps.Cfg.WalletSameRollCacheMin; cacheMin > 0 && roll != "" {
-			hit, err := s.wallet.HasRecentChargeForRoll(r.Context(), orgID, roll, cacheMin)
-			if err != nil {
-				writeErr(w, http.StatusInternalServerError, "wallet cache: "+err.Error())
-				return
-			}
-			if hit {
-				bal, _ := s.wallet.Balance(r.Context(), orgID)
-				setWalletHeaders(w, bal, 0)
-				next(w, r)
-				return
-			}
-		}
+		// Same-roll 5-min cache was removed 2026-08-24 per product
+		// decision — every liveness pass now debits, no free retries
+		// on repeat rolls. The WalletSameRollCacheMin config knob
+		// stays wired for observability, but the cache-hit branch no
+		// longer short-circuits the debit. Retakes within the same
+		// liveness session still ride the SAME liveness_checks row on
+		// the backend so face-match doesn't fire the debit path again
+		// (debit lives on /liveness-check, not face-match) — but
+		// re-running a NEW liveness (which is what happens on a fresh
+		// roll lookup) always costs.
 
 		// 1.5. Cap check runs AFTER the cache. Purpose: block only new
 		// spend, not free re-checks. Same message shape the frontend
