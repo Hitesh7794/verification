@@ -23,11 +23,11 @@ import { PortalHeader } from '../../components/ui/brand.jsx'
 import {
   registerInit,
   uploadDoc,
-  deleteDoc,
   submitApplication,
-  loadDraft,
-  saveDraft,
-  clearDraft,
+  // Draft persistence removed 2026-08-24 — the wizard now holds all
+  // state (fields, OTP proofs, File objects) in React memory only,
+  // and the DB is only written to on final Submit. `deleteDoc` also
+  // dropped — no server-side doc to delete pre-submit any more.
 } from '../../lib/onboarding/register.js'
 import OtpVerificationField from '../../components/ui/OtpVerificationField.jsx'
 import {
@@ -315,25 +315,12 @@ export default function Register() {
   const [emailOtpToken, setEmailOtpToken] = useState('')
   const [mobileOtpToken, setMobileOtpToken] = useState('')
 
-  // Restore draft on mount.
-  useEffect(() => {
-    const d = loadDraft()
-    if (d) {
-      setForm({ ...EMPTY_FORM, ...(d.form || {}) })
-      setStep(d.step ?? 0)
-      const validAppId = d.applicationId && !isNaN(Number(d.applicationId)) && Number(d.applicationId) > 0
-        ? Number(d.applicationId)
-        : null
-      setApplicationId(validAppId)
-      setUploaded(d.uploaded ?? {})
-      setEmailOtpToken(d.emailOtpToken ?? '')
-      setMobileOtpToken(d.mobileOtpToken ?? '')
-    }
-  }, [])
-
-  useEffect(() => {
-    saveDraft({ form, step, applicationId, uploaded, emailOtpToken, mobileOtpToken })
-  }, [form, step, applicationId, uploaded, emailOtpToken, mobileOtpToken])
+  // Draft persistence removed 2026-08-24 — nothing hits localStorage
+  // any more. Refreshing the tab now clears the wizard entirely,
+  // which is by design: it keeps OTP proof tokens off disk, avoids
+  // stale-app_id pitfalls when the server DB is wiped between
+  // sessions, and matches the "only write to DB on final Submit"
+  // policy that Submit now enforces end-to-end.
 
   function update(field, value) {
     setForm((f) => ({ ...f, [field]: value }))
@@ -386,7 +373,10 @@ export default function Register() {
     return Object.keys(e).length === 0
   }
 
-  async function initApplicationDraft() {
+  // buildRegisterPayload composes the create-application body. Extracted
+  // so the (now-single) call site in submit() reads cleanly. Contains
+  // no side effects.
+  function buildRegisterPayload() {
     const affiliation = form.affiliation_body === 'Other'
       ? form.affiliation_body_other.trim()
       : form.affiliation_body
@@ -402,17 +392,12 @@ export default function Register() {
       expected_centres: Number(form.expected_centres) || 1,
       email_otp_token: emailOtpToken,
       mobile_otp_token: mobileOtpToken,
-      // Backend expects an int (or omit). Empty-string picker value
-      // → drop the key entirely so the app lands in the legacy
-      // superadmin queue rather than 400'ing on a NaN.
       client_id: form.client_id ? Number(form.client_id) : undefined,
     }
-    delete payload.affiliation_body_other // internal-only field
-    delete payload.institution_type_other // internal-only field
+    delete payload.affiliation_body_other
+    delete payload.institution_type_other
     if (!payload.client_id) delete payload.client_id
-    const res = await registerInit(payload)
-    setApplicationId(res.application_id)
-    return res.application_id
+    return payload
   }
 
   async function goToStep2() {
@@ -427,102 +412,48 @@ export default function Register() {
       return
     }
 
-    setSubmitting(true)
+    // No DB write here any more — registerInit is deferred until
+    // Submit. Advance straight to the Documents step; docs are held
+    // as File objects in state until the final Submit orchestrates
+    // create-app + upload-all + finalize as one atomic sequence.
     setTopError('')
-    try {
-      await initApplicationDraft()
-      setStep(S_DOCUMENTS)
-    } catch (err) {
-      const msg = err.message || 'Registration failed'
-      setTopError(msg)
-      if (msg.toLowerCase().includes('email verification')) {
-        setEmailOtpToken('')
-      }
-      if (msg.toLowerCase().includes('mobile verification')) {
-        setMobileOtpToken('')
-      }
-    } finally {
-      setSubmitting(false)
-    }
+    setStep(S_DOCUMENTS)
   }
 
-  async function handleFile(docKind, file) {
+  // Stash the File in React state — no server call. The actual
+  // upload runs during Submit as part of the create-app + upload-all
+  // + finalize sequence.
+  function handleFile(docKind, file) {
     if (!file) return
     if (file.size > 10 * 1024 * 1024) {
       setErrors((e) => ({ ...e, [docKind]: 'File exceeds 10 MB limit' }))
       return
     }
     setErrors((e) => ({ ...e, [docKind]: undefined }))
-    setUploaded((u) => ({ ...u, [docKind]: { uploading: true, progress: 0, original_name: file.name } }))
-    
-    try {
-      let currentAppId = applicationId
-      if (!currentAppId || isNaN(Number(currentAppId)) || Number(currentAppId) <= 0) {
-        currentAppId = await initApplicationDraft()
-      }
-
-      let res
-      try {
-        res = await uploadDoc(currentAppId, docKind, file, (pct) => {
-          setUploaded((u) => ({ ...u, [docKind]: { ...u[docKind], progress: pct } }))
-        })
-      } catch (uploadErr) {
-        // If the backend reports invalid application ID / application not found (e.g. from local DB reset or stale draft),
-        // re-initialize the draft and retry once seamlessly.
-        const errMsg = String(uploadErr.message || '').toLowerCase()
-        if (errMsg.includes('application') || uploadErr.status === 400 || uploadErr.status === 404) {
-          const freshAppId = await initApplicationDraft()
-          res = await uploadDoc(freshAppId, docKind, file, (pct) => {
-            setUploaded((u) => ({ ...u, [docKind]: { ...u[docKind], progress: pct } }))
-          })
-        } else {
-          throw uploadErr
-        }
-      }
-
-      setUploaded((u) => ({
-        ...u,
-        [docKind]: {
-          doc_id: res.doc_id,
-          original_name: res.original_name,
-          size_bytes: res.size_bytes,
-          uploading: false,
-          progress: 100,
-        },
-      }))
-    } catch (err) {
-      setErrors((e) => ({ ...e, [docKind]: err.message }))
-      setUploaded((u) => {
-        const { [docKind]: _, ...rest } = u
-        return rest
-      })
-    }
+    setUploaded((u) => ({
+      ...u,
+      [docKind]: {
+        file,                       // held in memory; sent on Submit
+        original_name: file.name,
+        size_bytes: file.size,
+      },
+    }))
   }
 
-  async function removeDoc(docKind) {
-    const u = uploaded[docKind]
-    if (!u?.doc_id) {
-      setUploaded((prev) => {
-        const { [docKind]: _, ...rest } = prev
-        return rest
-      })
-      return
-    }
-    try {
-      await deleteDoc(applicationId, u.doc_id)
-    } catch {}
+  // Client-only remove — no server call any more; the doc never
+  // existed server-side yet.
+  function removeDoc(docKind) {
     setUploaded((prev) => {
       const { [docKind]: _, ...rest } = prev
       return rest
     })
   }
 
-  // Documents → Review. The required-doc gate lives here now, so the
-  // applicant can't reach a review page that claims they're ready when
-  // they aren't.
+  // Documents → Review. The required-doc gate now checks the in-memory
+  // File presence instead of a server-issued doc_id.
   function goToReview() {
     const activeDocs = getRequiredDocs(form)
-    const missing = activeDocs.filter((d) => d.required && !uploaded[d.kind]?.doc_id)
+    const missing = activeDocs.filter((d) => d.required && !uploaded[d.kind]?.file)
     if (missing.length) {
       setTopError('Please upload: ' + missing.map((d) => d.label).join(', '))
       return
@@ -542,7 +473,7 @@ export default function Register() {
       return
     }
     const activeDocs = getRequiredDocs(form)
-    const missing = activeDocs.filter((d) => d.required && !uploaded[d.kind]?.doc_id)
+    const missing = activeDocs.filter((d) => d.required && !uploaded[d.kind]?.file)
     if (missing.length) {
       setTopError('Please upload: ' + missing.map((d) => d.label).join(', '))
       setStep(S_DOCUMENTS)
@@ -551,8 +482,30 @@ export default function Register() {
     setSubmitting(true)
     setTopError('')
     try {
-      await submitApplication(applicationId)
-      clearDraft()
+      // Atomic-ish create-app + upload-each-doc + finalize.
+      //
+      // "Atomic-ish" because we still hit three separate HTTP calls:
+      //   1. registerInit    — INSERT institution_applications (draft)
+      //   2. uploadDoc * N   — INSERT institution_application_documents + S3 put per file
+      //   3. submitApplication — UPDATE status draft → pending
+      //
+      // If step 2 or 3 fails, a draft app row (and possibly partial
+      // docs) is stranded server-side under the returned appId. The
+      // applicant sees an error banner and can retry Submit — the
+      // retry does a FRESH registerInit (new appId), so the failed
+      // one turns into a superadmin cleanup task. Small orphan
+      // exposure in exchange for the "no DB writes until Submit"
+      // policy the applicant flow now enforces.
+      const initRes = await registerInit(buildRegisterPayload())
+      const newAppId = initRes.application_id
+      setApplicationId(newAppId)
+
+      const entries = Object.entries(uploaded).filter(([_, u]) => u?.file)
+      for (const [kind, u] of entries) {
+        await uploadDoc(newAppId, kind, u.file)
+      }
+
+      await submitApplication(newAppId)
       setStep(S_DONE)
     } catch (err) {
       setTopError(err.message)
@@ -562,12 +515,68 @@ export default function Register() {
   }
 
   function startOver() {
-    clearDraft()
     setForm(EMPTY_FORM)
     setApplicationId(null)
     setUploaded({})
+    setEmailOtpToken('')
+    setMobileOtpToken('')
     setStep(S_INSTITUTION)
     setTopError('')
+  }
+
+  // Picker handler for the Step 0 institution-type tiles.
+  //
+  // Cross-branch changes (academic ↔ non-academic) invalidate the
+  // whole form because the fields required + their semantics shift
+  // wholesale: aishe_code ↔ establishment reference, affiliation
+  // ↔ parent ministry, student_count meaning, designation
+  // vocabulary, required doc set. Keeping half-filled academic
+  // values around after the applicant re-declares as a recruitment
+  // body would produce garbage. Prompt-and-reset instead.
+  //
+  // Within-branch swaps (college ↔ university) share the same
+  // field set; carry values over as before, only touching
+  // institution_type_other + designation to keep them consistent.
+  function onTypeSelect(newType) {
+    const oldType = form.institution_type
+    if (oldType === newType) return
+
+    const wasAcademic = oldType === 'college' || oldType === 'university'
+    const nowAcademic = newType === 'college' || newType === 'university'
+    const crossBranch = wasAcademic !== nowAcademic
+
+    if (crossBranch) {
+      const hasData = (
+        form.institution_name || form.aishe_code || form.pan ||
+        form.head_name || form.head_email || form.head_mobile ||
+        Object.keys(uploaded).length > 0
+      )
+      if (hasData && !window.confirm(
+        'Changing the organisation type will reset the form — the fields required are different. Continue?'
+      )) {
+        return
+      }
+      setForm({ ...EMPTY_FORM, institution_type: newType })
+      setUploaded({})
+      setEmailOtpToken('')
+      setMobileOtpToken('')
+      setErrors({})
+      setTopError('')
+      return
+    }
+
+    // Within-branch: preserve fields, just swap type + touch-ups.
+    update('institution_type', newType)
+    if (newType !== 'other') {
+      update('institution_type_other', '')
+      if (RECRUITER_DESIGNATIONS.includes(form.head_designation)) {
+        update('head_designation', 'Principal')
+      }
+    } else {
+      if (ACADEMIC_DESIGNATIONS.includes(form.head_designation)) {
+        update('head_designation', 'Nodal Verification Officer')
+      }
+    }
   }
 
   return (
@@ -702,6 +711,7 @@ export default function Register() {
                       onNext={() => {
                         if (validateStep(S_INSTITUTION)) setStep(S_ADDRESS)
                       }}
+                      onTypeSelect={onTypeSelect}
                     />
                   )}
                   {step === S_ADDRESS && (
@@ -833,7 +843,7 @@ function StepSidebar({ step }) {
 
 // ─── Step 0 ────────────────────────────────────────────────────────────
 
-function Step0({ form, errors, update, onBlurField, onNext }) {
+function Step0({ form, errors, update, onBlurField, onNext, onTypeSelect }) {
   const isRecruiter = form.institution_type === 'other'
 
   return (
@@ -875,19 +885,7 @@ function Step0({ form, errors, update, onBlurField, onNext }) {
                 <CompactChoice
                   key={t.value}
                   selected={form.institution_type === t.value}
-                  onSelect={() => {
-                    update('institution_type', t.value)
-                    if (t.value !== 'other') {
-                      update('institution_type_other', '')
-                      if (RECRUITER_DESIGNATIONS.includes(form.head_designation)) {
-                        update('head_designation', 'Principal')
-                      }
-                    } else {
-                      if (ACADEMIC_DESIGNATIONS.includes(form.head_designation)) {
-                        update('head_designation', 'Nodal Verification Officer')
-                      }
-                    }
-                  }}
+                  onSelect={() => onTypeSelect(t.value)}
                   icon={IconComp}
                   label={t.label}
                   blurb={t.blurb}
