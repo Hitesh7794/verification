@@ -128,13 +128,35 @@ export async function setPassword(token, password) {
 // ----- Local persistence -----
 // Persist the wizard's in-flight state so a tab refresh / accidental
 // navigation doesn't lose 5 minutes of typing.
+//
+// TTL (L10 fix, 2026-08-23): drafts silently expire after 7 days.
+// Reasoning:
+//   1. Stale `applicationId`s from server-side wipes carry a dead ID
+//      that the submit path can't recover from cleanly.
+//   2. Stale HMAC-signed OTP proof tokens (`emailOtpToken`,
+//      `mobileOtpToken`) shouldn't sit in localStorage indefinitely
+//      on shared / public terminals.
+//   3. A registrar who genuinely needs >7 days to gather documents
+//      is rare; a stale draft causing a wrong submission is worse
+//      than making them re-enter fields.
+// 7 days is generous enough that a busy admin coming back after a
+// weekend + a couple of workdays still finds their form intact.
 const STORAGE_KEY = 'institution_register_state_v1'
+const DRAFT_TTL_MS = 7 * 24 * 60 * 60 * 1000 // 7 days
 
 export function loadDraft() {
   try {
     const raw = localStorage.getItem(STORAGE_KEY)
     if (!raw) return null
-    return JSON.parse(raw)
+    const d = JSON.parse(raw)
+    // Pre-TTL drafts (no `savedAt`) are treated as expired — safer to
+    // drop them than to load fields written before the timestamp
+    // guard existed.
+    if (!d?.savedAt || (Date.now() - d.savedAt) > DRAFT_TTL_MS) {
+      localStorage.removeItem(STORAGE_KEY)
+      return null
+    }
+    return d
   } catch {
     return null
   }
@@ -142,7 +164,13 @@ export function loadDraft() {
 
 export function saveDraft(state) {
   try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(state))
+    // Stamp savedAt on every write so the freshness clock resets
+    // with each keystroke — a form the user is actively touching
+    // never ages out mid-session.
+    localStorage.setItem(STORAGE_KEY, JSON.stringify({
+      ...state,
+      savedAt: Date.now(),
+    }))
   } catch {
     // localStorage full / disabled — silently ignore. Next save retries.
   }

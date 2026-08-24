@@ -740,7 +740,6 @@ export default function ReviewerDashboard() {
                     }}
                     className="!py-1.5 !px-3 text-xs font-semibold shrink-0 hover:!bg-slate-100"
                   >
-                    <Icon.ArrowLeft className="h-3.5 w-3.5 mr-1.5" />
                     Back to All Exams
                   </Button>
 
@@ -770,7 +769,7 @@ export default function ReviewerDashboard() {
                     </div>
                     {currentExam?.verification_from && (
                       <p className="text-xs text-slate-500 mt-0.5 truncate">
-                        📅 Window: {dateRange(currentExam.verification_from, currentExam.verification_to)} • {currentExam.candidate_count || 0} Candidates
+                        Window: {dateRange(currentExam.verification_from, currentExam.verification_to)} • {currentExam.candidate_count || 0} Candidates
                       </p>
                     )}
                   </div>
@@ -791,13 +790,12 @@ export default function ReviewerDashboard() {
                         setApprovedPage(1)
                         setSelectedOrgIds(new Set())
                       }}
-                      className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-all ${
+                      className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold whitespace-nowrap transition-all ${
                         subStatus === 'all'
                           ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200'
                           : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
                       }`}
                     >
-                      <Icon.FileText className="h-4 w-4 text-slate-500" />
                       <span>All Universities</span>
                       <span className={`inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold tabular-nums ${
                         subStatus === 'all' ? 'bg-slate-900 text-white' : 'bg-slate-200 text-slate-700'
@@ -815,13 +813,12 @@ export default function ReviewerDashboard() {
                         setApprovedPage(1)
                         setSelectedOrgIds(new Set())
                       }}
-                      className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-all ${
+                      className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold whitespace-nowrap transition-all ${
                         subStatus === 'pending'
                           ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200'
                           : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
                       }`}
                     >
-                      <Icon.Clock className="h-4 w-4 text-amber-600" />
                       <span>Pending Requests</span>
                       <span className={`inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold tabular-nums ${
                         subStatus === 'pending' ? 'bg-amber-100 text-amber-800 ring-1 ring-amber-300' : 'bg-slate-200 text-slate-700'
@@ -839,13 +836,12 @@ export default function ReviewerDashboard() {
                         setApprovedPage(1)
                         setSelectedOrgIds(new Set())
                       }}
-                      className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-all ${
+                      className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold whitespace-nowrap transition-all ${
                         subStatus === 'approved'
                           ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200'
                           : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
                       }`}
                     >
-                      <Icon.Check className="h-4 w-4 text-emerald-600" />
                       <span>Approved Subscriptions</span>
                       <span className={`inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold tabular-nums ${
                         subStatus === 'approved' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'
@@ -863,13 +859,12 @@ export default function ReviewerDashboard() {
                         setApprovedPage(1)
                         setSelectedOrgIds(new Set())
                       }}
-                      className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold transition-all ${
+                      className={`inline-flex items-center gap-2 rounded-lg px-3.5 py-2 text-sm font-semibold whitespace-nowrap transition-all ${
                         subStatus === 'rejected'
                           ? 'bg-white text-slate-900 shadow-sm ring-1 ring-slate-200'
                           : 'text-slate-600 hover:text-slate-900 hover:bg-white/50'
                       }`}
                     >
-                      <Icon.X className="h-4 w-4 text-rose-600" />
                       <span>Rejected</span>
                       <span className={`inline-flex items-center justify-center rounded-full px-2 py-0.5 text-xs font-bold tabular-nums ${
                         subStatus === 'rejected' ? 'bg-rose-100 text-rose-800' : 'bg-slate-200 text-slate-700'
@@ -1790,7 +1785,7 @@ export default function ReviewerDashboard() {
                           </div>
                           {e.verification_from && (
                             <div className="text-[11px] text-slate-500 mt-0.5">
-                              📅 Window: {dateRange(e.verification_from, e.verification_to)}
+                              Window: {dateRange(e.verification_from, e.verification_to)}
                             </div>
                           )}
                           {e.status === 'revoked' && e.review_note && (
