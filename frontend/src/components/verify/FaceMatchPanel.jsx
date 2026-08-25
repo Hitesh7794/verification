@@ -2,59 +2,56 @@ import { useEffect, useRef, useState } from 'react'
 import { Button } from '../ui/ui.jsx'
 import { postFaceMatch } from '../../lib/api.js'
 
-// FaceMatchPanel orchestrates the face capture step:
-//   1. Live webcam preview (getUserMedia)
-//   2. Operator clicks Capture → JPEG snapshot
-//   3. Snapshot is POSTed to /api/face-match — backend looks up the
-//      enrolled gallery template, forwards to luxand-service, returns
-//      the cosine-similarity score + server-computed threshold + status
-//   4. Result panel shows score / threshold inline, parent gets a
-//      structured result object via onResult so the Dashboard can
-//      propagate face_match_score into the verifications submit
+// FaceMatchPanel — paid identity match. Mirrors LivenessPanel's auto-
+// capture UX: no "Capture" button, the operator just sees a priming
+// countdown, one JPEG frame is grabbed automatically, and the snapshot
+// is POSTed to /api/face-match. Backend loads the enrolled photo from
+// S3 and forwards both to TrustView for cosine-similarity scoring.
+// Result panel shows score / threshold + Retake.
 //
-// Same design language as FingerprintCapture: status banner, score+
-// threshold readout, retake button. Operator never sees an "auth this"
-// or "select webcam" decision — first available webcam is used silently.
+// Runs immediately once the webcam is streaming — this component is
+// mounted only after LivenessPanel.onPass fires, so the operator has
+// already committed to "capture me now". The one-click promise starts
+// at "Start liveness check" and ends with the score readout below.
 //
-// Note: the Luxand match runs on the server, NOT on the operator laptop.
+// The wallet debit happens on this call (liveness is free). If the
+// server refuses with 412 (liveness gate expired), the parent bounces
+// the operator back to LivenessPanel — this component doesn't own that
+// recovery.
+//
+// The Luxand match runs on the server, NOT on the operator laptop.
 // That makes face the only fully OS-independent biometric channel — no
-// per-laptop daemon, no install. Matches happen in the central server's
-// luxand-service via libfsdk.so.
+// per-laptop daemon, no install.
+
+const PRIMING_MS = 1500  // pre-capture dwell, matches LivenessPanel
 
 export default function FaceMatchPanel({
   rollNo,
   onResult, // ({ ok, score, threshold, faceFound, captured, raw }) => void
   // Optional: per-verification idempotency key from the parent. Passed
   // through to postFaceMatch so the backend can stash the probe under
-  // this key for later promotion by createVerification. Absent → probe
-  // won't be persisted (backward-compatible).
+  // this key for later promotion by createVerification.
   idempotencyKey,
 }) {
   const videoRef = useRef(null)
-  // streamRef holds the live MediaStream across renders. When the user
-  // clicks Capture, we conditionally render an <img> over the <video>,
-  // which UNMOUNTS the video element. The MediaStream itself is fine —
-  // its tracks keep running — but the new <video> element that mounts
-  // on Retake doesn't have srcObject pointing at the stream, so the
-  // preview goes blank. Keeping the stream in a ref + a separate
-  // effect that re-attaches on remount fixes this.
+  // streamRef holds the live MediaStream across renders. When the auto-
+  // capture flow renders the snapshot <img> over the <video>, the video
+  // element unmounts. The MediaStream itself keeps running, but the
+  // <video> that mounts on Retake needs its srcObject re-attached —
+  // handled by the effect on [snap].
   const streamRef = useRef(null)
   const [streaming, setStreaming] = useState(false)
   const [webcamErr, setWebcamErr] = useState('')
   const [snap, setSnap] = useState(null)
-  const [busy, setBusy] = useState(false)
+  const [phase, setPhase] = useState('idle')
+    // idle | priming | matching | result | error
+  const [countdown, setCountdown] = useState(0)
   const [result, setResult] = useState(null)
   const [callErr, setCallErr] = useState('')
 
   // Boot webcam on mount, release on unmount.
   useEffect(() => {
     async function start() {
-      // Browsers only expose navigator.mediaDevices on a "secure context":
-      // https://... anything, http://localhost..., or file://. Plain HTTP
-      // from a LAN IP (e.g. http://192.168.x.y:5173) doesn't qualify —
-      // mediaDevices is literally undefined there, so we surface a
-      // specific message instead of the cryptic "undefined is not an
-      // object" the browser would otherwise throw.
       if (typeof navigator === 'undefined' ||
           !navigator.mediaDevices ||
           typeof navigator.mediaDevices.getUserMedia !== 'function') {
@@ -73,9 +70,6 @@ export default function FaceMatchPanel({
         }
         setStreaming(true)
       } catch (e) {
-        // Granted-but-failed: permission denied, no device, hardware
-        // error, etc. The browser gives a slightly more readable
-        // .name in these cases (NotAllowedError, NotFoundError, ...).
         const reason = e.name || e.message || 'unknown error'
         setWebcamErr(`Unable to access webcam (${reason}).`)
       }
@@ -90,20 +84,26 @@ export default function FaceMatchPanel({
   }, [])
 
   // Re-attach the live stream whenever the <video> element remounts.
-  // The element unmounts when `snap` becomes non-null (we render the
-  // captured snapshot <img> instead), and remounts when the operator
-  // clicks Retake (snap → null). Without this effect, the new <video>
-  // has no srcObject and the preview pane stays black even though the
-  // camera is still running.
+  // The element unmounts when `snap` becomes non-null (the captured
+  // <img> renders instead), and remounts when Retake clears `snap`.
   useEffect(() => {
     if (!snap && streamRef.current && videoRef.current) {
       videoRef.current.srcObject = streamRef.current
     }
   }, [snap])
 
+  // Auto-start the capture flow once the webcam is streaming and we're
+  // idle (either just mounted or the operator just hit Retake).
+  useEffect(() => {
+    if (streaming && phase === 'idle' && !webcamErr) {
+      run()
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [streaming, phase, webcamErr])
+
   function captureSnapshot() {
     const v = videoRef.current
-    if (!v) return null
+    if (!v || !v.videoWidth) return null
     const canvas = document.createElement('canvas')
     canvas.width = v.videoWidth
     canvas.height = v.videoHeight
@@ -113,18 +113,28 @@ export default function FaceMatchPanel({
     return canvas.toDataURL('image/jpeg', 0.85)
   }
 
-  async function captureAndMatch() {
-    setBusy(true)
+  async function run() {
     setCallErr('')
     setResult(null)
-    try {
-      const dataURL = captureSnapshot()
-      if (!dataURL) {
-        setCallErr('No webcam frame available')
-        return
-      }
-      setSnap(dataURL)
+    setPhase('priming')
 
+    let elapsed = 0
+    while (elapsed < PRIMING_MS) {
+      setCountdown(Math.ceil((PRIMING_MS - elapsed) / 1000))
+      await sleep(300)
+      elapsed += 300
+    }
+
+    const dataURL = captureSnapshot()
+    if (!dataURL) {
+      setPhase('error')
+      setCallErr('No webcam frame available. Click Retake to try again.')
+      return
+    }
+    setSnap(dataURL)
+    setPhase('matching')
+
+    try {
       const resp = await postFaceMatch(rollNo, dataURL, idempotencyKey)
       const out = {
         ok: !!resp.status,
@@ -136,11 +146,11 @@ export default function FaceMatchPanel({
         raw: resp,
       }
       setResult(out)
+      setPhase('result')
       onResult?.(out)
     } catch (e) {
+      setPhase('error')
       setCallErr(e.message || 'face match failed')
-    } finally {
-      setBusy(false)
     }
   }
 
@@ -148,78 +158,99 @@ export default function FaceMatchPanel({
     setSnap(null)
     setResult(null)
     setCallErr('')
+    setPhase('idle')
+    // The [streaming, phase] effect above re-runs `run()` on the next tick.
   }
+
+  const active = phase === 'priming' || phase === 'matching'
 
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
-        <div className="aspect-video w-full rounded-lg bg-slate-900 overflow-hidden border border-slate-200">
+        {/* Live preview → snapshot swap, with priming overlay while the
+            countdown ticks. Same visual language as LivenessPanel. */}
+        <div className="aspect-video w-full rounded-lg bg-slate-900 overflow-hidden border border-slate-200 relative">
           {snap ? (
             <img src={snap} alt="captured" className="w-full h-full object-cover" />
           ) : (
             <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
           )}
+          {phase === 'priming' && (
+            <div className="absolute inset-0 bg-slate-900/40 flex items-center justify-center">
+              <div className="text-white text-center">
+                <p className="text-xs uppercase tracking-wider opacity-80">Get ready</p>
+                <p className="text-5xl font-bold tabular-nums mt-1">{countdown}</p>
+                <p className="text-xs mt-2 opacity-80">Capturing your face</p>
+              </div>
+            </div>
+          )}
         </div>
+
+        {/* Instructions / result panel */}
         <div className="aspect-video w-full rounded-lg bg-slate-50 border border-dashed border-slate-300 flex items-center justify-center text-center p-3">
-          {result ? (
-            <ResultBox result={result} />
-          ) : busy ? (
+          {!streaming && !webcamErr && (
+            <p className="text-xs text-slate-500">Starting camera…</p>
+          )}
+          {phase === 'priming' && (
+            <div className="text-sm text-slate-700">
+              <p className="font-semibold">Stay still…</p>
+              <p className="text-xs text-slate-500 mt-1">One shot, straight at the camera.</p>
+            </div>
+          )}
+          {phase === 'matching' && (
             <div className="text-sm text-slate-600">
-              <div className="h-12 w-12 mx-auto rounded-full border-4 border-indigo-200 border-t-indigo-600 animate-spin" />
+              <div className="h-10 w-10 mx-auto rounded-full border-4 border-indigo-200 border-t-indigo-600 animate-spin" />
               <p className="mt-2">Matching against enrolled photo…</p>
             </div>
-          ) : (
-            <p className="text-xs text-slate-500">
-              Click <span className="font-medium text-slate-700">Capture &amp; match</span><br />
-              The server will compare against the enrolled photo.
-            </p>
+          )}
+          {phase === 'result' && result && (
+            <ResultBox result={result} />
+          )}
+          {phase === 'error' && (
+            <div className="text-rose-700">
+              <p className="font-semibold">Capture failed</p>
+              <p className="text-xs mt-1 text-slate-600">{callErr || 'Please retake.'}</p>
+            </div>
           )}
         </div>
       </div>
 
       {webcamErr && <p className="text-xs text-rose-600">{webcamErr}</p>}
-      {callErr && (
+      {callErr && phase !== 'error' && (
         <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">
           {callErr}
         </div>
       )}
 
       <div className="flex gap-2">
-        {result ? (
-          <Button variant="secondary" onClick={retake}>Retake</Button>
-        ) : (
-          <>
-            <Button onClick={captureAndMatch} disabled={!streaming || busy}>
-              {busy ? 'Matching…' : 'Capture & match'}
-            </Button>
-            {/* When the webcam is unavailable (no camera, permission denied,
-                or the Luxand service is unreachable on this host), the
-                operator otherwise gets stuck at Step 2. This skip path
-                emits a "no biometric attempted" result so the workflow can
-                proceed to fingerprint / iris / decision — those channels
-                are independent. The verifications row records face_match=
-                false, which is the truth. */}
-            {(!streaming || webcamErr) && (
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  const out = {
-                    ok: false,
-                    captured: false,
-                    faceFound: false,
-                    score: 0,
-                    threshold: 0,
-                    snapshot: null,
-                    skipped: true,
-                  }
-                  setResult(out)
-                  onResult?.(out)
-                }}
-              >
-                Skip face step
-              </Button>
-            )}
-          </>
+        {(phase === 'result' || phase === 'error') && (
+          <Button variant="secondary" onClick={retake} disabled={active}>
+            Retake
+          </Button>
+        )}
+        {/* Skip stays available whenever the webcam never came up so
+            the operator isn't stuck at Step 2 — face is optional in the
+            downstream decision path. */}
+        {(!streaming || webcamErr) && !result && (
+          <Button
+            variant="secondary"
+            onClick={() => {
+              const out = {
+                ok: false,
+                captured: false,
+                faceFound: false,
+                score: 0,
+                threshold: 0,
+                snapshot: null,
+                skipped: true,
+              }
+              setResult(out)
+              setPhase('result')
+              onResult?.(out)
+            }}
+          >
+            Skip face step
+          </Button>
         )}
       </div>
     </div>
@@ -252,4 +283,8 @@ function ResultBox({ result }) {
       </p>
     </div>
   )
+}
+
+function sleep(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms))
 }
