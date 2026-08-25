@@ -1142,7 +1142,7 @@ function ReviewStep({ form, uploaded, onEdit, onBack, onSubmit, submitting }) {
   ].filter((l) => l && l.trim())
 
   const activeDocs = getRequiredDocs(form)
-  const docs = activeDocs.filter((d) => uploaded[d.kind]?.doc_id)
+  const docs = activeDocs.filter((d) => uploaded[d.kind]?.file || uploaded[d.kind]?.doc_id)
 
   return (
     <AestheticCard>
@@ -1631,7 +1631,7 @@ function CalloutNote({ children }) {
 function Step2({ form, applicationId, uploaded, errors, handleFile, removeDoc, onBack, onSubmit, submitting }) {
   const activeDocs = getRequiredDocs(form)
   const requiredCount = activeDocs.filter((d) => d.required).length
-  const uploadedRequiredCount = activeDocs.filter((d) => d.required && uploaded[d.kind]?.doc_id).length
+  const uploadedRequiredCount = activeDocs.filter((d) => d.required && (uploaded[d.kind]?.file || uploaded[d.kind]?.doc_id)).length
   return (
     <AestheticCard>
       <div className="px-6 py-5 border-b border-warm flex items-start gap-3">
@@ -1641,10 +1641,7 @@ function Step2({ form, applicationId, uploaded, errors, handleFile, removeDoc, o
         <div className="flex-1 min-w-0">
           <h2 className="text-base font-semibold text-ink-900">Upload documents</h2>
           <p className="text-sm text-stone-500 mt-0.5">
-            PDF, JPG or PNG — up to 10 MB per file. Application{' '}
-            <code className="px-1.5 py-0.5 rounded bg-[#F5EEDF] border border-warm text-stone-800 text-xs font-mono">
-              #{applicationId ?? '—'}
-            </code>
+            PDF, JPG or PNG — up to 10 MB per file.
           </p>
         </div>
         <Pill tone={uploadedRequiredCount === requiredCount ? 'emerald' : 'amber'}>
@@ -1683,7 +1680,7 @@ function Step2({ form, applicationId, uploaded, errors, handleFile, removeDoc, o
 function DocUploadRow({ kind, label, hint, required, state, error, onFile, onRemove }) {
   const inputId = `file_${kind}`
   const uploading = state?.uploading
-  const done = state?.doc_id && !uploading
+  const done = Boolean(state?.file || state?.doc_id) && !uploading
 
   return (
     <motion.div
