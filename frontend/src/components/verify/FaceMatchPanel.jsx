@@ -2,28 +2,33 @@ import { useEffect, useRef, useState } from 'react'
 import { Button } from '../ui/ui.jsx'
 import { postFaceMatch } from '../../lib/api.js'
 
-// FaceMatchPanel — paid identity match. Mirrors LivenessPanel's auto-
-// capture UX: no "Capture" button, the operator just sees a priming
-// countdown, one JPEG frame is grabbed automatically, and the snapshot
-// is POSTed to /api/face-match. Backend loads the enrolled photo from
-// S3 and forwards both to TrustView for cosine-similarity scoring.
-// Result panel shows score / threshold + Retake.
+// FaceMatchPanel — paid identity match. Runs completely automatically:
+// no button, no countdown. The instant the webcam is streaming (this
+// component only mounts after LivenessPanel.onPass), a single JPEG
+// frame is grabbed and POSTed to /api/face-match. Backend loads the
+// enrolled photo from S3 and forwards both to TrustView for
+// cosine-similarity scoring. Result panel shows score / threshold
+// plus a Retake button.
 //
-// Runs immediately once the webcam is streaming — this component is
-// mounted only after LivenessPanel.onPass fires, so the operator has
-// already committed to "capture me now". The one-click promise starts
-// at "Start liveness check" and ends with the score readout below.
+// No priming countdown here: LivenessPanel already dwelt 1.6s on its
+// "Liveness verified" success moment before handing off, and the
+// operator's face is by definition centred and lit (they just blinked
+// twice at the same camera one second ago). Adding another 1.5s of
+// "Get ready" would just delay the score without improving the shot.
 //
 // The wallet debit happens on this call (liveness is free). If the
 // server refuses with 412 (liveness gate expired), the parent bounces
 // the operator back to LivenessPanel — this component doesn't own that
 // recovery.
 //
-// The Luxand match runs on the server, NOT on the operator laptop.
-// That makes face the only fully OS-independent biometric channel — no
-// per-laptop daemon, no install.
+// The TrustView match runs on the server, NOT on the operator laptop —
+// no per-laptop daemon, no install for the face channel.
 
-const PRIMING_MS = 1500  // pre-capture dwell, matches LivenessPanel
+// grabFrame retries: getUserMedia can flip streaming=true before the
+// first frame is fully decoded, so v.videoWidth is briefly 0. Wait a
+// few 100ms ticks before giving up.
+const FRAME_RETRY_MS = 100
+const FRAME_MAX_TRIES = 20
 
 export default function FaceMatchPanel({
   rollNo,
@@ -44,8 +49,7 @@ export default function FaceMatchPanel({
   const [webcamErr, setWebcamErr] = useState('')
   const [snap, setSnap] = useState(null)
   const [phase, setPhase] = useState('idle')
-    // idle | priming | matching | result | error
-  const [countdown, setCountdown] = useState(0)
+    // idle | matching | result | error
   const [result, setResult] = useState(null)
   const [callErr, setCallErr] = useState('')
 
@@ -116,23 +120,24 @@ export default function FaceMatchPanel({
   async function run() {
     setCallErr('')
     setResult(null)
-    setPhase('priming')
+    setPhase('matching')
 
-    let elapsed = 0
-    while (elapsed < PRIMING_MS) {
-      setCountdown(Math.ceil((PRIMING_MS - elapsed) / 1000))
-      await sleep(300)
-      elapsed += 300
+    // The webcam element sometimes reports streaming=true before the
+    // first frame is decoded, so v.videoWidth is briefly 0 and the
+    // toDataURL call returns a black rectangle. Poll for a real frame
+    // for up to 2s before giving up.
+    let dataURL = null
+    for (let i = 0; i < FRAME_MAX_TRIES; i++) {
+      dataURL = captureSnapshot()
+      if (dataURL) break
+      await sleep(FRAME_RETRY_MS)
     }
-
-    const dataURL = captureSnapshot()
     if (!dataURL) {
       setPhase('error')
-      setCallErr('No webcam frame available. Click Retake to try again.')
+      setCallErr('Camera did not deliver a frame. Click Retake to try again.')
       return
     }
     setSnap(dataURL)
-    setPhase('matching')
 
     try {
       const resp = await postFaceMatch(rollNo, dataURL, idempotencyKey)
@@ -162,40 +167,26 @@ export default function FaceMatchPanel({
     // The [streaming, phase] effect above re-runs `run()` on the next tick.
   }
 
-  const active = phase === 'priming' || phase === 'matching'
+  const active = phase === 'matching'
 
   return (
     <div className="space-y-3">
       <div className="grid grid-cols-2 gap-3">
-        {/* Live preview → snapshot swap, with priming overlay while the
-            countdown ticks. Same visual language as LivenessPanel. */}
+        {/* Live preview → captured snapshot swap. No overlay — the
+            capture happens the instant the camera is ready, so there's
+            no "get ready" moment worth showing. */}
         <div className="aspect-video w-full rounded-lg bg-slate-900 overflow-hidden border border-slate-200 relative">
           {snap ? (
             <img src={snap} alt="captured" className="w-full h-full object-cover" />
           ) : (
             <video ref={videoRef} autoPlay playsInline muted className="w-full h-full object-cover" />
           )}
-          {phase === 'priming' && (
-            <div className="absolute inset-0 bg-slate-900/40 flex items-center justify-center">
-              <div className="text-white text-center">
-                <p className="text-xs uppercase tracking-wider opacity-80">Get ready</p>
-                <p className="text-5xl font-bold tabular-nums mt-1">{countdown}</p>
-                <p className="text-xs mt-2 opacity-80">Capturing your face</p>
-              </div>
-            </div>
-          )}
         </div>
 
-        {/* Instructions / result panel */}
+        {/* Status / result panel */}
         <div className="aspect-video w-full rounded-lg bg-slate-50 border border-dashed border-slate-300 flex items-center justify-center text-center p-3">
-          {!streaming && !webcamErr && (
+          {phase === 'idle' && !streaming && !webcamErr && (
             <p className="text-xs text-slate-500">Starting camera…</p>
-          )}
-          {phase === 'priming' && (
-            <div className="text-sm text-slate-700">
-              <p className="font-semibold">Stay still…</p>
-              <p className="text-xs text-slate-500 mt-1">One shot, straight at the camera.</p>
-            </div>
           )}
           {phase === 'matching' && (
             <div className="text-sm text-slate-600">
