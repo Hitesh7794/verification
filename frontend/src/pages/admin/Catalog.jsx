@@ -1,9 +1,9 @@
 import { useCallback, useEffect, useState } from 'react'
 import AdminShell, { PageHead } from '../../components/shell/AdminShell.jsx'
-import { Card, CardBody } from '../../components/ui/ui.jsx'
+import { Button, Card, CardBody } from '../../components/ui/ui.jsx'
 import { Pill } from '../../components/ui/extras.jsx'
 import { FadeIn } from '../../components/ui/motion.jsx'
-import { getCatalog } from '../../lib/admin/examSubscriptions.js'
+import { getCatalog, subscribeExam } from '../../lib/admin/examSubscriptions.js'
 import { dateRange } from '../../lib/dates.js'
 
 // Admin > Exam catalog — read-only browse of every visible client and
@@ -18,6 +18,9 @@ export default function Catalog() {
   const [clients, setClients] = useState([])
   const [initialLoading, setInitialLoading] = useState(true)
   const [err, setErr] = useState('')
+  // Track the exam being subscribed so the row's button can show a
+  // loading state without disabling every other row's button too.
+  const [busyExamId, setBusyExamId] = useState(null)
 
   const loadData = useCallback(async () => {
     setInitialLoading(true)
@@ -33,6 +36,23 @@ export default function Catalog() {
   }, [])
 
   useEffect(() => { loadData() }, [loadData])
+
+  // Optimistically flip the exam's status to 'approved' in the local
+  // state — the backend adminSubscribe path either approves the row
+  // outright (blanket-approved orgs) or leaves it pending. Either way
+  // the row leaves 'Available' and reload reconciles anything stale.
+  async function onSubscribe(examId) {
+    setBusyExamId(examId)
+    setErr('')
+    try {
+      await subscribeExam(examId)
+      await loadData()
+    } catch (e) {
+      setErr(e?.body?.error || e?.message || 'Could not subscribe to this exam')
+    } finally {
+      setBusyExamId(null)
+    }
+  }
 
   const isExamActive = (e) => {
     if (e.closed) return false
@@ -50,7 +70,7 @@ export default function Catalog() {
         <PageHead
           eyebrow="Catalog"
           title="Exam catalog"
-          subtitle="Every open exam on the platform. Access is granted to your organisation automatically when your KYC is approved — nothing to subscribe to from here."
+          subtitle="Every open exam on the platform. Click Subscribe to add an exam your organisation isn't already granted access to. Exams from your approved KYC show as Subscribed automatically."
         />
         {err && (
           <div role="alert" className="mb-4 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">
@@ -92,6 +112,8 @@ export default function Catalog() {
                       <tbody>
                         {c.exams.map((e) => {
                           const isSubscribed = e.subscription_status === 'approved' || e.subscribed
+                          const isPending    = e.subscription_status === 'pending'
+                          const rowBusy      = busyExamId === e.id
                           return (
                             <tr key={e.id} className="border-b border-slate-100 last:border-none hover:bg-slate-50/40">
                               <td className="px-5 py-3 font-mono text-xs text-slate-700 tabular-nums">{e.exam_code}</td>
@@ -101,9 +123,19 @@ export default function Catalog() {
                               </td>
                               <td className="px-5 py-3 text-slate-700 tabular-nums">{e.candidate_count}</td>
                               <td className="px-5 py-3 text-right">
-                                {isSubscribed
-                                  ? <Pill tone="emerald" dot>Subscribed</Pill>
-                                  : <Pill tone="slate">Available</Pill>}
+                                {isSubscribed ? (
+                                  <Pill tone="emerald" dot>Subscribed</Pill>
+                                ) : isPending ? (
+                                  <Pill tone="amber" dot>Pending review</Pill>
+                                ) : (
+                                  <Button
+                                    size="sm"
+                                    disabled={rowBusy}
+                                    onClick={() => onSubscribe(e.id)}
+                                  >
+                                    {rowBusy ? 'Subscribing…' : 'Subscribe'}
+                                  </Button>
+                                )}
                               </td>
                             </tr>
                           )

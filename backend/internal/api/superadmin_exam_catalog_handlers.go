@@ -42,7 +42,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -416,57 +415,9 @@ func (s *Server) superadminCreateExam(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "db insert: "+err.Error())
 		return
 	}
-
-	// V15 fan-out (2026-08-25): grant the new exam to every org whose
-	// KYC has already been approved under this client. Without this,
-	// exams created after an org's approval would show 'Available'
-	// forever with no way for the admin to gain access — the org's
-	// only entry point (KYC-approval fan-out) already ran once and
-	// missed the newly-created exam.
-	//
-	// Mirror image of application_review_shared.go's fan-out at
-	// approve time: same ON CONFLICT DO UPDATE shape, same
-	// approval_type='blanket_client' marker so the CSV export can tell
-	// how the row was minted. reviewed_by is the caller (a superadmin)
-	// via claimsFrom; NULL is fine for legacy pre-JWT callers.
-	var reviewer any
-	if c := claimsFrom(r); c != nil {
-		reviewer = c.UserID
-	}
-	if _, err := s.deps.DB.ExecContext(r.Context(), `
-		INSERT INTO organization_exam_subscriptions(
-		    org_id, exam_id, status, approval_type,
-		    subscribed_by, requested_at,
-		    reviewed_at, reviewed_by, review_note)
-		SELECT DISTINCT
-		       u.org_id, $1, 'approved', 'blanket_client',
-		       $2, NOW(),
-		       NOW(), $2, 'Auto-granted on new-exam create (V15)'
-		  FROM users u
-		 WHERE u.role = 'admin' AND u.org_id IS NOT NULL
-		   AND EXISTS (
-		     SELECT 1 FROM institution_applications a
-		      WHERE a.status = 'approved'
-		        AND a.client_id = $3
-		        AND LOWER(TRIM(a.institution_name)) = LOWER(TRIM(
-		          COALESCE((SELECT name FROM organizations o WHERE o.id = u.org_id), '')
-		        ))
-		   )
-		ON CONFLICT (org_id, exam_id) DO UPDATE SET
-		    status = 'approved',
-		    approval_type = EXCLUDED.approval_type,
-		    reviewed_at = EXCLUDED.reviewed_at,
-		    reviewed_by = EXCLUDED.reviewed_by,
-		    review_note = EXCLUDED.review_note`,
-		id, reviewer, clientID,
-	); err != nil {
-		// Log the fan-out failure but don't roll back the exam create —
-		// a superadmin can still trigger it later (rerun this handler
-		// or hit a future backfill script) and the exam itself is live.
-		log.Printf("superadminCreateExam: fan-out to approved orgs failed exam=%d client=%d: %v",
-			id, clientID, err)
-	}
-
+	// Fan-out at exam create was removed 2026-08-25 — admins subscribe
+	// on demand from the exam catalog instead. Access at KYC-approve
+	// time still fires for exams that existed pre-approval.
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id": id, "name": name, "exam_code": code,
 	})
