@@ -330,6 +330,22 @@ func (s *Server) superadminDownloadDoc(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid doc_id")
 		return
 	}
+	// V15 gate — client-only routed apps have their KYC docs sealed
+	// off from the superadmin's view. Only the destination client's
+	// reviewer can fetch them. Superadmin still sees basic contact
+	// fields (needed to route sensibly) but not the sensitive
+	// document bytes.
+	mode, _, mErr := s.applicationReviewMode(r.Context(), appID)
+	if mErr != nil && !errors.Is(mErr, sql.ErrNoRows) {
+		writeErr(w, http.StatusInternalServerError, "db read")
+		return
+	}
+	if mode == "client" {
+		writeErr(w, http.StatusForbidden,
+			"KYC documents for a client-only board are only visible to that client's reviewer.")
+		return
+	}
+
 	var storagePath, mime, original string
 	err = s.deps.DB.QueryRowContext(r.Context(),
 		`SELECT storage_path, mime, original_name
@@ -446,13 +462,8 @@ func (s *Server) superadminApproveApplication(w http.ResponseWriter, r *http.Req
 	var req approveReq
 	_ = json.NewDecoder(r.Body).Decode(&req) // optional body
 
-	// V15 routing: if the destination client's kyc_review_mode is 'both',
-	// superadmin approve is only the first of two gates. Flip the row
-	// into the client reviewer's queue (status stays 'pending') instead
-	// of finalizing here. The org/admin/magic-link only get created when
-	// the client reviewer also approves. Otherwise (mode='admin' or no
-	// client_id attached — the current default) proceed with the full
-	// finalize.
+	// V15 authorization gates. Order matters so the error message the
+	// caller sees names the actual missing precondition.
 	mode, clientID, err := s.applicationReviewMode(r.Context(), appID)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -462,7 +473,27 @@ func (s *Server) superadminApproveApplication(w http.ResponseWriter, r *http.Req
 		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
 		return
 	}
-	if clientID != nil && mode == "both" {
+	// (1) Un-routed apps must be routed first — superadmin's job on a
+	//     no-client app is to pick which board it belongs to, not to
+	//     approve blind.
+	if clientID == nil {
+		writeErr(w, http.StatusBadRequest,
+			"Route this application to a client first — approving without a client would strand the new org with no exam access.")
+		return
+	}
+	// (2) Client-only mode → superadmin has no approve authority at
+	//     all; the client reviewer alone decides. Superadmin's only
+	//     action here is to re-route (or leave alone).
+	if mode == "client" {
+		writeErr(w, http.StatusForbidden,
+			"This application is routed to a client-only board. Only that client's reviewer can approve it.")
+		return
+	}
+	// (3) 'both' mode → superadmin's approve is the first of two
+	//     gates. Move the row into the client queue; the org/admin/
+	//     magic-link only get created when the client reviewer also
+	//     approves.
+	if mode == "both" {
 		if err := s.advanceApplicationToClientQueue(r.Context(), appID, claims.UserID, req.Note); err != nil {
 			code, msg := mapReviewErrorToHTTP(err)
 			writeErr(w, code, msg)
@@ -754,7 +785,30 @@ func (s *Server) superadminRejectApplication(w http.ResponseWriter, r *http.Requ
 	var req rejectReq
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
-	// scope=nil → superadmin can reject any application.
+	// Same V15 gates as approve — superadmin only decides on rows that
+	// belong to their queue. Un-routed → route first. Client-only mode
+	// → not superadmin's call (only the client reviewer decides).
+	mode, clientID, err := s.applicationReviewMode(r.Context(), appID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeErr(w, http.StatusNotFound, "application not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
+		return
+	}
+	if clientID == nil {
+		writeErr(w, http.StatusBadRequest,
+			"Route this application to a client first — the decision belongs to that board.")
+		return
+	}
+	if mode == "client" {
+		writeErr(w, http.StatusForbidden,
+			"This application is routed to a client-only board. Only that client's reviewer can reject it.")
+		return
+	}
+
+	// scope=nil → superadmin can act on rows for admin/both boards.
 	if err := s.rejectApplication(r.Context(), appID, claims.UserID, nil, req.Note); err != nil {
 		code, msg := mapReviewErrorToHTTP(err)
 		writeErr(w, code, msg)

@@ -232,17 +232,26 @@ export default function ApplicationDetail() {
 
   const meta = STATUS_LABELS[app.status] || STATUS_LABELS.draft
   const isPending = app.status === 'pending'
-  const activeDoc = app.docs.find((d) => d.doc_id === activeDocId)
-  // V15 gating: superadmin action bar only shows when THIS actor owns
-  // the decision. If routed to a mode='client' board, the client
-  // reviewer decides — superadmin's approve/reject buttons hide with
-  // an explanatory strip in their place. NULL pending_reviewer on a
-  // pending row (legacy pre-V15) is treated as admin-owned.
-  const superadminOwnsDecision = isPending && (
-    !app.pending_reviewer || app.pending_reviewer === 'admin'
-  )
+  // V15 gating rules:
+  //   • Un-routed pending app (client_id NULL) → superadmin's ONLY
+  //     action is to route. Approve/Reject blocked server-side too;
+  //     the UI just doesn't offer them.
+  //   • Routed to mode='client' → decision belongs to that client's
+  //     reviewer. KYC docs are also sealed off (backend refuses the
+  //     download call); the doc panel is replaced with an explanatory
+  //     strip.
+  //   • Routed to mode='admin' or 'both' → superadmin acts normally.
+  //     In 'both' the button label reflects the intermediate hand-off.
+  const isRouted = !!app.client_id
+  const isClientOnly = isRouted && app.client_kyc_review_mode === 'client'
+  const superadminOwnsDecision = isPending && isRouted && !isClientOnly
   const bothModeIntermediate =
     isPending && app.pending_reviewer === 'admin' && app.client_kyc_review_mode === 'both'
+  // Sensitive KYC documents are hidden on client-only routed apps.
+  // Basic contact/institution data stays visible so the superadmin can
+  // still sanity-check the routing.
+  const showDocs = !isClientOnly
+  const activeDoc = showDocs ? app.docs.find((d) => d.doc_id === activeDocId) : null
 
   return (
     <SuperShell>
@@ -424,10 +433,35 @@ export default function ApplicationDetail() {
         <div className="lg:col-span-3">
           <SectionTitle
             icon={Icon.FileText}
-            action={<span className="text-xs text-slate-500">{app.docs.length} document{app.docs.length === 1 ? '' : 's'}</span>}
+            action={showDocs
+              ? <span className="text-xs text-slate-500">{app.docs.length} document{app.docs.length === 1 ? '' : 's'}</span>
+              : <span className="text-xs text-slate-500">Sealed for this board</span>}
           >
             Documents
           </SectionTitle>
+          {!showDocs && (
+            <Card>
+              <CardBody>
+                <div className="py-12 text-center px-6">
+                  <div className="mx-auto h-12 w-12 rounded-xl bg-indigo-50 text-indigo-700 border border-indigo-100 flex items-center justify-center mb-3">
+                    <Icon.ShieldCheck className="h-6 w-6" />
+                  </div>
+                  <p className="text-sm font-semibold text-slate-900">
+                    KYC documents hidden
+                  </p>
+                  <p className="text-xs text-slate-600 mt-1 max-w-md mx-auto leading-relaxed">
+                    This application is routed to <span className="font-semibold">{app.client_name}</span>,
+                    which is set to <b>client-only</b> review. Only that board's reviewer can view the KYC
+                    documents and approve or reject. If you need to change where this application is
+                    routed, use the panel above.
+                  </p>
+                </div>
+              </CardBody>
+            </Card>
+          )}
+          {showDocs && (
+          <>
+
           <Card className="overflow-hidden">
             <CardHeader className="!py-0 !px-0 !border-b-0">
               <div className="flex items-center gap-1 px-2 bg-slate-50/50 border-b border-slate-200 overflow-x-auto">
@@ -506,6 +540,7 @@ export default function ApplicationDetail() {
               )}
             </CardBody>
           </Card>
+          </>)}
         </div>
       </div>
 
@@ -545,13 +580,25 @@ export default function ApplicationDetail() {
           </div>
         </div>
       )}
-      {isPending && !superadminOwnsDecision && (
+      {isPending && !superadminOwnsDecision && !isRouted && (
+        <div className="fixed bottom-0 left-0 right-0 bg-indigo-50/95 backdrop-blur border-t border-indigo-200 z-40">
+          <div className="mx-auto max-w-7xl px-6 py-3 flex items-center gap-3 text-sm text-indigo-900">
+            <Icon.ArrowRight className="h-4 w-4 shrink-0" />
+            <span>
+              Route this application to a client (panel above) before you can approve or reject it.
+              Un-routed applications belong to no board, so a decision here would strand the new org with no exam access.
+            </span>
+          </div>
+        </div>
+      )}
+      {isPending && !superadminOwnsDecision && isClientOnly && (
         <div className="fixed bottom-0 left-0 right-0 bg-amber-50/95 backdrop-blur border-t border-amber-200 z-40">
           <div className="mx-auto max-w-7xl px-6 py-3 flex items-center gap-3 text-sm text-amber-900">
             <Icon.ShieldCheck className="h-4 w-4 shrink-0" />
             <span>
-              Handed off to <span className="font-semibold">{app.client_name || 'the client'}</span>'s reviewer for approval.
-              This board's <code className="text-xs bg-amber-100 px-1 py-0.5 rounded">kyc_review_mode</code> is set to <b>{app.client_kyc_review_mode || 'client'}</b>.
+              Handed off to <span className="font-semibold">{app.client_name}</span>'s reviewer for approval.
+              This board is <b>client-only</b> — KYC documents and the approve/reject decision belong to them alone.
+              You can still change routing above.
             </span>
           </div>
         </div>
