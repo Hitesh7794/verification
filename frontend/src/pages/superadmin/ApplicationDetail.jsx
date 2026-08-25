@@ -259,7 +259,7 @@ export default function ApplicationDetail() {
           {approvalResult && approvalResult.admin_username && (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 text-emerald-800 px-3 py-1 text-xs font-medium">
               <Icon.Check className="h-3.5 w-3.5" />
-              Approved · magic link sent
+              Approved
             </span>
           )}
           {approvalResult && !approvalResult.admin_username && approvalResult.pending_reviewer === 'client' && (
@@ -275,19 +275,15 @@ export default function ApplicationDetail() {
         <div className="mb-4 rounded-lg bg-rose-50 border border-rose-200 px-4 py-3 text-sm text-rose-800">{actionErr}</div>
       )}
 
-      {approvalResult && (approvalResult.admin_username || approvalResult.magic_link_url) && (
+      {approvalResult && approvalResult.admin_username && (
         <div className="mb-6 rounded-xl bg-emerald-50 border border-emerald-200 p-4 flex items-start gap-3">
           <span className="h-9 w-9 rounded-lg bg-emerald-100 text-emerald-700 flex items-center justify-center shrink-0">
             <Icon.Check className="h-5 w-5" />
           </span>
           <div className="min-w-0 flex-1">
-            <p className="text-sm font-semibold text-emerald-900">Admin account created</p>
+            <p className="text-sm font-semibold text-emerald-900">Application approved</p>
             <p className="mt-1 text-xs text-emerald-800">
-              Username: <code className="bg-white px-1.5 py-0.5 rounded text-xs font-mono ring-1 ring-emerald-200">{approvalResult.admin_username}</code>
-            </p>
-            <p className="mt-1 text-xs text-emerald-800 break-all">
-              Magic link (also in backend logs):{' '}
-              <a className="text-emerald-900 underline font-medium" href={approvalResult.magic_link_url}>{approvalResult.magic_link_url}</a>
+              The institution's admin dashboard is now unlocked. Their sign-in credentials were sent at registration time; an approval notification email fires now.
             </p>
           </div>
         </div>

@@ -205,7 +205,7 @@ export default function ReviewerApplicationDetail() {
           {approvalResult && (
             <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 text-emerald-800 px-3 py-1 text-xs font-medium">
               <Icon.Check className="h-3.5 w-3.5" />
-              Approved · magic link sent
+              Approved
             </span>
           )}
         </div>
@@ -409,19 +409,12 @@ export default function ReviewerApplicationDetail() {
   )
 }
 
-// Approval-success card. Distinct from the superadmin one because the
-// reviewer is the party who now hands the operator credential to the
-// institution — so the card surfaces both the admin activation link
-// AND the shared operator username+password with copy affordances.
-// Password is echoed once by the API and is not retrievable later,
-// so a persistent visible card is intentional.
+// Approval-success card. Post-2026-08-25 rebuild: the admin account +
+// magic link were minted at register-submit time, not at approval, so
+// there are no fresh credentials to hand out here. Card is now a
+// short confirmation — the applicant already got the welcome email
+// with their username, and they'll get an "approved" email now.
 function ApprovalResultCard({ result }) {
-  // Operator credentials only appear for legacy approvals — the
-  // auto-created default operator was removed 2026-08-23. New
-  // approvals hand back an empty operator_username / password and
-  // this section trims to just the admin + magic link (the admin
-  // creates real, per-exam operators from the Operators page).
-  const hasLegacyOperator = !!result.operator_username
   return (
     <div className="mb-6 rounded-xl bg-emerald-50 border border-emerald-200 p-4">
       <div className="flex items-start gap-3">
@@ -429,23 +422,11 @@ function ApprovalResultCard({ result }) {
           <Icon.Check className="h-5 w-5" />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-sm font-semibold text-emerald-900">Institution activated</p>
+          <p className="text-sm font-semibold text-emerald-900">Application approved</p>
           <p className="mt-1 text-xs text-emerald-800">
-            An admin account has been created. Send the head of institution the magic
-            link below to set their password. They will create verification agents
-            (one per exam) from the admin dashboard after signing in.
+            The institution's admin dashboard is now unlocked. They received their sign-in
+            credentials by email at registration time and will get an approval notification now.
           </p>
-
-          <div className="mt-3 grid grid-cols-1 md:grid-cols-2 gap-3">
-            <CredBlock label="Admin username" value={result.admin_username} mono />
-            <CredBlock label="Magic link (one-time)" value={result.magic_link_url} link />
-            {hasLegacyOperator && (
-              <>
-                <CredBlock label="Verification agent username" value={result.operator_username} mono />
-                <CredBlock label="Verification agent password" value={result.operator_password} mono warn />
-              </>
-            )}
-          </div>
         </div>
       </div>
     </div>
