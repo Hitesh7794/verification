@@ -25,9 +25,12 @@ import SuperClientDetail from './pages/superadmin/ClientDetail.jsx'
 import SuperExamDetail from './pages/superadmin/ExamDetail.jsx'
 
 import ReviewerLogin from './pages/reviewer/Login.jsx'
-import ReviewerDashboard from './pages/reviewer/Dashboard.jsx'
 import ReviewerApplicationDetail from './pages/reviewer/ApplicationDetail.jsx'
 import ReviewerKycInbox from './pages/reviewer/KycInbox.jsx'
+// Removed 2026-08-25: ReviewerDashboard (subscription-requests page).
+// V15 flow retired the admin's exam-subscribe UI, so no new pending
+// per-exam subscription requests can ever land. The tab was dead —
+// reviewer's landing is now the KYC inbox directly.
 
 import Register from './pages/register/Register.jsx'
 import SetPassword from './pages/register/SetPassword.jsx'
@@ -227,22 +230,19 @@ export default function App() {
               client. Distinct URL space from /client/* (which is a
               legacy redirect for the operator role). */}
           <Route path="/reviewer/login" element={<ReviewerLogin />} />
+          {/* Reviewer landing = KYC inbox (V15 flow, 2026-08-25). The
+              legacy subscription-requests dashboard was retired here
+              — no new pending subs can ever land. /reviewer/kyc kept
+              as an alias so any bookmarked deep-link still resolves. */}
           <Route
             path="/reviewer"
-            element={
-              <RequireRole role="client_reviewer">
-                <ReviewerDashboard />
-              </RequireRole>
-            }
-          />
-          <Route
-            path="/reviewer/kyc"
             element={
               <RequireRole role="client_reviewer">
                 <ReviewerKycInbox />
               </RequireRole>
             }
           />
+          <Route path="/reviewer/kyc" element={<Navigate to="/reviewer" replace />} />
           <Route
             path="/reviewer/applications/:id"
             element={

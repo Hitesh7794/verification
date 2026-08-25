@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { NavLink, useNavigate } from 'react-router-dom'
+import { useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { useAuth } from '../../lib/auth.jsx'
 import { reviewerMe } from '../../lib/reviewer/api.js'
@@ -130,30 +130,9 @@ function ReviewerHeader({ meOverride }) {
           </div>
         </div>
 
-        {/* Nav — KYC applications (new 2026-08-24) + legacy subscription
-            requests inbox. Kept minimal so the shell stays compact;
-            both routes share the shell. */}
-        <nav className="hidden md:flex items-center gap-1 ml-4">
-          {[
-            { to: '/reviewer/kyc', label: 'KYC applications',      end: false },
-            { to: '/reviewer',     label: 'Subscription requests', end: true  },
-          ].map((t) => (
-            <NavLink
-              key={t.to}
-              to={t.to}
-              end={t.end}
-              className={({ isActive }) =>
-                `px-3 py-1.5 text-[12px] font-semibold rounded-md transition-colors ${
-                  isActive
-                    ? 'bg-stone-900 text-white'
-                    : 'text-stone-700 hover:bg-[#F5EEDF]'
-                }`
-              }
-            >
-              {t.label}
-            </NavLink>
-          ))}
-        </nav>
+        {/* Reviewer's only surface is the KYC inbox (2026-08-25 cleanup),
+            so no tab strip is rendered — the identity anchor on the
+            left is enough. Add tabs here when a second surface arrives. */}
 
         <div className="flex-1" />
 
