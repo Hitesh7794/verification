@@ -562,12 +562,28 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
-  // Basic phone validity: 10–15 digits, optional leading '+'. The
-  // backend applies the same rule (see isPlausiblePhone) — the UI check
-  // just keeps the Save button honest.
-  const phoneDigits = phone.replace(/[^\d+]/g, '').replace(/(?!^)\+/g, '')
-  const phoneCore = phoneDigits.startsWith('+') ? phoneDigits.slice(1) : phoneDigits
-  const isPhoneValid = /^\d{10,15}$/.test(phoneCore)
+  // Indian mobile only — 10 digits starting 6/7/8/9, with optional
+  // +91 or 91 prefix. Mirrors backend isPlausiblePhone; the FE check
+  // just keeps the Save button honest and gives a live inline hint.
+  const phoneClean = phone.replace(/[^\d+]/g, '').replace(/(?!^)\+/g, '')
+  const phoneCore  = phoneClean.replace(/^\+?91/, '').replace(/^\+/, '')
+  const isPhoneValid = /^[6-9]\d{9}$/.test(phoneCore)
+
+  // Date validation — mirrors backend parseDateWindow. valid_from must
+  // not be in the past; valid_to must be strictly after valid_from AND
+  // in the future. A 2-minute skew matches the backend so a form the
+  // admin filled a couple minutes ago still submits.
+  const now = new Date()
+  const fromDate = validFrom ? new Date(validFrom) : null
+  const toDate   = validTo   ? new Date(validTo)   : null
+  const fromInPast  = fromDate && !isNaN(fromDate) && (fromDate.getTime() + 2 * 60_000) < now.getTime()
+  const toInPast    = toDate   && !isNaN(toDate)   &&  toDate.getTime() < now.getTime()
+  const fromAfterTo = fromDate && toDate && !isNaN(fromDate) && !isNaN(toDate) && fromDate >= toDate
+  const dateInvalid = fromInPast || toInPast || fromAfterTo
+  const dateErrMsg = fromInPast ? 'Valid from cannot be in the past.'
+    : toInPast ? 'Valid to cannot be in the past.'
+    : fromAfterTo ? 'Valid from must be strictly before Valid to.'
+    : ''
 
   // Live cap validation — the wallet middleware enforces the runtime
   // limits anyway (see /liveness-check), but blocking obviously-broken
@@ -597,7 +613,11 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
       return
     }
     if (!isPhoneValid) {
-      setErr('Enter a valid phone number (10–15 digits, optional leading +).')
+      setErr('Enter a valid 10-digit Indian mobile number (starting 6/7/8/9, +91 optional).')
+      return
+    }
+    if (dateInvalid) {
+      setErr(dateErrMsg)
       return
     }
     setSaving(true)
@@ -675,7 +695,7 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
           />
           {phone.trim() && !isPhoneValid && (
             <p className="text-[11px] text-rose-600 mt-1">
-              Enter 10–15 digits, optionally starting with <code>+</code>.
+              Enter a valid 10-digit Indian mobile (starting <b>6/7/8/9</b>). <code>+91</code> or <code>91</code> prefix is optional.
             </p>
           )}
         </div>
@@ -732,10 +752,18 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
         <div>
           <Label>Valid from (date & time)</Label>
           <Input type="datetime-local" value={validFrom} onChange={(e) => setValidFrom(e.target.value)} required />
+          {fromInPast && (
+            <p className="text-[11px] text-rose-600 mt-1">Valid from cannot be in the past.</p>
+          )}
         </div>
         <div>
           <Label>Valid to (date & time)</Label>
           <Input type="datetime-local" value={validTo} onChange={(e) => setValidTo(e.target.value)} required min={validFrom || undefined} />
+          {(toInPast || fromAfterTo) && (
+            <p className="text-[11px] text-rose-600 mt-1">
+              {toInPast ? 'Valid to cannot be in the past.' : 'Valid to must be after Valid from.'}
+            </p>
+          )}
         </div>
       </div>
       <div>
@@ -767,7 +795,7 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
 
       <div className="flex justify-end gap-2">
         <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>
-        <Button type="submit" disabled={saving || examIds.length === 0 || !isPhoneValid || capInvalid}>
+        <Button type="submit" disabled={saving || examIds.length === 0 || !isPhoneValid || capInvalid || dateInvalid}>
           {saving ? 'Saving…' : (isEdit ? 'Save changes' : 'Create verification agent')}
         </Button>
       </div>

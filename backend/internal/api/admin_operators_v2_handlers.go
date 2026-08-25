@@ -267,7 +267,7 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if !isPlausiblePhone(req.Phone) {
-		writeErr(w, http.StatusBadRequest, "phone number must be 10–15 digits (optionally starting with +)")
+		writeErr(w, http.StatusBadRequest, "phone number must be a valid 10-digit Indian mobile (starting 6/7/8/9, +91 optional)")
 		return
 	}
 	// Pre-check uniqueness (case-insensitive) to give a clean 409
@@ -491,7 +491,7 @@ func (s *Server) adminPatchOperator(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		if !isPlausiblePhone(p) {
-			writeErr(w, http.StatusBadRequest, "phone number must be 10–15 digits (optionally starting with +)")
+			writeErr(w, http.StatusBadRequest, "phone number must be a valid 10-digit Indian mobile (starting 6/7/8/9, +91 optional)")
 			return
 		}
 		sets = append(sets, "phone = ?")
@@ -641,6 +641,12 @@ func parseDateWindow(fromStr, toStr string) (any, any, error) {
 	var fromT, toT time.Time
 	var hasFrom, hasTo bool
 
+	// Small tolerance so a form the admin filled in a couple of minutes
+	// ago still submits after they wander back to it. Not for future-
+	// dating tricks — the check is one-sided (past).
+	const skew = 2 * time.Minute
+	now := time.Now().UTC()
+
 	if fromStr != "" {
 		t, err := parseDateTimeWindow(fromStr, false)
 		if err != nil {
@@ -649,6 +655,12 @@ func parseDateWindow(fromStr, toStr string) (any, any, error) {
 		fromT = t
 		hasFrom = true
 		vFrom = t.Format("2006-01-02T15:04:05Z07:00")
+		// Reject back-dated activation. An agent whose window starts
+		// yesterday is either a data-entry mistake or a compliance
+		// question; either way it shouldn't slip through silently.
+		if fromT.Add(skew).Before(now) {
+			return nil, nil, errors.New("valid_from cannot be in the past")
+		}
 	}
 	if toStr != "" {
 		t, err := parseDateTimeWindow(toStr, true)
@@ -658,13 +670,14 @@ func parseDateWindow(fromStr, toStr string) (any, any, error) {
 		toT = t
 		hasTo = true
 		vTo = t.Format("2006-01-02T15:04:05Z07:00")
-		// Reject already-expired operators.
-		if toT.Before(time.Now().UTC()) {
+		// Reject already-expired operators. A window that ends before
+		// now would create an agent who can never verify anything.
+		if toT.Before(now) {
 			return nil, nil, errors.New("valid_to cannot be in the past")
 		}
 	}
-	if hasFrom && hasTo && fromT.After(toT) {
-		return nil, nil, errors.New("valid_from must be <= valid_to")
+	if hasFrom && hasTo && !fromT.Before(toT) {
+		return nil, nil, errors.New("valid_from must be strictly before valid_to")
 	}
 	return vFrom, vTo, nil
 }
@@ -703,16 +716,25 @@ func normalizePhone(s string) string {
 	return b.String()
 }
 
-// isPlausiblePhone accepts 10–15 digit numbers (optionally prefixed
-// with '+' for international format). Loose on purpose — the admin is
-// filling in their own record for the agent; the portal doesn't SMS
-// or verify it.
+// isPlausiblePhone accepts Indian mobile numbers only — the app is
+// Indian-market-only and letting a US 15-digit slip through is more
+// likely a typo than a legitimate contact. Canonical form is 10
+// digits starting 6/7/8/9 (TRAI mobile block). Callers strip +91 /
+// 91 prefixes via normalizePhone before this check.
 func isPlausiblePhone(s string) bool {
 	digits := s
 	if strings.HasPrefix(digits, "+") {
 		digits = digits[1:]
 	}
-	if len(digits) < 10 || len(digits) > 15 {
+	// Strip country code so both "+919876543210" and "9876543210" pass.
+	digits = strings.TrimPrefix(digits, "91")
+	if len(digits) != 10 {
+		return false
+	}
+	// TRAI mobile ranges: first digit must be 6/7/8/9. Landlines start
+	// 2–5 and would fail this — that's intentional; we want an SMS-able
+	// number, not a receptionist line.
+	if digits[0] < '6' || digits[0] > '9' {
 		return false
 	}
 	for _, r := range digits {
