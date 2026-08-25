@@ -97,15 +97,15 @@ func (s *Server) adminListOperators(w http.ResponseWriter, r *http.Request) {
 		}
 		if vFrom.Valid {
 			d := vFrom.String
-			if len(d) >= 10 {
-				d = d[:10]
+			if t, err := parseDateTimeWindow(d, false); err == nil {
+				d = t.Format("2006-01-02T15:04")
 			}
 			o.ValidFrom = &d
 		}
 		if vTo.Valid {
 			d := vTo.String
-			if len(d) >= 10 {
-				d = d[:10]
+			if t, err := parseDateTimeWindow(d, true); err == nil {
+				d = t.Format("2006-01-02T15:04")
 			}
 			o.ValidTo = &d
 		}
@@ -193,15 +193,15 @@ func (s *Server) loadOperatorForOrg(r *http.Request, orgID, id int64) (*operator
 	}
 	if vFrom.Valid {
 		d := vFrom.String
-		if len(d) >= 10 {
-			d = d[:10]
+		if t, err := parseDateTimeWindow(d, false); err == nil {
+			d = t.Format("2006-01-02T15:04")
 		}
 		o.ValidFrom = &d
 	}
 	if vTo.Valid {
 		d := vTo.String
-		if len(d) >= 10 {
-			d = d[:10]
+		if t, err := parseDateTimeWindow(d, true); err == nil {
+			d = t.Format("2006-01-02T15:04")
 		}
 		o.ValidTo = &d
 	}
@@ -229,7 +229,7 @@ type createOperatorReq struct {
 	Email            string  `json:"email,omitempty"` // required; welcome mail dispatched
 	Phone            string  `json:"phone,omitempty"` // required; admin's own record
 	SpendingCapPaise *int64  `json:"spending_cap_paise,omitempty"`
-	ValidFrom        string  `json:"valid_from,omitempty"` // YYYY-MM-DD or empty
+	ValidFrom        string  `json:"valid_from,omitempty"` // YYYY-MM-DD or YYYY-MM-DDTHH:MM
 	ValidTo          string  `json:"valid_to,omitempty"`
 	ExamIDs          []int64 `json:"exam_ids"`
 }
@@ -290,7 +290,7 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if strings.TrimSpace(req.ValidFrom) == "" || strings.TrimSpace(req.ValidTo) == "" {
-		writeErr(w, http.StatusBadRequest, "valid_from and valid_to are required (YYYY-MM-DD)")
+		writeErr(w, http.StatusBadRequest, "valid_from and valid_to are required (YYYY-MM-DD or YYYY-MM-DDTHH:MM)")
 		return
 	}
 	if err := validatePassword(req.Password); err != nil {
@@ -638,34 +638,32 @@ func parseDateWindow(fromStr, toStr string) (any, any, error) {
 	var vFrom, vTo any
 	fromStr = strings.TrimSpace(fromStr)
 	toStr = strings.TrimSpace(toStr)
-	today := time.Now().UTC().Format("2006-01-02")
+	var fromT, toT time.Time
+	var hasFrom, hasTo bool
 
-	if fromStr == "" {
-		vFrom = nil
-	} else {
-		t, err := time.Parse("2006-01-02", fromStr)
+	if fromStr != "" {
+		t, err := parseDateTimeWindow(fromStr, false)
 		if err != nil {
-			return nil, nil, errors.New("valid_from must be YYYY-MM-DD")
+			return nil, nil, errors.New("valid_from must be a valid date/time (YYYY-MM-DD or YYYY-MM-DDTHH:MM)")
 		}
-		vFrom = t.Format("2006-01-02")
+		fromT = t
+		hasFrom = true
+		vFrom = t.Format("2006-01-02T15:04:05Z07:00")
 	}
-	if toStr == "" {
-		vTo = nil
-	} else {
-		t, err := time.Parse("2006-01-02", toStr)
+	if toStr != "" {
+		t, err := parseDateTimeWindow(toStr, true)
 		if err != nil {
-			return nil, nil, errors.New("valid_to must be YYYY-MM-DD")
+			return nil, nil, errors.New("valid_to must be a valid date/time (YYYY-MM-DD or YYYY-MM-DDTHH:MM)")
 		}
-		vTo = t.Format("2006-01-02")
-		// Reject already-expired operators. An operator whose window
-		// ends before today can never verify anything — it's a policy
-		// mistake, not a legitimate configuration. Backdating valid_from
-		// stays allowed (useful for backfill / immediate activation).
-		if vTo.(string) < today {
-			return nil, nil, errors.New("valid_to cannot be in the past (today is " + today + ")")
+		toT = t
+		hasTo = true
+		vTo = t.Format("2006-01-02T15:04:05Z07:00")
+		// Reject already-expired operators.
+		if toT.Before(time.Now().UTC()) {
+			return nil, nil, errors.New("valid_to cannot be in the past")
 		}
 	}
-	if fromStr != "" && toStr != "" && fromStr > toStr {
+	if hasFrom && hasTo && fromT.After(toT) {
 		return nil, nil, errors.New("valid_from must be <= valid_to")
 	}
 	return vFrom, vTo, nil

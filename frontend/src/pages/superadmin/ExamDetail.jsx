@@ -27,7 +27,7 @@ import {
   uploadBiometric,
 } from '../../lib/superadmin/examCatalog.js'
 import { uploadExamCSV } from '../../lib/api.js'
-import { dateOnly, dateRange } from '../../lib/dates.js'
+import { dateOnly, dateRange, toDatetimeLocal } from '../../lib/dates.js'
 import BulkBiometricUpload from './BulkBiometricUpload.jsx'
 
 // Superadmin > Exam detail — the exam meta, list of enrolled
@@ -183,6 +183,9 @@ export default function ExamDetail() {
   const totalPages = Math.ceil(totalCandidates / PAGE)
   const currentPage = Math.floor(offset / PAGE) + 1
 
+  const isExpired = exam.verification_to && new Date() > new Date(exam.verification_to)
+  const isOngoing = !exam.closed && (!exam.verification_from || new Date(exam.verification_from) <= new Date()) && !isExpired
+
   return (
     <SuperShell>
       <FadeIn>
@@ -200,8 +203,11 @@ export default function ExamDetail() {
               <span className="text-slate-400">·</span>
               <span>{dateRange(exam.verification_from, exam.verification_to)}</span>
               <span className="text-slate-400">·</span>
-              {exam.visible ? <Pill tone="emerald" dot>Listed</Pill> : <Pill tone="slate" dot>Unlisted</Pill>}
               {exam.closed && <Pill tone="amber" dot>Ended</Pill>}
+              {isExpired && !exam.closed && <Pill tone="amber" dot>Archived (Window Expired)</Pill>}
+              {isOngoing && <Pill tone="emerald" dot>Live</Pill>}
+              {!isOngoing && !isExpired && !exam.closed && <Pill tone="blue" dot>Upcoming</Pill>}
+              {exam.visible ? <Pill tone="emerald" dot>Listed</Pill> : <Pill tone="slate" dot>Unlisted</Pill>}
               <span className="text-slate-400">·</span>
               <span className="text-xs text-slate-600">
                 Requires: {[
@@ -256,6 +262,24 @@ export default function ExamDetail() {
         {err && (
           <div role="alert" className="mb-4 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">
             {err}
+          </div>
+        )}
+
+        {(isExpired || exam.closed) && (
+          <div className="mb-6 rounded-xl border border-amber-200 bg-amber-50/80 p-4 text-xs text-amber-900 flex items-start gap-3 shadow-2xs">
+            <div className="h-7 w-7 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+              <Icon.Calendar className="h-4 w-4" />
+            </div>
+            <div>
+              <p className="font-semibold text-amber-900 text-sm">
+                {exam.closed ? 'This examination has been ended' : 'This examination is archived (window expired)'}
+              </p>
+              <p className="mt-0.5 text-amber-800 leading-relaxed">
+                {exam.closed
+                  ? 'New candidate verifications are blocked. Click "Reopen" or "Edit" to re-activate this exam.'
+                  : 'The verification window for this exam has passed. Click "Edit" above to extend the verification window to a future date/time — doing so will automatically remove it from the archive.'}
+              </p>
+            </div>
           </div>
         )}
 
@@ -663,8 +687,8 @@ function EditExamForm({ exam, onCancel, onSaved }) {
   // way in, and compare against the normalised value on the way out so
   // the dirty-check doesn't see "2026-08-06" != "2026-08-06T00:00:00Z"
   // and patch dates that were never touched.
-  const examFrom = dateOnly(exam.verification_from)
-  const examTo = dateOnly(exam.verification_to)
+  const examFrom = toDatetimeLocal(exam.verification_from, '00:00')
+  const examTo = toDatetimeLocal(exam.verification_to, '23:59')
 
   const [name, setName] = useState(exam.name)
   const [from, setFrom] = useState(examFrom)
@@ -715,12 +739,12 @@ function EditExamForm({ exam, onCancel, onSaved }) {
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
-              <Label>Verification from</Label>
-              <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} required />
+              <Label>Verification from (date & time)</Label>
+              <Input type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)} required />
             </div>
             <div>
-              <Label>Verification to</Label>
-              <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} required />
+              <Label>Verification to (date & time)</Label>
+              <Input type="datetime-local" value={to} onChange={(e) => setTo(e.target.value)} required min={from || undefined} />
             </div>
           </div>
           <div>

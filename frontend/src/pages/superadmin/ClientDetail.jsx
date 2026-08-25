@@ -40,6 +40,7 @@ export default function ClientDetail() {
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [creating, setCreating] = useState(false)
+  const [tab, setTab] = useState('active') // 'active' | 'archived'
 
   // Confirm-dialog state. `dlg` is null when closed, or an object
   // { kind, title, body, confirmLabel, tone, onConfirm } when open.
@@ -89,12 +90,32 @@ export default function ClientDetail() {
   }
   function askDeleteClient() {
     setDlg({
-      title:        `Delete "${client.name}"?`,
+      title:        `Delete "${client?.name || 'Client'}"?`,
       body:         'This is permanent. Only allowed if the client has no exams.\n\nUse "End" instead if you want to close the client while preserving its data.',
       confirmLabel: 'Delete client',
       tone:         'danger',
       onConfirm:    async () => { await deleteClient(id); nav('/superadmin/clients') },
     })
+  }
+
+  function isExamOngoing(e) {
+    if (!e || e.closed) return false
+    const now = new Date()
+    const from = e.verification_from ? new Date(e.verification_from) : null
+    const to = e.verification_to ? new Date(e.verification_to) : null
+    if (from && !isNaN(from.getTime()) && now < from) return false
+    if (to && !isNaN(to.getTime()) && now > to) return false
+    return true
+  }
+
+  function isExamArchived(e) {
+    if (!e) return false
+    if (e.closed) return true
+    if (e.verification_to) {
+      const to = new Date(e.verification_to)
+      if (!isNaN(to.getTime()) && new Date() > to) return true
+    }
+    return false
   }
 
   if (loading) {
@@ -110,7 +131,11 @@ export default function ClientDetail() {
   }
 
   const totalCandidates = exams.reduce((s, e) => s + (e.candidate_count || 0), 0)
-  const openExams = exams.filter(e => !e.closed).length
+  const openExams = exams.filter(isExamOngoing).length
+
+  const activeExams = exams.filter(e => !isExamArchived(e))
+  const archivedExams = exams.filter(isExamArchived)
+  const displayedExams = tab === 'active' ? activeExams : archivedExams
 
   return (
     <SuperShell>
@@ -208,10 +233,70 @@ export default function ClientDetail() {
           )}
         </AnimatePresence>
 
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-3">
+          <div className="inline-flex rounded-xl bg-slate-100 p-1 text-sm font-medium">
+            <button
+              type="button"
+              onClick={() => setTab('active')}
+              className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-all ${
+                tab === 'active'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span>Active & Upcoming</span>
+              <span className={`rounded-full px-2 py-0.5 text-[10px] ${
+                tab === 'active' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'
+              }`}>
+                {activeExams.length}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab('archived')}
+              className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-all ${
+                tab === 'archived'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span>Archived</span>
+              <span className={`rounded-full px-2 py-0.5 text-[10px] ${
+                tab === 'archived' ? 'bg-amber-100 text-amber-800' : 'bg-slate-200 text-slate-700'
+              }`}>
+                {archivedExams.length}
+              </span>
+            </button>
+          </div>
+          {tab === 'archived' && (
+            <p className="text-xs text-slate-500">
+              Exams with expired verification windows or ended status. Extending an exam's window to a future date will automatically unarchive it.
+            </p>
+          )}
+        </div>
+
         <Card>
           <CardBody className="p-0">
-            {exams.length === 0 ? (
-              <EmptyExams onCreate={() => setCreating(true)} />
+            {displayedExams.length === 0 ? (
+              tab === 'active' ? (
+                exams.length === 0 ? (
+                  <EmptyExams onCreate={() => setCreating(true)} />
+                ) : (
+                  <div className="p-10 text-center">
+                    <p className="text-sm text-slate-600 font-medium">No active or upcoming exams.</p>
+                    <p className="text-xs text-slate-400 mt-1">
+                      All exams under this client are archived ({archivedExams.length}). You can create a new exam or extend an archived exam's verification window.
+                    </p>
+                  </div>
+                )
+              ) : (
+                <div className="p-10 text-center">
+                  <p className="text-sm text-slate-600 font-medium">No archived exams.</p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Exams whose verification window has passed or that are closed will automatically appear here.
+                  </p>
+                </div>
+              )
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full text-sm">
@@ -226,41 +311,55 @@ export default function ClientDetail() {
                     </tr>
                   </thead>
                   <tbody>
-                    {exams.map((e) => (
-                      <tr key={e.id} className="border-b border-slate-100 last:border-none hover:bg-slate-50/60 transition-colors">
-                        <td className="px-5 py-3.5">
-                          <Link
-                            to={`/superadmin/exams/${e.id}`}
-                            className="font-mono text-xs text-indigo-700 hover:underline tabular-nums"
-                          >
-                            {e.exam_code}
-                          </Link>
-                        </td>
-                        <td className="px-5 py-3.5 font-medium text-slate-900">{e.name}</td>
-                        <td className="px-5 py-3.5 text-xs text-slate-600 tabular-nums whitespace-nowrap">
-                          {dateRange(e.verification_from, e.verification_to)}
-                        </td>
-                        <td className="px-5 py-3.5 text-slate-700 tabular-nums">{e.candidate_count}</td>
-                        <td className="px-5 py-3.5">
-                          <div className="flex gap-1.5 flex-wrap">
-                            {e.visible ? <Pill tone="emerald" dot>Listed</Pill> : <Pill tone="slate" dot>Unlisted</Pill>}
-                            {e.closed && <Pill tone="amber" dot>Ended</Pill>}
-                          </div>
-                        </td>
-                        <td className="px-5 py-3.5">
-                          <div className="flex justify-end gap-1.5">
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              onClick={() => onToggleVisibility(e.id)}
-                              title={e.visible
-                                ? 'Remove from the catalog admins subscribe from (reversible)'
-                                : 'Add back to the catalog admins subscribe from'}
+                    {displayedExams.map((e) => {
+                      const ongoing = isExamOngoing(e)
+                      const isExpired = e.verification_to && new Date() > new Date(e.verification_to)
+                      return (
+                        <tr key={e.id} className="border-b border-slate-100 last:border-none hover:bg-slate-50/60 transition-colors">
+                          <td className="px-5 py-3.5">
+                            <Link
+                              to={`/superadmin/exams/${e.id}`}
+                              className="font-mono text-xs text-indigo-700 hover:underline tabular-nums"
                             >
-                              {e.visible ? 'Unlist' : 'List'}
-                            </Button>
-                            {e.closed
-                              ? <Button
+                              {e.exam_code}
+                            </Link>
+                          </td>
+                          <td className="px-5 py-3.5 font-medium text-slate-900">{e.name}</td>
+                          <td className="px-5 py-3.5 text-xs text-slate-600 tabular-nums whitespace-nowrap">
+                            {dateRange(e.verification_from, e.verification_to)}
+                          </td>
+                          <td className="px-5 py-3.5 text-slate-700 tabular-nums">{e.candidate_count}</td>
+                          <td className="px-5 py-3.5">
+                            <div className="flex gap-1.5 flex-wrap">
+                              {tab === 'archived' ? (
+                                <>
+                                  {e.closed && <Pill tone="amber" dot>Ended</Pill>}
+                                  {isExpired && !e.closed && <Pill tone="amber" dot>Window Expired</Pill>}
+                                  {e.visible ? <Pill tone="slate" dot>Listed</Pill> : <Pill tone="slate" dot>Unlisted</Pill>}
+                                </>
+                              ) : (
+                                <>
+                                  {ongoing && <Pill tone="emerald" dot>Live</Pill>}
+                                  {!ongoing && !e.closed && <Pill tone="blue" dot>Upcoming</Pill>}
+                                  {e.visible ? <Pill tone="emerald" dot>Listed</Pill> : <Pill tone="slate" dot>Unlisted</Pill>}
+                                </>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-5 py-3.5">
+                            <div className="flex justify-end gap-1.5">
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => onToggleVisibility(e.id)}
+                                title={e.visible
+                                  ? 'Remove from the catalog admins subscribe from (reversible)'
+                                  : 'Add back to the catalog admins subscribe from'}
+                              >
+                                {e.visible ? 'Unlist' : 'List'}
+                              </Button>
+                              {e.closed ? (
+                                <Button
                                   variant="secondary"
                                   size="sm"
                                   onClick={() => onReopen(e.id)}
@@ -268,35 +367,38 @@ export default function ClientDetail() {
                                 >
                                   Reopen
                                 </Button>
-                              : <Button
+                              ) : (
+                                <Button
                                   variant="secondary"
                                   size="sm"
                                   onClick={() => askClose(e.id, e.name)}
                                   title="Stop accepting new verifications (existing data preserved, reversible)"
                                 >
                                   End
-                                </Button>}
-                            <Button
-                              variant="secondary"
-                              size="sm"
-                              onClick={() => askDeleteExam(e.id, e.name)}
-                              title="Permanently delete — only allowed if no verifications reference this exam's candidates"
-                              className="!text-rose-700 !border-rose-200 hover:!bg-rose-50 hover:!border-rose-300"
-                            >
-                              Delete
-                            </Button>
-                            <Link
-                              to={`/superadmin/exams/${e.id}`}
-                              className="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-lg bg-stone-900 text-white hover:bg-stone-800 transition-colors"
-                              title="Open this exam's detail page to upload CSVs, edit fields, and see verifications"
-                            >
-                              Manage
-                              <Icon.ChevronRight className="h-3.5 w-3.5 ml-0.5" />
-                            </Link>
-                          </div>
-                        </td>
-                      </tr>
-                    ))}
+                                </Button>
+                              )}
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => askDeleteExam(e.id, e.name)}
+                                title="Permanently delete — only allowed if no verifications reference this exam's candidates"
+                                className="!text-rose-700 !border-rose-200 hover:!bg-rose-50 hover:!border-rose-300"
+                              >
+                                Delete
+                              </Button>
+                              <Link
+                                to={`/superadmin/exams/${e.id}`}
+                                className="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-lg bg-stone-900 text-white hover:bg-stone-800 transition-colors"
+                                title="Open this exam's detail page to upload CSVs, edit fields, and see verifications"
+                              >
+                                Manage
+                                <Icon.ChevronRight className="h-3.5 w-3.5 ml-0.5" />
+                              </Link>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
                   </tbody>
                 </table>
               </div>
@@ -922,15 +1024,15 @@ function NewExamForm({ clientId, onCancel, onCreated }) {
           </FormSection>
 
           {/* Section 2 — window */}
-          <FormSection num="2" title="Verification window" hint="Colleges can only verify candidates for this exam inside this date range.">
+          <FormSection num="2" title="Verification window" hint="Colleges can only verify candidates for this exam inside this date & time range.">
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
               <div>
-                <Label>From <span className="text-rose-500">*</span></Label>
-                <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} required />
+                <Label>From (date & time) <span className="text-rose-500">*</span></Label>
+                <Input type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)} required />
               </div>
               <div>
-                <Label>To <span className="text-rose-500">*</span></Label>
-                <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} required min={from || undefined} />
+                <Label>To (date & time) <span className="text-rose-500">*</span></Label>
+                <Input type="datetime-local" value={to} onChange={(e) => setTo(e.target.value)} required min={from || undefined} />
               </div>
             </div>
           </FormSection>

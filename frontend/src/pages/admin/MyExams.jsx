@@ -14,6 +14,10 @@ import { dateRange } from '../../lib/dates.js'
 // rows for every visible + open exam under the destination client. The
 // admin doesn't pick and doesn't unsubscribe — this page just tells
 // them which exams their verification agents can be assigned to.
+//
+// Expired / closed exams are filtered out so the page reads as
+// "what can my agents actually verify against right now"; the
+// underlying rows still exist for audit + history views.
 export default function MyExams() {
   const [subs, setSubs] = useState([])
   const [loading, setLoading] = useState(true)
@@ -33,13 +37,25 @@ export default function MyExams() {
 
   useEffect(() => { refresh() }, [refresh])
 
+  // Active = exam not closed AND today is within its verification window.
+  // Uses verification_to as the past-cutoff so an archived exam whose
+  // window ended yesterday drops off automatically without needing the
+  // superadmin to also mark it closed=1.
+  const isExamActive = (s) => {
+    if (s.exam_closed) return false
+    if (s.verification_to && new Date() > new Date(s.verification_to)) return false
+    return true
+  }
+
+  const activeSubs = subs.filter(isExamActive)
+
   return (
     <AdminShell>
       <FadeIn>
         <PageHead
           eyebrow="Access"
           title="Exams"
-          subtitle="Every exam under your assigned board. Access is granted when your KYC is approved — assign these to your verification agents from the Agents tab."
+          subtitle="Every exam under your assigned board that is currently open. Access is granted when your KYC is approved — assign these to your verification agents from the Agents tab."
         />
         {err && (
           <div role="alert" className="mb-4 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">
@@ -50,11 +66,11 @@ export default function MyExams() {
           <CardBody className="p-0">
             {loading ? (
               <div className="p-10 text-center text-sm text-slate-500">Loading…</div>
-            ) : subs.length === 0 ? (
+            ) : activeSubs.length === 0 ? (
               <div className="p-10 text-center">
-                <p className="text-sm text-slate-500">No exams available yet.</p>
+                <p className="text-sm text-slate-500">No active exams right now.</p>
                 <p className="text-xs text-slate-400 mt-1">
-                  Once your institution is routed to a board and approved, the exams under that board will appear here automatically.
+                  Once your institution is routed to a board and approved, its open exams appear here automatically.
                 </p>
               </div>
             ) : (
@@ -72,7 +88,7 @@ export default function MyExams() {
                     </tr>
                   </thead>
                   <tbody>
-                    {subs.map((s) => (
+                    {activeSubs.map((s) => (
                       <tr key={s.exam_id} className="border-b border-slate-100 last:border-none hover:bg-slate-50/60">
                         <td className="px-4 py-3 font-mono text-xs text-slate-700 tabular-nums">{s.exam_code}</td>
                         <td className="px-4 py-3 text-slate-900">{s.exam_name}</td>

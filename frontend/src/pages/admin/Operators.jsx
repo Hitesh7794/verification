@@ -19,6 +19,7 @@ import {
 } from '../../lib/admin/examSubscriptions.js'
 import { getWallet, formatRupees } from '../../lib/wallet/wallet.js'
 import { uploadExamCSV } from '../../lib/api.js'
+import { dateRange, formatDateTime, toDatetimeLocal } from '../../lib/dates.js'
 
 // Admin > Operators — per-operator management (Phase 2). Each operator
 // has: username, password, display name, optional spending cap,
@@ -316,7 +317,7 @@ export default function Operators() {
                           </td>
                           <td className="px-4 py-3 text-xs text-slate-600 tabular-nums">
                             {o.valid_from || o.valid_to
-                              ? `${o.valid_from || '…'} → ${o.valid_to || '…'}`
+                              ? `${formatDateTime(o.valid_from) || '…'} → ${formatDateTime(o.valid_to) || '…'}`
                               : <span className="text-slate-400">no window</span>}
                           </td>
                           <td className="px-4 py-3 text-slate-700 tabular-nums">{(o.assigned_exam_ids || []).length}</td>
@@ -402,8 +403,14 @@ function ExamMultiSelect({ subs, value, onChange, single = false }) {
     }
   }, [open])
 
+  const activeSubs = subs.filter((s) => {
+    if (s.exam_closed) return false
+    if (s.verification_to && new Date() > new Date(s.verification_to)) return false
+    return true
+  })
+
   const selected = subs.filter((s) => value.includes(s.exam_id))
-  const allSelected = subs.length > 0 && selected.length === subs.length
+  const allSelected = activeSubs.length > 0 && selected.length === activeSubs.length
 
   // single mode: clicking any exam replaces the selection with just that
   // exam (one operator = one exam per policy migrated in 022). Clicking
@@ -448,7 +455,7 @@ function ExamMultiSelect({ subs, value, onChange, single = false }) {
             <span className="text-[11px] font-medium uppercase tracking-wider text-slate-500">
               {single
                 ? (selected.length ? 'Assigned' : 'Pick one exam')
-                : `${selected.length} of ${subs.length} selected`}
+                : `${selected.length} of ${activeSubs.length} selected`}
             </span>
             <div className="flex gap-1">
               {!single && (
@@ -457,7 +464,7 @@ function ExamMultiSelect({ subs, value, onChange, single = false }) {
                     type="button"
                     className="text-xs font-medium text-emerald-700 hover:underline disabled:text-slate-400 disabled:no-underline"
                     disabled={allSelected}
-                    onClick={() => onChange(subs.map((s) => s.exam_id))}
+                    onClick={() => onChange(activeSubs.map((s) => s.exam_id))}
                   >
                     Select all
                   </button>
@@ -476,30 +483,36 @@ function ExamMultiSelect({ subs, value, onChange, single = false }) {
           </div>
 
           <div className="max-h-56 overflow-y-auto py-1" role="listbox" aria-multiselectable={!single}>
-            {subs.map((s) => {
-              const checked = value.includes(s.exam_id)
-              return (
-                <label
-                  key={s.exam_id}
-                  role="option"
-                  aria-selected={checked}
-                  className={`flex items-center gap-3 px-3 py-2 cursor-pointer transition-colors ${
-                    checked ? 'bg-emerald-50/60 hover:bg-emerald-50' : 'hover:bg-slate-50'
-                  }`}
-                >
-                  <input
-                    type="checkbox"
-                    checked={checked}
-                    onChange={() => toggle(s.exam_id)}
-                    className="rounded border-slate-300 text-emerald-700 focus:ring-emerald-500"
-                  />
-                  <span className="min-w-0">
-                    <span className="block font-mono text-xs text-slate-700">{s.exam_code}</span>
-                    <span className="block truncate text-xs text-slate-500">{s.exam_name}</span>
-                  </span>
-                </label>
-              )
-            })}
+            {activeSubs.length === 0 ? (
+              <div className="px-3 py-3 text-xs text-slate-500 text-center">
+                No active exams available.
+              </div>
+            ) : (
+              activeSubs.map((s) => {
+                const checked = value.includes(s.exam_id)
+                return (
+                  <label
+                    key={s.exam_id}
+                    role="option"
+                    aria-selected={checked}
+                    className={`flex items-center gap-3 px-3 py-2 cursor-pointer transition-colors ${
+                      checked ? 'bg-emerald-50/60 hover:bg-emerald-50' : 'hover:bg-slate-50'
+                    }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggle(s.exam_id)}
+                      className="rounded border-slate-300 text-emerald-700 focus:ring-emerald-500"
+                    />
+                    <span className="min-w-0">
+                      <span className="block font-mono text-xs text-slate-700">{s.exam_code}</span>
+                      <span className="block truncate text-xs text-slate-500">{s.exam_name}</span>
+                    </span>
+                  </label>
+                )
+              })
+            )}
           </div>
         </div>
       )}
@@ -543,8 +556,8 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
   const initialPhone = (operator?.phone || '').trim()
   const [phone, setPhone] = useState(initialPhone)
   const [capRupees, setCapRupees] = useState(operator?.spending_cap_paise ? String(operator.spending_cap_paise / 100) : '')
-  const [validFrom, setValidFrom] = useState(operator?.valid_from || '')
-  const [validTo, setValidTo] = useState(operator?.valid_to || '')
+  const [validFrom, setValidFrom] = useState(toDatetimeLocal(operator?.valid_from, '00:00'))
+  const [validTo, setValidTo] = useState(toDatetimeLocal(operator?.valid_to, '23:59'))
   const [examIds, setExamIds] = useState(operator?.assigned_exam_ids || [])
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
@@ -717,12 +730,12 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
           })()}
         </div>
         <div>
-          <Label>Valid from</Label>
-          <Input type="date" value={validFrom} onChange={(e) => setValidFrom(e.target.value)} required />
+          <Label>Valid from (date & time)</Label>
+          <Input type="datetime-local" value={validFrom} onChange={(e) => setValidFrom(e.target.value)} required />
         </div>
         <div>
-          <Label>Valid to</Label>
-          <Input type="date" value={validTo} onChange={(e) => setValidTo(e.target.value)} required min={validFrom || undefined} />
+          <Label>Valid to (date & time)</Label>
+          <Input type="datetime-local" value={validTo} onChange={(e) => setValidTo(e.target.value)} required min={validFrom || undefined} />
         </div>
       </div>
       <div>

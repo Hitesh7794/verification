@@ -153,9 +153,11 @@ type walletSummaryResp struct {
 	// banner instead of subjecting the operator to silent 404s on
 	// every lookup. Fields are all zero-valued for admin/superadmin
 	// (who don't have an assigned exam concept).
-	AssignedExamID   int64  `json:"assigned_exam_id,omitempty"`
-	AssignedExamCode string `json:"assigned_exam_code,omitempty"`
-	AssignedExamName string `json:"assigned_exam_name,omitempty"`
+	AssignedExamID               int64  `json:"assigned_exam_id,omitempty"`
+	AssignedExamCode             string `json:"assigned_exam_code,omitempty"`
+	AssignedExamName             string `json:"assigned_exam_name,omitempty"`
+	AssignedExamVerificationFrom string `json:"assigned_exam_verification_from,omitempty"`
+	AssignedExamVerificationTo   string `json:"assigned_exam_verification_to,omitempty"`
 }
 
 func (s *Server) walletSummary(w http.ResponseWriter, r *http.Request) {
@@ -204,21 +206,27 @@ func (s *Server) walletSummary(w http.ResponseWriter, r *http.Request) {
 	// section entirely.
 	if claims != nil && claims.Role == "client" && claims.UserID != 0 {
 		var (
-			eid  sql.NullInt64
-			code sql.NullString
-			name sql.NullString
+			eid   sql.NullInt64
+			code  sql.NullString
+			name  sql.NullString
+			vFrom sql.NullString
+			vTo   sql.NullString
 		)
 		_ = s.deps.DB.QueryRowContext(r.Context(), `
-			SELECT e.id, e.exam_code, e.name
+			SELECT e.id, e.exam_code, e.name,
+			       COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD"T"HH24:MI'), ''),
+			       COALESCE(TO_CHAR(e.verification_to,   'YYYY-MM-DD"T"HH24:MI'), '')
 			  FROM operator_exams oe
 			  JOIN exams e ON e.id = oe.exam_id
 			 WHERE oe.user_id = $1
 			 LIMIT 1
-		`, claims.UserID).Scan(&eid, &code, &name)
+		`, claims.UserID).Scan(&eid, &code, &name, &vFrom, &vTo)
 		if eid.Valid {
 			resp.AssignedExamID = eid.Int64
 			resp.AssignedExamCode = code.String
 			resp.AssignedExamName = name.String
+			resp.AssignedExamVerificationFrom = vFrom.String
+			resp.AssignedExamVerificationTo = vTo.String
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)

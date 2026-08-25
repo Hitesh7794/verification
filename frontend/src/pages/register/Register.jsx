@@ -1143,9 +1143,8 @@ function ReviewStep({ form, uploaded, onEdit, onBack, onSubmit, submitting }) {
 
   const activeDocs = getRequiredDocs(form)
   // Files live in memory until Submit (the "defer all DB writes to
-  // Submit" flow), so key off `.file` — `.doc_id` only appears after
-  // the actual upload call, which happens AFTER this Review screen.
-  const docs = activeDocs.filter((d) => uploaded[d.kind]?.file)
+  // Submit" flow), so key off `.file` (or `.doc_id` if present).
+  const docs = activeDocs.filter((d) => uploaded[d.kind]?.file || uploaded[d.kind]?.doc_id)
 
   return (
     <AestheticCard>
@@ -1635,10 +1634,8 @@ function Step2({ form, applicationId, uploaded, errors, handleFile, removeDoc, o
   const activeDocs = getRequiredDocs(form)
   const requiredCount = activeDocs.filter((d) => d.required).length
   // Count picked-in-memory files, not server-issued doc_ids — the
-  // Submit-time upload is what mints doc_id. Pre-refactor this counter
-  // read the wrong field and stuck at 0/N even after all files were
-  // picked, blocking the whole flow.
-  const uploadedRequiredCount = activeDocs.filter((d) => d.required && uploaded[d.kind]?.file).length
+  // Submit-time upload is what mints doc_id.
+  const uploadedRequiredCount = activeDocs.filter((d) => d.required && (uploaded[d.kind]?.file || uploaded[d.kind]?.doc_id)).length
   return (
     <AestheticCard>
       <div className="px-6 py-5 border-b border-warm flex items-start gap-3">
@@ -1648,10 +1645,7 @@ function Step2({ form, applicationId, uploaded, errors, handleFile, removeDoc, o
         <div className="flex-1 min-w-0">
           <h2 className="text-base font-semibold text-ink-900">Upload documents</h2>
           <p className="text-sm text-stone-500 mt-0.5">
-            PDF, JPG or PNG — up to 10 MB per file. Application{' '}
-            <code className="px-1.5 py-0.5 rounded bg-[#F5EEDF] border border-warm text-stone-800 text-xs font-mono">
-              #{applicationId ?? '—'}
-            </code>
+            PDF, JPG or PNG — up to 10 MB per file.
           </p>
         </div>
         <Pill tone={uploadedRequiredCount === requiredCount ? 'emerald' : 'amber'}>
@@ -1690,10 +1684,8 @@ function Step2({ form, applicationId, uploaded, errors, handleFile, removeDoc, o
 function DocUploadRow({ kind, label, hint, required, state, error, onFile, onRemove }) {
   const inputId = `file_${kind}`
   const uploading = state?.uploading
-  // `done` = a file is picked (kept in memory until Submit). Pre-refactor
-  // this waited on state.doc_id, which never arrived pre-Submit, so rows
-  // stayed unmarked even after the applicant chose files.
-  const done = !!state?.file && !uploading
+  // `done` = a file is picked (kept in memory until Submit).
+  const done = Boolean(state?.file || state?.doc_id) && !uploading
 
   return (
     <motion.div
