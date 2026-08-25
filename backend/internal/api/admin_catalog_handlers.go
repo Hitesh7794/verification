@@ -262,46 +262,43 @@ func (s *Server) adminSubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Check if this organization already has blanket approval from this client.
-	var blanketApproved int
-	_ = s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT 1 FROM client_organization_approvals WHERE client_id = $1 AND org_id = $2`,
-		clientID, orgID,
-	).Scan(&blanketApproved)
-
-	initialStatus := "pending"
-	var approvalType sql.NullString
-	if blanketApproved == 1 {
-		initialStatus = "approved"
-		approvalType = sql.NullString{String: "blanket_client", Valid: true}
-	}
-
+	// V15 flow (2026-08-25): admin subscribe is immediate — no review
+	// step, no pending status. The previous pending → reviewer inbox
+	// path is retired (the reviewer's subscription-request page is
+	// gone), and the KYC review already covers the "does this org
+	// deserve access to this client's exams" question. So a click on
+	// the admin's Subscribe button flips the row straight to approved.
 	if _, err := s.deps.DB.ExecContext(r.Context(), `
 		INSERT INTO organization_exam_subscriptions(
-			org_id, exam_id, status, approval_type, requested_at, subscribed_at, subscribed_by, reviewed_at, review_note
+			org_id, exam_id, status, approval_type,
+			requested_at, subscribed_at, subscribed_by,
+			reviewed_at, reviewed_by, review_note
 		) VALUES(
-			$1, $2, $3, $4, NOW(), NOW(), $5,
-			CASE WHEN $3 = 'approved' THEN NOW() ELSE NULL END,
-			CASE WHEN $3 = 'approved' THEN 'Pre-approved via client blanket authorization' ELSE NULL END
+			$1, $2, 'approved', 'blanket_client',
+			NOW(), NOW(), $3,
+			NOW(), $3, 'Admin self-subscribe (V15)'
 		)
 		ON CONFLICT (org_id, exam_id) DO UPDATE SET
-			status = EXCLUDED.status,
-			approval_type = EXCLUDED.approval_type,
+			status = 'approved',
+			approval_type = 'blanket_client',
 			requested_at = NOW(),
 			subscribed_at = NOW(),
 			subscribed_by = EXCLUDED.subscribed_by,
-			reviewed_at = EXCLUDED.reviewed_at,
+			reviewed_at = NOW(),
+			reviewed_by = EXCLUDED.reviewed_by,
 			review_note = EXCLUDED.review_note`,
-		orgID, req.ExamID, initialStatus, approvalType, claims.UserID,
+		orgID, req.ExamID, claims.UserID,
 	); err != nil {
 		writeErr(w, http.StatusInternalServerError, "db insert: "+err.Error())
 		return
 	}
+	// clientID captured earlier for future audit / rules but currently
+	// unused now that blanket-approval branching is gone.
+	_ = clientID
 	writeJSON(w, http.StatusCreated, map[string]any{
-		"ok":                  true,
-		"exam_id":             req.ExamID,
-		"status":              initialStatus,
-		"blanket_preapproved": blanketApproved == 1,
+		"ok":      true,
+		"exam_id": req.ExamID,
+		"status":  "approved",
 	})
 }
 
