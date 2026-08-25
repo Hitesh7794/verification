@@ -43,6 +43,7 @@ type operatorRow struct {
 	Password         string     `json:"password,omitempty"` // plaintext, admin visibility only
 	DisplayName      string     `json:"display_name"`
 	Email            string     `json:"email,omitempty"`
+	Phone            string     `json:"phone,omitempty"`
 	Status           string     `json:"status"` // active | disabled
 	SpendingCapPaise *int64     `json:"spending_cap_paise,omitempty"`
 	SpentPaise       int64      `json:"spent_paise"`
@@ -64,7 +65,8 @@ func (s *Server) adminListOperators(w http.ResponseWriter, r *http.Request) {
 	orgID := *claims.OrgID
 	rows, err := s.deps.DB.QueryContext(r.Context(), `
 		SELECT id, username, COALESCE(password_plaintext,''), display_name,
-		       COALESCE(email,''), disabled_at, spending_cap_paise, spent_paise,
+		       COALESCE(email,''), COALESCE(phone,''), disabled_at,
+		       spending_cap_paise, spent_paise,
 		       valid_from, valid_to, created_at
 		FROM users
 		WHERE org_id = $1 AND role = 'client'
@@ -81,7 +83,7 @@ func (s *Server) adminListOperators(w http.ResponseWriter, r *http.Request) {
 		var cap sql.NullInt64
 		var vFrom, vTo sql.NullString
 		if err := rows.Scan(&o.ID, &o.Username, &o.Password, &o.DisplayName,
-			&o.Email, &disabledAt, &cap, &o.SpentPaise, &vFrom, &vTo, &o.CreatedAt); err != nil {
+			&o.Email, &o.Phone, &disabledAt, &cap, &o.SpentPaise, &vFrom, &vTo, &o.CreatedAt); err != nil {
 			writeErr(w, http.StatusInternalServerError, "row scan: "+err.Error())
 			return
 		}
@@ -171,12 +173,13 @@ func (s *Server) loadOperatorForOrg(r *http.Request, orgID, id int64) (*operator
 	var vFrom, vTo sql.NullString
 	err := s.deps.DB.QueryRowContext(r.Context(), `
 		SELECT id, username, COALESCE(password_plaintext,''), display_name,
-		       COALESCE(email,''), disabled_at, spending_cap_paise, spent_paise,
+		       COALESCE(email,''), COALESCE(phone,''), disabled_at,
+		       spending_cap_paise, spent_paise,
 		       valid_from, valid_to, created_at
 		  FROM users
 		 WHERE id = $1 AND org_id = $2 AND role = 'client'`, id, orgID,
 	).Scan(&o.ID, &o.Username, &o.Password, &o.DisplayName,
-		&o.Email, &disabledAt, &cap, &o.SpentPaise, &vFrom, &vTo, &o.CreatedAt)
+		&o.Email, &o.Phone, &disabledAt, &cap, &o.SpentPaise, &vFrom, &vTo, &o.CreatedAt)
 	if err != nil {
 		return nil, err
 	}
@@ -223,8 +226,8 @@ type createOperatorReq struct {
 	Username         string  `json:"username"`
 	Password         string  `json:"password"`
 	DisplayName      string  `json:"display_name"`
-	Email            string  `json:"email,omitempty"` // optional; if set, we send a welcome mail
-	EmailOTPToken    string  `json:"email_otp_token,omitempty"`
+	Email            string  `json:"email,omitempty"` // required; welcome mail dispatched
+	Phone            string  `json:"phone,omitempty"` // required; admin's own record
 	SpendingCapPaise *int64  `json:"spending_cap_paise,omitempty"`
 	ValidFrom        string  `json:"valid_from,omitempty"` // YYYY-MM-DD or empty
 	ValidTo          string  `json:"valid_to,omitempty"`
@@ -246,6 +249,7 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 	req.Username = strings.TrimSpace(req.Username)
 	req.DisplayName = strings.TrimSpace(req.DisplayName)
 	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	req.Phone = normalizePhone(req.Phone)
 	if len(req.Username) < 3 || len(req.Username) > 60 {
 		writeErr(w, http.StatusBadRequest, "username required (3-60 chars)")
 		return
@@ -256,6 +260,14 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 	}
 	if !isPlausibleEmail(req.Email) {
 		writeErr(w, http.StatusBadRequest, "email is not a valid address")
+		return
+	}
+	if req.Phone == "" {
+		writeErr(w, http.StatusBadRequest, "phone number is required")
+		return
+	}
+	if !isPlausiblePhone(req.Phone) {
+		writeErr(w, http.StatusBadRequest, "phone number must be 10–15 digits (optionally starting with +)")
 		return
 	}
 	// Pre-check uniqueness (case-insensitive) to give a clean 409
@@ -275,20 +287,6 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 	} else if !errors.Is(err, sql.ErrNoRows) {
 		writeErr(w, http.StatusInternalServerError, "email check: "+err.Error())
 		return
-	}
-
-	// Validate email OTP proof token if OTP store is active
-	if s.otpStore != nil && !strings.EqualFold(s.deps.Cfg.AppEnv, "test") {
-		if req.EmailOTPToken == "" {
-			writeErr(w, http.StatusBadRequest, "Verification agent email must be verified with OTP before creating")
-			return
-		}
-		if err := s.otpStore.ValidateProofToken("operator_creation", req.Email, req.EmailOTPToken); err != nil {
-			if err2 := s.otpStore.ValidateProofToken("registration", req.Email, req.EmailOTPToken); err2 != nil {
-				writeErr(w, http.StatusBadRequest, "Email verification failed: "+err.Error())
-				return
-			}
-		}
 	}
 
 	if strings.TrimSpace(req.ValidFrom) == "" || strings.TrimSpace(req.ValidTo) == "" {
@@ -339,12 +337,12 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 	var uid int64
 	if err := tx.QueryRowContext(r.Context(), `
 		INSERT INTO users(username, password_hash, role, org_id,
-		                  display_name, email, password_plaintext,
+		                  display_name, email, phone, password_plaintext,
 		                  spending_cap_paise, valid_from, valid_to)
-		VALUES($1, $2, 'client', $3, $4, $5, $6, $7, $8, $9)
+		VALUES($1, $2, 'client', $3, $4, $5, $6, $7, $8, $9, $10)
 		RETURNING id`,
 		req.Username, string(hash), orgID, req.DisplayName,
-		nullable(req.Email), req.Password,
+		nullable(req.Email), nullable(req.Phone), req.Password,
 		nullableInt64(req.SpendingCapPaise), vFrom, vTo).Scan(&uid); err != nil {
 		if isUniqueViolation(err) && strings.Contains(strings.ToLower(err.Error()), "username") {
 			writeErr(w, http.StatusConflict, "username already taken")
@@ -397,8 +395,8 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 
 type patchOperatorReq struct {
 	DisplayName      *string  `json:"display_name,omitempty"`
-	Email            *string  `json:"email,omitempty"` // empty string clears
-	EmailOTPToken    string   `json:"email_otp_token,omitempty"`
+	Email            *string  `json:"email,omitempty"` // required if present
+	Phone            *string  `json:"phone,omitempty"` // required if present
 	Password         *string  `json:"password,omitempty"`     // if present, hash + store plaintext
 	SpendingCapPaise *int64   `json:"spending_cap_paise,omitempty"`
 	ClearSpendingCap bool     `json:"clear_spending_cap,omitempty"` // sentinel: set to NULL
@@ -483,24 +481,21 @@ func (s *Server) adminPatchOperator(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 
-		var currentEmail sql.NullString
-		_ = tx.QueryRow(`SELECT email FROM users WHERE id = $1`, id).Scan(&currentEmail)
-		emailChanged := !currentEmail.Valid || !strings.EqualFold(strings.TrimSpace(currentEmail.String), e)
-		if emailChanged && s.otpStore != nil && !strings.EqualFold(s.deps.Cfg.AppEnv, "test") {
-			if req.EmailOTPToken == "" {
-				writeErr(w, http.StatusBadRequest, "Verification agent email must be verified with OTP before saving")
-				return
-			}
-			if err := s.otpStore.ValidateProofToken("operator_creation", e, req.EmailOTPToken); err != nil {
-				if err2 := s.otpStore.ValidateProofToken("registration", e, req.EmailOTPToken); err2 != nil {
-					writeErr(w, http.StatusBadRequest, "Email verification failed: "+err.Error())
-					return
-				}
-			}
-		}
-
 		sets = append(sets, "email = ?")
 		args = append(args, e)
+	}
+	if req.Phone != nil {
+		p := normalizePhone(*req.Phone)
+		if p == "" {
+			writeErr(w, http.StatusBadRequest, "phone cannot be empty")
+			return
+		}
+		if !isPlausiblePhone(p) {
+			writeErr(w, http.StatusBadRequest, "phone number must be 10–15 digits (optionally starting with +)")
+			return
+		}
+		sets = append(sets, "phone = ?")
+		args = append(args, p)
 	}
 	if req.Password != nil {
 		if err := validatePassword(*req.Password); err != nil {
@@ -688,6 +683,46 @@ func nullableInt64(p *int64) any {
 // "shape looks like an email address"; delivery is the real validator.
 func isPlausibleEmail(s string) bool {
 	return reEmail.MatchString(s)
+}
+
+// normalizePhone trims whitespace and collapses interior spaces/dashes
+// commonly pasted from address books. Leading '+' is preserved. Empty
+// input stays empty (caller decides required-vs-optional).
+func normalizePhone(s string) string {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return ""
+	}
+	var b strings.Builder
+	b.Grow(len(s))
+	for i, r := range s {
+		if r >= '0' && r <= '9' {
+			b.WriteRune(r)
+		} else if r == '+' && i == 0 {
+			b.WriteRune(r)
+		}
+	}
+	return b.String()
+}
+
+// isPlausiblePhone accepts 10–15 digit numbers (optionally prefixed
+// with '+' for international format). Loose on purpose — the admin is
+// filling in their own record for the agent; the portal doesn't SMS
+// or verify it.
+func isPlausiblePhone(s string) bool {
+	digits := s
+	if strings.HasPrefix(digits, "+") {
+		digits = digits[1:]
+	}
+	if len(digits) < 10 || len(digits) > 15 {
+		return false
+	}
+	for _, r := range digits {
+		if r < '0' || r > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // buildOperatorWelcomeEmail composes the plain-text welcome message

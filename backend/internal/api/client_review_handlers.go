@@ -90,6 +90,12 @@ func (s *Server) clientListApplications(w http.ResponseWriter, r *http.Request) 
 		where = append(where, "status = ?")
 		args = append(args, status)
 	}
+	// V15 routing: reviewer only sees pending rows that are in the
+	// client queue (pending_reviewer='client'). Approved/rejected/draft
+	// rows are shown regardless. Pre-V15 pending rows (pending_reviewer
+	// NULL) are excluded here because the pre-V15 flow never routed to
+	// a client reviewer — those were superadmin-only.
+	where = append(where, "(status != 'pending' OR pending_reviewer = 'client')")
 	whereSQL := strings.Join(where, " AND ")
 
 	var total int

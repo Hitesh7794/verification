@@ -24,7 +24,9 @@ import {
   listClientReviewers,
   createClientReviewer,
   deleteClientReviewer,
+  patchClient,
 } from '../../lib/superadmin/examCatalog.js'
+import { KYCReviewModePicker, KYCReviewModePill } from './Clients.jsx'
 import { dateRange } from '../../lib/dates.js'
 
 // Superadmin > Client detail — client hero + list of its exams inline.
@@ -180,6 +182,8 @@ export default function ClientDetail() {
           </div>
         )}
 
+        <KYCReviewModePanel client={client} onChanged={refresh} />
+
         <ReviewPortalPanel client={client} onChanged={refresh} />
 
         <AnimatePresence initial={false}>
@@ -326,6 +330,71 @@ export default function ClientDetail() {
 // by the API and shown here with an obvious copy affordance — this
 // account isn't in the operator plaintext table, so if the superadmin
 // misses it, the only remedy is to delete + recreate the reviewer.
+
+// KYCReviewModePanel — inline editor for who reviews KYC applications
+// routed to this client. Lives above the reviewer-portal panel because
+// its setting decides whether a client reviewer will EVER see an app;
+// having reviewers configured while mode='admin' is a valid but
+// intentional state (the reviewer just won't receive routed apps).
+function KYCReviewModePanel({ client, onChanged }) {
+  const initial = client.kyc_review_mode || 'admin'
+  const [mode, setMode] = useState(initial)
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
+  const [editing, setEditing] = useState(false)
+  useEffect(() => { setMode(client.kyc_review_mode || 'admin') }, [client.kyc_review_mode])
+
+  async function onSave() {
+    setSaving(true)
+    setErr('')
+    try {
+      await patchClient(client.id, { kyc_review_mode: mode })
+      await onChanged?.()
+      setEditing(false)
+    } catch (e) {
+      setErr(e?.body?.error || e?.message || 'Could not update')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <div className="mb-6 rounded-xl bg-warm-surface ring-1 ring-warm overflow-hidden">
+      <div className="p-5 sm:p-6">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold text-slate-900">KYC review routing</h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Who approves new institution registrations tied to <span className="font-medium text-slate-700">{client.name}</span>.
+            </p>
+          </div>
+          {!editing && (
+            <div className="flex items-center gap-2 shrink-0">
+              <KYCReviewModePill mode={initial} />
+              <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>Change</Button>
+            </div>
+          )}
+        </div>
+        {editing && (
+          <div className="mt-4 space-y-3">
+            <KYCReviewModePicker value={mode} onChange={setMode} />
+            {err && (
+              <p className="text-xs text-rose-600">{err}</p>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => { setMode(initial); setEditing(false); setErr('') }}>
+                Cancel
+              </Button>
+              <Button size="sm" onClick={onSave} disabled={saving || mode === initial}>
+                {saving ? 'Saving…' : 'Save'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
 
 function ReviewPortalPanel({ client, onChanged }) {
   const [portalOn, setPortalOn] = useState(!!client.portal_enabled)

@@ -114,7 +114,108 @@ func Migrate(d *sql.DB) error {
 		}
 	}
 
+	if !applied[14] {
+		if err := applyV14UsersPhone(ctx, d); err != nil {
+			return fmt.Errorf("apply v14 users_phone: %w", err)
+		}
+	}
+
+	if !applied[15] {
+		if err := applyV15KYCReviewMode(ctx, d); err != nil {
+			return fmt.Errorf("apply v15 kyc_review_mode: %w", err)
+		}
+	}
+
 	return nil
+}
+
+// applyV15KYCReviewMode adds the per-client KYC review mode + the
+// per-application pending_reviewer routing column (2026-08-24 rebuild).
+//
+//   clients.kyc_review_mode              — 'admin' | 'client' | 'both'
+//   institution_applications.pending_reviewer  — 'admin' | 'client' | NULL
+//
+// mode drives routing at submit time. pending_reviewer says which queue
+// the row currently sits in; NULL once the app reaches a terminal state.
+//
+// 'both' semantics: submit lands in the superadmin queue
+// (pending_reviewer='admin'). Superadmin approve flips it to
+// pending_reviewer='client' (still status='pending', no org yet — just
+// moves to the client reviewer's inbox). Client reviewer's approve
+// finalizes: status='approved', org+admin created, exams fanned out.
+// Either reviewer's reject → status='rejected'.
+//
+// Back-fill sets pending_reviewer NULL for terminal rows and 'admin'
+// for anything still pending — pre-migration behaviour was
+// superadmin-only, so nothing moves silently.
+func applyV15KYCReviewMode(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmts := []string{
+		`ALTER TABLE clients
+		    ADD COLUMN IF NOT EXISTS kyc_review_mode TEXT NOT NULL DEFAULT 'admin'`,
+		`ALTER TABLE clients
+		    DROP CONSTRAINT IF EXISTS clients_kyc_review_mode_check`,
+		`ALTER TABLE clients
+		    ADD CONSTRAINT clients_kyc_review_mode_check
+		    CHECK (kyc_review_mode IN ('admin','client','both'))`,
+		`ALTER TABLE institution_applications
+		    ADD COLUMN IF NOT EXISTS pending_reviewer TEXT`,
+		`ALTER TABLE institution_applications
+		    DROP CONSTRAINT IF EXISTS institution_applications_pending_reviewer_check`,
+		`ALTER TABLE institution_applications
+		    ADD CONSTRAINT institution_applications_pending_reviewer_check
+		    CHECK (pending_reviewer IS NULL OR pending_reviewer IN ('admin','client'))`,
+		// Back-fill routing: anything still pending goes to admin queue
+		// (matches pre-migration behaviour); terminal rows have NULL.
+		`UPDATE institution_applications
+		    SET pending_reviewer = 'admin'
+		  WHERE status = 'pending' AND pending_reviewer IS NULL`,
+		`UPDATE institution_applications
+		    SET pending_reviewer = NULL
+		  WHERE status IN ('approved','rejected','draft')`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.ExecContext(ctx, s); err != nil {
+			return fmt.Errorf("exec %q: %w", firstLine(s), err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)`,
+		15, "kyc_review_mode",
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// applyV14UsersPhone adds an optional phone column to the users table.
+// Used by the admin's per-agent create/edit form: OTP verification was
+// dropped 2026-08-24 in favor of a plain email + phone-number pair the
+// admin fills in for their own records. Additive, nullable — existing
+// rows and existing code paths are unaffected.
+func applyV14UsersPhone(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx,
+		`ALTER TABLE users ADD COLUMN IF NOT EXISTS phone TEXT`); err != nil {
+		return fmt.Errorf("add users.phone: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)`,
+		14, "users_phone",
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // applyV12SingleClientReviewerConstraint enforces that each client can

@@ -1142,6 +1142,8 @@ function ReviewStep({ form, uploaded, onEdit, onBack, onSubmit, submitting }) {
   ].filter((l) => l && l.trim())
 
   const activeDocs = getRequiredDocs(form)
+  // Files live in memory until Submit (the "defer all DB writes to
+  // Submit" flow), so key off `.file` (or `.doc_id` if present).
   const docs = activeDocs.filter((d) => uploaded[d.kind]?.file || uploaded[d.kind]?.doc_id)
 
   return (
@@ -1631,6 +1633,8 @@ function CalloutNote({ children }) {
 function Step2({ form, applicationId, uploaded, errors, handleFile, removeDoc, onBack, onSubmit, submitting }) {
   const activeDocs = getRequiredDocs(form)
   const requiredCount = activeDocs.filter((d) => d.required).length
+  // Count picked-in-memory files, not server-issued doc_ids — the
+  // Submit-time upload is what mints doc_id.
   const uploadedRequiredCount = activeDocs.filter((d) => d.required && (uploaded[d.kind]?.file || uploaded[d.kind]?.doc_id)).length
   return (
     <AestheticCard>
@@ -1680,6 +1684,7 @@ function Step2({ form, applicationId, uploaded, errors, handleFile, removeDoc, o
 function DocUploadRow({ kind, label, hint, required, state, error, onFile, onRemove }) {
   const inputId = `file_${kind}`
   const uploading = state?.uploading
+  // `done` = a file is picked (kept in memory until Submit).
   const done = Boolean(state?.file || state?.doc_id) && !uploading
 
   return (

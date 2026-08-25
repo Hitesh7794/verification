@@ -1180,20 +1180,44 @@ func (s *Server) registerSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Decide which queue this application lands in based on the
+	// destination client's kyc_review_mode (V15). If no client is
+	// attached — the current default for public registrations — the app
+	// goes to the superadmin queue exactly as pre-V15.
+	//
+	//   mode 'admin'  → pending_reviewer='admin'  (superadmin only)
+	//   mode 'client' → pending_reviewer='client' (client reviewer only)
+	//   mode 'both'   → pending_reviewer='admin'  (superadmin first, then hands off)
+	//   no client_id  → pending_reviewer='admin'  (matches pre-V15 behaviour)
+	pendingReviewer := "admin"
+	var clientID sql.NullInt64
+	_ = s.deps.DB.QueryRowContext(r.Context(),
+		`SELECT client_id FROM institution_applications WHERE id = $1`, appID,
+	).Scan(&clientID)
+	if clientID.Valid {
+		var mode string
+		if err := s.deps.DB.QueryRowContext(r.Context(),
+			`SELECT kyc_review_mode FROM clients WHERE id = $1`, clientID.Int64,
+		).Scan(&mode); err == nil && mode == "client" {
+			pendingReviewer = "client"
+		}
+	}
+
 	_, err = s.deps.DB.ExecContext(r.Context(),
 		`UPDATE institution_applications
-		 SET status = 'pending', updated_at = CURRENT_TIMESTAMP
+		 SET status = 'pending', pending_reviewer = $2, updated_at = CURRENT_TIMESTAMP
 		 WHERE id = $1 AND status = 'draft'`,
-		appID,
+		appID, pendingReviewer,
 	)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db update")
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
-		"application_id": appID,
-		"status":         "pending",
-		"message":        "Application submitted. You'll hear back within 48 hours by email.",
+		"application_id":    appID,
+		"status":            "pending",
+		"pending_reviewer":  pendingReviewer,
+		"message":           "Application submitted. You'll hear back within 48 hours by email.",
 	})
 }
 

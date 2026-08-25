@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import { Link } from 'react-router-dom'
 import AdminShell, { PageHead } from '../../components/shell/AdminShell.jsx'
 import {
   Button,
@@ -10,8 +9,6 @@ import {
 } from '../../components/ui/ui.jsx'
 import { Icon, Pill } from '../../components/ui/extras.jsx'
 import { FadeIn } from '../../components/ui/motion.jsx'
-import OtpVerificationField from '../../components/ui/OtpVerificationField.jsx'
-import { sendEmailOTP, verifyEmailOTP } from '../../lib/otp/api.js'
 import {
   listOperators,
   createOperator,
@@ -231,8 +228,8 @@ export default function Operators() {
 
         {subs.length === 0 && (
           <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800">
-            You haven't subscribed to any exams yet — verification agents need at least one subscribed exam to verify against.{' '}
-            <Link to="/admin/catalog" className="font-medium text-amber-900 hover:underline">Open catalog →</Link>
+            You don't have any exams yet — verification agents need at least one exam to verify against.
+            Ask your platform contact to route your institution to the right exam board.
           </div>
         )}
         {err && (
@@ -303,6 +300,7 @@ export default function Operators() {
                           <td className="px-4 py-3">
                             <div className="text-slate-900">{o.display_name}</div>
                             {o.email && <div className="text-xs text-slate-500 mt-0.5">{o.email}</div>}
+                            {o.phone && <div className="text-xs text-slate-500">{o.phone}</div>}
                           </td>
                           <td className="px-4 py-3 text-xs text-slate-600 tabular-nums">
                             {o.spending_cap_paise ? (
@@ -542,7 +540,8 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
   const [displayName, setDisplayName] = useState(operator?.display_name || '')
   const initialEmail = (operator?.email || '').trim().toLowerCase()
   const [email, setEmail] = useState(initialEmail)
-  const [emailOtpToken, setEmailOtpToken] = useState('')
+  const initialPhone = (operator?.phone || '').trim()
+  const [phone, setPhone] = useState(initialPhone)
   const [capRupees, setCapRupees] = useState(operator?.spending_cap_paise ? String(operator.spending_cap_paise / 100) : '')
   const [validFrom, setValidFrom] = useState(operator?.valid_from || '')
   const [validTo, setValidTo] = useState(operator?.valid_to || '')
@@ -550,9 +549,12 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
-  const isEmailValid = /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())
-  const emailUnchanged = isEdit && Boolean(initialEmail) && email.trim().toLowerCase() === initialEmail
-  const isEmailVerified = emailUnchanged || Boolean(emailOtpToken)
+  // Basic phone validity: 10–15 digits, optional leading '+'. The
+  // backend applies the same rule (see isPlausiblePhone) — the UI check
+  // just keeps the Save button honest.
+  const phoneDigits = phone.replace(/[^\d+]/g, '').replace(/(?!^)\+/g, '')
+  const phoneCore = phoneDigits.startsWith('+') ? phoneDigits.slice(1) : phoneDigits
+  const isPhoneValid = /^\d{10,15}$/.test(phoneCore)
 
   // Live cap validation — the wallet middleware enforces the runtime
   // limits anyway (see /liveness-check), but blocking obviously-broken
@@ -581,22 +583,19 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
       setErr(`Spending cap can't exceed the wallet balance (${formatRupees(walletBalancePaise)}). Top up the wallet first or lower the cap.`)
       return
     }
+    if (!isPhoneValid) {
+      setErr('Enter a valid phone number (10–15 digits, optional leading +).')
+      return
+    }
     setSaving(true)
     setErr('')
     try {
       const capPaise = capRupees.trim() ? Math.round(Number(capRupees) * 100) : null
       if (isEdit) {
-        if (!isEmailVerified) {
-          setErr('Please verify the verification agent email with OTP before saving.')
-          setSaving(false)
-          return
-        }
         const patch = { exam_ids: examIds }
         if (displayName !== operator.display_name) patch.display_name = displayName
-        if (email.trim().toLowerCase() !== initialEmail) {
-          patch.email = email.trim()
-          patch.email_otp_token = emailOtpToken
-        }
+        if (email.trim().toLowerCase() !== initialEmail) patch.email = email.trim()
+        if (phone.trim() !== initialPhone) patch.phone = phone.trim()
         if (password.trim()) patch.password = password
         if (validFrom !== (operator.valid_from || '')) patch.valid_from = validFrom
         if (validTo !== (operator.valid_to || '')) patch.valid_to = validTo
@@ -604,17 +603,12 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
         else if (capPaise !== null && capPaise !== operator.spending_cap_paise) patch.spending_cap_paise = capPaise
         await patchOperator(operator.id, patch)
       } else {
-        if (!isEmailVerified) {
-          setErr('Please verify the verification agent email with OTP before creating.')
-          setSaving(false)
-          return
-        }
         await createOperator({
           username: username.trim(),
           password,
           display_name: displayName.trim() || username.trim(),
-          email: email.trim() || undefined,
-          email_otp_token: emailOtpToken,
+          email: email.trim(),
+          phone: phone.trim(),
           spending_cap_paise: capPaise,
           valid_from: validFrom || undefined,
           valid_to: validTo || undefined,
@@ -644,29 +638,31 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
           <Label>Display name</Label>
           <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
         </div>
-        <div className="sm:col-span-2">
-          <OtpVerificationField
-            label="Email"
+        <div>
+          <Label>Email</Label>
+          <Input
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
             placeholder="agent@college.edu"
             required
-            isVerified={isEmailVerified}
-            onVerified={(token) => {
-              setEmailOtpToken(token)
-              setErr('')
-            }}
-            onResetVerification={() => {
-              setEmailOtpToken('')
-            }}
-            sendOtpFn={() => sendEmailOTP(email.trim(), 'operator_creation')}
-            verifyOtpFn={(code) => verifyEmailOTP(email.trim(), code, 'operator_creation')}
-            canSendOtp={isEmailValid && !emailUnchanged}
+            autoComplete="email"
           />
-          {!isEmailVerified && (
-            <p className="text-[11px] text-slate-500 mt-1">
-              Verify operator's email with OTP. Enter email and click <strong>Send OTP</strong> to verify.
+        </div>
+        <div>
+          <Label>Phone number</Label>
+          <Input
+            type="tel"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            placeholder="+91 98765 43210"
+            required
+            autoComplete="tel"
+            inputMode="tel"
+          />
+          {phone.trim() && !isPhoneValid && (
+            <p className="text-[11px] text-rose-600 mt-1">
+              Enter 10–15 digits, optionally starting with <code>+</code>.
             </p>
           )}
         </div>
@@ -758,8 +754,8 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
 
       <div className="flex justify-end gap-2">
         <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>
-        <Button type="submit" disabled={saving || examIds.length === 0 || !isEmailVerified || capInvalid}>
-          {saving ? 'Saving…' : (isEdit ? 'Save changes' : 'Create operator')}
+        <Button type="submit" disabled={saving || examIds.length === 0 || !isPhoneValid || capInvalid}>
+          {saving ? 'Saving…' : (isEdit ? 'Save changes' : 'Create verification agent')}
         </Button>
       </div>
     </form>

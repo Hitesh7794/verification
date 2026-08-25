@@ -31,6 +31,7 @@ export default function Clients() {
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
   const [newNotes, setNewNotes] = useState('')
+  const [newKycMode, setNewKycMode] = useState('admin') // 'admin' | 'client' | 'both'
   const [saving, setSaving] = useState(false)
   // id of the row with a request in flight — disables that row's buttons
   // so a double-click can't fire the same toggle twice.
@@ -58,9 +59,10 @@ export default function Clients() {
     setSaving(true)
     setErr('')
     try {
-      await createClient({ name: newName.trim(), notes: newNotes.trim() })
+      await createClient({ name: newName.trim(), notes: newNotes.trim(), kyc_review_mode: newKycMode })
       setNewName('')
       setNewNotes('')
+      setNewKycMode('admin')
       setCreating(false)
       await refresh({ quiet: true })
     } catch (e) {
@@ -194,6 +196,13 @@ export default function Clients() {
                         </p>
                       </div>
                     </div>
+                    <div className="pt-2">
+                      <Label>KYC review by <span className="text-rose-500">*</span></Label>
+                      <p className="text-[11px] text-slate-500 mt-0.5 mb-2">
+                        Who approves institution registrations tied to this client.
+                      </p>
+                      <KYCReviewModePicker value={newKycMode} onChange={setNewKycMode} />
+                    </div>
                     <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
                       <Button type="button" variant="ghost" onClick={() => { setCreating(false); setNewName(''); setNewNotes('') }}>
                         Cancel
@@ -243,6 +252,7 @@ export default function Clients() {
                               ? <Pill tone="emerald" dot>Listed</Pill>
                               : <Pill tone="slate" dot>Unlisted</Pill>}
                             {c.closed && <Pill tone="amber" dot>Ended</Pill>}
+                            <KYCReviewModePill mode={c.kyc_review_mode || 'admin'} />
                           </div>
                         </td>
                         <td className="px-5 py-3.5 text-xs text-slate-500 tabular-nums">
@@ -339,6 +349,59 @@ export default function Clients() {
 // already in the network tab for whoever is debugging.
 function errText(e, fallback) {
   return e?.body?.error || e?.message || fallback
+}
+
+// KYCReviewModePicker — three-option radio for who reviews KYC apps for
+// this client. Rendered as segmented cards, not raw radios, since each
+// choice has meaningful description text worth showing.
+export function KYCReviewModePicker({ value, onChange }) {
+  const opts = [
+    { key: 'admin',  title: 'Admin only',   sub: 'Superadmin approves KYC. Client reviewer never sees it.' },
+    { key: 'client', title: 'Client only',  sub: 'Only this client’s reviewer approves KYC. Superadmin skips it.' },
+    { key: 'both',   title: 'Both (admin then client)', sub: 'Superadmin approves first, then the client reviewer gives final approval.' },
+  ]
+  return (
+    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
+      {opts.map((o) => {
+        const active = value === o.key
+        return (
+          <button
+            key={o.key}
+            type="button"
+            onClick={() => onChange(o.key)}
+            className={`text-left rounded-lg border px-3 py-2.5 transition-colors ${
+              active
+                ? 'border-stone-900 bg-stone-50 ring-1 ring-stone-900/10'
+                : 'border-slate-200 bg-white hover:border-slate-300'
+            }`}
+          >
+            <div className="flex items-center gap-2">
+              <span
+                className={`h-3.5 w-3.5 rounded-full border ${
+                  active ? 'border-stone-900 bg-stone-900' : 'border-slate-300'
+                } flex items-center justify-center`}
+              >
+                {active && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
+              </span>
+              <span className="text-sm font-medium text-slate-900">{o.title}</span>
+            </div>
+            <p className="text-[11px] text-slate-500 mt-1.5 leading-snug">{o.sub}</p>
+          </button>
+        )
+      })}
+    </div>
+  )
+}
+
+// KYCReviewModePill — compact badge used in the clients table.
+export function KYCReviewModePill({ mode }) {
+  const label = mode === 'both' ? 'Both'
+    : mode === 'client' ? 'Client'
+    : 'Admin'
+  const tone = mode === 'both' ? 'indigo'
+    : mode === 'client' ? 'emerald'
+    : 'slate'
+  return <Pill tone={tone}>Review: {label}</Pill>
 }
 
 // Placeholder rows echoing the real table's rhythm, so the swap from

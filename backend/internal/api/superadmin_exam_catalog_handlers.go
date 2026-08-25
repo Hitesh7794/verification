@@ -65,16 +65,29 @@ const (
 // ── DTOs ──────────────────────────────────────────────────────────────
 
 type clientRow struct {
-	ID            int64      `json:"id"`
-	Name          string     `json:"name"`
-	Notes         string     `json:"notes,omitempty"`
-	Visible       bool       `json:"visible"`
-	Closed        bool       `json:"closed"`
-	PortalEnabled bool       `json:"portal_enabled"`
-	ClosedAt      *time.Time `json:"closed_at,omitempty"`
-	ExamCount     int64      `json:"exam_count"`
-	CreatedAt     time.Time  `json:"created_at"`
-	UpdatedAt     time.Time  `json:"updated_at"`
+	ID             int64      `json:"id"`
+	Name           string     `json:"name"`
+	Notes          string     `json:"notes,omitempty"`
+	Visible        bool       `json:"visible"`
+	Closed         bool       `json:"closed"`
+	PortalEnabled  bool       `json:"portal_enabled"`
+	KYCReviewMode  string     `json:"kyc_review_mode"` // 'admin' | 'client' | 'both'
+	ClosedAt       *time.Time `json:"closed_at,omitempty"`
+	ExamCount      int64      `json:"exam_count"`
+	CreatedAt      time.Time  `json:"created_at"`
+	UpdatedAt      time.Time  `json:"updated_at"`
+}
+
+// normalizeKYCReviewMode returns the string unchanged if it's one of the
+// three accepted modes, or "admin" for anything else (empty, garbage).
+// Callers use this so a client that predates V15 (no mode in the JSON
+// payload) defaults to the safe "admin-only" review path.
+func normalizeKYCReviewMode(s string) string {
+	switch strings.ToLower(strings.TrimSpace(s)) {
+	case "admin", "client", "both":
+		return strings.ToLower(strings.TrimSpace(s))
+	}
+	return "admin"
 }
 
 type examRow struct {
@@ -118,8 +131,9 @@ type uploadRow struct {
 // ── CLIENTS ───────────────────────────────────────────────────────────
 
 type createClientReq struct {
-	Name  string `json:"name"`
-	Notes string `json:"notes"`
+	Name          string `json:"name"`
+	Notes         string `json:"notes"`
+	KYCReviewMode string `json:"kyc_review_mode"` // 'admin' | 'client' | 'both'; default 'admin'
 }
 
 func (s *Server) superadminCreateClient(w http.ResponseWriter, r *http.Request) {
@@ -134,21 +148,23 @@ func (s *Server) superadminCreateClient(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 	notes := strings.TrimSpace(req.Notes)
+	mode := normalizeKYCReviewMode(req.KYCReviewMode)
 	var id int64
 	if err := s.deps.DB.QueryRowContext(r.Context(),
-		`INSERT INTO clients(name, notes) VALUES($1, $2) RETURNING id`,
-		name, nullable(notes),
+		`INSERT INTO clients(name, notes, kyc_review_mode) VALUES($1, $2, $3) RETURNING id`,
+		name, nullable(notes), mode,
 	).Scan(&id); err != nil {
 		writeErr(w, http.StatusInternalServerError, "db insert: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "name": name})
+	writeJSON(w, http.StatusCreated, map[string]any{"id": id, "name": name, "kyc_review_mode": mode})
 }
 
 func (s *Server) superadminListClients(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.deps.DB.QueryContext(r.Context(), `
 		SELECT c.id, c.name, COALESCE(c.notes,''),
-		       c.visible, c.closed, c.closed_at, c.created_at, c.updated_at,
+		       c.visible, c.closed, c.kyc_review_mode,
+		       c.closed_at, c.created_at, c.updated_at,
 		       (SELECT COUNT(*) FROM exams e WHERE e.client_id = c.id) AS exam_count
 		FROM clients c
 		ORDER BY c.created_at DESC`)
@@ -163,6 +179,7 @@ func (s *Server) superadminListClients(w http.ResponseWriter, r *http.Request) {
 		var visible, closed int
 		var closedAt sql.NullTime
 		if err := rows.Scan(&c.ID, &c.Name, &c.Notes, &visible, &closed,
+			&c.KYCReviewMode,
 			&closedAt, &c.CreatedAt, &c.UpdatedAt, &c.ExamCount); err != nil {
 			writeErr(w, http.StatusInternalServerError, "row scan: "+err.Error())
 			return
@@ -201,8 +218,9 @@ func (s *Server) superadminGetClient(w http.ResponseWriter, r *http.Request) {
 }
 
 type patchClientReq struct {
-	Name  *string `json:"name,omitempty"`
-	Notes *string `json:"notes,omitempty"`
+	Name          *string `json:"name,omitempty"`
+	Notes         *string `json:"notes,omitempty"`
+	KYCReviewMode *string `json:"kyc_review_mode,omitempty"`
 }
 
 func (s *Server) superadminPatchClient(w http.ResponseWriter, r *http.Request) {
@@ -230,6 +248,11 @@ func (s *Server) superadminPatchClient(w http.ResponseWriter, r *http.Request) {
 	if req.Notes != nil {
 		sets = append(sets, "notes = ?")
 		args = append(args, nullable(strings.TrimSpace(*req.Notes)))
+	}
+	if req.KYCReviewMode != nil {
+		mode := normalizeKYCReviewMode(*req.KYCReviewMode)
+		sets = append(sets, "kyc_review_mode = ?")
+		args = append(args, mode)
 	}
 	if len(sets) == 0 {
 		writeErr(w, http.StatusBadRequest, "nothing to update")
@@ -853,11 +876,11 @@ func (s *Server) loadClient(ctx context.Context, id int64) (*clientRow, error) {
 	var closedAt sql.NullTime
 	err := s.deps.DB.QueryRowContext(ctx, db.Q(`
 		SELECT c.id, c.name, COALESCE(c.notes,''),
-		       c.visible, c.closed, c.portal_enabled,
+		       c.visible, c.closed, c.portal_enabled, c.kyc_review_mode,
 		       c.closed_at, c.created_at, c.updated_at,
 		       (SELECT COUNT(*) FROM exams e WHERE e.client_id = c.id) AS exam_count
 		FROM clients c WHERE c.id = $1`), id).Scan(
-		&c.ID, &c.Name, &c.Notes, &visible, &closed, &c.PortalEnabled,
+		&c.ID, &c.Name, &c.Notes, &visible, &closed, &c.PortalEnabled, &c.KYCReviewMode,
 		&closedAt, &c.CreatedAt, &c.UpdatedAt, &c.ExamCount)
 	if err != nil {
 		return nil, err

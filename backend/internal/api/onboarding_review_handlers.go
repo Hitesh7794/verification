@@ -102,6 +102,12 @@ func (s *Server) superadminListApplications(w http.ResponseWriter, r *http.Reque
 		where = append(where, "status = ?")
 		args = append(args, status)
 	}
+	// V15 routing: pending applications routed to the client reviewer
+	// (mode='client' at submit, or mode='both' after superadmin approves)
+	// live in `pending_reviewer='client'` and are NOT shown in this
+	// superadmin queue. Approved/rejected historical rows and pre-V15
+	// pending rows (pending_reviewer=NULL) always show.
+	where = append(where, "(status != 'pending' OR pending_reviewer IS NULL OR pending_reviewer = 'admin')")
 	if search != "" {
 		where = append(where, "(institution_name LIKE ? OR aishe_code LIKE ? OR pan LIKE ? OR head_email LIKE ?)")
 		p := "%" + search + "%"
@@ -185,6 +191,12 @@ type applicationDetail struct {
 	ReviewedAt         string `json:"reviewed_at,omitempty"`
 	CreatedAt          string `json:"created_at"`
 	UpdatedAt          string `json:"updated_at"`
+	// V15 routing surface — tells the UI which queue the row currently
+	// sits in and (if routed) which client owns it.
+	ClientID           *int64      `json:"client_id,omitempty"`
+	ClientName         string      `json:"client_name,omitempty"`
+	ClientKYCReviewMode string     `json:"client_kyc_review_mode,omitempty"`
+	PendingReviewer    string      `json:"pending_reviewer,omitempty"`
 	Docs               []docDetail `json:"docs"`
 }
 
@@ -220,9 +232,10 @@ func (s *Server) superadminGetApplication(w http.ResponseWriter, r *http.Request
 func (s *Server) loadApplicationDetail(ctx context.Context, appID int64) (*applicationDetail, error) {
 	var (
 		d           applicationDetail
-		tier, aishe, pan, addr2, district, affil, reviewNote sql.NullString
+		tier, aishe, pan, addr2, district, affil, reviewNote, pendingReviewer sql.NullString
 		yearEst, studentCount sql.NullInt64
-		reviewedAt           sql.NullTime
+		clientID            sql.NullInt64
+		reviewedAt          sql.NullTime
 		createdAt, updatedAt time.Time
 	)
 	err := s.deps.DB.QueryRowContext(ctx,
@@ -231,7 +244,8 @@ func (s *Server) loadApplicationDetail(ctx context.Context, appID int64) (*appli
 		        address_line1, address_line2, city, district, state, pin_code,
 		        approx_student_count, expected_centres,
 		        head_name, head_designation, head_email, head_mobile,
-		        review_note, reviewed_at, created_at, updated_at
+		        review_note, reviewed_at, created_at, updated_at,
+		        client_id, pending_reviewer
 		 FROM institution_applications WHERE id = $1`), appID,
 	).Scan(&d.ID, &d.Status, &d.InstitutionName, &d.InstitutionType,
 		&tier, &aishe, &pan, &yearEst, &affil,
@@ -239,9 +253,22 @@ func (s *Server) loadApplicationDetail(ctx context.Context, appID int64) (*appli
 		&studentCount, &d.ExpectedCentres,
 		&d.HeadName, &d.HeadDesignation, &d.HeadEmail, &d.HeadMobile,
 		&reviewNote, &reviewedAt, &createdAt, &updatedAt,
+		&clientID, &pendingReviewer,
 	)
 	if err != nil {
 		return nil, err
+	}
+	if clientID.Valid {
+		cid := clientID.Int64
+		d.ClientID = &cid
+		// Best-effort client name + mode enrichment — the detail page
+		// uses these to render the current routing state chip.
+		_ = s.deps.DB.QueryRowContext(ctx,
+			`SELECT name, kyc_review_mode FROM clients WHERE id = $1`, cid,
+		).Scan(&d.ClientName, &d.ClientKYCReviewMode)
+	}
+	if pendingReviewer.Valid {
+		d.PendingReviewer = pendingReviewer.String
 	}
 	d.Tier = tier.String
 	d.AisheCode = aishe.String
@@ -419,6 +446,41 @@ func (s *Server) superadminApproveApplication(w http.ResponseWriter, r *http.Req
 	var req approveReq
 	_ = json.NewDecoder(r.Body).Decode(&req) // optional body
 
+	// V15 routing: if the destination client's kyc_review_mode is 'both',
+	// superadmin approve is only the first of two gates. Flip the row
+	// into the client reviewer's queue (status stays 'pending') instead
+	// of finalizing here. The org/admin/magic-link only get created when
+	// the client reviewer also approves. Otherwise (mode='admin' or no
+	// client_id attached — the current default) proceed with the full
+	// finalize.
+	mode, clientID, err := s.applicationReviewMode(r.Context(), appID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeErr(w, http.StatusNotFound, "application not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
+		return
+	}
+	if clientID != nil && mode == "both" {
+		if err := s.advanceApplicationToClientQueue(r.Context(), appID, claims.UserID, req.Note); err != nil {
+			code, msg := mapReviewErrorToHTTP(err)
+			writeErr(w, code, msg)
+			return
+		}
+		s.auditFromRequest(r, "application.advance_to_client", "application", appID, map[string]any{
+			"actor":     "superadmin",
+			"client_id": *clientID,
+		})
+		writeJSON(w, http.StatusOK, map[string]any{
+			"application_id":   appID,
+			"status":           "pending",
+			"pending_reviewer": "client",
+			"message":          "First-stage approval recorded. Handed off to the client reviewer for final approval.",
+		})
+		return
+	}
+
 	// scope=nil → superadmin sees every application regardless of
 	// client_id (both legacy null-scoped rows and client-scoped ones).
 	out, err := s.approveApplication(r, appID, claims.UserID, nil, req.Note)
@@ -442,6 +504,116 @@ func (s *Server) superadminApproveApplication(w http.ResponseWriter, r *http.Req
 		MagicLinkURL:     out.MagicLinkURL,
 		OperatorUsername: out.OperatorUsername,
 		OperatorPassword: out.OperatorPassword,
+	})
+}
+
+// ----- POST /api/superadmin/applications/{id}/route -----
+//
+// Attaches a client_id to a pending application and re-computes
+// pending_reviewer from that client's kyc_review_mode. Real-world use
+// case: institutions register through the public form without
+// specifying a target exam board (no picker on the form). Superadmin
+// receives the app in their queue and decides which client owns it —
+// routing it hands the KYC over to that client's reviewer (or keeps it
+// in the superadmin queue for admin/both modes).
+//
+// Only pending apps can be routed. Already-approved/rejected apps are
+// terminal; re-routing them would either bypass a decision that's been
+// made or leave the created org tied to the wrong client.
+//
+//   admin  → pending_reviewer='admin'  (superadmin still decides)
+//   both   → pending_reviewer='admin'  (superadmin decides first, then reviewer)
+//   client → pending_reviewer='client' (app moves to reviewer's inbox immediately)
+
+type routeApplicationReq struct {
+	ClientID int64 `json:"client_id"`
+}
+
+func (s *Server) superadminRouteApplication(w http.ResponseWriter, r *http.Request) {
+	appID, err := parseInt64(chi.URLParam(r, "id"))
+	if err != nil || appID <= 0 {
+		writeErr(w, http.StatusBadRequest, "invalid id")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	var req routeApplicationReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if req.ClientID <= 0 {
+		writeErr(w, http.StatusBadRequest, "client_id is required")
+		return
+	}
+
+	// Verify app is still pending. Terminal apps can't be re-routed.
+	var status string
+	if err := s.deps.DB.QueryRowContext(r.Context(),
+		`SELECT status FROM institution_applications WHERE id = $1`, appID,
+	).Scan(&status); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeErr(w, http.StatusNotFound, "application not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "db read")
+		return
+	}
+	if status != "pending" {
+		writeErr(w, http.StatusConflict,
+			fmt.Sprintf("only pending applications can be routed (this one is %s)", status))
+		return
+	}
+
+	// Look up client + its mode. Reject closed/hidden clients so
+	// routing doesn't strand an app under a client no one can
+	// operationally handle.
+	var mode string
+	var closed int
+	if err := s.deps.DB.QueryRowContext(r.Context(),
+		`SELECT kyc_review_mode, closed FROM clients WHERE id = $1`, req.ClientID,
+	).Scan(&mode, &closed); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeErr(w, http.StatusNotFound, "client not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "db read")
+		return
+	}
+	if closed == 1 {
+		writeErr(w, http.StatusBadRequest, "cannot route to a closed client")
+		return
+	}
+
+	// mode → pending_reviewer. Same table used at submit time in
+	// registerSubmit — kept in sync so the routing logic stays in one
+	// mental model.
+	pendingReviewer := "admin"
+	if mode == "client" {
+		pendingReviewer = "client"
+	}
+
+	if _, err := s.deps.DB.ExecContext(r.Context(),
+		`UPDATE institution_applications
+		    SET client_id = $1,
+		        pending_reviewer = $2,
+		        updated_at = CURRENT_TIMESTAMP
+		  WHERE id = $3 AND status = 'pending'`,
+		req.ClientID, pendingReviewer, appID,
+	); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db update: "+err.Error())
+		return
+	}
+
+	s.auditFromRequest(r, "application.route", "application", appID, map[string]any{
+		"client_id":         req.ClientID,
+		"client_mode":       mode,
+		"pending_reviewer":  pendingReviewer,
+	})
+	writeJSON(w, http.StatusOK, map[string]any{
+		"application_id":    appID,
+		"client_id":         req.ClientID,
+		"client_mode":       mode,
+		"pending_reviewer":  pendingReviewer,
 	})
 }
 
