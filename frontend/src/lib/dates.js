@@ -9,8 +9,22 @@ export function dateOnly(value) {
   return splitIdx === -1 ? s : s.slice(0, splitIdx)
 }
 
-// toDatetimeLocal formats any ISO/RFC 3339 or date string to YYYY-MM-DDTHH:MM
-// for HTML5 <input type="datetime-local">.
+// toDatetimeLocal formats any ISO/RFC 3339 or date string to
+// YYYY-MM-DDTHH:MM for HTML5 <input type="datetime-local">.
+//
+// Timezone handling: if the incoming value carries an offset (Z or
+// +/-HH:MM), we CONVERT to IST (Asia/Kolkata) before formatting so
+// the user sees the wall-clock time they typed originally. The
+// backend (parseDateTimeWindow) parses naive datetime-local values
+// as IST too, so a round-trip
+//   DB (UTC) → toDatetimeLocal → input → PATCH → backend → DB
+// preserves the original wall-clock moment.
+//
+// Before this fix, we stripped the tz suffix and returned raw UTC
+// hours in the input — a timestamp stored as 11:00 UTC rendered as
+// "11:00" in the picker, which the user read as 11:00 IST and, on
+// save, the backend parsed as 11:00 IST = 05:30 UTC. Every edit
+// drifted the value by 5.5 hours.
 export function toDatetimeLocal(value, defaultTime = '00:00') {
   if (!value) return ''
   let s = String(value).trim()
@@ -18,14 +32,29 @@ export function toDatetimeLocal(value, defaultTime = '00:00') {
   if (s.length >= 10 && s[10] === ' ') {
     s = s.slice(0, 10) + 'T' + s.slice(11)
   }
+  // Bare date (no time) — pad with the default time. No tz math to do.
   if (!s.includes('T')) {
     return `${s}T${defaultTime}`
   }
+  // If a tz suffix is present, convert to IST for display.
+  if (/[zZ]$|[+\-]\d{2}:?\d{2}$/.test(s)) {
+    const d = new Date(s)
+    if (!isNaN(d.getTime())) {
+      // en-CA gives YYYY-MM-DD; en-GB 24h gives HH:mm — both stable
+      // across locales, and the timeZone option pins the output to
+      // IST regardless of the viewer's browser locale/tz.
+      const opts = { timeZone: 'Asia/Kolkata', hour12: false }
+      const date = d.toLocaleDateString('en-CA', opts)
+      const time = d.toLocaleTimeString('en-GB', { ...opts, hour: '2-digit', minute: '2-digit' })
+      return `${date}T${time}`
+    }
+  }
+  // Naive datetime — the string is already in the wall-clock format
+  // the picker wants. Trim to minute precision.
   const parts = s.split('T')
   const datePart = parts[0]
-  const timePart = (parts[1] || '').replace(/Z|[+-].*$/, '')
-  const hm = timePart ? timePart.slice(0, 5) : defaultTime
-  return `${datePart}T${hm}`
+  const timePart = (parts[1] || '').slice(0, 5)
+  return `${datePart}T${timePart || defaultTime}`
 }
 
 // formatDateTime renders a human-friendly string e.g. "15 May 2026, 09:30 AM"
