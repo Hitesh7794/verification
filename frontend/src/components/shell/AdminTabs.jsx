@@ -18,17 +18,19 @@ import AvatarMenu from './AvatarMenu.jsx'
 // state is a cream wash. Amber accent on the "ADMIN" wordmark keeps
 // the two-tone story with the ink-black primary actions.
 
-// Exam-catalog tab removed 2026-08-24 — admins no longer subscribe;
-// access is minted automatically at KYC-approval time (V15 fan-out).
-// 'Exams' tab restored 2026-08-25 as a read-only view (linked to the
-// resurrected /admin/my-exams page).
+// V15 flow — access is minted automatically at KYC-approval time (no
+// admin-driven subscribe). Both 'Exam catalog' and 'My exams' are
+// read-only views; the admin can't create or cancel subscriptions from
+// either. Kept as tabs for browsing UX so the admin has a sense of
+// what the platform offers and what their org already has access to.
 const tabs = [
-  { to: '/admin',           label: 'Overview',   end: true  },
-  { to: '/admin/my-exams',  label: 'Exams',      end: false },
-  { to: '/admin/operators', label: 'Agents',     end: false },
-  { to: '/admin/history',   label: 'History',    end: false },
-  { to: '/admin/products',  label: 'Products',   end: false },
-  { to: '/admin/downloads', label: 'Downloads',  end: false },
+  { to: '/admin',           label: 'Overview',      end: true  },
+  { to: '/admin/catalog',   label: 'Exam catalog',  end: false },
+  { to: '/admin/my-exams',  label: 'My exams',      end: false },
+  { to: '/admin/operators', label: 'Agents',        end: false },
+  { to: '/admin/history',   label: 'History',       end: false },
+  { to: '/admin/products',  label: 'Products',      end: false },
+  { to: '/admin/downloads', label: 'Downloads',     end: false },
 ]
 
 export default function AdminTabs({ walletRefreshKey, onWalletBalanceChange }) {

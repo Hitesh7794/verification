@@ -472,14 +472,14 @@ function KYCReviewModePanel({ client, onChanged }) {
           </div>
           {!editing && (
             <div className="flex items-center gap-2 shrink-0">
-              <KYCReviewModePill mode={initial} />
+              <KYCReviewModePill mode={initial} clientName={client.name} />
               <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>Change</Button>
             </div>
           )}
         </div>
         {editing && (
           <div className="mt-4 space-y-3">
-            <KYCReviewModePicker value={mode} onChange={setMode} />
+            <KYCReviewModePicker value={mode} onChange={setMode} clientName={client.name} />
             {err && (
               <p className="text-xs text-rose-600">{err}</p>
             )}

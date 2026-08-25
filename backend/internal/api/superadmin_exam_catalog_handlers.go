@@ -415,6 +415,9 @@ func (s *Server) superadminCreateExam(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "db insert: "+err.Error())
 		return
 	}
+	// Fan-out at exam create was removed 2026-08-25 — admins subscribe
+	// on demand from the exam catalog instead. Access at KYC-approve
+	// time still fires for exams that existed pre-approval.
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id": id, "name": name, "exam_code": code,
 	})
