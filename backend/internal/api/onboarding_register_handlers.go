@@ -1180,20 +1180,39 @@ func (s *Server) registerSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Decide which queue this application lands in based on the
-	// destination client's kyc_review_mode (V15). If no client is
-	// attached — the current default for public registrations — the app
-	// goes to the superadmin queue exactly as pre-V15.
+	// Auto-attach + queue routing (2026-08-25 rebuild — no manual
+	// route-to-client step any more). If the app already carries a
+	// client_id (deep-linked registration) we respect it; otherwise
+	// we look for the single visible+open+portal-enabled client on
+	// the platform and attach to that. Single-client model is the
+	// intended production shape right now; the fallback keeps the
+	// system quiet if 0 or >1 candidates exist.
 	//
 	//   mode 'admin'  → pending_reviewer='admin'  (superadmin only)
 	//   mode 'client' → pending_reviewer='client' (client reviewer only)
 	//   mode 'both'   → pending_reviewer='admin'  (superadmin first, then hands off)
-	//   no client_id  → pending_reviewer='admin'  (matches pre-V15 behaviour)
+	//   no client_id  → pending_reviewer='admin'  (safety net; UI treats as legacy)
 	pendingReviewer := "admin"
 	var clientID sql.NullInt64
 	_ = s.deps.DB.QueryRowContext(r.Context(),
 		`SELECT client_id FROM institution_applications WHERE id = $1`, appID,
 	).Scan(&clientID)
+	if !clientID.Valid {
+		// Pick the sole eligible client. COUNT(*) matters: with more
+		// than one visible+open+portal-enabled client we can't tell
+		// which board the applicant belongs to, so we leave client_id
+		// NULL and let the superadmin sort it later (no UI for that
+		// path today; will fall through to the admin queue).
+		var count int
+		var candidate int64
+		if err := s.deps.DB.QueryRowContext(r.Context(),
+			`SELECT COUNT(*), COALESCE(MIN(id), 0)
+			   FROM clients
+			  WHERE visible = 1 AND closed = 0 AND portal_enabled = true`,
+		).Scan(&count, &candidate); err == nil && count == 1 && candidate > 0 {
+			clientID = sql.NullInt64{Int64: candidate, Valid: true}
+		}
+	}
 	if clientID.Valid {
 		var mode string
 		if err := s.deps.DB.QueryRowContext(r.Context(),
@@ -1203,11 +1222,20 @@ func (s *Server) registerSubmit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// UPDATE sets client_id AND pending_reviewer in one shot. When the
+	// row already had a client_id, the coalesce leaves it alone.
+	var clientIDArg any
+	if clientID.Valid {
+		clientIDArg = clientID.Int64
+	}
 	_, err = s.deps.DB.ExecContext(r.Context(),
 		`UPDATE institution_applications
-		 SET status = 'pending', pending_reviewer = $2, updated_at = CURRENT_TIMESTAMP
+		 SET status = 'pending',
+		     pending_reviewer = $2,
+		     client_id = COALESCE(client_id, $3),
+		     updated_at = CURRENT_TIMESTAMP
 		 WHERE id = $1 AND status = 'draft'`,
-		appID, pendingReviewer,
+		appID, pendingReviewer, clientIDArg,
 	)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db update")

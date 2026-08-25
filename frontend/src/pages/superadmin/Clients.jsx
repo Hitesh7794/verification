@@ -201,7 +201,11 @@ export default function Clients() {
                       <p className="text-[11px] text-slate-500 mt-0.5 mb-2">
                         Who approves institution registrations tied to this client.
                       </p>
-                      <KYCReviewModePicker value={newKycMode} onChange={setNewKycMode} />
+                      <KYCReviewModePicker
+                        value={newKycMode}
+                        onChange={setNewKycMode}
+                        clientName={newName.trim() || 'Client reviewer'}
+                      />
                     </div>
                     <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
                       <Button type="button" variant="ghost" onClick={() => { setCreating(false); setNewName(''); setNewNotes('') }}>
@@ -252,7 +256,7 @@ export default function Clients() {
                               ? <Pill tone="emerald" dot>Listed</Pill>
                               : <Pill tone="slate" dot>Unlisted</Pill>}
                             {c.closed && <Pill tone="amber" dot>Ended</Pill>}
-                            <KYCReviewModePill mode={c.kyc_review_mode || 'admin'} />
+                            <KYCReviewModePill mode={c.kyc_review_mode || 'admin'} clientName={c.name} />
                           </div>
                         </td>
                         <td className="px-5 py-3.5 text-xs text-slate-500 tabular-nums">
@@ -351,53 +355,79 @@ function errText(e, fallback) {
   return e?.body?.error || e?.message || fallback
 }
 
-// KYCReviewModePicker — three-option radio for who reviews KYC apps for
-// this client. Rendered as segmented cards, not raw radios, since each
-// choice has meaningful description text worth showing.
-export function KYCReviewModePicker({ value, onChange }) {
-  const opts = [
-    { key: 'admin',  title: 'Admin only',   sub: 'Superadmin approves KYC. Client reviewer never sees it.' },
-    { key: 'client', title: 'Client only',  sub: 'Only this client’s reviewer approves KYC. Superadmin skips it.' },
-    { key: 'both',   title: 'Both (admin then client)', sub: 'Superadmin approves first, then the client reviewer gives final approval.' },
+// Platform brand shown on the left checkbox. Constant on purpose — this
+// is the "us" side of the picker, not a per-client value.
+const PLATFORM_BRAND = 'Innovatiview'
+
+// KYCReviewModePicker — two-checkbox surface for who reviews KYC apps
+// for this client. Left box: the platform (Innovatiview). Right box:
+// the client's own reviewer, labelled with the client's actual name
+// (e.g. "NTA"). Both checked = the previous 'both' mode (superadmin
+// approves first, then the client reviewer finalises).
+//
+// The picker maps to the same kyc_review_mode enum values the backend
+// already understands: 'admin' | 'client' | 'both'. At least one box
+// must stay ticked — un-ticking both would leave nobody to review KYC.
+export function KYCReviewModePicker({ value, onChange, clientName }) {
+  const adminChecked  = value === 'admin'  || value === 'both'
+  const clientChecked = value === 'client' || value === 'both'
+  const rightLabel = (clientName || '').trim() || 'Client reviewer'
+
+  const toggle = (which) => {
+    let nextAdmin  = adminChecked
+    let nextClient = clientChecked
+    if (which === 'admin')  nextAdmin  = !adminChecked
+    if (which === 'client') nextClient = !clientChecked
+    // Guard: at least one box has to remain ticked. If the user tries
+    // to untick the last one, ignore the change and keep the current
+    // mode — leaving nobody assigned would strand every incoming KYC.
+    if (!nextAdmin && !nextClient) return
+    const nextMode = nextAdmin && nextClient ? 'both'
+      : nextAdmin ? 'admin'
+      : 'client'
+    onChange(nextMode)
+  }
+
+  const boxes = [
+    { key: 'admin',  label: PLATFORM_BRAND, checked: adminChecked  },
+    { key: 'client', label: rightLabel,     checked: clientChecked },
   ]
+
   return (
-    <div className="grid grid-cols-1 sm:grid-cols-3 gap-2">
-      {opts.map((o) => {
-        const active = value === o.key
-        return (
-          <button
-            key={o.key}
-            type="button"
-            onClick={() => onChange(o.key)}
-            className={`text-left rounded-lg border px-3 py-2.5 transition-colors ${
-              active
-                ? 'border-stone-900 bg-stone-50 ring-1 ring-stone-900/10'
-                : 'border-slate-200 bg-white hover:border-slate-300'
-            }`}
-          >
-            <div className="flex items-center gap-2">
-              <span
-                className={`h-3.5 w-3.5 rounded-full border ${
-                  active ? 'border-stone-900 bg-stone-900' : 'border-slate-300'
-                } flex items-center justify-center`}
-              >
-                {active && <span className="h-1.5 w-1.5 rounded-full bg-white" />}
-              </span>
-              <span className="text-sm font-medium text-slate-900">{o.title}</span>
-            </div>
-            <p className="text-[11px] text-slate-500 mt-1.5 leading-snug">{o.sub}</p>
-          </button>
-        )
-      })}
+    <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+      {boxes.map((b) => (
+        <label
+          key={b.key}
+          className={`flex items-center gap-3 rounded-lg border px-3.5 py-3 cursor-pointer transition-colors ${
+            b.checked
+              ? 'border-stone-900 bg-stone-50 ring-1 ring-stone-900/10'
+              : 'border-slate-200 bg-white hover:border-slate-300'
+          }`}
+        >
+          <input
+            type="checkbox"
+            className="h-4 w-4 rounded border-slate-400 text-stone-900 focus:ring-stone-500"
+            checked={b.checked}
+            onChange={() => toggle(b.key)}
+          />
+          <span className="text-sm font-medium text-slate-900">{b.label}</span>
+        </label>
+      ))}
+      <p className="col-span-1 sm:col-span-2 text-[11px] text-slate-500">
+        Both ticked → {PLATFORM_BRAND} approves first, then {rightLabel}. At least one must stay ticked.
+      </p>
     </div>
   )
 }
 
-// KYCReviewModePill — compact badge used in the clients table.
-export function KYCReviewModePill({ mode }) {
-  const label = mode === 'both' ? 'Both'
-    : mode === 'client' ? 'Client'
-    : 'Admin'
+// KYCReviewModePill — compact badge used in the clients table. Labels
+// mirror the picker's checkbox naming (platform brand + client name)
+// so the reader doesn't have to translate 'admin'/'client'/'both'.
+export function KYCReviewModePill({ mode, clientName }) {
+  const rightLabel = (clientName || '').trim() || 'Client'
+  const label = mode === 'both' ? `${PLATFORM_BRAND} + ${rightLabel}`
+    : mode === 'client' ? rightLabel
+    : PLATFORM_BRAND
   const tone = mode === 'both' ? 'indigo'
     : mode === 'client' ? 'emerald'
     : 'slate'

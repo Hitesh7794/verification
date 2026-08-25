@@ -62,14 +62,6 @@ export default function ApplicationDetail() {
   const [note, setNote] = useState('')
   const [approvalResult, setApprovalResult] = useState(null)
 
-  // Client-routing state (V15 flow). Applicants register without
-  // specifying a target board, so the superadmin picks one here and
-  // the app moves into the queue that client's kyc_review_mode dictates.
-  const [clients, setClients] = useState([])
-  const [routeClientId, setRouteClientId] = useState('')
-  const [routing, setRouting] = useState(false)
-  const [showRouteChanger, setShowRouteChanger] = useState(false)
-
   // Inline preview state — which doc is showing.
   const [activeDocId, setActiveDocId] = useState(null)
   const [docBlobUrl, setDocBlobUrl] = useState(null)
@@ -91,40 +83,6 @@ export default function ApplicationDetail() {
       alive = false
     }
   }, [id])
-
-  // One-shot fetch of the visible+open clients for the route picker.
-  // Cheap (<10 rows typical); no need to refresh on every mount action.
-  useEffect(() => {
-    let alive = true
-    api('/superadmin/clients')
-      .then((d) => {
-        if (!alive) return
-        const visible = (d.clients || []).filter((c) => c.visible && !c.closed)
-        setClients(visible)
-      })
-      .catch(() => {})
-    return () => { alive = false }
-  }, [])
-
-  async function routeToClient() {
-    if (!routeClientId) return
-    setRouting(true)
-    setActionErr('')
-    try {
-      await api(`/superadmin/applications/${id}/route`, {
-        method: 'POST',
-        body: { client_id: Number(routeClientId) },
-      })
-      const d = await api(`/superadmin/applications/${id}`)
-      setApp(d)
-      setShowRouteChanger(false)
-      setRouteClientId('')
-    } catch (e) {
-      setActionErr(e?.body?.error || e.message || 'Could not route application')
-    } finally {
-      setRouting(false)
-    }
-  }
 
   // When the active doc changes, fetch + render it inline. We do this
   // via authenticated fetch → blob URL because the download endpoint
@@ -348,21 +306,10 @@ export default function ApplicationDetail() {
         </div>
       )}
 
-      {/* V15 routing panel — only for pending apps. Shows current
-          client attachment + lets superadmin pick / change the client
-          the KYC review is routed to. */}
-      {isPending && (
-        <RoutingPanel
-          app={app}
-          clients={clients}
-          routeClientId={routeClientId}
-          setRouteClientId={setRouteClientId}
-          onRoute={routeToClient}
-          routing={routing}
-          showChanger={showRouteChanger}
-          setShowChanger={setShowRouteChanger}
-        />
-      )}
+      {/* Route-to-client panel removed 2026-08-25 — apps are auto-attached
+          to the single visible client at submit time, so there's nothing
+          for the superadmin to route. Configure who reviews each
+          client's KYC from that client's detail page. */}
 
       {/* MAIN GRID: data on the left, doc preview on the right */}
       <div className="grid grid-cols-1 lg:grid-cols-5 gap-6 mb-32">
@@ -437,7 +384,7 @@ export default function ApplicationDetail() {
             icon={Icon.FileText}
             action={showDocs
               ? <span className="text-xs text-slate-500">{app.docs.length} document{app.docs.length === 1 ? '' : 's'}</span>
-              : <span className="text-xs text-slate-500">{isRouted ? 'Sealed for this board' : 'Route first to view'}</span>}
+              : <span className="text-xs text-slate-500">Sealed for this board</span>}
           >
             Documents
           </SectionTitle>
@@ -452,20 +399,10 @@ export default function ApplicationDetail() {
                     KYC documents hidden
                   </p>
                   <p className="text-xs text-slate-600 mt-1 max-w-md mx-auto leading-relaxed">
-                    {!isRouted ? (
-                      <>
-                        Route this application to a client first. If the board's review mode is
-                        <b> admin</b> or <b> both</b>, the KYC documents will appear here for your review.
-                        If it's <b> client-only</b>, the documents stay sealed for that board's reviewer.
-                      </>
-                    ) : (
-                      <>
-                        This application is routed to <span className="font-semibold">{app.client_name}</span>,
-                        which is set to <b>client-only</b> review. Only that board's reviewer can view the
-                        KYC documents and approve or reject. Use the routing panel above to send it to a
-                        different board if this is wrong.
-                      </>
-                    )}
+                    This application belongs to <span className="font-semibold">{app.client_name || 'the board'}</span>,
+                    which is set to <b>client-only</b> review. Only that board's reviewer can view the KYC
+                    documents and approve or reject. Change the board's KYC review setting from the client
+                    detail page if this is wrong.
                   </p>
                 </div>
               </CardBody>
@@ -592,17 +529,6 @@ export default function ApplicationDetail() {
           </div>
         </div>
       )}
-      {isPending && !superadminOwnsDecision && !isRouted && (
-        <div className="fixed bottom-0 left-0 right-0 bg-indigo-50/95 backdrop-blur border-t border-indigo-200 z-40">
-          <div className="mx-auto max-w-7xl px-6 py-3 flex items-center gap-3 text-sm text-indigo-900">
-            <Icon.ArrowRight className="h-4 w-4 shrink-0" />
-            <span>
-              Route this application to a client (panel above) before you can approve or reject it.
-              Un-routed applications belong to no board, so a decision here would strand the new org with no exam access.
-            </span>
-          </div>
-        </div>
-      )}
       {isPending && !superadminOwnsDecision && isClientOnly && (
         <div className="fixed bottom-0 left-0 right-0 bg-amber-50/95 backdrop-blur border-t border-amber-200 z-40">
           <div className="mx-auto max-w-7xl px-6 py-3 flex items-center gap-3 text-sm text-amber-900">
@@ -619,83 +545,9 @@ export default function ApplicationDetail() {
   )
 }
 
-// RoutingPanel — inline "Route to client" widget shown at the top of
-// every pending application. Two states:
-//
-//   - No client attached yet → picker + Route button.
-//   - Already routed → shows current client + mode + a small "Change"
-//     control (mistakes happen; re-routing before approval is cheap).
-//
-// Colours follow the reviewer-portal warm palette so the panel reads as
-// a routing decision, not part of the KYC data blocks below.
-function RoutingPanel({ app, clients, routeClientId, setRouteClientId, onRoute, routing, showChanger, setShowChanger }) {
-  const hasClient = !!app.client_id
-  const currentClient = hasClient
-    ? { id: app.client_id, name: app.client_name, mode: app.client_kyc_review_mode }
-    : null
-  const modeLabel = (m) => m === 'both' ? 'Admin then Client' : m === 'client' ? 'Client only' : 'Admin only'
-
-  return (
-    <div className="mb-6 rounded-xl border border-slate-200 bg-slate-50/60 overflow-hidden">
-      <div className="px-5 py-3 border-b border-slate-200 flex items-center gap-3">
-        <span className="h-8 w-8 rounded-lg bg-white text-slate-700 border border-slate-200 flex items-center justify-center shrink-0">
-          <Icon.ArrowRight className="h-4 w-4" />
-        </span>
-        <div className="min-w-0 flex-1">
-          <h3 className="text-sm font-semibold text-slate-900">Route to client</h3>
-          <p className="text-xs text-slate-500 mt-0.5">
-            Applicants register without picking a board. Assign one so the KYC review flows to the right queue.
-          </p>
-        </div>
-        {hasClient && !showChanger && (
-          <div className="flex items-center gap-2 shrink-0">
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-white ring-1 ring-slate-200 px-2.5 py-1 text-xs">
-              <span className="font-semibold text-slate-900">{currentClient.name}</span>
-              <span className="text-slate-400">·</span>
-              <span className="text-slate-600">{modeLabel(currentClient.mode)}</span>
-            </span>
-            <Button variant="secondary" size="sm" onClick={() => setShowChanger(true)}>
-              Change
-            </Button>
-          </div>
-        )}
-      </div>
-      {(!hasClient || showChanger) && (
-        <div className="px-5 py-4 flex flex-wrap items-end gap-3">
-          <div className="flex-1 min-w-[240px]">
-            <Label className="!text-xs !mb-1">Route to</Label>
-            <select
-              value={routeClientId}
-              onChange={(e) => setRouteClientId(e.target.value)}
-              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-indigo-500 focus:outline-none focus:ring-2 focus:ring-indigo-200"
-              disabled={routing}
-            >
-              <option value="">Pick a client…</option>
-              {clients.map((c) => (
-                <option key={c.id} value={c.id}>
-                  {c.name} — review mode: {modeLabel(c.kyc_review_mode || 'admin')}
-                </option>
-              ))}
-            </select>
-            <p className="text-[11px] text-slate-500 mt-1">
-              Admin-only stays here. Client-only jumps to that reviewer's inbox. Both keeps it here until you approve, then hands off.
-            </p>
-          </div>
-          <div className="flex gap-2 shrink-0">
-            {hasClient && (
-              <Button variant="ghost" size="sm" onClick={() => { setShowChanger(false); setRouteClientId('') }} disabled={routing}>
-                Cancel
-              </Button>
-            )}
-            <Button size="sm" onClick={onRoute} disabled={!routeClientId || routing}>
-              {routing ? 'Routing…' : hasClient ? 'Change routing' : 'Route application'}
-            </Button>
-          </div>
-        </div>
-      )}
-    </div>
-  )
-}
+// RoutingPanel removed 2026-08-25 — apps auto-attach to the single
+// visible client at submit; per-client kyc_review_mode drives who sees
+// the queue. Nothing for the superadmin to route from this page.
 
 function DocPreview({ blobUrl, mime }) {
   if (mime.startsWith('image/')) {
