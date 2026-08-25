@@ -214,8 +214,8 @@ func (s *Server) walletSummary(w http.ResponseWriter, r *http.Request) {
 		)
 		_ = s.deps.DB.QueryRowContext(r.Context(), `
 			SELECT e.id, e.exam_code, e.name,
-			       COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD'), ''),
-			       COALESCE(TO_CHAR(e.verification_to,   'YYYY-MM-DD'), '')
+			       COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD"T"HH24:MI'), ''),
+			       COALESCE(TO_CHAR(e.verification_to,   'YYYY-MM-DD"T"HH24:MI'), '')
 			  FROM operator_exams oe
 			  JOIN exams e ON e.id = oe.exam_id
 			 WHERE oe.user_id = $1

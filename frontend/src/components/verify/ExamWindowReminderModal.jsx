@@ -2,19 +2,33 @@ import { useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import { Icon } from '../ui/extras.jsx'
+import { toDatetimeLocal } from '../../lib/dates.js'
 
 function formatDate(isoStr) {
   if (!isoStr) return '—'
   try {
-    const parts = isoStr.split('-')
-    if (parts.length === 3) {
-      const d = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]))
-      return d.toLocaleDateString('en-IN', {
-        weekday: 'long',
-        year: 'numeric',
-        month: 'long',
-        day: 'numeric',
-      })
+    const s = String(isoStr).trim()
+    const dt = toDatetimeLocal(s)
+    if (dt) {
+      const [datePart, timePart] = dt.split('T')
+      const [y, m, d] = datePart.split('-').map(Number)
+      if (y && m && d) {
+        const dateObj = new Date(y, m - 1, d)
+        const dateFormatted = dateObj.toLocaleDateString('en-IN', {
+          weekday: 'long',
+          year: 'numeric',
+          month: 'long',
+          day: 'numeric',
+        })
+        if (timePart && timePart !== '00:00') {
+          const [hh, mm] = timePart.split(':').map(Number)
+          const ampm = hh >= 12 ? 'PM' : 'AM'
+          const hour12 = hh % 12 === 0 ? 12 : hh % 12
+          const minStr = String(mm || 0).padStart(2, '0')
+          return `${dateFormatted} at ${hour12}:${minStr} ${ampm}`
+        }
+        return dateFormatted
+      }
     }
   } catch {}
   return isoStr
@@ -23,14 +37,19 @@ function formatDate(isoStr) {
 function getDaysRemaining(isoDateStr) {
   if (!isoDateStr) return null
   try {
-    const parts = isoDateStr.split('-')
-    if (parts.length === 3) {
-      const target = new Date(Number(parts[0]), Number(parts[1]) - 1, Number(parts[2]))
-      const today = new Date()
-      today.setHours(0, 0, 0, 0)
-      target.setHours(0, 0, 0, 0)
-      const diffMs = target.getTime() - today.getTime()
-      const diffDays = Math.round(diffMs / (1000 * 60 * 60 * 24))
+    const s = String(isoDateStr).trim()
+    const dt = toDatetimeLocal(s)
+    if (dt) {
+      const [datePart, timePart] = dt.split('T')
+      const [y, m, d] = datePart.split('-').map(Number)
+      const [hh, mm] = (timePart || '00:00').split(':').map(Number)
+      const target = new Date(y, m - 1, d, hh || 0, mm || 0, 0)
+      const now = new Date()
+      const diffMs = target.getTime() - now.getTime()
+      if (diffMs <= 0) return 0
+      const diffHours = diffMs / (1000 * 60 * 60)
+      if (diffHours < 24 && target.getDate() === now.getDate()) return 0
+      const diffDays = Math.ceil(diffHours / 24)
       return diffDays
     }
   } catch {}

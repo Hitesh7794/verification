@@ -47,8 +47,8 @@ CREATE TABLE users (
     password_change_required SMALLINT NOT NULL DEFAULT 0 CHECK (password_change_required IN (0,1)),
     spending_cap_paise       INTEGER,
     spent_paise              INTEGER NOT NULL DEFAULT 0,
-    valid_from               DATE,
-    valid_to                 DATE
+    valid_from               TIMESTAMPTZ,
+    valid_to                 TIMESTAMPTZ
 );
 CREATE INDEX idx_users_org_role ON users(org_id, role);
 -- Email uniqueness scoped per organisation (V6, 2026-08-20) — same
@@ -109,8 +109,8 @@ CREATE TABLE exams (
     name               TEXT NOT NULL,
     exam_code          TEXT NOT NULL,
     trustview_ref      TEXT,
-    verification_from  DATE NOT NULL,
-    verification_to    DATE NOT NULL,
+    verification_from  TIMESTAMPTZ NOT NULL,
+    verification_to    TIMESTAMPTZ NOT NULL,
     visible            SMALLINT NOT NULL DEFAULT 1 CHECK (visible IN (0,1)),
     closed             SMALLINT NOT NULL DEFAULT 0 CHECK (closed IN (0,1)),
     closed_at          TIMESTAMPTZ,

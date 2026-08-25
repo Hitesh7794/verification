@@ -126,6 +126,12 @@ func Migrate(d *sql.DB) error {
 		}
 	}
 
+	if !applied[16] {
+		if err := applyV16VerificationWindowTimestamps(ctx, d); err != nil {
+			return fmt.Errorf("apply v16 verification_window_timestamps: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -187,6 +193,37 @@ func applyV15KYCReviewMode(ctx context.Context, d *sql.DB) error {
 	if _, err := tx.ExecContext(ctx,
 		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)`,
 		15, "kyc_review_mode",
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// applyV16VerificationWindowTimestamps converts verification_from/to on exams
+// and valid_from/to on users from plain DATE to TIMESTAMPTZ, enabling exact
+// date + time window scheduling for superadmins and college administrators.
+func applyV16VerificationWindowTimestamps(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmts := []string{
+		`ALTER TABLE exams ALTER COLUMN verification_from TYPE TIMESTAMPTZ USING verification_from::timestamptz`,
+		`ALTER TABLE exams ALTER COLUMN verification_to TYPE TIMESTAMPTZ USING verification_to::timestamptz`,
+		`ALTER TABLE users ALTER COLUMN valid_from TYPE TIMESTAMPTZ USING valid_from::timestamptz`,
+		`ALTER TABLE users ALTER COLUMN valid_to TYPE TIMESTAMPTZ USING valid_to::timestamptz`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.ExecContext(ctx, s); err != nil {
+			return fmt.Errorf("exec %q: %w", firstLine(s), err)
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)`,
+		16, "verification_window_timestamps",
 	); err != nil {
 		return err
 	}

@@ -367,15 +367,17 @@ func (s *Server) superadminCreateExam(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "exam_code required (2-60 chars)")
 		return
 	}
-	if _, err := time.Parse("2006-01-02", from); err != nil {
-		writeErr(w, http.StatusBadRequest, "verification_from must be YYYY-MM-DD")
+	fromT, err := parseDateTimeWindow(from, false)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "verification_from must be a valid date/time (YYYY-MM-DD or YYYY-MM-DDTHH:MM)")
 		return
 	}
-	if _, err := time.Parse("2006-01-02", to); err != nil {
-		writeErr(w, http.StatusBadRequest, "verification_to must be YYYY-MM-DD")
+	toT, err := parseDateTimeWindow(to, true)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "verification_to must be a valid date/time (YYYY-MM-DD or YYYY-MM-DDTHH:MM)")
 		return
 	}
-	if from > to {
+	if fromT.After(toT) {
 		writeErr(w, http.StatusBadRequest, "verification_from must be <= verification_to")
 		return
 	}
@@ -400,7 +402,7 @@ func (s *Server) superadminCreateExam(w http.ResponseWriter, r *http.Request) {
 		VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		RETURNING id`,
 		clientID, name, code, nullable(strings.TrimSpace(req.TrustviewRef)),
-		from, to,
+		fromT.Format("2006-01-02T15:04:05Z07:00"), toT.Format("2006-01-02T15:04:05Z07:00"),
 		boolToInt(rFace), boolToInt(rFP), boolToInt(rIris)).Scan(&id); err != nil {
 		if isUniqueViolation(err) {
 			el := strings.ToLower(err.Error())
@@ -479,21 +481,23 @@ func (s *Server) superadminPatchExam(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.VerificationFrom != nil {
 		f := strings.TrimSpace(*req.VerificationFrom)
-		if _, err := time.Parse("2006-01-02", f); err != nil {
-			writeErr(w, http.StatusBadRequest, "verification_from must be YYYY-MM-DD")
+		fromT, err := parseDateTimeWindow(f, false)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "verification_from must be a valid date/time (YYYY-MM-DD or YYYY-MM-DDTHH:MM)")
 			return
 		}
 		sets = append(sets, "verification_from = ?")
-		args = append(args, f)
+		args = append(args, fromT.Format("2006-01-02T15:04:05Z07:00"))
 	}
 	if req.VerificationTo != nil {
 		t := strings.TrimSpace(*req.VerificationTo)
-		if _, err := time.Parse("2006-01-02", t); err != nil {
-			writeErr(w, http.StatusBadRequest, "verification_to must be YYYY-MM-DD")
+		toT, err := parseDateTimeWindow(t, true)
+		if err != nil {
+			writeErr(w, http.StatusBadRequest, "verification_to must be a valid date/time (YYYY-MM-DD or YYYY-MM-DDTHH:MM)")
 			return
 		}
 		sets = append(sets, "verification_to = ?")
-		args = append(args, t)
+		args = append(args, toT.Format("2006-01-02T15:04:05Z07:00"))
 	}
 	// Per-exam modality toggles. If any modality bit was passed, we
 	// validate the final set (post-update) still has at least one
@@ -901,7 +905,9 @@ func (s *Server) loadExam(ctx context.Context, id int64) (*examRow, error) {
 	var reqFace, reqFP, reqIris int
 	err := s.deps.DB.QueryRowContext(ctx, db.Q(`
 		SELECT e.id, e.client_id, c.name, e.name, e.exam_code, e.trustview_ref,
-		       e.verification_from, e.verification_to, e.visible, e.closed,
+		       COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD"T"HH24:MI'), ''),
+		       COALESCE(TO_CHAR(e.verification_to,   'YYYY-MM-DD"T"HH24:MI'), ''),
+		       e.visible, e.closed,
 		       e.closed_at, e.created_at, e.updated_at,
 		       e.requires_face, e.requires_fp, e.requires_iris,
 		       (SELECT COUNT(*) FROM exam_candidates ec WHERE ec.exam_id = e.id)
@@ -932,7 +938,9 @@ func (s *Server) loadExam(ctx context.Context, id int64) (*examRow, error) {
 func (s *Server) listExamsForClient(ctx context.Context, clientID int64) ([]examRow, error) {
 	rows, err := s.deps.DB.QueryContext(ctx, db.Q(`
 		SELECT e.id, e.client_id, e.name, e.exam_code, e.trustview_ref,
-		       e.verification_from, e.verification_to, e.visible, e.closed,
+		       COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD"T"HH24:MI'), ''),
+		       COALESCE(TO_CHAR(e.verification_to,   'YYYY-MM-DD"T"HH24:MI'), ''),
+		       e.visible, e.closed,
 		       e.closed_at, e.created_at, e.updated_at,
 		       e.requires_face, e.requires_fp, e.requires_iris,
 		       (SELECT COUNT(*) FROM exam_candidates ec WHERE ec.exam_id = e.id)

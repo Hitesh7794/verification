@@ -48,6 +48,14 @@ export default function MyExams() {
     }
   }
 
+  const isExamActive = (s) => {
+    if (s.exam_closed) return false
+    if (s.verification_to && new Date() > new Date(s.verification_to)) return false
+    return true
+  }
+
+  const activeSubs = subs.filter(isExamActive)
+
   return (
     <AdminShell>
       <FadeIn>
@@ -65,11 +73,11 @@ export default function MyExams() {
           <CardBody className="p-0">
             {loading ? (
               <div className="p-10 text-center text-sm text-slate-500">Loading…</div>
-            ) : subs.length === 0 ? (
+            ) : activeSubs.length === 0 ? (
               <div className="p-10 text-center">
-                <p className="text-sm text-slate-500">No exams subscribed yet.</p>
+                <p className="text-sm text-slate-500">No active subscribed exams.</p>
                 <p className="text-xs text-slate-400 mt-1">
-                  Go to the <Link to="/admin/catalog" className="text-indigo-600 hover:underline">Exam catalog</Link> and pick the exams your college needs.
+                  Go to the <Link to="/admin/catalog" className="text-indigo-600 hover:underline">Exam catalog</Link> and pick the active exams your college needs.
                 </p>
               </div>
             ) : (
@@ -88,7 +96,7 @@ export default function MyExams() {
                     </tr>
                   </thead>
                   <tbody>
-                    {subs.map((s) => (
+                    {activeSubs.map((s) => (
                       <tr key={s.exam_id} className="border-b border-slate-100 last:border-none hover:bg-slate-50/60">
                         <td className="px-4 py-3 font-mono text-xs text-slate-700 tabular-nums">{s.exam_code}</td>
                         <td className="px-4 py-3 text-slate-900">{s.exam_name}</td>

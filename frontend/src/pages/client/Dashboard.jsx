@@ -19,6 +19,7 @@ import LivenessPanel from '../../components/verify/LivenessPanel.jsx'
 import ExamWindowReminderModal from '../../components/verify/ExamWindowReminderModal.jsx'
 import { api, fetchFPTemplate, fetchPhotoBlob, isWalletEmptyError, getCandidateAttempts, downloadVerificationPDF } from '../../lib/api.js'
 import { getWalletSummary, formatRupees } from '../../lib/wallet/wallet.js'
+import { formatDateTime } from '../../lib/dates.js'
 
 // Generate an idempotency key per verification attempt so a network retry
 // of the submit doesn't create two rows. crypto.randomUUID is available in
@@ -349,29 +350,37 @@ export default function ClientDashboard() {
     setWalletEmpty(false)
     if (!roll.trim()) return
 
-    const today = new Date().toISOString().slice(0, 10)
-    // Early client-side check if assigned exam window is known and in future
-    if (wallet?.assigned_exam_verification_from && today < wallet.assigned_exam_verification_from) {
-      setWindowReminder({
-        type: 'future',
-        examName: wallet.assigned_exam_name,
-        examCode: wallet.assigned_exam_code,
-        verificationFrom: wallet.assigned_exam_verification_from,
-        verificationTo: wallet.assigned_exam_verification_to,
-        message: `Candidate verification for ${wallet.assigned_exam_name || wallet.assigned_exam_code} is scheduled to start on ${wallet.assigned_exam_verification_from}. Live biometric verifications cannot be started before this date.`,
-      })
-      return
+    const now = new Date()
+    const fromStr = wallet?.assigned_exam_verification_from
+    const toStr = wallet?.assigned_exam_verification_to
+
+    if (fromStr) {
+      const fromDt = new Date(fromStr)
+      if (!isNaN(fromDt.getTime()) && now < fromDt) {
+        setWindowReminder({
+          type: 'future',
+          examName: wallet.assigned_exam_name,
+          examCode: wallet.assigned_exam_code,
+          verificationFrom: fromStr,
+          verificationTo: toStr,
+          message: `Candidate verification for ${wallet.assigned_exam_name || wallet.assigned_exam_code} is scheduled to start on ${formatDateTime(fromStr)}. Live biometric verifications cannot be started before this time.`,
+        })
+        return
+      }
     }
-    if (wallet?.assigned_exam_verification_to && today > wallet.assigned_exam_verification_to) {
-      setWindowReminder({
-        type: 'expired',
-        examName: wallet.assigned_exam_name,
-        examCode: wallet.assigned_exam_code,
-        verificationFrom: wallet.assigned_exam_verification_from,
-        verificationTo: wallet.assigned_exam_verification_to,
-        message: `The verification window for ${wallet.assigned_exam_name || wallet.assigned_exam_code} closed on ${wallet.assigned_exam_verification_to}. Verifications are no longer accepted.`,
-      })
-      return
+    if (toStr) {
+      const toDt = new Date(toStr)
+      if (!isNaN(toDt.getTime()) && now > toDt) {
+        setWindowReminder({
+          type: 'expired',
+          examName: wallet.assigned_exam_name,
+          examCode: wallet.assigned_exam_code,
+          verificationFrom: fromStr,
+          verificationTo: toStr,
+          message: `The verification window for ${wallet.assigned_exam_name || wallet.assigned_exam_code} closed on ${formatDateTime(toStr)}. Verifications are no longer accepted.`,
+        })
+        return
+      }
     }
 
     try {
@@ -683,7 +692,7 @@ export default function ClientDashboard() {
           </CardHeader>
           <CardBody>
             {wallet?.assigned_exam_verification_from &&
-              new Date().toISOString().slice(0, 10) < wallet.assigned_exam_verification_from && (
+              new Date() < new Date(wallet.assigned_exam_verification_from) && (
                 <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50/80 p-4 text-xs text-amber-900 flex items-start gap-3 shadow-2xs">
                   <div className="h-7 w-7 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
                     <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -698,7 +707,7 @@ export default function ClientDashboard() {
                       Upcoming Examination Verification Window
                     </p>
                     <p className="mt-0.5 text-amber-800 leading-relaxed">
-                      Verification for <strong>{wallet.assigned_exam_name || wallet.assigned_exam_code}</strong> is scheduled to begin on <strong>{wallet.assigned_exam_verification_from}</strong>. Candidate biometric lookups will unlock on that date.
+                      Verification for <strong>{wallet.assigned_exam_name || wallet.assigned_exam_code}</strong> is scheduled to begin on <strong>{formatDateTime(wallet.assigned_exam_verification_from)}</strong>. Candidate biometric lookups will unlock at that time.
                     </p>
                   </div>
                 </div>

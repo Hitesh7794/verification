@@ -76,30 +76,34 @@ func (s *Server) getCandidate(w http.ResponseWriter, r *http.Request) {
 	// would begin. Empty From/To strings mean "no window set" and
 	// are treated as always-on for backward compat with legacy rows.
 	if claims.Role == "client" {
-		today := time.Now().UTC().Format("2006-01-02")
-		if ec.VerificationFrom != "" && today < ec.VerificationFrom {
-			writeJSON(w, http.StatusForbidden, map[string]any{
-				"error": fmt.Sprintf("Verification for %s (%s) will start on %s. Verifications cannot be started before this date.",
-					ec.ExamName, ec.ExamCode, ec.VerificationFrom),
-				"code":              "EXAM_WINDOW_FUTURE",
-				"exam_code":         ec.ExamCode,
-				"exam_name":         ec.ExamName,
-				"verification_from": ec.VerificationFrom,
-				"verification_to":   ec.VerificationTo,
-			})
-			return
+		now := time.Now().UTC()
+		if ec.VerificationFrom != "" {
+			if fromT, err := parseDateTimeWindow(ec.VerificationFrom, false); err == nil && now.Before(fromT) {
+				writeJSON(w, http.StatusForbidden, map[string]any{
+					"error": fmt.Sprintf("Verification for %s (%s) will start on %s. Verifications cannot be started before this date/time.",
+						ec.ExamName, ec.ExamCode, ec.VerificationFrom),
+					"code":              "EXAM_WINDOW_FUTURE",
+					"exam_code":         ec.ExamCode,
+					"exam_name":         ec.ExamName,
+					"verification_from": ec.VerificationFrom,
+					"verification_to":   ec.VerificationTo,
+				})
+				return
+			}
 		}
-		if ec.VerificationTo != "" && today > ec.VerificationTo {
-			writeJSON(w, http.StatusForbidden, map[string]any{
-				"error": fmt.Sprintf("Verification window for %s (%s) closed on %s. Verifications are no longer accepted.",
-					ec.ExamName, ec.ExamCode, ec.VerificationTo),
-				"code":              "EXAM_WINDOW_EXPIRED",
-				"exam_code":         ec.ExamCode,
-				"exam_name":         ec.ExamName,
-				"verification_from": ec.VerificationFrom,
-				"verification_to":   ec.VerificationTo,
-			})
-			return
+		if ec.VerificationTo != "" {
+			if toT, err := parseDateTimeWindow(ec.VerificationTo, true); err == nil && now.After(toT) {
+				writeJSON(w, http.StatusForbidden, map[string]any{
+					"error": fmt.Sprintf("Verification window for %s (%s) closed on %s. Verifications are no longer accepted.",
+						ec.ExamName, ec.ExamCode, ec.VerificationTo),
+					"code":              "EXAM_WINDOW_EXPIRED",
+					"exam_code":         ec.ExamCode,
+					"exam_name":         ec.ExamName,
+					"verification_from": ec.VerificationFrom,
+					"verification_to":   ec.VerificationTo,
+				})
+				return
+			}
 		}
 	}
 
@@ -883,8 +887,8 @@ func (s *Server) lookupExamCandidate(r *http.Request, claims *authClaims, roll s
 		       COALESCE(ec.dob::text, ''),       COALESCE(ec.gender, ''),
 		       COALESCE(ec.shift_name, ''),      COALESCE(ec.centre_code, ''),
 		       e.requires_face, e.requires_fp, e.requires_iris,
-		       COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD'), ''),
-		       COALESCE(TO_CHAR(e.verification_to,   'YYYY-MM-DD'), '')
+		       COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD"T"HH24:MI'), ''),
+		       COALESCE(TO_CHAR(e.verification_to,   'YYYY-MM-DD"T"HH24:MI'), '')
 		  FROM exam_candidates ec
 		  JOIN exams   e ON e.id = ec.exam_id
 		  JOIN clients c ON c.id = e.client_id

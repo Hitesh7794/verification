@@ -85,6 +85,19 @@ export default function Catalog() {
     }
   }
 
+  const isExamActive = (e) => {
+    if (e.closed) return false
+    if (e.verification_to && new Date() > new Date(e.verification_to)) return false
+    return true
+  }
+
+  const visibleClients = clients
+    .map((c) => ({
+      ...c,
+      exams: (c.exams || []).filter(isExamActive),
+    }))
+    .filter((c) => c.exams.length > 0 || c.client_blanket_approved)
+
   return (
     <AdminShell>
       <FadeIn>
@@ -102,16 +115,16 @@ export default function Catalog() {
             <div className="inline-block h-6 w-6 rounded-full border-2 border-slate-200 border-t-stone-900 animate-spin mb-3" />
             <p>Loading exam catalog…</p>
           </div>
-        ) : clients.length === 0 ? (
+        ) : visibleClients.length === 0 ? (
           <Card><CardBody>
             <div className="p-6 text-center">
-              <p className="text-sm text-slate-500">Nothing in the catalog yet.</p>
-              <p className="text-xs text-slate-400 mt-1">The platform team hasn't published any exams.</p>
+              <p className="text-sm text-slate-500">No active exams in the catalog.</p>
+              <p className="text-xs text-slate-400 mt-1">There are currently no active or upcoming examinations available for subscription.</p>
             </div>
           </CardBody></Card>
         ) : (
           <div className="space-y-4">
-            {clients.map((c) => (
+            {visibleClients.map((c) => (
               <Card key={c.id}>
                 <CardBody className="p-0">
                   <div className="px-5 py-3 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between gap-3">

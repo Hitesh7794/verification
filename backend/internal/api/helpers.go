@@ -5,13 +5,44 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"log"
 	"net/http"
 	"regexp"
 	"strings"
+	"time"
 
 	"github.com/veni/neet-verification/internal/auth"
 )
+
+// parseDateTimeWindow parses ISO/RFC3339 timestamps, HTML5 datetime-local
+// strings ("2006-01-02T15:04"), or plain date strings ("2006-01-02").
+// If a date-only string is passed and isEnd is true, it defaults the time to
+// 23:59:59 UTC so the entire closing day is inclusive.
+func parseDateTimeWindow(s string, isEnd bool) (time.Time, error) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return time.Time{}, errors.New("datetime is required")
+	}
+	formats := []string{
+		time.RFC3339,
+		"2006-01-02T15:04:05Z07:00",
+		"2006-01-02T15:04:05",
+		"2006-01-02T15:04",
+		"2006-01-02 15:04:05",
+		"2006-01-02 15:04",
+		"2006-01-02",
+	}
+	for _, f := range formats {
+		if t, err := time.Parse(f, s); err == nil {
+			if f == "2006-01-02" && isEnd {
+				t = time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 0, time.UTC)
+			}
+			return t.UTC(), nil
+		}
+	}
+	return time.Time{}, fmt.Errorf("invalid datetime format: %q", s)
+}
 
 type ctxKey string
 

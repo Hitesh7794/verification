@@ -13,6 +13,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -88,7 +89,7 @@ func testServer(t *testing.T) (s *Server, token, roll string, cleanup func()) {
 		t.Fatal(err)
 	}
 	var orgID int64
-	if err := d.QueryRow(`SELECT org_id FROM users WHERE id=?`, uid).Scan(&orgID); err != nil {
+	if err := d.QueryRow(db.Q(`SELECT org_id FROM users WHERE id=?`), uid).Scan(&orgID); err != nil {
 		t.Fatal(err)
 	}
 	tok, err := jwt.Issue(auth.Claims{
@@ -111,28 +112,30 @@ func testServer(t *testing.T) (s *Server, token, roll string, cleanup func()) {
 	if err := d.QueryRow(`SELECT id FROM clients ORDER BY id DESC LIMIT 1`).Scan(&clientRowID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.Exec(`
-		INSERT INTO exams(client_id, name, exam_code, verification_from, verification_to)
-		VALUES(?, 'Test Exam', 'TEST-EXAM-001', '2020-01-01', '2099-12-31')`,
-		clientRowID); err != nil {
-		t.Fatal(err)
-	}
+	examCode := fmt.Sprintf("TEST-EXAM-%d", time.Now().UnixNano())
 	var examID int64
-	if err := d.QueryRow(`SELECT id FROM exams WHERE exam_code='TEST-EXAM-001'`).Scan(&examID); err != nil {
+	if err := d.QueryRow(db.Q(`
+		INSERT INTO exams(client_id, name, exam_code, verification_from, verification_to)
+		VALUES(?, 'Test Exam', ?, '2020-01-01', '2099-12-31')
+		RETURNING id`),
+		clientRowID, examCode).Scan(&examID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.Exec(`
+	if _, err := d.Exec(db.Q(`
 		INSERT INTO exam_candidates(exam_id, roll_no, name, verification_date)
-		VALUES(?, ?, 'Test Candidate', '2026-06-01')`, examID, roll); err != nil {
+		VALUES(?, ?, 'Test Candidate', '2026-06-01')`), examID, roll); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.Exec(`
+	if _, err := d.Exec(db.Q(`
 		INSERT INTO organization_exam_subscriptions(org_id, exam_id, subscribed_by)
-		VALUES(?, ?, ?)`, orgID, examID, uid); err != nil {
+		VALUES(?, ?, ?)`), orgID, examID, uid); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := d.Exec(`
-		INSERT INTO operator_exams(user_id, exam_id) VALUES(?, ?)`,
+	if _, err := d.Exec(db.Q(`DELETE FROM operator_exams WHERE user_id=?`), uid); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := d.Exec(db.Q(`
+		INSERT INTO operator_exams(user_id, exam_id) VALUES(?, ?)`),
 		uid, examID); err != nil {
 		t.Fatal(err)
 	}
@@ -396,8 +399,8 @@ func TestGetCandidateFutureWindowReturnsReminder(t *testing.T) {
 	if got["code"] != "EXAM_WINDOW_FUTURE" {
 		t.Errorf("code = %v, want EXAM_WINDOW_FUTURE", got["code"])
 	}
-	if got["verification_from"] != "2099-01-01" {
-		t.Errorf("verification_from = %v, want 2099-01-01", got["verification_from"])
+	if vFrom, ok := got["verification_from"].(string); !ok || !strings.HasPrefix(vFrom, "2099-01-01") {
+		t.Errorf("verification_from = %v, want prefix 2099-01-01", got["verification_from"])
 	}
 }
 

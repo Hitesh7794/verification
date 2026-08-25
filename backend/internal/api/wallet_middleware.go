@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net/http"
+	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -67,22 +68,26 @@ func (s *Server) walletCharge(next http.HandlerFunc) http.HandlerFunc {
 			writeErr(w, http.StatusInternalServerError, "verification agent lookup: "+err.Error())
 			return
 		}
-		today := time.Now().UTC().Format("2006-01-02")
-		if vFrom.Valid && today < normaliseYMD(vFrom.String) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusForbidden)
-			_, _ = w.Write([]byte(fmt.Sprintf(
-				`{"error":"operator not active until %s","valid_from":"%s"}`,
-				normaliseYMD(vFrom.String), normaliseYMD(vFrom.String))))
-			return
+		now := time.Now().UTC()
+		if vFrom.Valid && strings.TrimSpace(vFrom.String) != "" {
+			if fromT, err := parseDateTimeWindow(vFrom.String, false); err == nil && now.Before(fromT) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(fmt.Sprintf(
+					`{"error":"operator not active until %s","valid_from":"%s"}`,
+					vFrom.String, vFrom.String)))
+				return
+			}
 		}
-		if vTo.Valid && today > normaliseYMD(vTo.String) {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusForbidden)
-			_, _ = w.Write([]byte(fmt.Sprintf(
-				`{"error":"operator access expired on %s","valid_to":"%s"}`,
-				normaliseYMD(vTo.String), normaliseYMD(vTo.String))))
-			return
+		if vTo.Valid && strings.TrimSpace(vTo.String) != "" {
+			if toT, err := parseDateTimeWindow(vTo.String, true); err == nil && now.After(toT) {
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusForbidden)
+				_, _ = w.Write([]byte(fmt.Sprintf(
+					`{"error":"operator access expired on %s","valid_to":"%s"}`,
+					vTo.String, vTo.String)))
+				return
+			}
 		}
 
 		// Same-roll 5-min cache was removed 2026-08-24 per product

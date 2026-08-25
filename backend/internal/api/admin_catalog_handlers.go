@@ -72,7 +72,8 @@ func (s *Server) adminCatalog(w http.ResponseWriter, r *http.Request) {
 			c.id, c.name, COALESCE(c.notes,''),
 			CASE WHEN coa.client_id IS NOT NULL THEN 1 ELSE 0 END AS client_blanket_approved,
 			e.id, e.name, e.exam_code,
-			e.verification_from, e.verification_to,
+			COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD"T"HH24:MI'), ''),
+			COALESCE(TO_CHAR(e.verification_to,   'YYYY-MM-DD"T"HH24:MI'), ''),
 			(SELECT COUNT(*) FROM exam_candidates ec WHERE ec.exam_id = e.id),
 			COALESCE(s.status, ''),
 			COALESCE(s.review_note, ''),
@@ -84,6 +85,7 @@ func (s *Server) adminCatalog(w http.ResponseWriter, r *http.Request) {
 			ON e.client_id = c.id
 			AND e.visible = 1
 			AND e.closed = 0
+			AND (e.verification_to IS NULL OR e.verification_to >= CURRENT_TIMESTAMP)
 		LEFT JOIN organization_exam_subscriptions s
 			ON s.exam_id = e.id AND s.org_id = $2
 		WHERE c.visible = 1 AND c.closed = 0
@@ -115,44 +117,44 @@ func (s *Server) adminCatalog(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, "row scan: "+err.Error())
 			return
 		}
-		cli, ok := byClient[cID]
+		cc, ok := byClient[cID]
 		if !ok {
-			cli = &catalogClient{
+			cc = &catalogClient{
 				ID:                    cID,
 				Name:                  cName,
 				Notes:                 cNotes,
 				ClientBlanketApproved: blanketApproved == 1,
 				Exams:                 []catalogExam{},
 			}
-			byClient[cID] = cli
+			byClient[cID] = cc
 			order = append(order, cID)
 		}
 		if eID.Valid {
-			statusStr := subStatus
-			if statusStr == "" {
-				statusStr = "none"
-			}
+			// Subscribed iff an approved subscription row exists OR the
+			// client has blanket approval.
+			isApproved := subStatus == "approved" || blanketApproved == 1
 			var reqAtStr string
 			if reqAt.Valid {
 				reqAtStr = reqAt.Time.UTC().Format("2006-01-02T15:04:05Z")
 			}
-			cli.Exams = append(cli.Exams, catalogExam{
+			cc.Exams = append(cc.Exams, catalogExam{
 				ID:                 eID.Int64,
 				Name:               eName.String,
 				ExamCode:           eCode.String,
 				VerificationFrom:   from.String,
 				VerificationTo:     to.String,
 				CandidateCount:     candCount.Int64,
-				Subscribed:         statusStr == "approved",
-				SubscriptionStatus: statusStr,
+				Subscribed:         isApproved,
+				SubscriptionStatus: subStatus,
 				ReviewNote:         reviewNote,
 				RequestedAt:        reqAtStr,
 			})
 		}
 	}
-	out := []catalogClient{}
+
+	out := []*catalogClient{}
 	for _, id := range order {
-		out = append(out, *byClient[id])
+		out = append(out, byClient[id])
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"clients": out})
 }
@@ -183,7 +185,9 @@ func (s *Server) adminListSubscriptions(w http.ResponseWriter, r *http.Request) 
 
 	rows, err := s.deps.DB.QueryContext(r.Context(), `
 		SELECT e.id, e.name, e.exam_code, e.client_id, c.name,
-		       e.verification_from, e.verification_to, e.closed,
+		       COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD"T"HH24:MI'), ''),
+		       COALESCE(TO_CHAR(e.verification_to,   'YYYY-MM-DD"T"HH24:MI'), ''),
+		       e.closed,
 		       (SELECT COUNT(*) FROM exam_candidates ec WHERE ec.exam_id = e.id),
 		       (SELECT COUNT(DISTINCT oe.user_id)
 		          FROM operator_exams oe
@@ -194,6 +198,8 @@ func (s *Server) adminListSubscriptions(w http.ResponseWriter, r *http.Request) 
 		JOIN exams e   ON e.id = s.exam_id
 		JOIN clients c ON c.id = e.client_id
 		WHERE s.org_id = $2 AND s.status = 'approved'
+		  AND e.closed = 0
+		  AND (e.verification_to IS NULL OR e.verification_to >= CURRENT_TIMESTAMP)
 		ORDER BY s.subscribed_at DESC`, orgID, orgID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
