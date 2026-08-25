@@ -11,10 +11,11 @@ import AdminHistory from './pages/admin/History.jsx'
 import AdminDownloads from './pages/admin/Downloads.jsx'
 import AdminProducts from './pages/admin/Products.jsx'
 import AdminOperators from './pages/admin/Operators.jsx'
-// Removed 2026-08-24: AdminCatalog + AdminMyExams. Exam access is now
-// minted automatically at KYC-approval time (V15 flow). Existing
-// subscriptions still resolve via the backend API for agent
-// assignment; admins just have no self-service page any more.
+import AdminMyExams from './pages/admin/MyExams.jsx'
+// AdminCatalog stays removed — admins no longer pick exams; access is
+// minted automatically at KYC-approval time (V15 fan-out). MyExams
+// came back 2026-08-25 as a read-only 'here are the exams you can
+// assign to agents' view.
 
 import SuperLogin from './pages/superadmin/Login.jsx'
 import SuperDashboard from './pages/superadmin/Dashboard.jsx'
@@ -25,9 +26,12 @@ import SuperClientDetail from './pages/superadmin/ClientDetail.jsx'
 import SuperExamDetail from './pages/superadmin/ExamDetail.jsx'
 
 import ReviewerLogin from './pages/reviewer/Login.jsx'
-import ReviewerDashboard from './pages/reviewer/Dashboard.jsx'
 import ReviewerApplicationDetail from './pages/reviewer/ApplicationDetail.jsx'
 import ReviewerKycInbox from './pages/reviewer/KycInbox.jsx'
+// Removed 2026-08-25: ReviewerDashboard (subscription-requests page).
+// V15 flow retired the admin's exam-subscribe UI, so no new pending
+// per-exam subscription requests can ever land. The tab was dead —
+// reviewer's landing is now the KYC inbox directly.
 
 import Register from './pages/register/Register.jsx'
 import SetPassword from './pages/register/SetPassword.jsx'
@@ -186,11 +190,14 @@ export default function App() {
             }
           />
 
-          {/* Admin's exam-catalog + my-exams pages removed 2026-08-24.
-              Under the V15 flow, org exam access is minted automatically
-              at KYC-approval time — the admin no longer chooses which
-              exams to subscribe to. Only the agents (operators)
-              management page remains. */}
+          {/* Admin's exam-catalog surface was retired 2026-08-24 (V15
+              flow — access is minted automatically at KYC approval).
+              /admin/my-exams is back 2026-08-25 as a read-only view so
+              the admin can see which exams they can assign to agents. */}
+          <Route
+            path="/admin/my-exams"
+            element={<RequireRole role="admin"><AdminMyExams /></RequireRole>}
+          />
           <Route
             path="/admin/operators"
             element={<RequireRole role="admin"><AdminOperators /></RequireRole>}
@@ -227,22 +234,19 @@ export default function App() {
               client. Distinct URL space from /client/* (which is a
               legacy redirect for the operator role). */}
           <Route path="/reviewer/login" element={<ReviewerLogin />} />
+          {/* Reviewer landing = KYC inbox (V15 flow, 2026-08-25). The
+              legacy subscription-requests dashboard was retired here
+              — no new pending subs can ever land. /reviewer/kyc kept
+              as an alias so any bookmarked deep-link still resolves. */}
           <Route
             path="/reviewer"
-            element={
-              <RequireRole role="client_reviewer">
-                <ReviewerDashboard />
-              </RequireRole>
-            }
-          />
-          <Route
-            path="/reviewer/kyc"
             element={
               <RequireRole role="client_reviewer">
                 <ReviewerKycInbox />
               </RequireRole>
             }
           />
+          <Route path="/reviewer/kyc" element={<Navigate to="/reviewer" replace />} />
           <Route
             path="/reviewer/applications/:id"
             element={

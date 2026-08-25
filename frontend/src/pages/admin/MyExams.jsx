@@ -1,23 +1,27 @@
 import { useCallback, useEffect, useState } from 'react'
-import { Link } from 'react-router-dom'
 import AdminShell, { PageHead } from '../../components/shell/AdminShell.jsx'
-import {
-  Button,
-  Card,
-  CardBody,
-} from '../../components/ui/ui.jsx'
+import { Card, CardBody } from '../../components/ui/ui.jsx'
 import { Pill } from '../../components/ui/extras.jsx'
 import { FadeIn } from '../../components/ui/motion.jsx'
-import { getSubscriptions, unsubscribeExam } from '../../lib/admin/examSubscriptions.js'
+import { getSubscriptions } from '../../lib/admin/examSubscriptions.js'
 import { dateRange } from '../../lib/dates.js'
 
-// Admin > My exams — the exams this college has subscribed to. Read
-// mostly; only action is Unsubscribe (which cascades operator_exams).
+// Admin > Exams — read-only view of every exam this org has access to.
+//
+// Under the V15 flow exam access is minted automatically when the org's
+// KYC is approved: the superadmin (or client reviewer, per mode) fires
+// approveApplication, which fans out organization_exam_subscriptions
+// rows for every visible + open exam under the destination client. The
+// admin doesn't pick and doesn't unsubscribe — this page just tells
+// them which exams their verification agents can be assigned to.
+//
+// Expired / closed exams are filtered out so the page reads as
+// "what can my agents actually verify against right now"; the
+// underlying rows still exist for audit + history views.
 export default function MyExams() {
   const [subs, setSubs] = useState([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
-  const [busy, setBusy] = useState(null)
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -25,7 +29,7 @@ export default function MyExams() {
     try {
       setSubs(await getSubscriptions())
     } catch (e) {
-      setErr(e.message || 'Could not load subscriptions')
+      setErr(e.message || 'Could not load exams')
     } finally {
       setLoading(false)
     }
@@ -33,21 +37,10 @@ export default function MyExams() {
 
   useEffect(() => { refresh() }, [refresh])
 
-  async function onUnsub(examId, opCount) {
-    if (opCount > 0) {
-      if (!confirm(`Unsubscribing will remove this exam from ${opCount} operator${opCount === 1 ? '' : 's'}. Continue?`)) return
-    } else if (!confirm('Unsubscribe from this exam?')) return
-    setBusy(examId)
-    try {
-      await unsubscribeExam(examId)
-      await refresh()
-    } catch (e) {
-      setErr(e.message || 'Failed')
-    } finally {
-      setBusy(null)
-    }
-  }
-
+  // Active = exam not closed AND today is within its verification window.
+  // Uses verification_to as the past-cutoff so an archived exam whose
+  // window ended yesterday drops off automatically without needing the
+  // superadmin to also mark it closed=1.
   const isExamActive = (s) => {
     if (s.exam_closed) return false
     if (s.verification_to && new Date() > new Date(s.verification_to)) return false
@@ -60,9 +53,9 @@ export default function MyExams() {
     <AdminShell>
       <FadeIn>
         <PageHead
-          eyebrow="Subscribed"
-          title="My exams"
-          right={<Link to="/admin/catalog" className="text-sm font-medium text-stone-900 hover:underline">Browse catalog →</Link>}
+          eyebrow="Access"
+          title="Exams"
+          subtitle="Every exam under your assigned board that is currently open. Access is granted when your KYC is approved — assign these to your verification agents from the Agents tab."
         />
         {err && (
           <div role="alert" className="mb-4 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">
@@ -75,9 +68,9 @@ export default function MyExams() {
               <div className="p-10 text-center text-sm text-slate-500">Loading…</div>
             ) : activeSubs.length === 0 ? (
               <div className="p-10 text-center">
-                <p className="text-sm text-slate-500">No active subscribed exams.</p>
+                <p className="text-sm text-slate-500">No active exams right now.</p>
                 <p className="text-xs text-slate-400 mt-1">
-                  Go to the <Link to="/admin/catalog" className="text-indigo-600 hover:underline">Exam catalog</Link> and pick the active exams your college needs.
+                  Once your institution is routed to a board and approved, its open exams appear here automatically.
                 </p>
               </div>
             ) : (
@@ -87,12 +80,11 @@ export default function MyExams() {
                     <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wider text-slate-500 bg-slate-50">
                       <th className="px-4 py-2.5">Exam code</th>
                       <th className="px-4 py-2.5">Name</th>
-                      <th className="px-4 py-2.5">Client</th>
+                      <th className="px-4 py-2.5">Board</th>
                       <th className="px-4 py-2.5">Window</th>
                       <th className="px-4 py-2.5">Candidates</th>
                       <th className="px-4 py-2.5">Verification Agents</th>
                       <th className="px-4 py-2.5">Status</th>
-                      <th className="px-4 py-2.5 text-right">Actions</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -106,17 +98,6 @@ export default function MyExams() {
                         <td className="px-4 py-3 text-slate-700 tabular-nums">{s.operator_count}</td>
                         <td className="px-4 py-3">
                           {s.exam_closed ? <Pill tone="amber" dot>Closed</Pill> : <Pill tone="emerald" dot>Active</Pill>}
-                        </td>
-                        <td className="px-4 py-3 text-right">
-                          <Button
-                            variant="secondary"
-                            size="sm"
-                            disabled={busy === s.exam_id}
-                            onClick={() => onUnsub(s.exam_id, s.operator_count)}
-                            className="!text-rose-700 !border-rose-200 hover:!bg-rose-50 hover:!border-rose-300"
-                          >
-                            {busy === s.exam_id ? 'Removing…' : 'Unsubscribe'}
-                          </Button>
                         </td>
                       </tr>
                     ))}

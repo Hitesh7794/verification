@@ -18,12 +18,13 @@ import AvatarMenu from './AvatarMenu.jsx'
 // state is a cream wash. Amber accent on the "ADMIN" wordmark keeps
 // the two-tone story with the ink-black primary actions.
 
-// Exam-catalog + my-exams tabs removed 2026-08-24 — exam access is now
-// minted at KYC-approval time (V15 flow) rather than admin-picked from
-// a catalog. The org's per-exam subscriptions still drive agent
-// assignment; they're just no longer visible or editable from here.
+// Exam-catalog tab removed 2026-08-24 — admins no longer subscribe;
+// access is minted automatically at KYC-approval time (V15 fan-out).
+// 'Exams' tab restored 2026-08-25 as a read-only view (linked to the
+// resurrected /admin/my-exams page).
 const tabs = [
   { to: '/admin',           label: 'Overview',   end: true  },
+  { to: '/admin/my-exams',  label: 'Exams',      end: false },
   { to: '/admin/operators', label: 'Agents',     end: false },
   { to: '/admin/history',   label: 'History',    end: false },
   { to: '/admin/products',  label: 'Products',   end: false },

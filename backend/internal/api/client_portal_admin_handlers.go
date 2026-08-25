@@ -230,39 +230,105 @@ func (s *Server) superadminDeleteReviewer(w http.ResponseWriter, r *http.Request
 		writeErr(w, http.StatusBadRequest, "invalid uid")
 		return
 	}
-	// Scope the DELETE by (id, client_id, role) so a superadmin call
-	// can't accidentally delete an admin user by ID.
+	// Two-tier removal, decided by whether the reviewer has any prior
+	// decisions on record:
+	//
+	//   1. If institution_applications.reviewed_by_user_id references
+	//      this user (they've approved or rejected anything), a hard
+	//      DELETE would break the audit trail — FK is ON DELETE NO
+	//      ACTION on purpose. Soft-disable instead: set disabled_at.
+	//      The login gate already refuses signin for disabled users,
+	//      and the partial unique index `ux_users_client_reviewer_single`
+	//      only counts non-disabled reviewers, so the superadmin can
+	//      immediately create a fresh one for the same client.
+	//
+	//   2. If they have no history, hard DELETE keeps the users table
+	//      tidy — nothing of value is lost.
+	//
+	// Both paths return 200 with a small payload so the FE can label
+	// the action correctly if it wants ("removed" vs "disabled") — a
+	// caller that just checks res.ok keeps working unchanged.
+	scoped := `id = $1 AND client_id = $2 AND role = 'client_reviewer'`
+	var priorDecisions int
+	if err := s.deps.DB.QueryRowContext(r.Context(),
+		`SELECT COUNT(*) FROM institution_applications
+		  WHERE reviewed_by_user_id = $1`, userID,
+	).Scan(&priorDecisions); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
+		return
+	}
+
+	if priorDecisions == 0 {
+		res, err := s.deps.DB.ExecContext(r.Context(),
+			`DELETE FROM users WHERE `+scoped,
+			userID, clientID,
+		)
+		if err != nil {
+			// Belt-and-braces: if a NEW FK we didn't anticipate blocks
+			// the delete, fall through to soft-disable so the reviewer
+			// still becomes inactive.
+			if !(strings.Contains(err.Error(), "23503") ||
+				strings.Contains(strings.ToLower(err.Error()), "foreign key")) {
+				writeErr(w, http.StatusInternalServerError, "db delete: "+err.Error())
+				return
+			}
+		} else if n, _ := res.RowsAffected(); n == 0 {
+			writeErr(w, http.StatusNotFound, "reviewer not found")
+			return
+		} else {
+			s.auditFromRequest(r, "reviewer.delete", "user", userID, map[string]any{
+				"client_id": clientID,
+			})
+			writeJSON(w, http.StatusOK, map[string]any{
+				"removed":       true,
+				"soft_disabled": false,
+			})
+			return
+		}
+	}
+
+	// Soft-disable path — either the reviewer has prior decisions, or a
+	// surprise FK blocked the hard delete above.
 	res, err := s.deps.DB.ExecContext(r.Context(),
-		`DELETE FROM users
-		  WHERE id = $1 AND client_id = $2 AND role = 'client_reviewer'`,
+		`UPDATE users SET disabled_at = CURRENT_TIMESTAMP
+		  WHERE `+scoped+` AND disabled_at IS NULL`,
 		userID, clientID,
 	)
 	if err != nil {
-		// A reviewer who's already approved or rejected applications is
-		// referenced by institution_applications.reviewed_by_user_id
-		// (ON DELETE NO ACTION), so the DELETE fails with a FK
-		// violation (SQLSTATE 23503). Surface a 409 with an actionable
-		// message instead of a generic 500 — the superadmin's next
-		// question is "so how do I get rid of them?" and the answer
-		// (once we ship soft-disable) will belong here too.
-		if strings.Contains(err.Error(), "23503") ||
-			strings.Contains(strings.ToLower(err.Error()), "foreign key") {
-			writeErr(w, http.StatusConflict,
-				"reviewer has prior approvals or rejections on record — cannot delete. "+
-					"Their history is referenced by past applications.")
-			return
-		}
-		writeErr(w, http.StatusInternalServerError, "db delete: "+err.Error())
+		writeErr(w, http.StatusInternalServerError, "db disable: "+err.Error())
 		return
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
-		writeErr(w, http.StatusNotFound, "reviewer not found")
+		// Either the reviewer doesn't exist (or belongs to a different
+		// client), or was already disabled — treat both as "gone" for
+		// the caller's intent. Distinguish so a curious caller can tell.
+		var exists int
+		_ = s.deps.DB.QueryRowContext(r.Context(),
+			`SELECT COUNT(*) FROM users WHERE `+scoped,
+			userID, clientID,
+		).Scan(&exists)
+		if exists == 0 {
+			writeErr(w, http.StatusNotFound, "reviewer not found")
+			return
+		}
+		writeJSON(w, http.StatusOK, map[string]any{
+			"removed":         true,
+			"soft_disabled":   true,
+			"already_disabled": true,
+		})
 		return
 	}
-	s.auditFromRequest(r, "reviewer.delete", "user", userID, map[string]any{
-		"client_id": clientID,
+
+	s.auditFromRequest(r, "reviewer.disable", "user", userID, map[string]any{
+		"client_id":        clientID,
+		"prior_decisions":  priorDecisions,
+		"reason":           "hard-delete would break audit trail",
 	})
-	w.WriteHeader(http.StatusNoContent)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"removed":         true,
+		"soft_disabled":   true,
+		"prior_decisions": priorDecisions,
+	})
 }
 
 // ---------- GET /api/clients/public ----------
