@@ -16,6 +16,7 @@ import FingerprintCapture from '../../components/verify/FingerprintCapture.jsx'
 import IrisCapture from '../../components/verify/IrisCapture.jsx'
 import FaceMatchPanel from '../../components/verify/FaceMatchPanel.jsx'
 import LivenessPanel from '../../components/verify/LivenessPanel.jsx'
+import ExamWindowReminderModal from '../../components/verify/ExamWindowReminderModal.jsx'
 import { api, fetchFPTemplate, fetchPhotoBlob, isWalletEmptyError, getCandidateAttempts, downloadVerificationPDF } from '../../lib/api.js'
 import { getWalletSummary, formatRupees } from '../../lib/wallet/wallet.js'
 
@@ -232,6 +233,10 @@ export default function ClientDashboard() {
   // returns HTTP 402. Operators can't top up themselves — this is
   // surfaced as a passive banner directing them to their admin.
   const [walletEmpty, setWalletEmpty] = useState(false)
+  // When an operator attempts to verify a candidate for an exam whose
+  // verification window is in the future (or closed), windowReminder triggers
+  // a prominent date reminder modal with examination details and start date.
+  const [windowReminder, setWindowReminder] = useState(null)
 
   // Live wallet-balance pill in the page header. Fetched once on mount
   // (no polling — the balance only moves when THIS operator submits a
@@ -343,6 +348,32 @@ export default function ClientDashboard() {
     setLookupErr('')
     setWalletEmpty(false)
     if (!roll.trim()) return
+
+    const today = new Date().toISOString().slice(0, 10)
+    // Early client-side check if assigned exam window is known and in future
+    if (wallet?.assigned_exam_verification_from && today < wallet.assigned_exam_verification_from) {
+      setWindowReminder({
+        type: 'future',
+        examName: wallet.assigned_exam_name,
+        examCode: wallet.assigned_exam_code,
+        verificationFrom: wallet.assigned_exam_verification_from,
+        verificationTo: wallet.assigned_exam_verification_to,
+        message: `Candidate verification for ${wallet.assigned_exam_name || wallet.assigned_exam_code} is scheduled to start on ${wallet.assigned_exam_verification_from}. Live biometric verifications cannot be started before this date.`,
+      })
+      return
+    }
+    if (wallet?.assigned_exam_verification_to && today > wallet.assigned_exam_verification_to) {
+      setWindowReminder({
+        type: 'expired',
+        examName: wallet.assigned_exam_name,
+        examCode: wallet.assigned_exam_code,
+        verificationFrom: wallet.assigned_exam_verification_from,
+        verificationTo: wallet.assigned_exam_verification_to,
+        message: `The verification window for ${wallet.assigned_exam_name || wallet.assigned_exam_code} closed on ${wallet.assigned_exam_verification_to}. Verifications are no longer accepted.`,
+      })
+      return
+    }
+
     try {
       const c = await api(`/candidates/${encodeURIComponent(roll.trim())}`)
       setCandidate(c)
@@ -385,6 +416,44 @@ export default function ClientDashboard() {
         setWalletEmpty(true)
         return
       }
+
+      // Check for 403 Forbidden verification window errors
+      if (
+        e.status === 403 &&
+        (e.body?.code === 'EXAM_WINDOW_FUTURE' ||
+          e.body?.code === 'EXAM_WINDOW_EXPIRED' ||
+          e.body?.verification_from ||
+          e.body?.verification_to)
+      ) {
+        setWindowReminder({
+          type: e.body?.code === 'EXAM_WINDOW_EXPIRED' ? 'expired' : 'future',
+          examName: e.body?.exam_name || wallet?.assigned_exam_name || '',
+          examCode: e.body?.exam_code || wallet?.assigned_exam_code || '',
+          verificationFrom: e.body?.verification_from || wallet?.assigned_exam_verification_from || '',
+          verificationTo: e.body?.verification_to || wallet?.assigned_exam_verification_to || '',
+          message: e.body?.error || e.message,
+        })
+        return
+      }
+
+      if (
+        e.status === 403 &&
+        (e.message?.toLowerCase().includes('will start') ||
+          e.message?.toLowerCase().includes('opens on') ||
+          e.message?.toLowerCase().includes('closed on'))
+      ) {
+        const isFuture = !e.message?.toLowerCase().includes('closed on')
+        setWindowReminder({
+          type: isFuture ? 'future' : 'expired',
+          examName: wallet?.assigned_exam_name || '',
+          examCode: wallet?.assigned_exam_code || '',
+          verificationFrom: wallet?.assigned_exam_verification_from || '',
+          verificationTo: wallet?.assigned_exam_verification_to || '',
+          message: e.message,
+        })
+        return
+      }
+
       setLookupErr(e.message || 'lookup failed')
     }
   }
@@ -613,6 +682,27 @@ export default function ClientDashboard() {
             <CardTitle>Step 1 — Roll number</CardTitle>
           </CardHeader>
           <CardBody>
+            {wallet?.assigned_exam_verification_from &&
+              new Date().toISOString().slice(0, 10) < wallet.assigned_exam_verification_from && (
+                <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50/80 p-4 text-xs text-amber-900 flex items-start gap-3 shadow-2xs">
+                  <div className="h-7 w-7 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
+                      <line x1="16" y1="2" x2="16" y2="6" />
+                      <line x1="8" y1="2" x2="8" y2="6" />
+                      <line x1="3" y1="10" x2="21" y2="10" />
+                    </svg>
+                  </div>
+                  <div>
+                    <p className="font-semibold text-amber-900 text-sm">
+                      Upcoming Examination Verification Window
+                    </p>
+                    <p className="mt-0.5 text-amber-800 leading-relaxed">
+                      Verification for <strong>{wallet.assigned_exam_name || wallet.assigned_exam_code}</strong> is scheduled to begin on <strong>{wallet.assigned_exam_verification_from}</strong>. Candidate biometric lookups will unlock on that date.
+                    </p>
+                  </div>
+                </div>
+              )}
             <form onSubmit={lookupRoll} className="max-w-md space-y-4">
               <div>
                 <Label>Candidate roll number</Label>
@@ -896,6 +986,12 @@ export default function ClientDashboard() {
           />
         </div>
       )}
+
+      <ExamWindowReminderModal
+        open={Boolean(windowReminder)}
+        onClose={() => setWindowReminder(null)}
+        {...windowReminder}
+      />
     </AppShell>
   )
 }

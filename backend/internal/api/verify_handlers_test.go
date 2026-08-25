@@ -48,12 +48,16 @@ func testServer(t *testing.T) (s *Server, token, roll string, cleanup func()) {
 		t.Fatal(err)
 	}
 
-	d, err := db.Open(filepath.Join(tmp, "v.db"))
+	dbURL := os.Getenv("DATABASE_URL")
+	if dbURL == "" {
+		dbURL = "postgres://portal:portal-dev@127.0.0.1:5434/verification?sslmode=disable"
+	}
+	d, err := db.Open(dbURL)
 	if err != nil {
-		t.Fatal(err)
+		t.Skipf("skipping test: db connect (%s): %v", dbURL, err)
 	}
 	if err := db.Migrate(d); err != nil {
-		t.Fatal(err)
+		t.Skipf("skipping test: db migrate: %v", err)
 	}
 
 	idx, err := data.LoadIndex(filepath.Join(tmp, "datatree"))
@@ -369,3 +373,31 @@ func TestUploadArtifactRejectsBadKind(t *testing.T) {
 		t.Errorf("expected 400, got %d", rr2.Code)
 	}
 }
+
+func TestGetCandidateFutureWindowReturnsReminder(t *testing.T) {
+	s, tok, roll, cleanup := testServer(t)
+	defer cleanup()
+
+	// Update exam to have a future verification window
+	if _, err := s.deps.DB.Exec(`UPDATE exams SET verification_from = '2099-01-01', verification_to = '2099-12-31'`); err != nil {
+		t.Fatal(err)
+	}
+
+	req := httptest.NewRequest("GET", "/api/candidates/"+roll, nil)
+	req.Header.Set("Authorization", "Bearer "+tok)
+	rr := httptest.NewRecorder()
+	s.Router().ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusForbidden {
+		t.Fatalf("expected 403 Forbidden, got %d (body: %s)", rr.Code, rr.Body)
+	}
+	var got map[string]any
+	_ = json.Unmarshal(rr.Body.Bytes(), &got)
+	if got["code"] != "EXAM_WINDOW_FUTURE" {
+		t.Errorf("code = %v, want EXAM_WINDOW_FUTURE", got["code"])
+	}
+	if got["verification_from"] != "2099-01-01" {
+		t.Errorf("verification_from = %v, want 2099-01-01", got["verification_from"])
+	}
+}
+

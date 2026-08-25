@@ -78,15 +78,27 @@ func (s *Server) getCandidate(w http.ResponseWriter, r *http.Request) {
 	if claims.Role == "client" {
 		today := time.Now().UTC().Format("2006-01-02")
 		if ec.VerificationFrom != "" && today < ec.VerificationFrom {
-			writeErr(w, http.StatusForbidden,
-				fmt.Sprintf("This exam (%s) opens on %s. Verifications can't be started before then.",
-					ec.ExamCode, ec.VerificationFrom))
+			writeJSON(w, http.StatusForbidden, map[string]any{
+				"error": fmt.Sprintf("Verification for %s (%s) will start on %s. Verifications cannot be started before this date.",
+					ec.ExamName, ec.ExamCode, ec.VerificationFrom),
+				"code":              "EXAM_WINDOW_FUTURE",
+				"exam_code":         ec.ExamCode,
+				"exam_name":         ec.ExamName,
+				"verification_from": ec.VerificationFrom,
+				"verification_to":   ec.VerificationTo,
+			})
 			return
 		}
 		if ec.VerificationTo != "" && today > ec.VerificationTo {
-			writeErr(w, http.StatusForbidden,
-				fmt.Sprintf("This exam (%s) closed on %s. Verifications are no longer accepted.",
-					ec.ExamCode, ec.VerificationTo))
+			writeJSON(w, http.StatusForbidden, map[string]any{
+				"error": fmt.Sprintf("Verification window for %s (%s) closed on %s. Verifications are no longer accepted.",
+					ec.ExamName, ec.ExamCode, ec.VerificationTo),
+				"code":              "EXAM_WINDOW_EXPIRED",
+				"exam_code":         ec.ExamCode,
+				"exam_name":         ec.ExamName,
+				"verification_from": ec.VerificationFrom,
+				"verification_to":   ec.VerificationTo,
+			})
 			return
 		}
 	}
