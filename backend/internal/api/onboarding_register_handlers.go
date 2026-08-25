@@ -1207,16 +1207,21 @@ func (s *Server) registerSubmit(w http.ResponseWriter, r *http.Request) {
 	).Scan(&clientID)
 	if !clientID.Valid {
 		// Pick the sole eligible client. COUNT(*) matters: with more
-		// than one visible+open+portal-enabled client we can't tell
-		// which board the applicant belongs to, so we leave client_id
-		// NULL and let the superadmin sort it later (no UI for that
-		// path today; will fall through to the admin queue).
+		// than one visible+open client we can't tell which board the
+		// applicant belongs to, so we leave client_id NULL.
+		//
+		// portal_enabled deliberately IS NOT in the filter: it gates
+		// the reviewer's LOGIN when the platform team temporarily
+		// disables a client, not whether new applications should
+		// route to that client. A portal-disabled client can still
+		// own its incoming KYCs; superadmin can act on them via the
+		// admin queue while the client reviewer is offline.
 		var count int
 		var candidate int64
 		if err := s.deps.DB.QueryRowContext(r.Context(),
 			`SELECT COUNT(*), COALESCE(MIN(id), 0)
 			   FROM clients
-			  WHERE visible = 1 AND closed = 0 AND portal_enabled = true`,
+			  WHERE visible = 1 AND closed = 0`,
 		).Scan(&count, &candidate); err == nil && count == 1 && candidate > 0 {
 			clientID = sql.NullInt64{Int64: candidate, Valid: true}
 		}
@@ -1249,12 +1254,31 @@ func (s *Server) registerSubmit(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "db update")
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]any{
-		"application_id":    appID,
-		"status":            "pending",
-		"pending_reviewer":  pendingReviewer,
-		"message":           "Application submitted. You'll hear back within 48 hours by email.",
-	})
+
+	// 2026-08-25 rebuild: provision the org + admin user + magic link
+	// at submit time (not at approve time). The applicant can log in
+	// during the pending window; the frontend's KYC gate keeps them on
+	// the lock screen until the review lands. If provisioning fails,
+	// we don't roll back the pending flip — the applicant is still in
+	// the queue and superadmin can trigger a resend from ApplicationDetail.
+	prov, provErr := s.provisionOrgAndAdmin(r, appID, true)
+	resp := map[string]any{
+		"application_id":   appID,
+		"status":           "pending",
+		"pending_reviewer": pendingReviewer,
+		"message":          "Application submitted. Check your email for a link to set your password and sign in.",
+	}
+	if provErr != nil {
+		// Log but don't fail the submit — the row is safe as-is.
+		fmt.Printf("registerSubmit: provisionOrgAndAdmin failed app=%d: %v\n", appID, provErr)
+	} else if prov != nil {
+		// Echo the magic link URL so the FE's "submitted" page can
+		// deep-link the applicant into set-password in dev, and so
+		// integration tests can pick it up without hitting logs.
+		resp["admin_username"] = prov.AdminUsername
+		resp["magic_link_url"] = prov.MagicLinkURL
+	}
+	writeJSON(w, http.StatusOK, resp)
 }
 
 // ----- GET /api/register/{id} (read-back for "Submitted" page) -----

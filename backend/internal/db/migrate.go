@@ -132,7 +132,80 @@ func Migrate(d *sql.DB) error {
 		}
 	}
 
+	if !applied[17] {
+		if err := applyV17OrgApplicationLink(ctx, d); err != nil {
+			return fmt.Errorf("apply v17 org_application_link: %w", err)
+		}
+	}
+
 	return nil
+}
+
+// applyV17OrgApplicationLink wires organizations back to the
+// institution_applications row that spawned them, and hardens the
+// "one identity, one application" uniqueness so a rejected applicant
+// can't just re-register with the same head_email / head_mobile / PAN
+// / AISHE and start over.
+//
+// Two schema changes:
+//
+//  1. organizations.application_id (nullable BIGINT FK) — the KYC
+//     gate middleware reads this to answer "is this org's KYC still
+//     pending / rejected / approved?" without a name-match join.
+//     Nullable so legacy orgs (created before V17, when the KYC-
+//     approve flow was the org-creator) stay valid.
+//
+//  2. The four unique partial indexes on institution_applications
+//     (head_email, head_mobile, pan, aishe) previously filtered
+//     `WHERE status IN ('approved','pending')`. That let a rejected
+//     applicant register again with the same identity. Widen to
+//     include 'rejected' so identity is locked once you've registered,
+//     regardless of the decision — matches the 'no re-register on
+//     reject' rule (2026-08-25 UX call).
+func applyV17OrgApplicationLink(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmts := []string{
+		`ALTER TABLE organizations
+		    ADD COLUMN IF NOT EXISTS application_id BIGINT
+		    REFERENCES institution_applications(id) ON DELETE SET NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_organizations_application_id
+		    ON organizations(application_id)
+		    WHERE application_id IS NOT NULL`,
+		// Rebuild the four partial unique indexes so 'rejected' rows
+		// also block re-registration. Drop + recreate is the only
+		// portable way to change the WHERE predicate on a partial
+		// index in postgres.
+		`DROP INDEX IF EXISTS idx_inst_apps_head_email_active`,
+		`CREATE UNIQUE INDEX idx_inst_apps_head_email_active
+		    ON institution_applications(head_email)
+		    WHERE status IN ('approved','pending','rejected')`,
+		`DROP INDEX IF EXISTS idx_inst_apps_head_mobile_active`,
+		`CREATE UNIQUE INDEX idx_inst_apps_head_mobile_active
+		    ON institution_applications(head_mobile)
+		    WHERE status IN ('approved','pending','rejected')`,
+		`DROP INDEX IF EXISTS idx_inst_apps_pan_active`,
+		`CREATE UNIQUE INDEX idx_inst_apps_pan_active
+		    ON institution_applications(pan)
+		    WHERE pan IS NOT NULL AND status IN ('approved','pending','rejected')`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.ExecContext(ctx, s); err != nil {
+			return fmt.Errorf("exec %q: %w", firstLine(s), err)
+		}
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)`,
+		17, "org_application_link",
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // applyV15KYCReviewMode adds the per-client KYC review mode + the

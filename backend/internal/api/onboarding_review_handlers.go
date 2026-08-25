@@ -907,6 +907,37 @@ func buildRejectionEmail(institutionName, headName, note string) string {
 	fmt.Fprintf(&b, "Thank you for your interest in registering \"%s\" on the Verification Portal.\n\n", institutionName)
 	b.WriteString("Unfortunately we couldn't approve your registration at this time. Reviewer's note:\n\n")
 	fmt.Fprintf(&b, "  %s\n\n", note)
-	b.WriteString("You're welcome to re-apply with corrected information from the registration page.\n")
+	b.WriteString("You can sign in to see this decision. To re-apply you'll need to contact the platform team — the identity you registered with is locked to this outcome.\n")
+	return b.String()
+}
+
+// buildRegistrationSubmittedEmail is the welcome mail sent right after
+// an applicant submits their KYC. It carries the magic link for
+// password setup so they can log in and track status while the KYC
+// review is pending.
+func buildRegistrationSubmittedEmail(institutionName, headName, username, link string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Dear %s,\n\n", headName)
+	fmt.Fprintf(&b, "Your registration for \"%s\" has been received on the Verification Portal and is under review.\n\n", institutionName)
+	fmt.Fprintf(&b, "Your admin username is: %s\n\n", username)
+	fmt.Fprintf(&b, "Set your password using the link below (valid for 7 days):\n\n  %s\n\n", link)
+	b.WriteString("Once you set a password, you can sign in and see the review status of your application. Access to agents, exams, and wallet is unlocked when the review is approved.\n\n")
+	b.WriteString("You'll get another email as soon as the review lands.\n\n")
+	b.WriteString("If you didn't apply for an account, please ignore this email.\n")
+	return b.String()
+}
+
+// buildKYCApprovedEmail is sent when the review lands as approved.
+// No magic link — the applicant already set their password when they
+// received the welcome email at submit time.
+func buildKYCApprovedEmail(institutionName, headName, username, note string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Dear %s,\n\n", headName)
+	fmt.Fprintf(&b, "Your registration for \"%s\" has been approved on the Verification Portal.\n\n", institutionName)
+	fmt.Fprintf(&b, "Sign in with your admin username %s and start creating verification agents.\n\n", username)
+	if strings.TrimSpace(note) != "" {
+		fmt.Fprintf(&b, "Reviewer's note: %s\n\n", note)
+	}
+	b.WriteString("If you forgot the password you set earlier, use \"Forgot password\" on the sign-in page.\n")
 	return b.String()
 }

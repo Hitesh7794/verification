@@ -152,6 +152,25 @@ func claimsFrom(r *http.Request) *auth.Claims {
 }
 
 func (s *Server) requireRole(roles ...string) func(http.HandlerFunc) http.HandlerFunc {
+	return s.requireRoleGated(true, roles...)
+}
+
+// requireRoleOpen is requireRole without the KYC-approved gate. Use it
+// only for endpoints that need to be reachable BEFORE the org's KYC
+// is approved (the kyc-status endpoint, and any read that the lock
+// screen legitimately needs). Everything else should use requireRole.
+func (s *Server) requireRoleOpen(roles ...string) func(http.HandlerFunc) http.HandlerFunc {
+	return s.requireRoleGated(false, roles...)
+}
+
+// requireRoleGated is the shared implementation. When kycGate is true
+// (the default via requireRole), admin and client callers must belong
+// to an org whose linked institution_application is status='approved'.
+// A pending / rejected KYC returns 403 with a machine-readable
+// x-kyc-state header so the FE lock screen can render the right copy.
+// Roles that don't carry an org (superadmin, ops_admin, client_reviewer)
+// always bypass the KYC check — it doesn't apply to them.
+func (s *Server) requireRoleGated(kycGate bool, roles ...string) func(http.HandlerFunc) http.HandlerFunc {
 	allowed := map[string]bool{}
 	for _, r := range roles {
 		allowed[r] = true
@@ -163,7 +182,38 @@ func (s *Server) requireRole(roles ...string) func(http.HandlerFunc) http.Handle
 				writeErr(w, http.StatusForbidden, "You don't have access to that.")
 				return
 			}
+			if kycGate && (c.Role == "admin" || c.Role == "client") && c.OrgID != nil {
+				state, _ := s.orgKYCState(r.Context(), *c.OrgID)
+				// state == 'approved' → pass. Everything else → block.
+				// 'unknown' means the org has no linked application (legacy
+				// pre-V17 or seeded via superadmin bulk); treat as approved
+				// so those flows keep working without a migration script.
+				if state != "" && state != "approved" && state != "unknown" {
+					w.Header().Set("x-kyc-state", state)
+					writeErr(w, http.StatusForbidden,
+						"Your institution's KYC review is "+state+". Access unlocks once it is approved.")
+					return
+				}
+			}
 			next(w, r)
 		}
 	}
+}
+
+// orgKYCState resolves the KYC review state for a given org by
+// following organizations.application_id → institution_applications.
+// Returns "" on DB error (which the caller treats as a soft-pass so
+// a transient blip doesn't lock every admin out).
+func (s *Server) orgKYCState(ctx context.Context, orgID int64) (string, error) {
+	var status string
+	err := s.deps.DB.QueryRowContext(ctx, `
+		SELECT COALESCE(a.status, 'unknown')
+		  FROM organizations o
+		  LEFT JOIN institution_applications a ON a.id = o.application_id
+		 WHERE o.id = $1`, orgID,
+	).Scan(&status)
+	if err != nil {
+		return "", err
+	}
+	return status, nil
 }

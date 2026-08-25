@@ -1,12 +1,12 @@
 package api
 
-// Shared approve/reject flow for institution_applications.
+// Shared submit / approve / reject flow for institution_applications.
 //
-// The same steps run whether the review is done from the superadmin
-// global queue or from a client reviewer's client-scoped inbox — the
-// only difference is who's allowed to act on which row. Extracted here
-// so both callers stay thin wrappers that do auth + response shaping
-// only.
+// 2026-08-25 UX rebuild: the org + admin user are now created at
+// registerSubmit time (not at approval time). The user can log in
+// during the "pending" window but sees a lock screen until the KYC
+// review lands; approve just flips the status flag that unlocks
+// their portal. See project_snapshot memory for the state machine.
 
 import (
 	"context"
@@ -36,9 +36,9 @@ var (
 
 // approvedApplication is what the shared approve helper returns after
 // the DB tx commits + the magic link is generated. Callers echo the
-// relevant fields to the client — superadmin surfaces every field
-// (including the operator credential); a client reviewer might choose
-// to hide some.
+// relevant fields to the client. Under the 2026-08-25 rebuild, the
+// MagicLinkURL is populated at SUBMIT time (not approve); approve
+// callers just get the same URL echoed for convenience.
 type approvedApplication struct {
 	ApplicationID    int64  `json:"application_id"`
 	OrgID            int64  `json:"org_id"`
@@ -56,9 +56,161 @@ type approvedApplication struct {
 	HeadEmail       string `json:"-"`
 }
 
-// approveApplication runs the full approval flow inside its own
-// transaction: atomic state-change, org + admin + operator user
-// creation, magic-link issuance, best-effort email.
+// provisionOrgAndAdmin creates the org row + admin user + magic link
+// for a submitted application, and emails the applicant. Idempotent —
+// if the org already exists (linked via organizations.application_id),
+// returns the existing IDs without a second insert or second email.
+//
+// Called from:
+//   - registerSubmit — at submit time (new locked-account flow).
+//   - approveApplication — as a legacy safety net for pre-V17 apps
+//     that were submitted before this rebuild and don't have an org
+//     yet. In that path we DON'T re-send the welcome email since the
+//     applicant is about to get the approval email instead.
+//
+// sendWelcomeEmail = false suppresses the welcome mail (used by the
+// legacy approve path). registerSubmit passes true.
+func (s *Server) provisionOrgAndAdmin(r *http.Request, appID int64, sendWelcomeEmail bool) (*approvedApplication, error) {
+	ctx := r.Context()
+
+	// Idempotency check — if there's already an admin user under an
+	// org linked to this application, we're done. Return the existing
+	// IDs and skip the insert path entirely.
+	var existingOrgID, existingUserID int64
+	var existingUsername string
+	err := s.deps.DB.QueryRowContext(ctx, `
+		SELECT o.id, u.id, u.username
+		  FROM organizations o
+		  JOIN users u ON u.org_id = o.id AND u.role = 'admin'
+		 WHERE o.application_id = $1
+		 LIMIT 1`, appID,
+	).Scan(&existingOrgID, &existingUserID, &existingUsername)
+	if err == nil {
+		return &approvedApplication{
+			ApplicationID: appID,
+			OrgID:         existingOrgID,
+			AdminUserID:   existingUserID,
+			AdminUsername: existingUsername,
+		}, nil
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return nil, fmt.Errorf("provision precheck: %w", err)
+	}
+
+	// Read application details in one query.
+	var (
+		instName, headName, headEmail, headDesignation string
+		aishe                                          sql.NullString
+	)
+	if err := s.deps.DB.QueryRowContext(ctx,
+		`SELECT institution_name, head_name, head_email, head_designation, aishe_code
+		   FROM institution_applications WHERE id = $1`, appID,
+	).Scan(&instName, &headName, &headEmail, &headDesignation, &aishe); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errAppNotFound
+		}
+		return nil, fmt.Errorf("read app: %w", err)
+	}
+
+	tx, err := s.deps.DB.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("provision begin: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Org code preference: AISHE (guaranteed unique per application),
+	// else a synthetic APP_<id>. Same convention as the pre-V17 flow.
+	orgCode := "APP_" + strconv.FormatInt(appID, 10)
+	if aishe.Valid && aishe.String != "" {
+		orgCode = "AISHE_" + aishe.String
+	}
+
+	var orgID int64
+	// ON CONFLICT (code) DO UPDATE lets a pre-V17 org (created before
+	// the application_id column existed) get its FK back-filled the
+	// first time provision runs. New rows just insert.
+	if _, err := tx.ExecContext(ctx, `
+		INSERT INTO organizations(code, name, application_id)
+		VALUES($1, $2, $3)
+		ON CONFLICT (code) DO UPDATE SET
+		    application_id = COALESCE(organizations.application_id, EXCLUDED.application_id)`,
+		orgCode, instName, appID,
+	); err != nil {
+		return nil, fmt.Errorf("org insert: %w", err)
+	}
+	if err := tx.QueryRowContext(ctx,
+		`SELECT id FROM organizations WHERE code = $1`, orgCode,
+	).Scan(&orgID); err != nil {
+		return nil, fmt.Errorf("org read: %w", err)
+	}
+
+	// Placeholder password — applicant sets a real one via the magic
+	// link. NOT NULL on password_hash makes the placeholder necessary
+	// even though it's never a valid login credential (magic link is
+	// verified out-of-band and password gets replaced on set-password).
+	username := slugifyUsername(instName) + "_" + strconv.FormatInt(appID, 10)
+	placeholder, err := bcrypt.GenerateFromPassword([]byte("placeholder-"+username), bcrypt.MinCost)
+	if err != nil {
+		return nil, fmt.Errorf("bcrypt: %w", err)
+	}
+	adminEmail := strings.ToLower(strings.TrimSpace(headEmail))
+	var userID int64
+	if err := tx.QueryRowContext(ctx,
+		`INSERT INTO users(username, password_hash, role, org_id, display_name, email)
+		 VALUES($1, $2, 'admin', $3, $4, $5)
+		 RETURNING id`,
+		username, string(placeholder), orgID, headName+" ("+headDesignation+")",
+		nullable(adminEmail),
+	).Scan(&userID); err != nil {
+		return nil, fmt.Errorf("user insert: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("provision commit: %w", err)
+	}
+
+	// Best-effort — token + email happen post-commit. A failure here
+	// doesn't roll the org back; the applicant can request another
+	// link via the existing resend endpoint.
+	token, err := s.magicLinks.Generate(ctx, userID, magiclink.PurposeSetPassword, 0)
+	if err != nil {
+		return nil, fmt.Errorf("magic link: %w", err)
+	}
+	linkURL := s.buildMagicLinkURL(r, token)
+
+	if sendWelcomeEmail && s.emailer != nil {
+		body := buildRegistrationSubmittedEmail(instName, headName, username, linkURL)
+		if err := s.emailer.Send(ctx, email.Message{
+			To:      headEmail,
+			Subject: "Your Verification Portal registration is under review",
+			Body:    body,
+		}); err != nil {
+			log.Printf("emailer.Send submit-welcome to %s: %v", headEmail, err)
+		}
+	}
+
+	return &approvedApplication{
+		ApplicationID:   appID,
+		OrgID:           orgID,
+		AdminUserID:     userID,
+		AdminUsername:   username,
+		MagicLinkURL:    linkURL,
+		InstitutionName: instName,
+		HeadName:        headName,
+		HeadEmail:       headEmail,
+	}, nil
+}
+
+// approveApplication finalises a pending KYC review. Under the
+// 2026-08-25 rebuild the org + admin user are already created at
+// submit time; this function just:
+//
+//   1. Flips status='approved' + clears pending_reviewer.
+//   2. Runs the exam fan-out for the routed client (if any).
+//   3. Emails the applicant the "you're approved" notice (no magic
+//      link — they already have their password).
+//
+// The provisionOrgAndAdmin safety net runs first for the pre-V17
+// legacy path (rare — approved orgs from before this rebuild).
 //
 // scope, when non-nil, requires the application's client_id to match.
 // Superadmin callers pass nil (no scope filter). Client reviewers pass
@@ -82,23 +234,41 @@ func (s *Server) approveApplication(
 		}
 	}
 
-	tx, err := s.deps.DB.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("db begin: %w", err)
+	// Read + validate pre-conditions on the pending row.
+	var (
+		status       string
+		gotScope     sql.NullInt64
+		appClientID  sql.NullInt64
+	)
+	if err := s.deps.DB.QueryRowContext(ctx,
+		`SELECT status, client_id, client_id
+		   FROM institution_applications WHERE id = $1`, appID,
+	).Scan(&status, &gotScope, &appClientID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errAppNotFound
+		}
+		return nil, fmt.Errorf("db read: %w", err)
 	}
-	defer tx.Rollback()
+	if scope != nil {
+		if !gotScope.Valid || gotScope.Int64 != *scope {
+			return nil, errAppOutOfScope
+		}
+	}
+	if status != "pending" {
+		return nil, fmt.Errorf("%w (currently %s)", errAppNotPending, status)
+	}
 
-	// Atomically claim the application as approved BEFORE doing any
-	// other work. Two concurrent approvals would otherwise both read
-	// status='pending', both proceed, and both create user/operator
-	// rows; the second would see UNIQUE failures on some inserts but
-	// might leave half-created state. UPDATE ... WHERE status='pending'
-	// guarantees exactly one transaction wins.
-	//
-	// The scope predicate is folded into the same UPDATE so a reviewer
-	// out-of-scope can't even race a superadmin — the row simply
-	// doesn't match their WHERE clause. pending_reviewer is nulled out
-	// on approve since the row is now terminal.
+	// Legacy safety net — pre-V17 apps may not have an org yet.
+	// New apps (post-2026-08-25) had provisionOrgAndAdmin run at
+	// submit, so this is a no-op idempotent lookup.
+	prov, err := s.provisionOrgAndAdmin(r, appID, false)
+	if err != nil {
+		return nil, err
+	}
+
+	// Atomic state flip. Gates on status='pending' so two concurrent
+	// approvers can't both win. Scope predicate folded in for the
+	// client-reviewer path.
 	q := `UPDATE institution_applications
 	         SET status = 'approved',
 	             pending_reviewer = NULL,
@@ -112,117 +282,24 @@ func (s *Server) approveApplication(
 		q += ` AND client_id = $4`
 		args = append(args, *scope)
 	}
-	res0, err := tx.ExecContext(ctx, q, args...)
+	res, err := s.deps.DB.ExecContext(ctx, q, args...)
 	if err != nil {
-		return nil, fmt.Errorf("app claim: %w", err)
+		return nil, fmt.Errorf("app approve: %w", err)
 	}
-	affected, _ := res0.RowsAffected()
-	if affected == 0 {
-		// Disambiguate why the row didn't move for a helpful error.
-		var (
-			status  string
-			gotScope sql.NullInt64
-		)
-		err := tx.QueryRowContext(ctx,
-			`SELECT status, client_id FROM institution_applications WHERE id = $1`, appID,
-		).Scan(&status, &gotScope)
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, errAppNotFound
-		}
-		if err != nil {
-			return nil, fmt.Errorf("db read: %w", err)
-		}
+	if n, _ := res.RowsAffected(); n == 0 {
+		// Lost the race — someone else just finalised. Report as
+		// out-of-scope for scoped callers, "not pending" for others.
 		if scope != nil {
-			if !gotScope.Valid || gotScope.Int64 != *scope {
-				return nil, errAppOutOfScope
-			}
+			return nil, errAppOutOfScope
 		}
-		if status != "pending" {
-			return nil, fmt.Errorf("%w (currently %s)", errAppNotPending, status)
-		}
-		return nil, errAppNotFound
+		return nil, errAppNotPending
 	}
 
-	// Now read the rest of the columns we need to provision the org.
-	// We already own the row's state transition; concurrent readers
-	// will see status='approved' and skip.
-	var (
-		instName, headName, headEmail, headDesignation string
-		aishe                                          sql.NullString
-		appClientID                                    sql.NullInt64
-	)
-	err = tx.QueryRowContext(ctx,
-		`SELECT institution_name, head_name, head_email, head_designation, aishe_code, client_id
-		   FROM institution_applications WHERE id = $1`, appID,
-	).Scan(&instName, &headName, &headEmail, &headDesignation, &aishe, &appClientID)
-	if err != nil {
-		return nil, fmt.Errorf("db read: %w", err)
-	}
-
-	// Choose an org code. Prefer AISHE code (always unique); fall back
-	// to a synthetic code derived from the application ID.
-	orgCode := "APP_" + strconv.FormatInt(appID, 10)
-	if aishe.Valid && aishe.String != "" {
-		orgCode = "AISHE_" + aishe.String
-	}
-
-	// Insert organization (or find existing — orgs.code is UNIQUE).
-	var orgID int64
-	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO organizations(code, name) VALUES($1, $2) ON CONFLICT (code) DO NOTHING`,
-		orgCode, instName,
-	); err != nil {
-		return nil, fmt.Errorf("org insert: %w", err)
-	}
-	if err := tx.QueryRowContext(ctx,
-		`SELECT id FROM organizations WHERE code = $1`, orgCode,
-	).Scan(&orgID); err != nil {
-		return nil, fmt.Errorf("org read: %w", err)
-	}
-
-	// Insert the admin user with a *placeholder* bcrypt of random data.
-	// They can't sign in until they set their own password via the
-	// magic link — the placeholder is for the NOT NULL constraint only.
-	username := slugifyUsername(instName) + "_" + strconv.FormatInt(appID, 10)
-	placeholder, err := bcrypt.GenerateFromPassword([]byte("placeholder-"+username), bcrypt.MinCost)
-	if err != nil {
-		return nil, fmt.Errorf("bcrypt: %w", err)
-	}
-	// Copy the KYC head_email onto the users row so the admin can sign
-	// in with either their username or the email they used to register.
-	adminEmail := strings.ToLower(strings.TrimSpace(headEmail))
-	var userID int64
-	if err := tx.QueryRowContext(ctx,
-		`INSERT INTO users(username, password_hash, role, org_id, display_name, email)
-		 VALUES($1, $2, 'admin', $3, $4, $5)
-		 RETURNING id`,
-		username, string(placeholder), orgID, headName+" ("+headDesignation+")",
-		nullable(adminEmail),
-	).Scan(&userID); err != nil {
-		return nil, fmt.Errorf("user insert: %w", err)
-	}
-
-	// Auto-created default "Centre Operator" retired 2026-08-23. Under
-	// the post-V9 subscription-approval flow operators must be assigned
-	// to specific exams via operator_exams; a default one with zero
-	// assignments was just noise on the admin's Operators page. Admin
-	// creates real, exam-scoped operators after logging in via the
-	// magic link below.
-	//
-	// The OperatorUsername / OperatorPassword fields on the response
-	// struct stay for wire-shape compatibility (existing FE reads them,
-	// now gets empty strings and hides its CredBlocks).
-
-	// V15 exam fan-out: if the application was routed through a
-	// specific client (kyc_review_mode routing put a client_id on this
-	// row), auto-grant the newly-created org access to every visible +
-	// open exam under that client. This is the replacement for the old
-	// admin-driven exam-subscribe flow — the admin no longer has a UI
-	// to subscribe, so subscription is minted here at approval time.
-	// Existing pre-V15 approvals had client_id=NULL and hit no rows;
-	// this only fires for post-V15 rows.
+	// V15 exam fan-out — if a client_id is attached, grant this org
+	// access to every visible + open exam under that client. Same
+	// insert as before the rebuild.
 	if appClientID.Valid {
-		if _, err := tx.ExecContext(ctx, `
+		if _, err := s.deps.DB.ExecContext(ctx, `
 			INSERT INTO organization_exam_subscriptions(
 			    org_id, exam_id, status, approval_type,
 			    subscribed_by, requested_at,
@@ -238,48 +315,35 @@ func (s *Server) approveApplication(
 			    reviewed_at = EXCLUDED.reviewed_at,
 			    reviewed_by = EXCLUDED.reviewed_by,
 			    review_note = EXCLUDED.review_note`,
-			orgID, reviewerUserID, appClientID.Int64,
+			prov.OrgID, reviewerUserID, appClientID.Int64,
 		); err != nil {
 			return nil, fmt.Errorf("exam fan-out: %w", err)
 		}
 	}
 
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("db commit: %w", err)
-	}
-
-	// Everything below is post-commit and best-effort; a failure here
-	// doesn't roll the approval back. The admin can request a fresh
-	// magic link via the resend endpoint.
-	token, err := s.magicLinks.Generate(ctx, userID, magiclink.PurposeSetPassword, 0)
-	if err != nil {
-		return nil, fmt.Errorf("magic link: %w", err)
-	}
-	linkURL := s.buildMagicLinkURL(r, token)
-
+	// Post-approval email — the applicant already has their password
+	// (they set it at registration time via the welcome magic link).
+	// This mail just tells them they're unlocked.
 	if s.emailer != nil {
-		body := buildApprovalEmail(instName, headName, username, linkURL, note)
+		body := buildKYCApprovedEmail(prov.InstitutionName, prov.HeadName, prov.AdminUsername, note)
 		if err := s.emailer.Send(ctx, email.Message{
-			To:      headEmail,
-			Subject: "Your institution has been approved — set your portal password",
+			To:      prov.HeadEmail,
+			Subject: "Your Verification Portal registration has been approved",
 			Body:    body,
 		}); err != nil {
-			log.Printf("emailer.Send approval to %s: %v", headEmail, err)
+			log.Printf("emailer.Send approval to %s: %v", prov.HeadEmail, err)
 		}
 	}
 
 	return &approvedApplication{
-		ApplicationID:    appID,
-		OrgID:            orgID,
-		AdminUserID:      userID,
-		AdminUsername:    username,
-		MagicLinkURL:     linkURL,
-		// OperatorUsername + OperatorPassword deliberately empty —
-		// auto-created default operator was removed 2026-08-23. See
-		// note above the Commit call.
-		InstitutionName:  instName,
-		HeadName:         headName,
-		HeadEmail:        headEmail,
+		ApplicationID:   appID,
+		OrgID:           prov.OrgID,
+		AdminUserID:     prov.AdminUserID,
+		AdminUsername:   prov.AdminUsername,
+		MagicLinkURL:    prov.MagicLinkURL,
+		InstitutionName: prov.InstitutionName,
+		HeadName:        prov.HeadName,
+		HeadEmail:       prov.HeadEmail,
 	}, nil
 }
 
