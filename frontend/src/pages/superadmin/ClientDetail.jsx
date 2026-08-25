@@ -999,7 +999,7 @@ function NewExamForm({ clientId, onCancel, onCreated }) {
                 <Input
                   value={name}
                   onChange={(e) => setName(e.target.value)}
-                  placeholder="e.g. UPSC Civil Services 2026"
+                  placeholder="Exam name"
                   maxLength={200}
                   required
                   autoFocus

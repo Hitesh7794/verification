@@ -382,7 +382,7 @@ export default function ApplicationDetail() {
                   {app.address_line1}
                   {app.address_line2 && <>, {app.address_line2}</>}
                   <br />
-                  {app.city}{app.district && `, ${app.district}`}<br />
+                  {[app.city, app.district].filter(Boolean).join(', ')}<br />
                   {app.state} — <span className="font-mono">{app.pin_code}</span>
                 </p>
               </CardBody>

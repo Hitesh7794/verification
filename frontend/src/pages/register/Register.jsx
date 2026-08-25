@@ -227,7 +227,7 @@ const FIELD_RULES = {
     return n < 1 || n > 10_000_000 ? 'Must be a positive number' : undefined
   },
   address_line1: (v) => (!v.trim() ? 'Required' : undefined),
-  city: (v) => (!v.trim() ? 'Required' : undefined),
+  district: (v) => (!v.trim() ? 'Required' : undefined),
   state: (v) => (!v.trim() ? 'Required' : undefined),
   pin_code: (v) => (/^[0-9]{6}$/.test(v.trim()) ? undefined : 'PIN must be 6 digits'),
   head_name: (v, form) =>
@@ -269,7 +269,7 @@ const STEP_FIELDS = [
     'year_established', 'affiliation_body', 'affiliation_body_other',
     'approx_student_count',
   ],
-  ['address_line1', 'city', 'state', 'pin_code', 'head_name', 'head_email', 'head_mobile'],
+  ['address_line1', 'district', 'state', 'pin_code', 'head_name', 'head_email', 'head_mobile'],
 ]
 
 const EMPTY_FORM = {
@@ -1466,6 +1466,7 @@ function Step1({
               value={form.state}
               onChange={(e) => {
                 update('state', e.target.value)
+                update('district', '')
                 update('city', '')
               }}
               onBlur={() => onBlurField('state')}
@@ -1476,27 +1477,27 @@ function Step1({
             />
           </Field>
           <Field
-            label="City"
+            label="District"
             required
-            error={errors.city}
+            error={errors.district}
             help={!form.state ? 'Select a state first' : undefined}
           >
             <Select
-              value={form.city}
-              onChange={(e) => update('city', e.target.value)}
-              onBlur={() => onBlurField('city')}
+              value={form.district}
+              onChange={(e) => update('district', e.target.value)}
+              onBlur={() => onBlurField('district')}
               disabled={!form.state}
               options={[
-                { value: '', label: form.state ? 'Select city' : '—' },
+                { value: '', label: form.state ? 'Select district' : '—' },
                 ...((CITIES_BY_STATE[form.state] || []).map((c) => ({ value: c, label: c }))),
               ]}
             />
           </Field>
-          <Field label="District">
+          <Field label="City">
             <Input
-              value={form.district}
-              onChange={(e) => update('district', e.target.value)}
-              placeholder="Optional"
+              value={form.city}
+              onChange={(e) => update('city', e.target.value)}
+              placeholder="e.g. City / Town (Optional)"
             />
           </Field>
         </div>
