@@ -374,6 +374,8 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/client/applications/{id}/docs/{doc_id}", s.requireRole("client_reviewer")(s.clientDownloadDoc))
 		r.Post("/api/client/applications/{id}/approve",      s.requireRole("client_reviewer")(s.clientApproveApplication))
 		r.Post("/api/client/applications/{id}/reject",       s.requireRole("client_reviewer")(s.clientRejectApplication))
+		r.Post("/api/client/applications/bulk-approve",      s.requireRole("client_reviewer")(s.clientBulkApproveApplications))
+		r.Post("/api/client/applications/bulk-reject",       s.requireRole("client_reviewer")(s.clientBulkRejectApplications))
 
 		// Client-reviewer subscription request management
 		r.Get("/api/client/subscription-requests",                                 s.requireRole("client_reviewer")(s.clientListSubscriptionRequests))

@@ -319,6 +319,145 @@ func (s *Server) clientRejectApplication(w http.ResponseWriter, r *http.Request)
 	})
 }
 
+// ---------- POST /api/client/applications/bulk-approve ----------
+// ---------- POST /api/client/applications/bulk-reject ----------
+//
+// Mass action variants of the single-app approve / reject. Reviewer
+// checks off N pending rows in the inbox and hits Approve All / Reject
+// All. Each row is processed via the same shared helpers so the
+// business rules (scope check, status='pending' race, exam fan-out,
+// email dispatch) are identical to the single-app path — no
+// duplicated logic to drift from the source of truth.
+//
+// The endpoint doesn't abort on the first failing app. It walks the
+// whole list, collects per-app outcomes, and returns them so the FE
+// can show a "12 approved, 2 skipped (out of scope)" style summary
+// without a second round-trip.
+//
+// A hard cap of 200 apps per call keeps a runaway UI (or curl) from
+// pinning a worker for minutes on a big INSTITUTIONS.csv import.
+
+const maxBulkKycAppsPerCall = 200
+
+type bulkKycActionReq struct {
+	ApplicationIDs []int64 `json:"application_ids"`
+	Note           string  `json:"note"`
+}
+
+type bulkKycActionResult struct {
+	ApplicationID int64  `json:"application_id"`
+	OK            bool   `json:"ok"`
+	Error         string `json:"error,omitempty"`
+	OrgID         int64  `json:"org_id,omitempty"`
+}
+
+type bulkKycActionResp struct {
+	Requested int                   `json:"requested"`
+	Succeeded int                   `json:"succeeded"`
+	Failed    int                   `json:"failed"`
+	Results   []bulkKycActionResult `json:"results"`
+}
+
+func (s *Server) clientBulkApproveApplications(w http.ResponseWriter, r *http.Request) {
+	s.clientBulkActionApplications(w, r, false /* isReject */)
+}
+
+func (s *Server) clientBulkRejectApplications(w http.ResponseWriter, r *http.Request) {
+	s.clientBulkActionApplications(w, r, true /* isReject */)
+}
+
+func (s *Server) clientBulkActionApplications(w http.ResponseWriter, r *http.Request, isReject bool) {
+	clientID, ok := clientReviewerScope(r)
+	if !ok {
+		writeErr(w, http.StatusForbidden, "client reviewer context required")
+		return
+	}
+	claims := claimsFrom(r)
+	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
+	var req bulkKycActionReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if len(req.ApplicationIDs) == 0 {
+		writeErr(w, http.StatusBadRequest, "application_ids list required")
+		return
+	}
+	if len(req.ApplicationIDs) > maxBulkKycAppsPerCall {
+		writeErr(w, http.StatusBadRequest,
+			fmt.Sprintf("too many applications in one call (max %d)", maxBulkKycAppsPerCall))
+		return
+	}
+	if isReject {
+		req.Note = strings.TrimSpace(req.Note)
+		if req.Note == "" {
+			writeErr(w, http.StatusBadRequest, "rejection note is required (one note is used for every rejected application)")
+			return
+		}
+	}
+
+	// Dedup + drop obviously bad ids up front so the audit log doesn't
+	// carry noise. Order preserved because the FE echoes results back
+	// in the same order it sent them.
+	seen := map[int64]bool{}
+	ids := make([]int64, 0, len(req.ApplicationIDs))
+	for _, id := range req.ApplicationIDs {
+		if id <= 0 || seen[id] {
+			continue
+		}
+		seen[id] = true
+		ids = append(ids, id)
+	}
+
+	results := make([]bulkKycActionResult, 0, len(ids))
+	succ, fail := 0, 0
+	for _, appID := range ids {
+		res := bulkKycActionResult{ApplicationID: appID}
+		if isReject {
+			if err := s.rejectApplication(r.Context(), appID, claims.UserID, &clientID, req.Note); err != nil {
+				_, msg := mapReviewErrorToHTTP(err)
+				res.Error = msg
+			} else {
+				res.OK = true
+			}
+		} else {
+			out, err := s.approveApplication(r, appID, claims.UserID, &clientID, req.Note)
+			if err != nil {
+				_, msg := mapReviewErrorToHTTP(err)
+				res.Error = msg
+			} else {
+				res.OK = true
+				res.OrgID = out.OrgID
+			}
+		}
+		if res.OK {
+			succ++
+		} else {
+			fail++
+		}
+		results = append(results, res)
+	}
+
+	action := "application.bulk_approve"
+	if isReject {
+		action = "application.bulk_reject"
+	}
+	s.auditFromRequest(r, action, "application", 0, map[string]any{
+		"client_id":       clientID,
+		"actor":           "client_reviewer",
+		"requested_count": len(ids),
+		"succeeded":       succ,
+		"failed":          fail,
+	})
+
+	writeJSON(w, http.StatusOK, bulkKycActionResp{
+		Requested: len(ids),
+		Succeeded: succ,
+		Failed:    fail,
+		Results:   results,
+	})
+}
+
 // ---------- GET /api/client/me ----------
 //
 // The dashboard uses this to render the client's name in the page

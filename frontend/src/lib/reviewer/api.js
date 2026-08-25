@@ -51,6 +51,28 @@ export async function rejectReviewerApplication(id, note) {
   })
 }
 
+// POST /api/client/applications/bulk-approve
+// Body: { application_ids: number[], note?: string }
+// Returns { requested, succeeded, failed, results: [{application_id, ok, error?}] }.
+// Non-atomic — a partial success is normal and the results array
+// carries per-app outcomes so the caller can label rows.
+export async function bulkApproveReviewerApplications(applicationIds, note = '') {
+  return api('/client/applications/bulk-approve', {
+    method: 'POST',
+    body: { application_ids: applicationIds, note },
+  })
+}
+
+// POST /api/client/applications/bulk-reject
+// Body: { application_ids: number[], note: string }
+// Note is REQUIRED — the same string is applied to every rejected row.
+export async function bulkRejectReviewerApplications(applicationIds, note) {
+  return api('/client/applications/bulk-reject', {
+    method: 'POST',
+    body: { application_ids: applicationIds, note },
+  })
+}
+
 // ── Exam Subscription Requests ─────────────────────────────────────────
 
 // GET /api/client/subscription-requests
