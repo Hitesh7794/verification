@@ -18,25 +18,52 @@ import (
 // parseDateTimeWindow parses ISO/RFC3339 timestamps, HTML5 datetime-local
 // strings ("2006-01-02T15:04"), or plain date strings ("2006-01-02").
 // If a date-only string is passed and isEnd is true, it defaults the time to
-// 23:59:59 UTC so the entire closing day is inclusive.
+// 23:59:59 IST so the entire closing day is inclusive.
+//
+// Naive inputs (no timezone in the string) are interpreted as
+// Asia/Kolkata (IST). This matches the product's audience — every
+// admin/superadmin/reviewer types local time in the datetime-local
+// picker and expects the exam / operator window to open at THAT
+// moment IST. Before this change naive strings were treated as UTC,
+// so 16:14 IST arrived at the backend as 16:14 UTC (= 21:44 IST) and
+// the FE showed the exam as still-upcoming for another 5.5 hours.
+// Values with an explicit offset (RFC3339 or …Z07:00) are respected
+// as-is, so a mobile client that attaches its own TZ still works.
 func parseDateTimeWindow(s string, isEnd bool) (time.Time, error) {
 	s = strings.TrimSpace(s)
 	if s == "" {
 		return time.Time{}, errors.New("datetime is required")
 	}
-	formats := []string{
+	// Formats with an explicit timezone — use time.Parse so the
+	// caller's offset wins.
+	tzFormats := []string{
 		time.RFC3339,
 		"2006-01-02T15:04:05Z07:00",
+	}
+	for _, f := range tzFormats {
+		if t, err := time.Parse(f, s); err == nil {
+			return t.UTC(), nil
+		}
+	}
+	// Naive formats — interpret in IST since that's what the UI + the
+	// product's audience mean when they type "16:14".
+	ist, err := time.LoadLocation("Asia/Kolkata")
+	if err != nil {
+		// Fallback: fixed +05:30 in case the container is missing
+		// tzdata. Same effective offset year-round for India.
+		ist = time.FixedZone("IST", 5*3600+30*60)
+	}
+	naiveFormats := []string{
 		"2006-01-02T15:04:05",
 		"2006-01-02T15:04",
 		"2006-01-02 15:04:05",
 		"2006-01-02 15:04",
 		"2006-01-02",
 	}
-	for _, f := range formats {
-		if t, err := time.Parse(f, s); err == nil {
+	for _, f := range naiveFormats {
+		if t, err := time.ParseInLocation(f, s, ist); err == nil {
 			if f == "2006-01-02" && isEnd {
-				t = time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 0, time.UTC)
+				t = time.Date(t.Year(), t.Month(), t.Day(), 23, 59, 59, 0, ist)
 			}
 			return t.UTC(), nil
 		}
