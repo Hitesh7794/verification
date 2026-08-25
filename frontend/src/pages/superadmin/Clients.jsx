@@ -14,7 +14,6 @@ import { FadeIn } from '../../components/ui/motion.jsx'
 import {
   listClients,
   createClient,
-  toggleClientVisibility,
   closeClient,
   reopenClient,
 } from '../../lib/superadmin/examCatalog.js'
@@ -91,23 +90,17 @@ export default function Clients() {
     }
   }
 
-  const onToggleVisibility = (c) =>
-    runRowAction(
-      c.id,
-      () => toggleClientVisibility(c.id),
-      `Could not ${c.visible ? 'hide' : 'show'} "${c.name}".`,
-    )
-
   const onClose = (c) =>
     runRowAction(c.id, () => closeClient(c.id), `Could not close "${c.name}".`)
 
   const onReopen = (c) =>
     runRowAction(c.id, () => reopenClient(c.id), `Could not reopen "${c.name}".`)
 
-  // Small at-a-glance stats above the table, so the page has a header
-  // that reads as a dashboard rather than just a create-button + list.
+  // Small at-a-glance stats above the table. 'Active' = not-ended
+  // (the Listed/Unlisted split is retired since admins no longer
+  // browse a client dropdown).
   const totalClients = clients.length
-  const visibleClients = clients.filter(c => c.visible && !c.closed).length
+  const activeClients = clients.filter(c => !c.closed).length
   const totalExams = clients.reduce((s, c) => s + (c.exam_count || 0), 0)
 
   return (
@@ -130,7 +123,7 @@ export default function Clients() {
         {!loading && totalClients > 0 && (
           <div className="grid grid-cols-3 gap-3 mb-6">
             <StatChip label="Clients" value={totalClients} />
-            <StatChip label="Listed + active" value={visibleClients} tone="emerald" />
+            <StatChip label="Active" value={activeClients} tone="emerald" />
             <StatChip label="Exams under them" value={totalExams} tone="indigo" />
           </div>
         )}
@@ -252,9 +245,6 @@ export default function Clients() {
                         <td className="px-5 py-3.5 text-slate-700 tabular-nums">{c.exam_count}</td>
                         <td className="px-5 py-3.5">
                           <div className="flex gap-1.5 flex-wrap">
-                            {c.visible
-                              ? <Pill tone="emerald" dot>Listed</Pill>
-                              : <Pill tone="slate" dot>Unlisted</Pill>}
                             {c.closed && <Pill tone="amber" dot>Ended</Pill>}
                             <KYCReviewModePill mode={c.kyc_review_mode || 'admin'} clientName={c.name} />
                           </div>
@@ -290,17 +280,6 @@ export default function Clients() {
                             </div>
                           ) : (
                             <div className="flex justify-end gap-1.5">
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                disabled={busyId === c.id}
-                                onClick={() => onToggleVisibility(c)}
-                                title={c.visible
-                                  ? 'Remove from the catalog admins subscribe from (reversible)'
-                                  : 'Add back to the catalog admins subscribe from'}
-                              >
-                                {busyId === c.id ? '…' : c.visible ? 'Unlist' : 'List'}
-                              </Button>
                               {c.closed ? (
                                 <Button
                                   variant="secondary"
