@@ -249,10 +249,14 @@ func (s *Server) superadminPatchClient(w http.ResponseWriter, r *http.Request) {
 		sets = append(sets, "notes = ?")
 		args = append(args, nullable(strings.TrimSpace(*req.Notes)))
 	}
+	// Capture the resolved new mode so we can sweep pending apps after
+	// the client UPDATE lands. Nil means the caller didn't touch mode.
+	var newMode *string
 	if req.KYCReviewMode != nil {
 		mode := normalizeKYCReviewMode(*req.KYCReviewMode)
 		sets = append(sets, "kyc_review_mode = ?")
 		args = append(args, mode)
+		newMode = &mode
 	}
 	if len(sets) == 0 {
 		writeErr(w, http.StatusBadRequest, "nothing to update")
@@ -264,6 +268,32 @@ func (s *Server) superadminPatchClient(w http.ResponseWriter, r *http.Request) {
 		db.Q("UPDATE clients SET "+strings.Join(sets, ", ")+" WHERE id = ?"), args...); err != nil {
 		writeErr(w, http.StatusInternalServerError, "db update: "+err.Error())
 		return
+	}
+
+	// If kyc_review_mode changed, re-route every pending application
+	// attached to this client to the queue the new mode says it
+	// belongs in. Without this sweep the superadmin's checkbox change
+	// only affects apps submitted AFTER the change — existing pending
+	// requests stay stuck in whichever queue they landed in first,
+	// which surprises the operator who just moved the checkbox.
+	//
+	// Terminal rows (approved/rejected) are ignored — retro-editing
+	// their pending_reviewer would rewrite history.
+	if newMode != nil {
+		reviewer := "admin"
+		if *newMode == "client" {
+			reviewer = "client"
+		}
+		if _, err := s.deps.DB.ExecContext(r.Context(),
+			`UPDATE institution_applications
+			    SET pending_reviewer = $1,
+			        updated_at = CURRENT_TIMESTAMP
+			  WHERE client_id = $2 AND status = 'pending'`,
+			reviewer, id,
+		); err != nil {
+			writeErr(w, http.StatusInternalServerError, "db pending sweep: "+err.Error())
+			return
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
