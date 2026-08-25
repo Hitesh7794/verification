@@ -219,7 +219,7 @@ export default function PendingApplications() {
               <thead className="bg-slate-50 sticky top-0 z-10">
                 <tr className="text-left text-xs uppercase tracking-wide text-slate-500">
                   <th className="px-6 py-3">Institution</th>
-                  <th className="px-6 py-3">Type / Tier</th>
+                  <th className="px-6 py-3">Type</th>
                   <th className="px-6 py-3">Location</th>
                   <th className="px-6 py-3">Head of institution</th>
                   <th className="px-6 py-3 text-center">Docs</th>
@@ -261,9 +261,6 @@ export default function PendingApplications() {
                       </td>
                       <td className="px-6 py-4">
                         <div className="text-slate-700 capitalize">{it.institution_type}</div>
-                        {it.tier && (
-                          <div className="text-xs text-slate-500 mt-0.5">{tierLabel(it.tier)}</div>
-                        )}
                       </td>
                       <td className="px-6 py-4 text-slate-700">
                         <div className="flex items-center gap-1.5">
@@ -353,10 +350,6 @@ function EmptyQueueState({ status, hasSearch }) {
   )
 }
 
-function tierLabel(t) {
-  if (!t) return ''
-  return t.replace('tier_', 'Tier ')
-}
 function cap(s) {
   if (!s) return ''
   return s.charAt(0).toUpperCase() + s.slice(1)

@@ -194,7 +194,6 @@ export default function ReviewerApplicationDetail() {
               </div>
               <p className="mt-1 text-sm text-slate-600">
                 {cap(app.institution_type)}
-                {app.tier && ` · ${tierLabel(app.tier)}`}
                 {app.aishe_code && ` · AISHE ${app.aishe_code}`}
               </p>
               <p className="mt-0.5 text-xs text-slate-500">
@@ -228,7 +227,6 @@ export default function ReviewerApplicationDetail() {
               <CardBody>
                 <DefList rows={[
                   ['Type', cap(app.institution_type)],
-                  ['Tier', tierLabel(app.tier)],
                   ['AISHE code', app.aishe_code || '—'],
                   ['PAN', app.pan || '—'],
                   ['Year established', app.year_established || '—'],
@@ -510,7 +508,6 @@ function DefList({ rows }) {
 }
 
 function cap(s) { return s ? s.charAt(0).toUpperCase() + s.slice(1) : '' }
-function tierLabel(t) { return t ? t.replace('tier_', 'Tier ') : '—' }
 function formatRelative(iso) {
   if (!iso) return ''
   const d = new Date(iso)

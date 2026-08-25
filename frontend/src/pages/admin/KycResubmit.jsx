@@ -58,7 +58,6 @@ export default function KycResubmit() {
       setForm({
         institution_name:      d.institution_name || '',
         institution_type:      d.institution_type || '',
-        tier:                  d.tier || '',
         aishe_code:            d.aishe_code || '',
         pan:                   d.pan || '',
         year_established:      d.year_established || '',

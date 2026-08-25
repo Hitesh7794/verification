@@ -281,7 +281,6 @@ function Row({ it, selectable, selected, onToggle }) {
             </div>
             <p className="text-[11px] text-stone-500 mt-1">
               {it.institution_type}
-              {it.tier ? ` · ${it.tier}` : ''}
               {it.aishe_code ? ` · AISHE ${it.aishe_code}` : ''}
             </p>
             <p className="text-[11px] text-stone-500 mt-0.5">
