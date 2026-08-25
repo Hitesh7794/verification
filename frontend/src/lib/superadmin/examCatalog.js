@@ -12,11 +12,15 @@ export async function listClients() {
   return clients
 }
 
-export async function createClient({ name, notes = '' }) {
-  return api('/superadmin/clients', {
-    method: 'POST',
-    body: { name, notes },
-  })
+// kyc_review_mode is picked in the create-client form (Innovatiview /
+// client / both) and MUST reach the backend on this POST, else the row
+// is created with the default 'admin' and the operator has to visit the
+// detail page to correct it — reads as "my choice reverted to
+// Innovatiview". Pass name + notes + kyc_review_mode through explicitly.
+export async function createClient({ name, notes = '', kyc_review_mode }) {
+  const body = { name, notes }
+  if (kyc_review_mode) body.kyc_review_mode = kyc_review_mode
+  return api('/superadmin/clients', { method: 'POST', body })
 }
 
 export async function getClient(id) {
