@@ -11,10 +11,11 @@ import AdminHistory from './pages/admin/History.jsx'
 import AdminDownloads from './pages/admin/Downloads.jsx'
 import AdminProducts from './pages/admin/Products.jsx'
 import AdminOperators from './pages/admin/Operators.jsx'
-// Removed 2026-08-24: AdminCatalog + AdminMyExams. Exam access is now
-// minted automatically at KYC-approval time (V15 flow). Existing
-// subscriptions still resolve via the backend API for agent
-// assignment; admins just have no self-service page any more.
+import AdminMyExams from './pages/admin/MyExams.jsx'
+// AdminCatalog stays removed — admins no longer pick exams; access is
+// minted automatically at KYC-approval time (V15 fan-out). MyExams
+// came back 2026-08-25 as a read-only 'here are the exams you can
+// assign to agents' view.
 
 import SuperLogin from './pages/superadmin/Login.jsx'
 import SuperDashboard from './pages/superadmin/Dashboard.jsx'
@@ -189,11 +190,14 @@ export default function App() {
             }
           />
 
-          {/* Admin's exam-catalog + my-exams pages removed 2026-08-24.
-              Under the V15 flow, org exam access is minted automatically
-              at KYC-approval time — the admin no longer chooses which
-              exams to subscribe to. Only the agents (operators)
-              management page remains. */}
+          {/* Admin's exam-catalog surface was retired 2026-08-24 (V15
+              flow — access is minted automatically at KYC approval).
+              /admin/my-exams is back 2026-08-25 as a read-only view so
+              the admin can see which exams they can assign to agents. */}
+          <Route
+            path="/admin/my-exams"
+            element={<RequireRole role="admin"><AdminMyExams /></RequireRole>}
+          />
           <Route
             path="/admin/operators"
             element={<RequireRole role="admin"><AdminOperators /></RequireRole>}
