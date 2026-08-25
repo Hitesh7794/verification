@@ -118,25 +118,6 @@ export default function DownloadsPanel({ heading = 'Verification agent client (W
                 <FactRow label="Last updated" value={formatDate(item.updated_at)} />
               </div>
 
-              <div className="mt-5">
-                <div className="text-xs uppercase tracking-wide text-slate-500 mb-1">SHA256</div>
-                <div className="flex items-center gap-2">
-                  <code className="flex-1 rounded-md border border-slate-200 bg-slate-50 px-3 py-2 text-xs font-mono text-slate-700 break-all">
-                    {item.sha256}
-                  </code>
-                  <button
-                    type="button"
-                    onClick={() => copy('sha256', item.sha256)}
-                    className="px-3 py-2 rounded-md border border-slate-300 bg-white text-sm text-slate-700 hover:bg-slate-50"
-                  >
-                    {copiedField === 'sha256' ? 'Copied!' : 'Copy'}
-                  </button>
-                </div>
-                <p className="mt-1 text-xs text-slate-500">
-                  Compare this hash after download to verify the file wasn't corrupted in transit.
-                </p>
-              </div>
-
               <div className="mt-6 flex flex-wrap items-center gap-3">
                 {busy ? (
                   <Button variant="secondary" onClick={onCancel} size="lg">
@@ -231,10 +212,6 @@ export default function DownloadsPanel({ heading = 'Verification agent client (W
                     <strong>Sign in</strong> — open Chrome / Edge from the new Desktop shortcut, sign in
                     with the verification agent credentials you already have. Plug in the fingerprint device. The
                     device indicator turns green when ready.
-                  </li>
-                  <li>
-                    <strong>Verify the SHA256</strong> (optional) — if anti-virus flags unsigned installers,
-                    share the SHA256 above so your IT can confirm the file matches.
                   </li>
                 </ol>
                 <p className="mt-4 text-xs text-slate-500">
