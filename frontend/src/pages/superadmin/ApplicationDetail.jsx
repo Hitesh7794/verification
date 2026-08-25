@@ -247,10 +247,12 @@ export default function ApplicationDetail() {
   const superadminOwnsDecision = isPending && isRouted && !isClientOnly
   const bothModeIntermediate =
     isPending && app.pending_reviewer === 'admin' && app.client_kyc_review_mode === 'both'
-  // Sensitive KYC documents are hidden on client-only routed apps.
-  // Basic contact/institution data stays visible so the superadmin can
-  // still sanity-check the routing.
-  const showDocs = !isClientOnly
+  // Docs are visible to superadmin ONLY when the app is routed to a
+  // board they have decision authority on (admin or both). Un-routed
+  // apps and client-only routed apps → docs sealed. Basic contact +
+  // institution data stays visible in every case so the superadmin
+  // can decide/verify routing.
+  const showDocs = isRouted && !isClientOnly
   const activeDoc = showDocs ? app.docs.find((d) => d.doc_id === activeDocId) : null
 
   return (
@@ -435,7 +437,7 @@ export default function ApplicationDetail() {
             icon={Icon.FileText}
             action={showDocs
               ? <span className="text-xs text-slate-500">{app.docs.length} document{app.docs.length === 1 ? '' : 's'}</span>
-              : <span className="text-xs text-slate-500">Sealed for this board</span>}
+              : <span className="text-xs text-slate-500">{isRouted ? 'Sealed for this board' : 'Route first to view'}</span>}
           >
             Documents
           </SectionTitle>
@@ -450,10 +452,20 @@ export default function ApplicationDetail() {
                     KYC documents hidden
                   </p>
                   <p className="text-xs text-slate-600 mt-1 max-w-md mx-auto leading-relaxed">
-                    This application is routed to <span className="font-semibold">{app.client_name}</span>,
-                    which is set to <b>client-only</b> review. Only that board's reviewer can view the KYC
-                    documents and approve or reject. If you need to change where this application is
-                    routed, use the panel above.
+                    {!isRouted ? (
+                      <>
+                        Route this application to a client first. If the board's review mode is
+                        <b> admin</b> or <b> both</b>, the KYC documents will appear here for your review.
+                        If it's <b> client-only</b>, the documents stay sealed for that board's reviewer.
+                      </>
+                    ) : (
+                      <>
+                        This application is routed to <span className="font-semibold">{app.client_name}</span>,
+                        which is set to <b>client-only</b> review. Only that board's reviewer can view the
+                        KYC documents and approve or reject. Use the routing panel above to send it to a
+                        different board if this is wrong.
+                      </>
+                    )}
                   </p>
                 </div>
               </CardBody>

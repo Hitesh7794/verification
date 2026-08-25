@@ -330,14 +330,20 @@ func (s *Server) superadminDownloadDoc(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid doc_id")
 		return
 	}
-	// V15 gate — client-only routed apps have their KYC docs sealed
-	// off from the superadmin's view. Only the destination client's
-	// reviewer can fetch them. Superadmin still sees basic contact
-	// fields (needed to route sensibly) but not the sensitive
-	// document bytes.
-	mode, _, mErr := s.applicationReviewMode(r.Context(), appID)
+	// V15 gate — KYC document bytes are visible to superadmin ONLY when
+	// the app is routed to a board they have decision authority on
+	// (mode='admin' or 'both'). Un-routed apps and client-only routed
+	// apps → sealed. Superadmin still sees basic contact fields on the
+	// detail page (they need those to route sensibly) but not the
+	// sensitive document bytes.
+	mode, clientID, mErr := s.applicationReviewMode(r.Context(), appID)
 	if mErr != nil && !errors.Is(mErr, sql.ErrNoRows) {
 		writeErr(w, http.StatusInternalServerError, "db read")
+		return
+	}
+	if clientID == nil {
+		writeErr(w, http.StatusForbidden,
+			"Route this application to a client first — KYC documents become viewable once routed to an admin/both board.")
 		return
 	}
 	if mode == "client" {
