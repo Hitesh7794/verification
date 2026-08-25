@@ -442,8 +442,12 @@ export default function Register() {
     const institutionType = form.institution_type === 'other'
       ? (form.institution_type_other.trim() || 'other')
       : form.institution_type
+    const district = (form.district || '').trim()
+    const city = (form.city || '').trim() || district
     const payload = {
       ...form,
+      district,
+      city,
       institution_type: institutionType,
       affiliation_body: affiliation,
       year_established: Number(form.year_established) || 0,

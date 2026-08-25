@@ -828,8 +828,16 @@ func validateInit(r *registerInitReq) error {
 	if r.AddressLine1 = strings.TrimSpace(r.AddressLine1); r.AddressLine1 == "" {
 		return errors.New("address_line1 required")
 	}
-	if r.City = strings.TrimSpace(r.City); r.City == "" {
-		return errors.New("city required")
+	r.District = strings.TrimSpace(r.District)
+	r.City = strings.TrimSpace(r.City)
+	if r.District == "" && r.City == "" {
+		return errors.New("district required")
+	}
+	if r.District == "" {
+		r.District = r.City
+	}
+	if r.City == "" {
+		r.City = r.District
 	}
 	if r.State = strings.TrimSpace(r.State); r.State == "" {
 		return errors.New("state required")
