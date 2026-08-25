@@ -173,15 +173,24 @@ function KYCLockScreen({ kyc }) {
                     {kyc?.review_note?.trim() ? kyc.review_note : '(no reason provided)'}
                   </blockquote>
                   <p>
-                    Please contact the platform team if you believe this was a mistake. The identity you
-                    registered with (email, mobile, PAN, AISHE) is locked to this decision and cannot be
-                    used to re-register.
+                    You can edit the details the reviewer flagged, replace or re-upload documents,
+                    and re-submit the same application below. Your account stays the same — no need to
+                    register again.
                   </p>
                   {kyc?.reviewed_at && (
                     <p className="text-xs text-stone-500">
                       Reviewed on {new Date(kyc.reviewed_at).toLocaleString('en-IN')}.
                     </p>
                   )}
+                  <div className="pt-2">
+                    <Link
+                      to="/admin/kyc-resubmit"
+                      className="inline-flex items-center gap-1.5 rounded-md bg-stone-900 text-white text-sm font-semibold px-4 py-2 hover:bg-stone-800 transition-colors"
+                    >
+                      Re-submit application
+                      <Icon.ChevronRight className="h-4 w-4" />
+                    </Link>
+                  </div>
                 </>
               )}
             </div>

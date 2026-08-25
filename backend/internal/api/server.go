@@ -293,10 +293,17 @@ func (s *Server) Router() http.Handler {
 		r.Post("/api/wallet/verify-payment", s.requireRole("admin")(s.walletVerifyPayment))
 
 		// Admin / Superadmin
-		// Open (no KYC gate) — the frontend lock screen needs this to
-		// render pending / rejected UX. Every other admin endpoint is
-		// KYC-gated via requireRole.
+		// Open (no KYC gate) — the frontend lock screen needs these to
+		// render pending / rejected UX and drive the rejected-app
+		// resubmit flow. Every other admin endpoint is KYC-gated via
+		// requireRole.
 		r.Get("/api/admin/kyc-status", s.requireRoleOpen("admin")(s.adminKYCStatus))
+		r.Get("/api/admin/kyc-application",                       s.requireRoleOpen("admin")(s.adminGetMyKYCApplication))
+		r.Patch("/api/admin/kyc-application",                     s.requireRoleOpen("admin")(s.adminPatchMyKYCApplication))
+		r.Get("/api/admin/kyc-application/docs/{doc_id}",         s.requireRoleOpen("admin")(s.adminDownloadMyKYCDoc))
+		r.Post("/api/admin/kyc-application/docs",                 s.requireRoleOpen("admin")(s.adminUploadMyKYCDoc))
+		r.Delete("/api/admin/kyc-application/docs/{doc_id}",      s.requireRoleOpen("admin")(s.adminDeleteMyKYCDoc))
+		r.Post("/api/admin/kyc-application/resubmit",             s.requireRoleOpen("admin")(s.adminResubmitMyKYCApplication))
 		r.Get("/api/admin/stats", s.requireRole("admin", "superadmin")(s.adminStats))
 		r.Get("/api/admin/recent", s.requireRole("admin", "superadmin")(s.adminRecent))
 		r.Get("/api/admin/by-center", s.requireRole("admin", "superadmin")(s.adminByCenter))

@@ -876,9 +876,10 @@ func (s *Server) registerUploadDoc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Only draft applications can accept uploads. Once submit() flips it
-	// to pending, the upload endpoint refuses further changes so a
-	// superadmin reviewing the queue can't see docs mutating under them.
+	// Only draft applications can accept uploads via this endpoint. Once
+	// submit() flips it to pending, uploads are locked here; the admin
+	// resubmit endpoint (see admin_kyc_resubmit_handlers.go) reuses the
+	// same body via s.saveUploadedDoc but with a different status gate.
 	var status string
 	err = s.deps.DB.QueryRowContext(r.Context(),
 		`SELECT status FROM institution_applications WHERE id = $1`, appID,
@@ -896,6 +897,15 @@ func (s *Server) registerUploadDoc(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	s.saveUploadedDoc(w, r, appID)
+}
+
+// saveUploadedDoc is the shared file-write + DB-insert body for both
+// the register-time upload (draft app) and the admin resubmit-time
+// upload (rejected app). Callers do their own status gate first; this
+// function handles the multipart parse, size / MIME checks, atomic
+// write, S3 mirror, and the docs-row insert.
+func (s *Server) saveUploadedDoc(w http.ResponseWriter, r *http.Request, appID int64) {
 	// Per-application doc count cap.
 	var docCount int
 	_ = s.deps.DB.QueryRowContext(r.Context(),

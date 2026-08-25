@@ -13,6 +13,7 @@ import AdminProducts from './pages/admin/Products.jsx'
 import AdminOperators from './pages/admin/Operators.jsx'
 import AdminMyExams from './pages/admin/MyExams.jsx'
 import AdminCatalog from './pages/admin/Catalog.jsx'
+import AdminKycResubmit from './pages/admin/KycResubmit.jsx'
 // AdminCatalog is a read-only browse page — subscriptions can't be
 // created from here any more (V15 fan-out grants exam access at KYC
 // approval), but the page still shows what the platform offers.
@@ -190,6 +191,13 @@ export default function App() {
             }
           />
 
+          {/* Re-submit surface for a rejected KYC — outside AdminShell
+              because AdminShell locks the page when the app isn't
+              approved, and this IS the fix-and-resubmit view. */}
+          <Route
+            path="/admin/kyc-resubmit"
+            element={<RequireRole role="admin"><AdminKycResubmit /></RequireRole>}
+          />
           {/* /admin/catalog + /admin/my-exams are both read-only under V15.
               Actual exam access is minted automatically at KYC approval;
               these pages exist for context and for the admin to see
