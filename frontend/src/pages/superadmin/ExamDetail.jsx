@@ -735,7 +735,7 @@ function EditExamForm({ exam, onCancel, onSaved }) {
         <form onSubmit={onSubmit} className="space-y-4">
           <div>
             <Label>Name</Label>
-            <Input value={name} onChange={(e) => setName(e.target.value)} required />
+            <Input value={name} onChange={(e) => setName(e.target.value)} placeholder="Exam name" required />
           </div>
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             <div>
