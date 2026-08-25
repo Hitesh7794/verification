@@ -415,7 +415,10 @@ function ReviewPortalPanel({ client, onChanged }) {
     setErr('')
     try {
       const rows = await listClientReviewers(client.id)
-      setReviewers(rows || [])
+      // Hide soft-disabled reviewers — the backend keeps their row so
+      // audit history stays intact, but the superadmin's active list
+      // should read as "who can currently sign in and review".
+      setReviewers((rows || []).filter((r) => !r.disabled_at))
     } catch (e) {
       setErr(e.message || 'Could not load reviewers')
     } finally {
