@@ -3,7 +3,7 @@ import AdminShell, { PageHead } from '../../components/shell/AdminShell.jsx'
 import { Button, Card, CardBody } from '../../components/ui/ui.jsx'
 import { Pill } from '../../components/ui/extras.jsx'
 import { FadeIn } from '../../components/ui/motion.jsx'
-import { getCatalog, subscribeExam } from '../../lib/admin/examSubscriptions.js'
+import { getCatalog, subscribeExam, unsubscribeExam } from '../../lib/admin/examSubscriptions.js'
 import { dateRange } from '../../lib/dates.js'
 
 // Admin > Exam catalog — read-only browse of every visible client and
@@ -49,6 +49,20 @@ export default function Catalog() {
       await loadData()
     } catch (e) {
       setErr(e?.body?.error || e?.message || 'Could not subscribe to this exam')
+    } finally {
+      setBusyExamId(null)
+    }
+  }
+
+  async function onUnsubscribe(examId, examName) {
+    if (!window.confirm(`Unsubscribe from "${examName}"? Any verification agents assigned to this exam will lose access.`)) return
+    setBusyExamId(examId)
+    setErr('')
+    try {
+      await unsubscribeExam(examId)
+      await loadData()
+    } catch (e) {
+      setErr(e?.body?.error || e?.message || 'Could not unsubscribe from this exam')
     } finally {
       setBusyExamId(null)
     }
@@ -124,7 +138,18 @@ export default function Catalog() {
                               <td className="px-5 py-3 text-slate-700 tabular-nums">{e.candidate_count}</td>
                               <td className="px-5 py-3 text-right">
                                 {isSubscribed ? (
-                                  <Pill tone="emerald" dot>Subscribed</Pill>
+                                  <div className="inline-flex items-center gap-2">
+                                    <Pill tone="emerald" dot>Subscribed</Pill>
+                                    <Button
+                                      variant="secondary"
+                                      size="sm"
+                                      disabled={rowBusy}
+                                      onClick={() => onUnsubscribe(e.id, e.name)}
+                                      className="!text-rose-700 !border-rose-200 hover:!bg-rose-50 hover:!border-rose-300"
+                                    >
+                                      {rowBusy ? 'Working…' : 'Unsubscribe'}
+                                    </Button>
+                                  </div>
                                 ) : isPending ? (
                                   <Pill tone="amber" dot>Pending review</Pill>
                                 ) : (
