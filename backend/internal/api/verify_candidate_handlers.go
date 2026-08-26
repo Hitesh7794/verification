@@ -190,12 +190,14 @@ func (s *Server) getCandidatePhoto(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// PHOTOS_BACKEND=s3: mint a 5-minute presigned URL and 302 the
-	// browser at it. The bytes never touch our EC2 — big win for
-	// bandwidth once a testing centre has many operators viewing
-	// photos in parallel. Auth is enforced HERE (requireRole gate on
-	// the route) before we hand out the signed URL, so an
-	// unauthenticated browser still gets 401 upstream.
+	// PHOTOS_BACKEND=s3: fetch the object server-side and stream the
+	// bytes back to the browser inline. We used to 302→presigned S3
+	// URL for the bandwidth win, but the bucket has no CORS config so
+	// the browser blocked the cross-origin body — the operator saw
+	// "No photo on file" even though the server was matching the same
+	// photo happily via GetPhotoBytes on the face-match path. Bytes
+	// per photo are ~180 KB, once per candidate lookup — well under
+	// any bandwidth threshold worth optimising for.
 	if s.deps.Cfg.PhotosBackend == "s3" && s.storage != nil && s.storage.Enabled() {
 		examCode, err := s.resolveExamCodeForOperator(r)
 		if err != nil {
@@ -208,17 +210,19 @@ func (s *Server) getCandidatePhoto(w http.ResponseWriter, r *http.Request) {
 				"verification agent is not scoped to any exam")
 			return
 		}
-		url, err := s.storage.PresignPhotoURL(r.Context(), examCode, roll, 5*time.Minute)
+		bytes, err := s.storage.GetPhotoBytes(r.Context(), examCode, roll)
 		if err != nil {
+			if errors.Is(err, storage.ErrNotFound) {
+				writeErr(w, http.StatusNotFound, "photo not found")
+				return
+			}
 			writeErr(w, http.StatusBadGateway,
-				"could not presign photo url: "+err.Error())
+				"read gallery photo from s3: "+err.Error())
 			return
 		}
-		// 302 lets the browser follow to S3 directly. Cache-Control
-		// on the redirect itself is 0 so the browser re-hits our
-		// auth check each time the operator revisits the page.
-		w.Header().Set("Cache-Control", "no-store")
-		http.Redirect(w, r, url, http.StatusFound)
+		w.Header().Set("Content-Type", "image/jpeg")
+		w.Header().Set("Cache-Control", "private, max-age=300")
+		_, _ = w.Write(bytes)
 		return
 	}
 
