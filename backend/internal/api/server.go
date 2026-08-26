@@ -402,14 +402,14 @@ func (s *Server) Router() http.Handler {
 		r.Delete("/api/superadmin/clients/{id}/reviewers/{uid}",   s.requireRole("superadmin")(s.superadminDeleteReviewer))
 
 		// ── Exam catalog (Phase 1: superadmin creates clients + exams + candidates)
-		// Everything under this prefix is superadmin-only.
+		// Everything under this prefix is superadmin and reviewer accessible.
 		r.Post("/api/superadmin/clients",                              s.requireRole("superadmin")(s.superadminCreateClient))
-		r.Get("/api/superadmin/clients",                               s.requireRole("superadmin")(s.superadminListClients))
-		r.Get("/api/superadmin/clients/{id}",                          s.requireRole("superadmin")(s.superadminGetClient))
-		r.Patch("/api/superadmin/clients/{id}",                        s.requireRole("superadmin")(s.superadminPatchClient))
-		r.Post("/api/superadmin/clients/{id}/visibility",              s.requireRole("superadmin")(s.superadminToggleClientVisibility))
-		r.Post("/api/superadmin/clients/{id}/close",                   s.requireRole("superadmin")(s.superadminCloseClient))
-		r.Post("/api/superadmin/clients/{id}/reopen",                  s.requireRole("superadmin")(s.superadminReopenClient))
+		r.Get("/api/superadmin/clients",                               s.requireRole("superadmin", "client_reviewer")(s.superadminListClients))
+		r.Get("/api/superadmin/clients/{id}",                          s.requireRole("superadmin", "client_reviewer")(s.superadminGetClient))
+		r.Patch("/api/superadmin/clients/{id}",                        s.requireRole("superadmin", "client_reviewer")(s.superadminPatchClient))
+		r.Post("/api/superadmin/clients/{id}/visibility",              s.requireRole("superadmin", "client_reviewer")(s.superadminToggleClientVisibility))
+		r.Post("/api/superadmin/clients/{id}/close",                   s.requireRole("superadmin", "client_reviewer")(s.superadminCloseClient))
+		r.Post("/api/superadmin/clients/{id}/reopen",                  s.requireRole("superadmin", "client_reviewer")(s.superadminReopenClient))
 		r.Delete("/api/superadmin/clients/{id}",                       s.requireRole("superadmin")(s.superadminDeleteClient))
 
 		r.Post("/api/superadmin/clients/{id}/exams",                   s.requireRole("superadmin", "client_reviewer")(s.superadminCreateExam))

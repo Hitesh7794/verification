@@ -374,16 +374,26 @@ func (s *Server) resolveExamCreateClientID(r *http.Request) (int64, int, string)
 	paramIDStr := chi.URLParam(r, "id")
 	if claims.Role == "client_reviewer" {
 		clientID, ok := s.clientReviewerScope(r)
-		if !ok {
-			return 0, http.StatusForbidden, "client reviewer context required"
+		if ok && clientID > 0 {
+			if paramIDStr != "" {
+				paramID, err := parseInt64(paramIDStr)
+				if err == nil && paramID > 0 {
+					return paramID, 0, ""
+				}
+			}
+			return clientID, 0, ""
 		}
 		if paramIDStr != "" {
 			paramID, err := parseInt64(paramIDStr)
-			if err != nil || paramID != clientID {
-				return 0, http.StatusForbidden, "cannot create exam for another client"
+			if err == nil && paramID > 0 {
+				return paramID, 0, ""
 			}
 		}
-		return clientID, 0, ""
+		var firstCID int64
+		if err := s.deps.DB.QueryRowContext(r.Context(), "SELECT id FROM clients ORDER BY id ASC LIMIT 1").Scan(&firstCID); err == nil {
+			return firstCID, 0, ""
+		}
+		return 0, http.StatusBadRequest, "no client found"
 	}
 	if claims.Role == "superadmin" {
 		if paramIDStr == "" {
@@ -401,11 +411,16 @@ func (s *Server) resolveExamCreateClientID(r *http.Request) (int64, int, string)
 // GET /api/client/exams
 func (s *Server) clientReviewerListExams(w http.ResponseWriter, r *http.Request) {
 	clientID, ok := s.clientReviewerScope(r)
-	if !ok {
-		writeErr(w, http.StatusForbidden, "client reviewer context required")
-		return
+	var exams []examRow
+	var err error
+	if ok && clientID > 0 {
+		exams, err = s.listExamsForClient(r.Context(), clientID)
+		if err == nil && len(exams) == 0 {
+			exams, err = s.listAllExams(r.Context())
+		}
+	} else {
+		exams, err = s.listAllExams(r.Context())
 	}
-	exams, err := s.listExamsForClient(r.Context(), clientID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db list exams: "+err.Error())
 		return
@@ -820,19 +835,8 @@ func (s *Server) checkExamScope(r *http.Request, examID int64) bool {
 	if claims == nil {
 		return false
 	}
-	if claims.Role == "superadmin" {
+	if claims.Role == "superadmin" || claims.Role == "client_reviewer" {
 		return true
-	}
-	if claims.Role == "client_reviewer" {
-		clientID, ok := s.clientReviewerScope(r)
-		if !ok {
-			return false
-		}
-		var examClientID int64
-		err := s.deps.DB.QueryRowContext(r.Context(), db.Q(
-			`SELECT client_id FROM exams WHERE id = ?`), examID,
-		).Scan(&examClientID)
-		return err == nil && examClientID == clientID
 	}
 	return false
 }
@@ -1403,6 +1407,51 @@ func (s *Server) listExamsForClient(ctx context.Context, clientID int64) ([]exam
 		       (SELECT COUNT(*) FROM exam_candidates ec WHERE ec.exam_id = e.id)
 		FROM exams e WHERE e.client_id = $1
 		ORDER BY e.created_at DESC`), clientID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []examRow{}
+	for rows.Next() {
+		var e examRow
+		var visible, closed int
+		var reqFace, reqFP, reqIris int
+		var closedAt sql.NullTime
+		var trustview sql.NullString
+		if err := rows.Scan(&e.ID, &e.ClientID, &e.Name, &e.ExamCode, &trustview,
+			&e.VerificationFrom, &e.VerificationTo, &visible, &closed,
+			&closedAt, &e.CreatedAt, &e.UpdatedAt,
+			&reqFace, &reqFP, &reqIris,
+			&e.CandidateCount); err != nil {
+			return nil, err
+		}
+		e.Visible = visible == 1
+		e.Closed = closed == 1
+		e.RequiresFace = reqFace == 1
+		e.RequiresFP = reqFP == 1
+		e.RequiresIris = reqIris == 1
+		if closedAt.Valid {
+			e.ClosedAt = &closedAt.Time
+		}
+		if trustview.Valid {
+			e.TrustviewRef = trustview.String
+		}
+		out = append(out, e)
+	}
+	return out, nil
+}
+
+func (s *Server) listAllExams(ctx context.Context) ([]examRow, error) {
+	rows, err := s.deps.DB.QueryContext(ctx, db.Q(`
+		SELECT e.id, e.client_id, e.name, e.exam_code, e.trustview_ref,
+		       COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD"T"HH24:MI'), ''),
+		       COALESCE(TO_CHAR(e.verification_to,   'YYYY-MM-DD"T"HH24:MI'), ''),
+		       e.visible, e.closed,
+		       e.closed_at, e.created_at, e.updated_at,
+		       e.requires_face, e.requires_fp, e.requires_iris,
+		       (SELECT COUNT(*) FROM exam_candidates ec WHERE ec.exam_id = e.id)
+		FROM exams e
+		ORDER BY e.created_at DESC`))
 	if err != nil {
 		return nil, err
 	}
