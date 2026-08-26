@@ -40,6 +40,11 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		passHash       string
 		role           string
 		orgID          sql.NullInt64
+		// client_id scopes the client_reviewer role — has to be in the
+		// JWT so every /api/client/* handler can filter to the right
+		// board. Dropping it here (as an earlier refactor did) turned
+		// every reviewer endpoint into a 403.
+		clientID       sql.NullInt64
 		displayName    string
 		disabledAt     sql.NullTime
 		passChangeReq  int
@@ -53,14 +58,14 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	identifier := strings.TrimSpace(req.Username)
 	emailLower := strings.ToLower(identifier)
 	err := s.deps.DB.QueryRowContext(r.Context(), db.Q(
-		`SELECT id, password_hash, role, org_id, display_name,
+		`SELECT id, password_hash, role, org_id, client_id, display_name,
 		        disabled_at, password_change_required, username
 		   FROM users
 		  WHERE username = ?
 		     OR (email = ? AND role IN ('admin','client','client_reviewer'))
 		  LIMIT 1`),
 		identifier, emailLower,
-	).Scan(&id, &passHash, &role, &orgID, &displayName,
+	).Scan(&id, &passHash, &role, &orgID, &clientID, &displayName,
 		&disabledAt, &passChangeReq, &actualUsername)
 	if err == sql.ErrNoRows {
 		s.auditAnonymous(r, "login.failure", map[string]any{
@@ -99,6 +104,10 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	if orgID.Valid {
 		v := orgID.Int64
 		claims.OrgID = &v
+	}
+	if clientID.Valid {
+		v := clientID.Int64
+		claims.ClientID = &v
 	}
 	tok, err := s.deps.JWT.Issue(claims)
 	if err != nil {
