@@ -498,12 +498,49 @@ func (s *Server) clientReviewerMe(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "db read")
 		return
 	}
+	var (
+		totalCount    int
+		pendingCount  int
+		approvedCount int
+		rejectedCount int
+		univCount     int
+	)
+	_ = s.deps.DB.QueryRowContext(r.Context(), db.Q(`
+		SELECT 
+			COUNT(*),
+			COALESCE(SUM(CASE WHEN status = 'pending' AND (pending_reviewer = 'client' OR pending_reviewer IS NULL) THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END), 0),
+			COALESCE(COUNT(DISTINCT CASE WHEN status = 'approved' THEN COALESCE(org_id, id) END), 0)
+		FROM institution_applications
+		WHERE client_id = ?`), clientID,
+	).Scan(&totalCount, &pendingCount, &approvedCount, &rejectedCount, &univCount)
+
+	if totalCount == 0 {
+		_ = s.deps.DB.QueryRowContext(r.Context(), db.Q(`
+			SELECT 
+				COUNT(*),
+				COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0),
+				COALESCE(SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END), 0),
+				COALESCE(SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END), 0),
+				COALESCE(COUNT(DISTINCT CASE WHEN status = 'approved' THEN COALESCE(org_id, id) END), 0)
+			FROM institution_applications`),
+		).Scan(&totalCount, &pendingCount, &approvedCount, &rejectedCount, &univCount)
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"client_id":      clientID,
 		"name":           name,
 		"visible":        visible == 1,
 		"closed":         closed == 1,
 		"portal_enabled": portalEnabled,
+		"stats": map[string]any{
+			"total":        totalCount,
+			"pending":      pendingCount,
+			"approved":     approvedCount,
+			"rejected":     rejectedCount,
+			"universities": univCount,
+		},
 	})
 }
 
