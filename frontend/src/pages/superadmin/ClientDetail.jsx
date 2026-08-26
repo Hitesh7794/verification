@@ -15,6 +15,8 @@ import { FadeIn } from '../../components/ui/motion.jsx'
 import {
   getClient,
   createExam,
+  bulkCreateExamsCSV,
+  downloadSampleExamCSV,
   toggleExamVisibility,
   closeExam,
   reopenExam,
@@ -227,6 +229,10 @@ export default function ClientDetail() {
                   setCreating(false)
                   await refresh()
                   nav(`/superadmin/exams/${examId}`)
+                }}
+                onBulkCreated={async () => {
+                  setCreating(false)
+                  await refresh()
                 }}
               />
             </motion.div>
@@ -936,7 +942,10 @@ function EmptyExams({ onCreate }) {
 //                           accepted a file. TrustView reference was
 //                           removed (integration still pending).
 
-function NewExamForm({ clientId, onCancel, onCreated }) {
+function NewExamForm({ clientId, onCancel, onCreated, onBulkCreated }) {
+  const [mode, setMode] = useState('single') // 'single' | 'bulk'
+
+  // Single exam state
   const [name, setName] = useState('')
   const [code, setCode] = useState('')
   const [from, setFrom] = useState('')
@@ -947,7 +956,15 @@ function NewExamForm({ clientId, onCancel, onCreated }) {
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
-  async function onSubmit(e) {
+  // Bulk CSV state
+  const [csvFile, setCsvFile] = useState(null)
+  const [bulkSaving, setBulkSaving] = useState(false)
+  const [bulkErr, setBulkErr] = useState('')
+  const [validationErrors, setValidationErrors] = useState([])
+  const [bulkSuccess, setBulkSuccess] = useState(null)
+  const [dragOver, setDragOver] = useState(false)
+
+  async function onSingleSubmit(e) {
     e.preventDefault()
     setSaving(true)
     setErr('')
@@ -974,110 +991,312 @@ function NewExamForm({ clientId, onCancel, onCreated }) {
     }
   }
 
-  const canSubmit = name.trim() && code.trim() && from && to && (reqFace || reqFP || reqIris)
+  async function onBulkSubmit(e) {
+    e.preventDefault()
+    if (!csvFile) return
+    setBulkSaving(true)
+    setBulkErr('')
+    setValidationErrors([])
+    setBulkSuccess(null)
+    try {
+      const res = await bulkCreateExamsCSV(clientId, csvFile)
+      setBulkSuccess(res.rows_seeded || res.exams?.length || 'Multiple')
+      setTimeout(() => {
+        if (onBulkCreated) onBulkCreated(res.rows_seeded)
+      }, 1200)
+    } catch (e) {
+      if (e.body?.validation_errors?.length) {
+        setValidationErrors(e.body.validation_errors)
+      } else {
+        setBulkErr(e.message || 'Bulk upload failed. Please check the CSV format.')
+      }
+    } finally {
+      setBulkSaving(false)
+    }
+  }
+
+  function handleFileDrop(e) {
+    e.preventDefault()
+    setDragOver(false)
+    const file = e.dataTransfer?.files?.[0]
+    if (file && (file.name.endsWith('.csv') || file.type.includes('csv') || file.type.includes('text'))) {
+      setCsvFile(file)
+      setBulkErr('')
+      setValidationErrors([])
+    } else if (file) {
+      setBulkErr('Please upload a valid .csv file.')
+    }
+  }
+
+  const canSingleSubmit = name.trim() && code.trim() && from && to && (reqFace || reqFP || reqIris)
 
   return (
     <div className="mb-6 rounded-xl bg-warm-surface ring-1 ring-warm shadow-sm overflow-hidden">
       <div className="h-1 bg-stone-900" />
       <div className="p-5 sm:p-6">
-        <div className="flex items-start gap-3 mb-6">
-          <div className="h-9 w-9 rounded-lg bg-stone-100 text-stone-800 flex items-center justify-center shrink-0">
-            <Icon.FileText className="h-5 w-5" />
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+          <div className="flex items-start gap-3">
+            <div className="h-9 w-9 rounded-lg bg-stone-100 text-stone-800 flex items-center justify-center shrink-0">
+              {mode === 'single' ? <Icon.FileText className="h-5 w-5" /> : <Icon.Upload className="h-5 w-5" />}
+            </div>
+            <div>
+              <h3 className="text-base font-semibold text-slate-900">
+                {mode === 'single' ? 'New exam' : 'Bulk create exams'}
+              </h3>
+              <p className="text-xs text-slate-500 mt-0.5">
+                {mode === 'single'
+                  ? 'Add an individual exam under this client.'
+                  : 'Upload a CSV file to create multiple exams at once under this client.'}
+              </p>
+            </div>
           </div>
-          <div>
-            <h3 className="text-base font-semibold text-slate-900">New exam</h3>
-            <p className="text-xs text-slate-500 mt-0.5">
-              Add an exam under this client. Upload the candidate roster from the
-              exam page once it exists.
-            </p>
+
+          {/* Mode Switcher Tabs */}
+          <div className="inline-flex rounded-lg bg-slate-100 p-1 text-xs font-semibold">
+            <button
+              type="button"
+              onClick={() => { setMode('single'); setErr(''); }}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 transition-all ${
+                mode === 'single'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Icon.FileText className="h-3.5 w-3.5" />
+              <span>Single exam</span>
+            </button>
+            <button
+              type="button"
+              onClick={() => { setMode('bulk'); setBulkErr(''); setValidationErrors([]); }}
+              className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 transition-all ${
+                mode === 'bulk'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <Icon.Upload className="h-3.5 w-3.5" />
+              <span>Bulk upload (CSV)</span>
+            </button>
           </div>
         </div>
 
-        <form onSubmit={onSubmit} className="space-y-6">
-          {/* Section 1 — identity */}
-          <FormSection num="1" title="Identity" hint="What the exam is called and its unique code.">
-            <div className="grid grid-cols-1 sm:grid-cols-[1fr_240px] gap-4">
-              <div>
-                <Label>Name <span className="text-rose-500">*</span></Label>
-                <Input
-                  value={name}
-                  onChange={(e) => setName(e.target.value)}
-                  placeholder="Exam name"
-                  maxLength={200}
-                  required
-                  autoFocus
+        {mode === 'single' ? (
+          /* Single Exam Form */
+          <form onSubmit={onSingleSubmit} className="space-y-6">
+            {/* Section 1 — identity */}
+            <FormSection num="1" title="Identity" hint="What the exam is called and its unique code.">
+              <div className="grid grid-cols-1 sm:grid-cols-[1fr_240px] gap-4">
+                <div>
+                  <Label>Name <span className="text-rose-500">*</span></Label>
+                  <Input
+                    value={name}
+                    onChange={(e) => setName(e.target.value)}
+                    placeholder="Exam name"
+                    maxLength={200}
+                    required
+                    autoFocus
+                  />
+                </div>
+                <div>
+                  <Label>Exam code <span className="text-rose-500">*</span></Label>
+                  <Input
+                    value={code}
+                    onChange={(e) => setCode(e.target.value.toUpperCase())}
+                    placeholder="EXAM-2026-01"
+                    maxLength={60}
+                    required
+                    className="font-mono uppercase tracking-wide"
+                  />
+                  <p className="text-[11px] text-slate-500 mt-1">Globally unique. Uppercase, no spaces.</p>
+                </div>
+              </div>
+            </FormSection>
+
+            {/* Section 2 — window */}
+            <FormSection num="2" title="Verification window" hint="Colleges can only verify candidates for this exam inside this date & time range.">
+              <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                <div>
+                  <Label>From (date & time) <span className="text-rose-500">*</span></Label>
+                  <Input type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)} required />
+                </div>
+                <div>
+                  <Label>To (date & time) <span className="text-rose-500">*</span></Label>
+                  <Input type="datetime-local" value={to} onChange={(e) => setTo(e.target.value)} required min={from || undefined} />
+                </div>
+              </div>
+            </FormSection>
+
+            {/* Section 3 — biometric requirements */}
+            <FormSection num="3" title="Biometrics" hint="Which biometrics the verification agent must capture for a candidate to be verified. At least one required.">
+              <div className="flex flex-wrap gap-4">
+                <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                  <input type="checkbox" checked={reqFace} onChange={(e) => setReqFace(e.target.checked)} />
+                  Face
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                  <input type="checkbox" checked={reqFP} onChange={(e) => setReqFP(e.target.checked)} />
+                  Fingerprint
+                </label>
+                <label className="inline-flex items-center gap-2 text-sm text-slate-700">
+                  <input type="checkbox" checked={reqIris} onChange={(e) => setReqIris(e.target.checked)} />
+                  Iris
+                </label>
+              </div>
+            </FormSection>
+
+            {/* Section 4 — candidate data */}
+            <FormSection num="4" title="Candidate data" hint="Uploaded from the exam page after the exam is created.">
+              <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2.5 text-xs text-slate-600">
+                After creating this exam, open it to upload the candidate roster
+                (name, roll_no + optional extras) and the centres CSV. Validation
+                errors and upload history live there too.
+              </div>
+            </FormSection>
+
+            {err && (
+              <div role="alert" className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">
+                {err}
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
+              <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>
+              <Button type="submit" disabled={saving || !canSingleSubmit}>
+                {saving ? 'Saving…' : 'Create exam'}
+              </Button>
+            </div>
+          </form>
+        ) : (
+          /* Bulk CSV Upload Form */
+          <form onSubmit={onBulkSubmit} className="space-y-6">
+            {/* Step 1: Download Sample Template */}
+            <div className="rounded-xl border border-slate-200/80 bg-slate-50/50 p-4 sm:p-5">
+              <div className="flex flex-wrap items-center justify-between gap-4">
+                <div className="min-w-0">
+                  <h4 className="text-sm font-semibold text-slate-900">1. CSV Template & Format Guidelines</h4>
+                  <p className="text-xs text-slate-500 mt-1 max-w-xl">
+                    Required headers: <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">exam_name</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">exam_code</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">verification_from</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">verification_to</code>.
+                    <br />
+                    Optional biometrics: <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">requires_face</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">requires_fp</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">requires_iris</code> (<code className="text-slate-700">yes</code> / <code className="text-slate-700">no</code>).
+                  </p>
+                </div>
+                <Button
+                  type="button"
+                  variant="outline"
+                  size="sm"
+                  onClick={downloadSampleExamCSV}
+                  className="bg-white hover:bg-slate-100 text-slate-800 shadow-sm shrink-0"
+                >
+                  <Icon.Download className="h-4 w-4 mr-1.5 text-slate-600" />
+                  Download sample CSV
+                </Button>
+              </div>
+            </div>
+
+            {/* Step 2: Upload CSV Dropzone */}
+            <div>
+              <h4 className="text-sm font-semibold text-slate-900 mb-2">2. Upload your CSV file</h4>
+              <div
+                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+                onDragLeave={() => setDragOver(false)}
+                onDrop={handleFileDrop}
+                className={`relative flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-8 transition-colors text-center ${
+                  dragOver
+                    ? 'border-stone-900 bg-stone-50/50'
+                    : 'border-slate-300 hover:border-slate-400 bg-white'
+                }`}
+              >
+                <input
+                  type="file"
+                  accept=".csv,text/csv"
+                  onChange={(e) => {
+                    const file = e.target.files?.[0]
+                    if (file) {
+                      setCsvFile(file)
+                      setBulkErr('')
+                      setValidationErrors([])
+                    }
+                  }}
+                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
                 />
+                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-600 mb-3">
+                  <Icon.Upload className="h-6 w-6" />
+                </div>
+                <p className="text-sm font-semibold text-slate-800">
+                  {csvFile ? csvFile.name : 'Choose a CSV file or drag and drop here'}
+                </p>
+                <p className="text-xs text-slate-500 mt-1">
+                  {csvFile
+                    ? `${(csvFile.size / 1024).toFixed(1)} KB — Click or drop another file to replace`
+                    : 'Only .csv files up to 20 MB are supported'}
+                </p>
+                {csvFile && (
+                  <div className="mt-3 flex items-center gap-2">
+                    <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 ring-1 ring-emerald-600/20">
+                      <Icon.Check className="h-3.5 w-3.5" />
+                      Ready to upload
+                    </span>
+                    <button
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation()
+                        setCsvFile(null)
+                        setValidationErrors([])
+                        setBulkErr('')
+                      }}
+                      className="text-xs text-slate-500 hover:text-rose-600 underline ml-2"
+                    >
+                      Remove
+                    </button>
+                  </div>
+                )}
               </div>
-              <div>
-                <Label>Exam code <span className="text-rose-500">*</span></Label>
-                <Input
-                  value={code}
-                  onChange={(e) => setCode(e.target.value.toUpperCase())}
-                  placeholder="EXAM-2026-01"
-                  maxLength={60}
-                  required
-                  className="font-mono uppercase tracking-wide"
-                />
-                <p className="text-[11px] text-slate-500 mt-1">Globally unique. Uppercase, no spaces.</p>
+            </div>
+
+            {/* Validation Errors */}
+            {validationErrors.length > 0 && (
+              <div className="rounded-xl border border-rose-200 bg-rose-50/80 p-4">
+                <div className="flex items-center gap-2 text-sm font-semibold text-rose-800 mb-2">
+                  <Icon.X className="h-4 w-4" />
+                  <span>Validation errors found in CSV ({validationErrors.length})</span>
+                </div>
+                <div className="max-h-48 overflow-y-auto space-y-1.5 pr-2">
+                  {validationErrors.map((v, i) => (
+                    <div key={i} className="text-xs text-rose-700 flex items-start gap-2 bg-white/70 rounded-md p-2 border border-rose-100">
+                      <span className="font-mono font-semibold text-rose-900 bg-rose-100 px-1.5 py-0.5 rounded shrink-0">
+                        Line {v.line}
+                      </span>
+                      <span>{v.msg}</span>
+                    </div>
+                  ))}
+                </div>
               </div>
-            </div>
-          </FormSection>
+            )}
 
-          {/* Section 2 — window */}
-          <FormSection num="2" title="Verification window" hint="Colleges can only verify candidates for this exam inside this date & time range.">
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
-              <div>
-                <Label>From (date & time) <span className="text-rose-500">*</span></Label>
-                <Input type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)} required />
+            {/* General Error Banner */}
+            {bulkErr && (
+              <div role="alert" className="rounded-lg bg-rose-50 border border-rose-200 px-4 py-3 text-sm text-rose-700">
+                {bulkErr}
               </div>
-              <div>
-                <Label>To (date & time) <span className="text-rose-500">*</span></Label>
-                <Input type="datetime-local" value={to} onChange={(e) => setTo(e.target.value)} required min={from || undefined} />
+            )}
+
+            {/* Success Confirmation */}
+            {bulkSuccess && (
+              <div role="status" className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800 flex items-center gap-2">
+                <Icon.Check className="h-4 w-4 shrink-0 text-emerald-600" />
+                <span>Successfully created {bulkSuccess} exams! Refreshing list…</span>
               </div>
-            </div>
-          </FormSection>
+            )}
 
-          {/* Section 3 — biometric requirements */}
-          <FormSection num="3" title="Biometrics" hint="Which biometrics the verification agent must capture for a candidate to be verified. At least one required.">
-            <div className="flex flex-wrap gap-4">
-              <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-                <input type="checkbox" checked={reqFace} onChange={(e) => setReqFace(e.target.checked)} />
-                Face
-              </label>
-              <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-                <input type="checkbox" checked={reqFP} onChange={(e) => setReqFP(e.target.checked)} />
-                Fingerprint
-              </label>
-              <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-                <input type="checkbox" checked={reqIris} onChange={(e) => setReqIris(e.target.checked)} />
-                Iris
-              </label>
+            {/* Actions */}
+            <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
+              <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>
+              <Button type="submit" disabled={bulkSaving || !csvFile}>
+                {bulkSaving ? 'Creating exams…' : 'Upload & create exams'}
+              </Button>
             </div>
-          </FormSection>
-
-          {/* Section 4 — candidate data.
-              Deliberately no form field. Uploads live on the exam page. */}
-          <FormSection num="4" title="Candidate data" hint="Uploaded from the exam page after the exam is created.">
-            <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2.5 text-xs text-slate-600">
-              After creating this exam, open it to upload the candidate roster
-              (name, roll_no + optional extras) and the centres CSV. Validation
-              errors and upload history live there too.
-            </div>
-          </FormSection>
-
-          {err && (
-            <div role="alert" className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">
-              {err}
-            </div>
-          )}
-
-          <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
-            <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>
-            <Button type="submit" disabled={saving || !canSubmit}>
-              {saving ? 'Saving…' : 'Create exam'}
-            </Button>
-          </div>
-        </form>
+          </form>
+        )}
       </div>
     </div>
   )

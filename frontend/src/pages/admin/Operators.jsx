@@ -12,45 +12,20 @@ import { FadeIn } from '../../components/ui/motion.jsx'
 import {
   listOperators,
   createOperator,
+  bulkCreateOperatorsCSV,
+  downloadSampleOperatorCSV,
   patchOperator,
   disableOperator,
   enableOperator,
   getSubscriptions,
 } from '../../lib/admin/examSubscriptions.js'
 import { getWallet, formatRupees } from '../../lib/wallet/wallet.js'
-import { uploadExamCSV } from '../../lib/api.js'
 import { dateRange, formatDateTime, toDatetimeLocal } from '../../lib/dates.js'
 
 // Admin > Operators — per-operator management (Phase 2). Each operator
 // has: username, password, display name, optional spending cap,
 // optional date window, and a subset of the college's subscribed
 // exams they're allowed to verify against.
-
-// Sample CSV content — one row per required column plus one example
-// operator row using safe placeholder values. Kept as a module-level
-// constant so the download and any future inline preview can share
-// the same source of truth.
-const OPERATOR_SAMPLE_CSV =
-`username,password,first_name,last_name,email,phone
-jdoe.op,ChangeMe123!,John,Doe,jdoe@example.com,+919999999999
-asharma.op,ChangeMe123!,Aditi,Sharma,asharma@example.com,+919888888888`
-
-function downloadOperatorSampleCsv() {
-  // Excel-friendly UTF-8 BOM so the file opens with the right
-  // encoding on double-click. Purely cosmetic — the backend parser
-  // strips it — but standard for CSV downloads.
-  const blob = new Blob(['﻿' + OPERATOR_SAMPLE_CSV], {
-    type: 'text/csv;charset=utf-8',
-  })
-  const url = URL.createObjectURL(blob)
-  const a = document.createElement('a')
-  a.href = url
-  a.download = 'verification-agents-sample.csv'
-  document.body.appendChild(a)
-  a.click()
-  a.remove()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
-}
 
 export default function Operators() {
   const [operators, setOperators] = useState([])
@@ -59,12 +34,8 @@ export default function Operators() {
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [creating, setCreating] = useState(false)
+  const [createMode, setCreateMode] = useState('single') // 'single' | 'bulk'
   const [editing, setEditing] = useState(null) // operator id currently being edited
-  const [bulking, setBulking] = useState(false)
-  const [bulkExamID, setBulkExamID] = useState('')
-  const [bulkFile, setBulkFile] = useState(null)
-  const [bulkBusy, setBulkBusy] = useState(false)
-  const [bulkResult, setBulkResult] = useState(null) // last response body
 
   const refresh = useCallback(async () => {
     setLoading(true)
@@ -87,22 +58,6 @@ export default function Operators() {
 
   useEffect(() => { refresh() }, [refresh])
 
-  async function onBulkUpload(e) {
-    e?.preventDefault()
-    if (!bulkExamID || !bulkFile) return
-    setBulkBusy(true)
-    setBulkResult(null)
-    try {
-      const { status, body } = await uploadExamCSV(bulkExamID, 'operators', bulkFile)
-      setBulkResult({ status, body })
-      if (status < 400) await refresh()
-    } catch (err) {
-      setBulkResult({ status: 0, body: { error: err.message || 'Bulk upload failed' } })
-    } finally {
-      setBulkBusy(false)
-    }
-  }
-
   async function onToggle(id, currentlyDisabled) {
     try {
       if (currentlyDisabled) {
@@ -124,108 +79,38 @@ export default function Operators() {
           title="Verification Agents"
           right={
             <div className="flex gap-2">
-              <Button variant="secondary" onClick={() => { setBulking(v => !v); setCreating(false); setEditing(null) }}>
-                {bulking ? 'Cancel bulk' : 'Bulk upload CSV'}
+              <Button
+                variant={creating && createMode === 'bulk' ? 'primary' : 'secondary'}
+                onClick={() => {
+                  if (creating && createMode === 'bulk') {
+                    setCreating(false)
+                  } else {
+                    setCreating(true)
+                    setCreateMode('bulk')
+                    setEditing(null)
+                  }
+                }}
+              >
+                <Icon.Upload className="h-4 w-4 mr-1.5" />
+                {creating && createMode === 'bulk' ? 'Close bulk upload' : 'Bulk upload CSV'}
               </Button>
-              <Button onClick={() => { setCreating(v => !v); setBulking(false); setEditing(null) }}>
-                {creating ? 'Cancel' : '+ New verification agent'}
+              <Button
+                onClick={() => {
+                  if (creating && createMode === 'single') {
+                    setCreating(false)
+                  } else {
+                    setCreating(true)
+                    setCreateMode('single')
+                    setEditing(null)
+                  }
+                }}
+              >
+                <Icon.Plus className="h-4 w-4 mr-1.5" />
+                {creating && createMode === 'single' ? 'Cancel' : '+ New verification agent'}
               </Button>
             </div>
           }
         />
-
-        {bulking && (
-          <Card className="mb-4">
-            <CardBody>
-              <div className="flex items-start justify-between gap-3 mb-1">
-                <h3 className="text-sm font-semibold text-slate-900">Bulk-upload verification agents from CSV</h3>
-                <button
-                  type="button"
-                  onClick={downloadOperatorSampleCsv}
-                  className="inline-flex items-center gap-1 rounded-md border border-slate-300 bg-white px-2 py-1 text-[11px] font-medium text-slate-700 hover:bg-slate-50 hover:border-slate-400 transition-colors shrink-0"
-                  title="Download a ready-to-edit sample CSV with the required columns"
-                >
-                  Sample CSV
-                </button>
-              </div>
-              <p className="text-xs text-slate-500 mb-3">
-                Required columns: <code>username</code>, <code>password</code>, <code>first_name</code>,
-                {' '}<code>last_name</code>, <code>email</code>. Extra columns (<code>phone</code>,
-                {' '}<code>centre_code</code>, <code>lab_code</code>, <code>config_name</code>,
-                {' '}<code>max_sessions</code>) are recognised but not stored. Comma OR tab-separated
-                files both work — pick whichever your spreadsheet exports.
-              </p>
-              <form onSubmit={onBulkUpload} className="grid gap-3 sm:grid-cols-3 sm:items-end">
-                <div>
-                  <Label>Assign to exam</Label>
-                  <select
-                    value={bulkExamID}
-                    onChange={(e) => setBulkExamID(e.target.value)}
-                    className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
-                  >
-                    <option value="">Pick a subscribed exam…</option>
-                    {subs.map((s) => (
-                      <option key={s.exam_id} value={s.exam_id}>
-                        {s.exam_code} — {s.exam_name}
-                      </option>
-                    ))}
-                  </select>
-                </div>
-                <div className="sm:col-span-1">
-                  <Label>CSV file</Label>
-                  <input
-                    type="file"
-                    accept=".csv,.txt,.tsv,text/csv,text/tab-separated-values"
-                    onChange={(e) => setBulkFile(e.target.files?.[0] || null)}
-                    className="block w-full text-sm text-slate-700 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200"
-                  />
-                </div>
-                <div>
-                  <Button type="submit" disabled={!bulkExamID || !bulkFile || bulkBusy}>
-                    {bulkBusy ? 'Uploading…' : 'Upload'}
-                  </Button>
-                </div>
-              </form>
-
-              {bulkResult && (
-                <div
-                  className={`mt-3 rounded-lg px-3 py-2 text-sm border ${
-                    bulkResult.status >= 200 && bulkResult.status < 300
-                      ? 'bg-emerald-50 border-emerald-200 text-emerald-800'
-                      : 'bg-rose-50 border-rose-200 text-rose-700'
-                  }`}
-                >
-                  {bulkResult.body?.error ? (
-                    <p>{bulkResult.body.error}</p>
-                  ) : (
-                    <>
-                      <p className="font-medium">
-                        {bulkResult.body?.rows_created || 0} created ·{' '}
-                        {bulkResult.body?.rows_assigned || 0} linked ·{' '}
-                        {bulkResult.body?.rows_failed || 0} failed
-                      </p>
-                      {bulkResult.body?.skipped_columns?.length > 0 && (
-                        <p className="text-xs mt-1 opacity-80">
-                          Ignored columns: {bulkResult.body.skipped_columns.join(', ')}
-                        </p>
-                      )}
-                      {bulkResult.body?.row_errors?.length > 0 && (
-                        <ul className="mt-2 text-xs list-disc list-inside space-y-0.5">
-                          {bulkResult.body.row_errors.slice(0, 10).map((e, i) => (
-                            <li key={i}>{e.line ? `Line ${e.line}: ` : ''}{e.msg}</li>
-                          ))}
-                          {bulkResult.body.row_errors.length > 10 && (
-                            <li>… {bulkResult.body.row_errors.length - 10} more</li>
-                          )}
-                        </ul>
-                      )}
-                    </>
-                  )}
-                </div>
-              )}
-            </CardBody>
-          </Card>
-        )}
 
         {subs.length === 0 && (
           <div className="mb-4 rounded-lg bg-amber-50 border border-amber-200 px-3 py-2 text-sm text-amber-800">
@@ -243,24 +128,67 @@ export default function Operators() {
           <div className="mb-6 rounded-xl bg-warm-surface ring-1 ring-warm shadow-sm overflow-hidden">
             <div className="h-1 bg-stone-900" />
             <div className="p-5 sm:p-6">
-              <div className="flex items-start gap-3 mb-5">
-                <div className="h-9 w-9 rounded-lg bg-stone-100 text-stone-800 flex items-center justify-center shrink-0">
-                  <Icon.Plus className="h-5 w-5" />
+              <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
+                <div className="flex items-start gap-3">
+                  <div className="h-9 w-9 rounded-lg bg-stone-100 text-stone-800 flex items-center justify-center shrink-0">
+                    {createMode === 'single' ? <Icon.Plus className="h-5 w-5" /> : <Icon.Upload className="h-5 w-5" />}
+                  </div>
+                  <div>
+                    <h3 className="text-base font-semibold text-slate-900">
+                      {createMode === 'single' ? 'New verification agent' : 'Bulk create verification agents'}
+                    </h3>
+                    <p className="text-xs text-slate-500 mt-0.5">
+                      {createMode === 'single'
+                        ? 'A per-agent login with spending cap, date window, and assigned exams.'
+                        : 'Upload a CSV file to create multiple verification agents at once.'}
+                    </p>
+                  </div>
                 </div>
-                <div>
-                  <h3 className="text-base font-semibold text-ink-900">New verification agent</h3>
-                  <p className="text-xs text-stone-500 mt-0.5">
-                    A per-agent login with an optional spending cap, date window, and one assigned exam.
-                  </p>
+
+                {/* Mode Switcher Tabs */}
+                <div className="inline-flex rounded-lg bg-slate-100 p-1 text-xs font-semibold">
+                  <button
+                    type="button"
+                    onClick={() => setCreateMode('single')}
+                    className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 transition-all ${
+                      createMode === 'single'
+                        ? 'bg-white text-slate-900 shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <Icon.FileText className="h-3.5 w-3.5" />
+                    <span>Single agent</span>
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => setCreateMode('bulk')}
+                    className={`flex items-center gap-1.5 rounded-md px-3 py-1.5 transition-all ${
+                      createMode === 'bulk'
+                        ? 'bg-white text-slate-900 shadow-sm'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    <Icon.Upload className="h-3.5 w-3.5" />
+                    <span>Bulk upload (CSV)</span>
+                  </button>
                 </div>
               </div>
-              <OperatorForm
-                subs={subs}
-                walletBalancePaise={walletBalancePaise}
-                mode="create"
-                onCancel={() => setCreating(false)}
-                onSaved={async () => { setCreating(false); await refresh() }}
-              />
+
+              {createMode === 'single' ? (
+                <OperatorForm
+                  subs={subs}
+                  walletBalancePaise={walletBalancePaise}
+                  mode="create"
+                  onCancel={() => setCreating(false)}
+                  onSaved={async () => { setCreating(false); await refresh() }}
+                />
+              ) : (
+                <BulkOperatorForm
+                  subs={subs}
+                  onCancel={() => setCreating(false)}
+                  onSaved={async () => { setCreating(false); await refresh() }}
+                />
+              )}
             </div>
           </div>
         )}
@@ -585,6 +513,20 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
     : fromAfterTo ? 'Valid from must be strictly before Valid to.'
     : ''
 
+  // Exam window validation — operator's window must be inside the superadmin-defined exam window
+  const selectedExam = subs.find((s) => examIds.includes(s.exam_id))
+  const examFromDate = selectedExam?.verification_from ? new Date(selectedExam.verification_from) : null
+  const examToDate   = selectedExam?.verification_to   ? new Date(selectedExam.verification_to)   : null
+
+  const beforeExamStart = selectedExam && examFromDate && !isNaN(examFromDate.getTime()) && fromDate && !isNaN(fromDate.getTime()) && fromDate < examFromDate
+  const afterExamEnd    = selectedExam && examToDate   && !isNaN(examToDate.getTime())   && toDate   && !isNaN(toDate.getTime())   && toDate > examToDate
+  const examWindowInvalid = beforeExamStart || afterExamEnd
+  const examWindowErrMsg = beforeExamStart
+    ? `Valid from cannot be earlier than the exam start time (${formatDateTime(selectedExam.verification_from)}).`
+    : afterExamEnd
+    ? `Valid to cannot be later than the exam end time (${formatDateTime(selectedExam.verification_to)}).`
+    : ''
+
   // Live cap validation — the wallet middleware enforces the runtime
   // limits anyway (see /liveness-check), but blocking obviously-broken
   // caps at form-submit surfaces the mistake before Save.
@@ -618,6 +560,10 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
     }
     if (dateInvalid) {
       setErr(dateErrMsg)
+      return
+    }
+    if (examWindowInvalid) {
+      setErr(examWindowErrMsg)
       return
     }
     setSaving(true)
@@ -751,17 +697,41 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
         </div>
         <div>
           <Label>Valid from (date & time)</Label>
-          <Input type="datetime-local" value={validFrom} onChange={(e) => setValidFrom(e.target.value)} required />
+          <Input
+            type="datetime-local"
+            value={validFrom}
+            onChange={(e) => setValidFrom(e.target.value)}
+            required
+            min={selectedExam?.verification_from ? selectedExam.verification_from.slice(0, 16) : undefined}
+            max={validTo || (selectedExam?.verification_to ? selectedExam.verification_to.slice(0, 16) : undefined)}
+          />
           {fromInPast && (
             <p className="text-[11px] text-rose-600 mt-1">Valid from cannot be in the past.</p>
+          )}
+          {beforeExamStart && (
+            <p className="text-[11px] text-rose-600 font-medium mt-1">
+              Valid from cannot be earlier than exam start ({formatDateTime(selectedExam.verification_from)}).
+            </p>
           )}
         </div>
         <div>
           <Label>Valid to (date & time)</Label>
-          <Input type="datetime-local" value={validTo} onChange={(e) => setValidTo(e.target.value)} required min={validFrom || undefined} />
+          <Input
+            type="datetime-local"
+            value={validTo}
+            onChange={(e) => setValidTo(e.target.value)}
+            required
+            min={validFrom || (selectedExam?.verification_from ? selectedExam.verification_from.slice(0, 16) : undefined)}
+            max={selectedExam?.verification_to ? selectedExam.verification_to.slice(0, 16) : undefined}
+          />
           {(toInPast || fromAfterTo) && (
             <p className="text-[11px] text-rose-600 mt-1">
               {toInPast ? 'Valid to cannot be in the past.' : 'Valid to must be after Valid from.'}
+            </p>
+          )}
+          {afterExamEnd && (
+            <p className="text-[11px] text-rose-600 font-medium mt-1">
+              Valid to cannot be later than exam end ({formatDateTime(selectedExam.verification_to)}).
             </p>
           )}
         </div>
@@ -783,6 +753,18 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
                 Assigning one exam is required.
               </p>
             )}
+            {selectedExam && (selectedExam.verification_from || selectedExam.verification_to) && (
+              <div className="mt-2 flex items-center gap-2 text-xs text-indigo-700 bg-indigo-50 border border-indigo-200/70 rounded-md px-2.5 py-1.5">
+                <Icon.Clock className="h-3.5 w-3.5 shrink-0 text-indigo-600" />
+                <span>
+                  <b>Exam Window:</b>{' '}
+                  {selectedExam.verification_from ? formatDateTime(selectedExam.verification_from) : 'Open'}
+                  {' → '}
+                  {selectedExam.verification_to ? formatDateTime(selectedExam.verification_to) : 'Open'}
+                  {' '}(Agent validity must be within this window)
+                </span>
+              </div>
+            )}
           </>
         )}
       </div>
@@ -795,10 +777,231 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
 
       <div className="flex justify-end gap-2">
         <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>
-        <Button type="submit" disabled={saving || examIds.length === 0 || !isPhoneValid || capInvalid || dateInvalid}>
+        <Button type="submit" disabled={saving || examIds.length === 0 || !isPhoneValid || capInvalid || dateInvalid || examWindowInvalid}>
           {saving ? 'Saving…' : (isEdit ? 'Save changes' : 'Create verification agent')}
         </Button>
       </div>
     </form>
   )
 }
+
+function BulkOperatorForm({ subs, onCancel, onSaved }) {
+  const [csvFile, setCsvFile] = useState(null)
+  const [selectedExamId, setSelectedExamId] = useState(subs[0]?.exam_id ? String(subs[0].exam_id) : '')
+  const [saving, setSaving] = useState(false)
+  const [err, setErr] = useState('')
+  const [validationErrors, setValidationErrors] = useState([])
+  const [success, setSuccess] = useState(null)
+  const [dragOver, setDragOver] = useState(false)
+
+  // sync default selected exam if subs change
+  useEffect(() => {
+    if (subs?.length && !selectedExamId) {
+      setSelectedExamId(String(subs[0].exam_id))
+    }
+  }, [subs, selectedExamId])
+
+  const selectedSub = subs.find((s) => String(s.exam_id) === String(selectedExamId)) || subs[0]
+
+  function handleFileDrop(e) {
+    e.preventDefault()
+    setDragOver(false)
+    const file = e.dataTransfer?.files?.[0]
+    if (file && (file.name.endsWith('.csv') || file.type.includes('csv') || file.type.includes('text'))) {
+      setCsvFile(file)
+      setErr('')
+      setValidationErrors([])
+    } else if (file) {
+      setErr('Please upload a valid .csv file.')
+    }
+  }
+
+  async function onSubmit(e) {
+    e.preventDefault()
+    if (!csvFile) return
+    setSaving(true)
+    setErr('')
+    setValidationErrors([])
+    setSuccess(null)
+    try {
+      const res = await bulkCreateOperatorsCSV(csvFile, selectedExamId ? [selectedExamId] : [])
+      setSuccess(res.rows_created || res.operators?.length || 'Multiple')
+      setTimeout(() => {
+        if (onSaved) onSaved()
+      }, 1200)
+    } catch (e) {
+      if (e.body?.validation_errors?.length) {
+        setValidationErrors(e.body.validation_errors)
+      } else {
+        setErr(e.message || 'Bulk upload failed. Please check the CSV format.')
+      }
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <form onSubmit={onSubmit} className="space-y-6">
+      {/* 1. CSV Template & Guidelines */}
+      <div className="rounded-xl border border-slate-200/80 bg-slate-50/50 p-4 sm:p-5">
+        <div className="flex flex-wrap items-center justify-between gap-4">
+          <div className="min-w-0">
+            <h4 className="text-sm font-semibold text-slate-900">1. CSV Template & Required Fields</h4>
+            <p className="text-xs text-slate-500 mt-1 max-w-2xl leading-relaxed">
+              Required headers: <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">username</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">password</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">display_name</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">email</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">phone</code>.
+              <br />
+              Optional columns: <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">cap_amount</code> (in ₹ rupees, e.g. <code className="text-slate-700">500</code>), <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">valid_from</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">valid_to</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">exam_codes</code>.
+            </p>
+          </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => downloadSampleOperatorCSV(selectedSub)}
+            className="bg-white hover:bg-slate-100 text-slate-800 shadow-sm shrink-0"
+          >
+            <Icon.Download className="h-4 w-4 mr-1.5 text-slate-600" />
+            Download sample CSV
+          </Button>
+        </div>
+      </div>
+
+      {/* 2. Default Exam Scope */}
+      {subs.length > 0 && (
+        <div className="rounded-xl border border-slate-200/80 bg-white p-4">
+          <h4 className="text-sm font-semibold text-slate-900 mb-1">2. Default Assigned Exam</h4>
+          <p className="text-xs text-slate-500 mb-3">
+            If an agent's row does not specify an explicit <code>exam_codes</code> column in the CSV, they will be assigned to this selected exam:
+          </p>
+          <select
+            value={selectedExamId}
+            onChange={(e) => setSelectedExamId(e.target.value)}
+            className="block w-full max-w-md rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-stone-900 focus:ring-1 focus:ring-stone-900 bg-white"
+          >
+            {subs.map((s) => (
+              <option key={s.exam_id} value={s.exam_id}>
+                {s.exam_code} — {s.exam_name}
+              </option>
+            ))}
+          </select>
+          {selectedSub && (selectedSub.verification_from || selectedSub.verification_to) && (
+            <div className="mt-2.5 flex items-center gap-2 text-xs text-indigo-700 bg-indigo-50/80 border border-indigo-200/80 rounded-lg px-3 py-1.5">
+              <Icon.Clock className="h-3.5 w-3.5 shrink-0 text-indigo-600" />
+              <span>
+                <b>Superadmin Exam Window:</b>{' '}
+                {selectedSub.verification_from ? formatDateTime(selectedSub.verification_from) : 'Open'}
+                {' → '}
+                {selectedSub.verification_to ? formatDateTime(selectedSub.verification_to) : 'Open'}.
+                {' '}(All CSV agent validity windows must fall within this range).
+              </span>
+            </div>
+          )}
+        </div>
+      )}
+
+      {/* 3. Dropzone */}
+      <div>
+        <h4 className="text-sm font-semibold text-slate-900 mb-2">3. Upload your CSV file</h4>
+        <div
+          onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+          onDragLeave={() => setDragOver(false)}
+          onDrop={handleFileDrop}
+          className={`relative flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-8 transition-colors text-center ${
+            dragOver
+              ? 'border-stone-900 bg-stone-50/50'
+              : 'border-slate-300 hover:border-slate-400 bg-white'
+          }`}
+        >
+          <input
+            type="file"
+            accept=".csv,.txt,.tsv,text/csv,text/tab-separated-values"
+            onChange={(e) => {
+              const file = e.target.files?.[0]
+              if (file) {
+                setCsvFile(file)
+                setErr('')
+                setValidationErrors([])
+              }
+            }}
+            className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
+          />
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-600 mb-3">
+            <Icon.Upload className="h-6 w-6" />
+          </div>
+          <p className="text-sm font-semibold text-slate-800">
+            {csvFile ? csvFile.name : 'Choose an agents CSV file or drag and drop here'}
+          </p>
+          <p className="text-xs text-slate-500 mt-1">
+            {csvFile
+              ? `${(csvFile.size / 1024).toFixed(1)} KB — Click or drop another file to replace`
+              : 'Only .csv, .tsv files up to 20 MB are supported'}
+          </p>
+          {csvFile && (
+            <div className="mt-3 flex items-center gap-2">
+              <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2 py-1 text-xs font-medium text-emerald-700 ring-1 ring-emerald-600/20">
+                <Icon.Check className="h-3.5 w-3.5" />
+                Ready to upload
+              </span>
+              <button
+                type="button"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  setCsvFile(null)
+                  setValidationErrors([])
+                  setErr('')
+                }}
+                className="text-xs text-slate-500 hover:text-rose-600 underline ml-2"
+              >
+                Remove
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Validation errors */}
+      {validationErrors.length > 0 && (
+        <div className="rounded-xl border border-rose-200 bg-rose-50/80 p-4">
+          <div className="flex items-center gap-2 text-sm font-semibold text-rose-800 mb-2">
+            <Icon.X className="h-4 w-4" />
+            <span>Validation errors found in CSV ({validationErrors.length})</span>
+          </div>
+          <div className="max-h-48 overflow-y-auto space-y-1.5 pr-2">
+            {validationErrors.map((v, i) => (
+              <div key={i} className="text-xs text-rose-700 flex items-start gap-2 bg-white/70 rounded-md p-2 border border-rose-100">
+                <span className="font-mono font-semibold text-rose-900 bg-rose-100 px-1.5 py-0.5 rounded shrink-0">
+                  Line {v.line}
+                </span>
+                <span>{v.msg}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
+
+      {/* General error */}
+      {err && (
+        <div role="alert" className="rounded-lg bg-rose-50 border border-rose-200 px-4 py-3 text-sm text-rose-700">
+          {err}
+        </div>
+      )}
+
+      {/* Success */}
+      {success && (
+        <div role="status" className="rounded-lg bg-emerald-50 border border-emerald-200 px-4 py-3 text-sm text-emerald-800 flex items-center gap-2">
+          <Icon.Check className="h-4 w-4 shrink-0 text-emerald-600" />
+          <span>Successfully created {success} verification agents! Refreshing list…</span>
+        </div>
+      )}
+
+      {/* Actions */}
+      <div className="flex justify-end gap-2 pt-4 border-t border-slate-100">
+        <Button type="button" variant="ghost" onClick={onCancel}>Cancel</Button>
+        <Button type="submit" disabled={saving || !csvFile}>
+          {saving ? 'Creating agents…' : 'Upload & create agents'}
+        </Button>
+      </div>
+    </form>
+  )
+}
+

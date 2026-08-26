@@ -6,7 +6,7 @@ export default function ClientLogin() {
       portalTitle="Center Verification Agent Portal"
       portalSubtitle="Verify candidate identity at the examination center using face and fingerprint biometrics."
       expectedRole="client"
-      redirectTo="/client"
+      redirectTo="/institute/operator"
       accent="indigo"
       demo="client / client123"
       rememberKey="nv_last_client_username"

@@ -20,11 +20,15 @@ package api
 import (
 	"context"
 	"database/sql"
+	"encoding/csv"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"log"
+	"math"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -234,6 +238,50 @@ type createOperatorReq struct {
 	ExamIDs          []int64 `json:"exam_ids"`
 }
 
+// validateOperatorWindowAgainstExam ensures the operator validity window [opFromStr, opToStr]
+// is strictly within the exam's superadmin-defined verification window [examFrom, examTo].
+func validateOperatorWindowAgainstExam(opFromStr, opToStr string, examFrom, examTo sql.NullString) error {
+	var opFrom, opTo time.Time
+	var hasOpFrom, hasOpTo bool
+
+	if s := strings.TrimSpace(opFromStr); s != "" {
+		if t, err := parseDateTimeWindow(s, false); err == nil {
+			opFrom = t
+			hasOpFrom = true
+		}
+	}
+	if s := strings.TrimSpace(opToStr); s != "" {
+		if t, err := parseDateTimeWindow(s, true); err == nil {
+			opTo = t
+			hasOpTo = true
+		}
+	}
+
+	ist := time.FixedZone("IST", 5*3600+30*60)
+
+	if examFrom.Valid && strings.TrimSpace(examFrom.String) != "" {
+		if ef, err := parseDateTimeWindow(examFrom.String, false); err == nil {
+			if hasOpFrom && opFrom.Before(ef) {
+				return fmt.Errorf("valid_from (%s) cannot be earlier than exam verification start (%s)",
+					opFrom.In(ist).Format("2006-01-02 15:04"),
+					ef.In(ist).Format("2006-01-02 15:04"))
+			}
+		}
+	}
+
+	if examTo.Valid && strings.TrimSpace(examTo.String) != "" {
+		if et, err := parseDateTimeWindow(examTo.String, true); err == nil {
+			if hasOpTo && opTo.After(et) {
+				return fmt.Errorf("valid_to (%s) cannot be later than exam verification end (%s)",
+					opTo.In(ist).Format("2006-01-02 15:04"),
+					et.In(ist).Format("2006-01-02 15:04"))
+			}
+		}
+	}
+
+	return nil
+}
+
 func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r)
 	if claims == nil || claims.OrgID == nil {
@@ -270,16 +318,32 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "phone number must be a valid 10-digit Indian mobile (starting 6/7/8/9, +91 optional)")
 		return
 	}
+	if len(req.ExamIDs) != 1 {
+		writeErr(w, http.StatusBadRequest, "a verification agent must be assigned to exactly one exam")
+		return
+	}
+	examID := req.ExamIDs[0]
+	var eFrom, eTo sql.NullString
+	if err := s.deps.DB.QueryRowContext(r.Context(), db.Q(`
+		SELECT verification_from, verification_to FROM exams WHERE id = ?`), examID).Scan(&eFrom, &eTo); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeErr(w, http.StatusBadRequest, "selected exam does not exist")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "db check exam: "+err.Error())
+		return
+	}
+
 	// Pre-check uniqueness (case-insensitive) to give a clean 409
 	// instead of a raw "UNIQUE constraint failed" error. Scoped to
 	// this admin's org so the same person can be provisioned as an
 	// operator under multiple orgs (migration V6). The DB index
 	// enforces the same (org_id, LOWER(email)) tuple at commit time.
 	var dupID int64
-	if err := s.deps.DB.QueryRowContext(r.Context(),
+	if err := s.deps.DB.QueryRowContext(r.Context(), db.Q(
 		`SELECT id FROM users
-		 WHERE org_id = $1 AND email IS NOT NULL AND LOWER(email) = LOWER($2)
-		 LIMIT 1`,
+		 WHERE org_id = ? AND email IS NOT NULL AND LOWER(email) = LOWER(?)
+		 LIMIT 1`),
 		orgID, req.Email,
 	).Scan(&dupID); err == nil {
 		writeErr(w, http.StatusConflict, "a user with this email already exists in this organisation")
@@ -318,6 +382,11 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if err := validateOperatorWindowAgainstExam(req.ValidFrom, req.ValidTo, eFrom, eTo); err != nil {
+		writeErr(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
 	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "bcrypt: "+err.Error())
@@ -335,12 +404,12 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 	// the org's subscribed exams). The legacy centre concept was removed
 	// in migration 021.
 	var uid int64
-	if err := tx.QueryRowContext(r.Context(), `
+	if err := tx.QueryRowContext(r.Context(), db.Q(`
 		INSERT INTO users(username, password_hash, role, org_id,
 		                  display_name, email, phone, password_plaintext,
 		                  spending_cap_paise, valid_from, valid_to)
-		VALUES($1, $2, 'client', $3, $4, $5, $6, $7, $8, $9, $10)
-		RETURNING id`,
+		VALUES(?, ?, 'client', ?, ?, ?, ?, ?, ?, ?, ?)
+		RETURNING id`),
 		req.Username, string(hash), orgID, req.DisplayName,
 		nullable(req.Email), nullable(req.Phone), req.Password,
 		nullableInt64(req.SpendingCapPaise), vFrom, vTo).Scan(&uid); err != nil {
@@ -389,6 +458,564 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 
 	op, _ := s.loadOperatorForOrg(r, orgID, uid)
 	writeJSON(w, http.StatusCreated, op)
+}
+
+// ── BULK CREATE OPERATORS CSV ─────────────────────────────────────────
+
+type parsedBulkOperator struct {
+	Username         string
+	Password         string
+	DisplayName      string
+	Email            string
+	Phone            string
+	SpendingCapPaise *int64
+	ValidFrom        string
+	ValidTo          string
+	ExamCodes        []string
+	Line             int
+}
+
+func parseBulkOperatorsCSV(buf []byte) ([]parsedBulkOperator, []csvValidationErr) {
+	head := buf
+	if len(head) > 4096 {
+		head = head[:4096]
+	}
+	rd := csv.NewReader(strings.NewReader(string(buf)))
+	rd.Comma = sniffCSVDelimiter(head)
+	rd.FieldsPerRecord = -1
+	rd.LazyQuotes = true
+
+	hdr, err := rd.Read()
+	if err != nil {
+		return nil, []csvValidationErr{{Line: 1, Msg: "cannot read header: " + err.Error()}}
+	}
+
+	uIdx, pIdx, dIdx, fIdx, lIdx, eIdx, phIdx, capIdx, fromIdx, toIdx, examIdx := -1, -1, -1, -1, -1, -1, -1, -1, -1, -1, -1
+
+	for i, raw := range hdr {
+		key := strings.ToLower(strings.TrimSpace(raw))
+		key = strings.TrimPrefix(key, "\ufeff")
+		switch key {
+		case "username", "user", "login":
+			uIdx = i
+		case "password", "pass", "pwd":
+			pIdx = i
+		case "display_name", "displayname", "name", "full_name", "fullname":
+			dIdx = i
+		case "first_name", "firstname":
+			fIdx = i
+		case "last_name", "lastname":
+			lIdx = i
+		case "email", "mail", "email_address":
+			eIdx = i
+		case "phone", "mobile", "phone_number", "mobile_number", "contact":
+			phIdx = i
+		case "cap_amount", "spending_cap", "spending_cap_rupees", "cap_rupees", "spending_cap_paise", "cap", "cap_in_rupees":
+			capIdx = i
+		case "valid_from", "from", "start_date", "start_time", "start":
+			fromIdx = i
+		case "valid_to", "to", "end_date", "end_time", "end":
+			toIdx = i
+		case "exam_codes", "exams", "exam_code", "exam":
+			examIdx = i
+		}
+	}
+
+	if uIdx < 0 || pIdx < 0 || eIdx < 0 {
+		return nil, []csvValidationErr{{Line: 1,
+			Msg: "header must contain at least 'username', 'password', and 'email'"}}
+	}
+
+	pick := func(row []string, idx int) string {
+		if idx < 0 || idx >= len(row) {
+			return ""
+		}
+		return strings.TrimSpace(row[idx])
+	}
+
+	var out []parsedBulkOperator
+	var verrs []csvValidationErr
+	seenUsers := map[string]int{}
+	seenEmails := map[string]int{}
+	seenPhones := map[string]int{}
+	line := 1
+
+	for {
+		row, err := rd.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		line++
+		if err != nil {
+			verrs = append(verrs, csvValidationErr{Line: line, Msg: err.Error()})
+			continue
+		}
+
+		empty := true
+		for _, cell := range row {
+			if strings.TrimSpace(cell) != "" {
+				empty = false
+				break
+			}
+		}
+		if empty {
+			continue
+		}
+
+		username := pick(row, uIdx)
+		password := pick(row, pIdx)
+		email := strings.ToLower(pick(row, eIdx))
+		phone := normalizePhone(pick(row, phIdx))
+		displayName := pick(row, dIdx)
+		if displayName == "" {
+			fn := pick(row, fIdx)
+			ln := pick(row, lIdx)
+			if fn != "" || ln != "" {
+				displayName = strings.TrimSpace(fn + " " + ln)
+			} else {
+				displayName = username
+			}
+		}
+
+		if len(username) < 3 || len(username) > 60 {
+			verrs = append(verrs, csvValidationErr{Line: line, Msg: "username required (3-60 characters)"})
+			continue
+		}
+		if strings.ContainsAny(username, " \t\r\n") {
+			verrs = append(verrs, csvValidationErr{Line: line, Msg: "username cannot contain spaces"})
+			continue
+		}
+
+		if err := validatePassword(password); err != nil {
+			verrs = append(verrs, csvValidationErr{Line: line, Msg: "password: " + err.Error()})
+			continue
+		}
+
+		if email == "" {
+			verrs = append(verrs, csvValidationErr{Line: line, Msg: "email is required"})
+			continue
+		}
+		if !isPlausibleEmail(email) {
+			verrs = append(verrs, csvValidationErr{Line: line, Msg: fmt.Sprintf("email %q is not a valid address", email)})
+			continue
+		}
+
+		if phone == "" {
+			verrs = append(verrs, csvValidationErr{Line: line, Msg: "phone number is required"})
+			continue
+		}
+		if !isPlausiblePhone(phone) {
+			verrs = append(verrs, csvValidationErr{Line: line, Msg: fmt.Sprintf("phone %q must be a valid 10-digit Indian mobile (starting 6/7/8/9, +91 optional)", phone)})
+			continue
+		}
+
+		// Check duplicates within CSV
+		uLower := strings.ToLower(username)
+		if prev, dup := seenUsers[uLower]; dup {
+			verrs = append(verrs, csvValidationErr{Line: line, Msg: fmt.Sprintf("duplicate username %q in CSV (first on line %d)", username, prev)})
+			continue
+		}
+		seenUsers[uLower] = line
+
+		if prev, dup := seenEmails[email]; dup {
+			verrs = append(verrs, csvValidationErr{Line: line, Msg: fmt.Sprintf("duplicate email %q in CSV (first on line %d)", email, prev)})
+			continue
+		}
+		seenEmails[email] = line
+
+		if prev, dup := seenPhones[phone]; dup {
+			verrs = append(verrs, csvValidationErr{Line: line, Msg: fmt.Sprintf("duplicate phone %q in CSV (first on line %d)", phone, prev)})
+			continue
+		}
+		seenPhones[phone] = line
+
+		// Spending cap parsing
+		var spendingCapPaise *int64
+		capStr := pick(row, capIdx)
+		if capStr != "" {
+			capStr = strings.TrimPrefix(capStr, "₹")
+			capStr = strings.TrimPrefix(capStr, "Rs.")
+			capStr = strings.TrimPrefix(capStr, "INR")
+			capStr = strings.TrimSpace(capStr)
+			val, err := strconv.ParseFloat(capStr, 64)
+			if err != nil || val < 1.0 {
+				verrs = append(verrs, csvValidationErr{Line: line, Msg: fmt.Sprintf("spending cap %q must be a valid number >= ₹1", capStr)})
+				continue
+			}
+			paise := int64(math.Round(val * 100))
+			spendingCapPaise = &paise
+		}
+
+		// Windows: optional
+		fromStr := pick(row, fromIdx)
+		toStr := pick(row, toIdx)
+		if fromStr != "" || toStr != "" {
+			_, _, err = parseDateWindow(fromStr, toStr)
+			if err != nil {
+				verrs = append(verrs, csvValidationErr{Line: line, Msg: err.Error()})
+				continue
+			}
+		}
+
+		// Exam codes
+		var examCodes []string
+		rawExams := pick(row, examIdx)
+		if rawExams != "" {
+			f := func(c rune) bool {
+				return c == ',' || c == ';' || c == '|'
+			}
+			for _, part := range strings.FieldsFunc(rawExams, f) {
+				cleanCode := strings.ToUpper(strings.TrimSpace(part))
+				if cleanCode != "" {
+					examCodes = append(examCodes, cleanCode)
+				}
+			}
+		}
+
+		out = append(out, parsedBulkOperator{
+			Username:         username,
+			Password:         password,
+			DisplayName:      displayName,
+			Email:            email,
+			Phone:            phone,
+			SpendingCapPaise: spendingCapPaise,
+			ValidFrom:        fromStr,
+			ValidTo:          toStr,
+			ExamCodes:        examCodes,
+			Line:             line,
+		})
+	}
+
+	return out, verrs
+}
+
+func (s *Server) adminBulkCreateOperatorsCSV(w http.ResponseWriter, r *http.Request) {
+	claims := claimsFrom(r)
+	if claims == nil || claims.OrgID == nil {
+		writeErr(w, http.StatusForbidden, "admin org context required")
+		return
+	}
+	orgID := *claims.OrgID
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxExamCSVBytes)
+	if err := r.ParseMultipartForm(maxExamCSVBytes); err != nil {
+		writeErr(w, http.StatusBadRequest, "multipart parse: "+err.Error())
+		return
+	}
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "file required (form field 'file')")
+		return
+	}
+	defer file.Close()
+
+	buf, err := io.ReadAll(file)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "read file: "+err.Error())
+		return
+	}
+
+	parsed, verrs := parseBulkOperatorsCSV(buf)
+	if len(verrs) > 0 {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+			"validation_errors": verrs,
+		})
+		return
+	}
+	if len(parsed) == 0 {
+		writeErr(w, http.StatusBadRequest, "csv contains no data rows")
+		return
+	}
+	if len(parsed) > 1000 {
+		writeErr(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("csv has %d operators, max 1000 per bulk upload", len(parsed)))
+		return
+	}
+
+	// 1. Check spending caps against org's wallet balance
+	walletBal, err := s.wallet.Balance(r.Context(), orgID)
+	if err == nil {
+		for _, p := range parsed {
+			if p.SpendingCapPaise != nil && *p.SpendingCapPaise > int64(walletBal) {
+				verrs = append(verrs, csvValidationErr{
+					Line: p.Line,
+					Msg: fmt.Sprintf("spending cap ₹%.2f exceeds current wallet balance ₹%.2f",
+						float64(*p.SpendingCapPaise)/100, float64(walletBal)/100),
+				})
+			}
+		}
+	}
+	if len(verrs) > 0 {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+			"validation_errors": verrs,
+		})
+		return
+	}
+
+	// 2. Check for username collisions
+	userMap := make(map[string]int, len(parsed))
+	uPlaceholders := make([]string, len(parsed))
+	uArgs := make([]any, len(parsed))
+	for i, p := range parsed {
+		uLower := strings.ToLower(p.Username)
+		userMap[uLower] = p.Line
+		uPlaceholders[i] = "?"
+		uArgs[i] = uLower
+	}
+
+	uq := "SELECT username FROM users WHERE LOWER(username) IN (" + strings.Join(uPlaceholders, ",") + ")"
+	uRows, err := s.deps.DB.QueryContext(r.Context(), db.Q(uq), uArgs...)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db check existing usernames: "+err.Error())
+		return
+	}
+	defer uRows.Close()
+
+	for uRows.Next() {
+		var u string
+		if err := uRows.Scan(&u); err == nil {
+			lineNum := userMap[strings.ToLower(u)]
+			verrs = append(verrs, csvValidationErr{
+				Line: lineNum,
+				Msg:  fmt.Sprintf("username %q already taken", u),
+			})
+		}
+	}
+
+	// 3. Check for email collisions in this org
+	emailMap := make(map[string]int, len(parsed))
+	ePlaceholders := make([]string, len(parsed))
+	eArgs := make([]any, len(parsed)+1)
+	eArgs[0] = orgID
+	for i, p := range parsed {
+		emailMap[p.Email] = p.Line
+		ePlaceholders[i] = "?"
+		eArgs[i+1] = p.Email
+	}
+
+	eq := "SELECT email FROM users WHERE org_id = ? AND LOWER(email) IN (" + strings.Join(ePlaceholders, ",") + ")"
+	eRows, err := s.deps.DB.QueryContext(r.Context(), db.Q(eq), eArgs...)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db check existing emails: "+err.Error())
+		return
+	}
+	defer eRows.Close()
+
+	for eRows.Next() {
+		var e string
+		if err := eRows.Scan(&e); err == nil {
+			lineNum := emailMap[strings.ToLower(e)]
+			verrs = append(verrs, csvValidationErr{
+				Line: lineNum,
+				Msg:  fmt.Sprintf("email %q already registered in this organisation", e),
+			})
+		}
+	}
+
+	if len(verrs) > 0 {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+			"validation_errors": verrs,
+		})
+		return
+	}
+
+	// 4. Resolve org's active subscribed exams
+	type subExamInfo struct {
+		ID               int64
+		ExamCode         string
+		VerificationFrom sql.NullString
+		VerificationTo   sql.NullString
+	}
+
+	subExamsRows, err := s.deps.DB.QueryContext(r.Context(), db.Q(`
+		SELECT e.id, UPPER(e.exam_code), e.verification_from, e.verification_to
+		FROM exams e
+		JOIN organization_exam_subscriptions s ON s.exam_id = e.id
+		WHERE s.org_id = ? AND s.status = 'approved'`), orgID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db load subscriptions: "+err.Error())
+		return
+	}
+	defer subExamsRows.Close()
+
+	codeToExamMap := make(map[string]subExamInfo)
+	idToExamMap := make(map[int64]subExamInfo)
+	allSubExamIDs := make([]int64, 0)
+	for subExamsRows.Next() {
+		var ex subExamInfo
+		if err := subExamsRows.Scan(&ex.ID, &ex.ExamCode, &ex.VerificationFrom, &ex.VerificationTo); err == nil {
+			codeToExamMap[ex.ExamCode] = ex
+			idToExamMap[ex.ID] = ex
+			allSubExamIDs = append(allSubExamIDs, ex.ID)
+		}
+	}
+
+	// Check default exam id passed in form field (if any)
+	var defaultExamID *int64
+	if defExamsStr := r.FormValue("default_exam_ids"); defExamsStr != "" {
+		for _, part := range strings.Split(defExamsStr, ",") {
+			if n, err := strconv.ParseInt(strings.TrimSpace(part), 10, 64); err == nil && n > 0 {
+				defaultExamID = &n
+				break
+			}
+		}
+	}
+	if defaultExamID == nil && len(allSubExamIDs) == 1 {
+		defaultExamID = &allSubExamIDs[0]
+	}
+
+	// Validate exam assignments and dates for each operator (must be exactly 1 exam per operator, within exam window)
+	for _, p := range parsed {
+		if len(p.ExamCodes) > 1 {
+			verrs = append(verrs, csvValidationErr{
+				Line: p.Line,
+				Msg:  "an agent can only be assigned to one exam (found multiple exam codes in CSV)",
+			})
+			continue
+		}
+
+		var targetExam *subExamInfo
+		if len(p.ExamCodes) == 1 {
+			c := p.ExamCodes[0]
+			if ex, ok := codeToExamMap[c]; ok {
+				targetExam = &ex
+			} else {
+				verrs = append(verrs, csvValidationErr{
+					Line: p.Line,
+					Msg:  fmt.Sprintf("unknown or unsubscribed exam_code %q", c),
+				})
+			}
+		} else if defaultExamID != nil {
+			if ex, ok := idToExamMap[*defaultExamID]; ok {
+				targetExam = &ex
+			}
+		} else {
+			if len(allSubExamIDs) == 0 {
+				verrs = append(verrs, csvValidationErr{
+					Line: p.Line,
+					Msg:  "your organisation has no approved exam subscriptions to assign agents to",
+				})
+			} else {
+				verrs = append(verrs, csvValidationErr{
+					Line: p.Line,
+					Msg:  "no exam specified in row and no default exam selected",
+				})
+			}
+		}
+
+		if targetExam != nil {
+			if err := validateOperatorWindowAgainstExam(p.ValidFrom, p.ValidTo, targetExam.VerificationFrom, targetExam.VerificationTo); err != nil {
+				verrs = append(verrs, csvValidationErr{
+					Line: p.Line,
+					Msg:  err.Error(),
+				})
+			}
+		}
+	}
+	if len(verrs) > 0 {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+			"validation_errors": verrs,
+		})
+		return
+	}
+
+	tx, err := s.deps.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db begin: "+err.Error())
+		return
+	}
+	defer tx.Rollback()
+
+	type createdOpResult struct {
+		ID          int64  `json:"id"`
+		Username    string `json:"username"`
+		DisplayName string `json:"display_name"`
+		Email       string `json:"email"`
+		Phone       string `json:"phone"`
+	}
+
+	var createdOps []createdOpResult
+
+	for _, p := range parsed {
+		hash, err := bcrypt.GenerateFromPassword([]byte(p.Password), bcrypt.DefaultCost)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, fmt.Sprintf("bcrypt on line %d: %v", p.Line, err))
+			return
+		}
+
+		vFrom, vTo, _ := parseDateWindow(p.ValidFrom, p.ValidTo)
+
+		var uid int64
+		err = tx.QueryRowContext(r.Context(), db.Q(`
+			INSERT INTO users(username, password_hash, role, org_id,
+			                  display_name, email, phone, password_plaintext,
+			                  spending_cap_paise, valid_from, valid_to)
+			VALUES(?, ?, 'client', ?, ?, ?, ?, ?, ?, ?, ?)
+			RETURNING id`),
+			p.Username, string(hash), orgID, p.DisplayName,
+			nullable(p.Email), nullable(p.Phone), p.Password,
+			nullableInt64(p.SpendingCapPaise), vFrom, vTo).Scan(&uid)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, fmt.Sprintf("db insert line %d: %v", p.Line, err))
+			return
+		}
+
+		// Determine assigned exam: explicit in CSV > default form value / single sub
+		var targetExamIDs []int64
+		if len(p.ExamCodes) == 1 {
+			if ex, ok := codeToExamMap[p.ExamCodes[0]]; ok {
+				targetExamIDs = []int64{ex.ID}
+			}
+		} else if defaultExamID != nil {
+			targetExamIDs = []int64{*defaultExamID}
+		}
+
+		if err := s.setOperatorExams(tx, orgID, uid, targetExamIDs); err != nil {
+			writeErr(w, http.StatusInternalServerError, fmt.Sprintf("db link exams line %d: %v", p.Line, err))
+			return
+		}
+
+		createdOps = append(createdOps, createdOpResult{
+			ID:          uid,
+			Username:    p.Username,
+			DisplayName: p.DisplayName,
+			Email:       p.Email,
+			Phone:       p.Phone,
+		})
+	}
+
+	if err := tx.Commit(); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db commit: "+err.Error())
+		return
+	}
+
+	s.auditFromRequest(r, "operator.bulk_create", "org", orgID, map[string]any{
+		"count": len(createdOps),
+	})
+
+	// Dispatch welcome emails in background
+	if s.emailer != nil {
+		loginURL := strings.TrimRight(s.deps.Cfg.PublicBaseURL, "/") + "/client/login"
+		for _, p := range parsed {
+			if p.Email != "" {
+				to := p.Email
+				body := buildOperatorWelcomeEmail(p.DisplayName, p.Username, p.Password, loginURL)
+				go func(sender email.Sender, to, body string) {
+					ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+					defer cancel()
+					_ = sender.Send(ctx, email.Message{
+						To:      to,
+						Subject: "Your Verification Portal verification agent account",
+						Body:    body,
+					})
+				}(s.emailer, to, body)
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"rows_created": len(createdOps),
+		"operators":    createdOps,
+	})
 }
 
 // ── PATCH ─────────────────────────────────────────────────────────────
@@ -467,10 +1094,10 @@ func (s *Server) adminPatchOperator(w http.ResponseWriter, r *http.Request) {
 		// collisions inside the caller's own org are the problem.
 		var dupID int64
 		err := tx.QueryRow(
-			`SELECT id FROM users
-			 WHERE org_id = $1 AND email IS NOT NULL
-			   AND LOWER(email) = LOWER($2) AND id != $3
-			 LIMIT 1`,
+			db.Q(`SELECT id FROM users
+			      WHERE org_id = ? AND email IS NOT NULL
+			        AND LOWER(email) = LOWER(?) AND id != ?
+			      LIMIT 1`),
 			orgID, e, id,
 		).Scan(&dupID)
 		if err == nil {
@@ -556,6 +1183,40 @@ func (s *Server) adminPatchOperator(w http.ResponseWriter, r *http.Request) {
 		if req.ValidTo != nil {
 			sets = append(sets, "valid_to = ?")
 			args = append(args, vTo)
+		}
+	}
+
+	// Validate date window against assigned exam if dates or exam changed
+	if req.ValidFrom != nil || req.ValidTo != nil || req.ExamIDs != nil {
+		var curFrom, curTo sql.NullString
+		var curExamID sql.NullInt64
+		_ = tx.QueryRow(db.Q(`
+			SELECT u.valid_from, u.valid_to, oe.exam_id
+			FROM users u
+			LEFT JOIN operator_exams oe ON oe.user_id = u.id
+			WHERE u.id = ? AND u.org_id = ?`), id, orgID).Scan(&curFrom, &curTo, &curExamID)
+
+		effFrom := curFrom.String
+		if req.ValidFrom != nil {
+			effFrom = *req.ValidFrom
+		}
+		effTo := curTo.String
+		if req.ValidTo != nil {
+			effTo = *req.ValidTo
+		}
+		effExamID := curExamID.Int64
+		if req.ExamIDs != nil && len(*req.ExamIDs) == 1 {
+			effExamID = (*req.ExamIDs)[0]
+		}
+
+		if effExamID > 0 {
+			var eFrom, eTo sql.NullString
+			if err := tx.QueryRow(db.Q(`SELECT verification_from, verification_to FROM exams WHERE id = ?`), effExamID).Scan(&eFrom, &eTo); err == nil {
+				if err := validateOperatorWindowAgainstExam(effFrom, effTo, eFrom, eTo); err != nil {
+					writeErr(w, http.StatusBadRequest, err.Error())
+					return
+				}
+			}
 		}
 	}
 
@@ -723,11 +1384,14 @@ func normalizePhone(s string) string {
 // 91 prefixes via normalizePhone before this check.
 func isPlausiblePhone(s string) bool {
 	digits := s
-	if strings.HasPrefix(digits, "+") {
+	if strings.HasPrefix(digits, "+91") {
+		digits = digits[3:]
+	} else if strings.HasPrefix(digits, "+") {
 		digits = digits[1:]
 	}
-	// Strip country code so both "+919876543210" and "9876543210" pass.
-	digits = strings.TrimPrefix(digits, "91")
+	if len(digits) == 12 && strings.HasPrefix(digits, "91") {
+		digits = digits[2:]
+	}
 	if len(digits) != 10 {
 		return false
 	}

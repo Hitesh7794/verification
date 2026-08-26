@@ -86,6 +86,53 @@ export async function createExam(clientId, exam) {
   })
 }
 
+// Bulk create exams via CSV upload.
+// On 422 the body has { validation_errors: [{ line, msg }] }
+export async function bulkCreateExamsCSV(clientId, file) {
+  const fd = new FormData()
+  fd.append('file', file)
+  return api(`/superadmin/clients/${clientId}/exams/csv`, {
+    method: 'POST',
+    body: fd,
+  })
+}
+
+// Download a formatted sample CSV template for bulk exam creation
+export function downloadSampleExamCSV() {
+  const now = new Date()
+  const fmtDate = (d, timeStr) => {
+    const yyyy = d.getFullYear()
+    const mm = String(d.getMonth() + 1).padStart(2, '0')
+    const dd = String(d.getDate()).padStart(2, '0')
+    return `${yyyy}-${mm}-${dd} ${timeStr}`
+  }
+
+  const d1From = new Date(now.getTime() + 7 * 86400000)
+  const d1To = new Date(now.getTime() + 30 * 86400000)
+
+  const d2From = new Date(now.getTime() + 14 * 86400000)
+  const d2To = new Date(now.getTime() + 45 * 86400000)
+
+  const d3From = new Date(now.getTime() + 21 * 86400000)
+  const d3To = new Date(now.getTime() + 60 * 86400000)
+
+  const y = now.getFullYear()
+  const content = `exam_name,exam_code,verification_from,verification_to,requires_face,requires_fp,requires_iris
+National Eligibility Test Session 1,NET-${y}-S1,${fmtDate(d1From, '09:00')},${fmtDate(d1To, '18:00')},yes,yes,no
+Combined Entrance Examination,CEE-${y}-MAIN,${fmtDate(d2From, '08:30')},${fmtDate(d2To, '17:30')},yes,yes,yes
+Graduate Aptitude Verification,GAV-${y}-01,${fmtDate(d3From, '10:00')},${fmtDate(d3To, '16:00')},yes,no,no
+`
+  const blob = new Blob(['\ufeff' + content], { type: 'text/csv;charset=utf-8;' })
+  const url = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = url
+  a.download = 'sample_exams.csv'
+  document.body.appendChild(a)
+  a.click()
+  a.remove()
+  URL.revokeObjectURL(url)
+}
+
 export async function getExam(examId) {
   return api(`/superadmin/exams/${examId}`)
 }

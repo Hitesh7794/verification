@@ -51,6 +51,8 @@ import ForcePasswordChange from './pages/ForcePasswordChange.jsx'
 // single Vite serving every route. Production deploys produce three
 // dist-* folders that nginx serves from three server blocks.
 
+import { loginPathForScope } from './lib/authStorage.js'
+
 const MODE = (typeof import.meta.env !== 'undefined' && import.meta.env.VITE_APP_MODE) || 'all'
 
 // requireRole helper that accepts a single role string OR an array.
@@ -61,33 +63,19 @@ function RequireRole({ role, children }) {
   const { user } = useAuth()
   const allowed = Array.isArray(role) ? role : [role]
   if (!user) {
-    // Pick a sensible login URL for the role we're protecting. For
-    // multi-role routes, use the first role's login page.
-    // client_reviewer lives at /reviewer/* — not /client_reviewer/*
-    // which would be an ugly URL and collide with the operator's
-    // legacy /client redirect.
     const first = allowed[0]
-    const scopeSeg = first === 'ops_admin' ? 'admin'
-      : first === 'client_reviewer' ? 'reviewer'
-      : first
-    const loginPath = `/${scopeSeg}/login`
+    const loginPath = loginPathForScope(first) || '/admin/login'
     return <Navigate to={loginPath} replace />
   }
   if (!allowed.includes(user.role)) {
     return <Navigate to="/" replace />
   }
-  // Seeded accounts (super/super123, ops/ops123) and any other user
-  // flagged by the backend get bounced to a forced-rotation screen
-  // before they can touch any protected page. The flag clears as
-  // soon as they pick a new password.
-  //
-  // The scope-prefix on the URL matters: getRoleScope() reads the
-  // first path segment to find the right `nv_user_*` storage entry.
-  // Without the prefix, ForcePasswordChange would see user=null and
-  // redirect to landing — making it look like login itself failed.
+  // Seeded accounts and any user flagged with password_change_required
   if (user.password_change_required) {
-    const scope = user.role === 'ops_admin' ? 'admin' : user.role
-    return <Navigate to={`/${scope}/force-password-change`} replace />
+    const changePath = user.role === 'client'
+      ? '/institute/operator/force-password-change'
+      : `/${user.role === 'ops_admin' ? 'admin' : user.role}/force-password-change`
+    return <Navigate to={changePath} replace />
   }
   return children
 }
