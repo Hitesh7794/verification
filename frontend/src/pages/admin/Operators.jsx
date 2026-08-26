@@ -314,6 +314,9 @@ function ExamMultiSelect({ subs, value, onChange, single = false }) {
   const [open, setOpen] = useState(false)
   const boxRef = useRef(null)
 
+  const subList = Array.isArray(subs) ? subs : []
+  const valList = Array.isArray(value) ? value : []
+
   // Close on outside click or Escape — standard dropdown affordances.
   useEffect(() => {
     if (!open) return
@@ -331,13 +334,13 @@ function ExamMultiSelect({ subs, value, onChange, single = false }) {
     }
   }, [open])
 
-  const activeSubs = subs.filter((s) => {
+  const activeSubs = subList.filter((s) => {
     if (s.exam_closed) return false
     if (s.verification_to && new Date() > new Date(s.verification_to)) return false
     return true
   })
 
-  const selected = subs.filter((s) => value.includes(s.exam_id))
+  const selected = subList.filter((s) => valList.includes(s.exam_id))
   const allSelected = activeSubs.length > 0 && selected.length === activeSubs.length
 
   // single mode: clicking any exam replaces the selection with just that
@@ -345,9 +348,9 @@ function ExamMultiSelect({ subs, value, onChange, single = false }) {
   // the already-selected exam clears the assignment.
   const toggle = (id) => {
     if (single) {
-      onChange(value.includes(id) ? [] : [id])
+      onChange(valList.includes(id) ? [] : [id])
     } else {
-      onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id])
+      onChange(valList.includes(id) ? valList.filter((x) => x !== id) : [...valList, id])
     }
   }
 
@@ -514,7 +517,7 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
     : ''
 
   // Exam window validation — operator's window must be inside the superadmin-defined window for all assigned exams
-  const selectedExams = subs.filter((s) => examIds.includes(s.exam_id))
+  const selectedExams = (subs || []).filter((s) => (examIds || []).includes(s.exam_id))
   const beforeExam = selectedExams.find((s) => {
     if (!s.verification_from || !fromDate || isNaN(fromDate.getTime())) return false
     const ef = new Date(s.verification_from)

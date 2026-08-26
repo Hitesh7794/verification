@@ -67,14 +67,14 @@ func (s *Server) adminListOperators(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	orgID := *claims.OrgID
-	rows, err := s.deps.DB.QueryContext(r.Context(), `
+	rows, err := s.deps.DB.QueryContext(r.Context(), db.Q(`
 		SELECT id, username, COALESCE(password_plaintext,''), display_name,
 		       COALESCE(email,''), COALESCE(phone,''), disabled_at,
 		       spending_cap_paise, spent_paise,
 		       valid_from, valid_to, created_at
 		FROM users
-		WHERE org_id = $1 AND role = 'client'
-		ORDER BY created_at DESC, id DESC`, orgID)
+		WHERE org_id = ? AND role = 'client'
+		ORDER BY created_at DESC, id DESC`), orgID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
 		return
@@ -123,11 +123,11 @@ func (s *Server) adminListOperators(w http.ResponseWriter, r *http.Request) {
 		for i := range out {
 			byID[out[i].ID] = &out[i]
 		}
-		erows, err := s.deps.DB.QueryContext(r.Context(), `
+		erows, err := s.deps.DB.QueryContext(r.Context(), db.Q(`
 			SELECT oe.user_id, oe.exam_id
 			  FROM operator_exams oe
 			  JOIN users u ON u.id = oe.user_id
-			 WHERE u.org_id = $1`, orgID)
+			 WHERE u.org_id = ?`), orgID)
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError, "db read exams: "+err.Error())
 			return
@@ -175,13 +175,13 @@ func (s *Server) loadOperatorForOrg(r *http.Request, orgID, id int64) (*operator
 	var disabledAt sql.NullTime
 	var cap sql.NullInt64
 	var vFrom, vTo sql.NullString
-	err := s.deps.DB.QueryRowContext(r.Context(), `
+	err := s.deps.DB.QueryRowContext(r.Context(), db.Q(`
 		SELECT id, username, COALESCE(password_plaintext,''), display_name,
 		       COALESCE(email,''), COALESCE(phone,''), disabled_at,
 		       spending_cap_paise, spent_paise,
 		       valid_from, valid_to, created_at
 		  FROM users
-		 WHERE id = $1 AND org_id = $2 AND role = 'client'`, id, orgID,
+		 WHERE id = ? AND org_id = ? AND role = 'client'`), id, orgID,
 	).Scan(&o.ID, &o.Username, &o.Password, &o.DisplayName,
 		&o.Email, &o.Phone, &disabledAt, &cap, &o.SpentPaise, &vFrom, &vTo, &o.CreatedAt)
 	if err != nil {
@@ -211,7 +211,7 @@ func (s *Server) loadOperatorForOrg(r *http.Request, orgID, id int64) (*operator
 	}
 	o.AssignedExamIDs = []int64{}
 	erows, err := s.deps.DB.QueryContext(r.Context(),
-		`SELECT exam_id FROM operator_exams WHERE user_id = $1`, id)
+		db.Q(`SELECT exam_id FROM operator_exams WHERE user_id = ?`), id)
 	if err != nil {
 		return nil, err
 	}
