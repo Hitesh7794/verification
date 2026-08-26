@@ -318,20 +318,25 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "phone number must be a valid 10-digit Indian mobile (starting 6/7/8/9, +91 optional)")
 		return
 	}
-	if len(req.ExamIDs) != 1 {
-		writeErr(w, http.StatusBadRequest, "a verification agent must be assigned to exactly one exam")
+	if len(req.ExamIDs) == 0 {
+		writeErr(w, http.StatusBadRequest, "a verification agent must be assigned to at least one exam")
 		return
 	}
-	examID := req.ExamIDs[0]
-	var eFrom, eTo sql.NullString
-	if err := s.deps.DB.QueryRowContext(r.Context(), db.Q(`
-		SELECT verification_from, verification_to FROM exams WHERE id = ?`), examID).Scan(&eFrom, &eTo); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			writeErr(w, http.StatusBadRequest, "selected exam does not exist")
+	for _, eid := range req.ExamIDs {
+		var eFrom, eTo sql.NullString
+		if err := s.deps.DB.QueryRowContext(r.Context(), db.Q(`
+			SELECT verification_from, verification_to FROM exams WHERE id = ?`), eid).Scan(&eFrom, &eTo); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeErr(w, http.StatusBadRequest, fmt.Sprintf("assigned exam %d does not exist", eid))
+				return
+			}
+			writeErr(w, http.StatusInternalServerError, "db check exam: "+err.Error())
 			return
 		}
-		writeErr(w, http.StatusInternalServerError, "db check exam: "+err.Error())
-		return
+		if err := validateOperatorWindowAgainstExam(req.ValidFrom, req.ValidTo, eFrom, eTo); err != nil {
+			writeErr(w, http.StatusBadRequest, err.Error())
+			return
+		}
 	}
 
 	// Pre-check uniqueness (case-insensitive) to give a clean 409
@@ -378,11 +383,6 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 	}
 	vFrom, vTo, err := parseDateWindow(req.ValidFrom, req.ValidTo)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
-		return
-	}
-
-	if err := validateOperatorWindowAgainstExam(req.ValidFrom, req.ValidTo, eFrom, eTo); err != nil {
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -863,30 +863,40 @@ func (s *Server) adminBulkCreateOperatorsCSV(w http.ResponseWriter, r *http.Requ
 		defaultExamID = &allSubExamIDs[0]
 	}
 
-	// Validate exam assignments and dates for each operator (must be exactly 1 exam per operator, within exam window)
+	// Validate exam assignments and dates for each operator (can be assigned to one or more exams, within each exam's window)
 	for _, p := range parsed {
-		if len(p.ExamCodes) > 1 {
-			verrs = append(verrs, csvValidationErr{
-				Line: p.Line,
-				Msg:  "an agent can only be assigned to one exam (found multiple exam codes in CSV)",
-			})
-			continue
-		}
-
-		var targetExam *subExamInfo
-		if len(p.ExamCodes) == 1 {
-			c := p.ExamCodes[0]
-			if ex, ok := codeToExamMap[c]; ok {
-				targetExam = &ex
-			} else {
-				verrs = append(verrs, csvValidationErr{
-					Line: p.Line,
-					Msg:  fmt.Sprintf("unknown or unsubscribed exam_code %q", c),
-				})
+		if len(p.ExamCodes) > 0 {
+			for _, c := range p.ExamCodes {
+				if ex, ok := codeToExamMap[c]; ok {
+					if err := validateOperatorWindowAgainstExam(p.ValidFrom, p.ValidTo, ex.VerificationFrom, ex.VerificationTo); err != nil {
+						verrs = append(verrs, csvValidationErr{
+							Line: p.Line,
+							Msg:  fmt.Sprintf("for exam %s: %s", c, err.Error()),
+						})
+					}
+				} else {
+					verrs = append(verrs, csvValidationErr{
+						Line: p.Line,
+						Msg:  fmt.Sprintf("unknown or unsubscribed exam_code %q", c),
+					})
+				}
 			}
 		} else if defaultExamID != nil {
 			if ex, ok := idToExamMap[*defaultExamID]; ok {
-				targetExam = &ex
+				if err := validateOperatorWindowAgainstExam(p.ValidFrom, p.ValidTo, ex.VerificationFrom, ex.VerificationTo); err != nil {
+					verrs = append(verrs, csvValidationErr{
+						Line: p.Line,
+						Msg:  err.Error(),
+					})
+				}
+			}
+		} else if len(allSubExamIDs) == 1 {
+			ex := idToExamMap[allSubExamIDs[0]]
+			if err := validateOperatorWindowAgainstExam(p.ValidFrom, p.ValidTo, ex.VerificationFrom, ex.VerificationTo); err != nil {
+				verrs = append(verrs, csvValidationErr{
+					Line: p.Line,
+					Msg:  err.Error(),
+				})
 			}
 		} else {
 			if len(allSubExamIDs) == 0 {
@@ -897,16 +907,7 @@ func (s *Server) adminBulkCreateOperatorsCSV(w http.ResponseWriter, r *http.Requ
 			} else {
 				verrs = append(verrs, csvValidationErr{
 					Line: p.Line,
-					Msg:  "no exam specified in row and no default exam selected",
-				})
-			}
-		}
-
-		if targetExam != nil {
-			if err := validateOperatorWindowAgainstExam(p.ValidFrom, p.ValidTo, targetExam.VerificationFrom, targetExam.VerificationTo); err != nil {
-				verrs = append(verrs, csvValidationErr{
-					Line: p.Line,
-					Msg:  err.Error(),
+					Msg:  "no exam specified in row (please specify 'exam_codes' column or select a fallback exam)",
 				})
 			}
 		}
@@ -959,14 +960,18 @@ func (s *Server) adminBulkCreateOperatorsCSV(w http.ResponseWriter, r *http.Requ
 			return
 		}
 
-		// Determine assigned exam: explicit in CSV > default form value / single sub
+		// Determine assigned exams: explicit in CSV > default form value / single sub
 		var targetExamIDs []int64
-		if len(p.ExamCodes) == 1 {
-			if ex, ok := codeToExamMap[p.ExamCodes[0]]; ok {
-				targetExamIDs = []int64{ex.ID}
+		if len(p.ExamCodes) > 0 {
+			for _, c := range p.ExamCodes {
+				if ex, ok := codeToExamMap[c]; ok {
+					targetExamIDs = append(targetExamIDs, ex.ID)
+				}
 			}
 		} else if defaultExamID != nil {
 			targetExamIDs = []int64{*defaultExamID}
+		} else if len(allSubExamIDs) == 1 {
+			targetExamIDs = []int64{allSubExamIDs[0]}
 		}
 
 		if err := s.setOperatorExams(tx, orgID, uid, targetExamIDs); err != nil {
@@ -1186,15 +1191,13 @@ func (s *Server) adminPatchOperator(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Validate date window against assigned exam if dates or exam changed
+	// Validate date window against assigned exams if dates or exams changed
 	if req.ValidFrom != nil || req.ValidTo != nil || req.ExamIDs != nil {
 		var curFrom, curTo sql.NullString
-		var curExamID sql.NullInt64
 		_ = tx.QueryRow(db.Q(`
-			SELECT u.valid_from, u.valid_to, oe.exam_id
+			SELECT u.valid_from, u.valid_to
 			FROM users u
-			LEFT JOIN operator_exams oe ON oe.user_id = u.id
-			WHERE u.id = ? AND u.org_id = ?`), id, orgID).Scan(&curFrom, &curTo, &curExamID)
+			WHERE u.id = ? AND u.org_id = ?`), id, orgID).Scan(&curFrom, &curTo)
 
 		effFrom := curFrom.String
 		if req.ValidFrom != nil {
@@ -1204,14 +1207,26 @@ func (s *Server) adminPatchOperator(w http.ResponseWriter, r *http.Request) {
 		if req.ValidTo != nil {
 			effTo = *req.ValidTo
 		}
-		effExamID := curExamID.Int64
-		if req.ExamIDs != nil && len(*req.ExamIDs) == 1 {
-			effExamID = (*req.ExamIDs)[0]
+
+		var checkExamIDs []int64
+		if req.ExamIDs != nil {
+			checkExamIDs = *req.ExamIDs
+		} else {
+			eRows, err := tx.Query(db.Q(`SELECT exam_id FROM operator_exams WHERE user_id = ?`), id)
+			if err == nil {
+				for eRows.Next() {
+					var eid int64
+					if err := eRows.Scan(&eid); err == nil {
+						checkExamIDs = append(checkExamIDs, eid)
+					}
+				}
+				eRows.Close()
+			}
 		}
 
-		if effExamID > 0 {
+		for _, eid := range checkExamIDs {
 			var eFrom, eTo sql.NullString
-			if err := tx.QueryRow(db.Q(`SELECT verification_from, verification_to FROM exams WHERE id = ?`), effExamID).Scan(&eFrom, &eTo); err == nil {
+			if err := tx.QueryRow(db.Q(`SELECT verification_from, verification_to FROM exams WHERE id = ?`), eid).Scan(&eFrom, &eTo); err == nil {
 				if err := validateOperatorWindowAgainstExam(effFrom, effTo, eFrom, eTo); err != nil {
 					writeErr(w, http.StatusBadRequest, err.Error())
 					return
