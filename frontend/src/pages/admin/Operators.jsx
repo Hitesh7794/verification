@@ -710,15 +710,14 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
             value={validFrom}
             onChange={(e) => setValidFrom(e.target.value)}
             required
-            min={selectedExam?.verification_from ? selectedExam.verification_from.slice(0, 16) : undefined}
-            max={validTo || (selectedExam?.verification_to ? selectedExam.verification_to.slice(0, 16) : undefined)}
+            max={validTo || undefined}
           />
           {fromInPast && (
             <p className="text-[11px] text-rose-600 mt-1">Valid from cannot be in the past.</p>
           )}
-          {beforeExamStart && (
+          {beforeExam && (
             <p className="text-[11px] text-rose-600 font-medium mt-1">
-              Valid from cannot be earlier than exam start ({formatDateTime(selectedExam.verification_from)}).
+              Valid from cannot be earlier than {beforeExam.exam_code} start ({formatDateTime(beforeExam.verification_from)}).
             </p>
           )}
         </div>
@@ -729,17 +728,16 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
             value={validTo}
             onChange={(e) => setValidTo(e.target.value)}
             required
-            min={validFrom || (selectedExam?.verification_from ? selectedExam.verification_from.slice(0, 16) : undefined)}
-            max={selectedExam?.verification_to ? selectedExam.verification_to.slice(0, 16) : undefined}
+            min={validFrom || undefined}
           />
           {(toInPast || fromAfterTo) && (
             <p className="text-[11px] text-rose-600 mt-1">
               {toInPast ? 'Valid to cannot be in the past.' : 'Valid to must be after Valid from.'}
             </p>
           )}
-          {afterExamEnd && (
+          {afterExam && (
             <p className="text-[11px] text-rose-600 font-medium mt-1">
-              Valid to cannot be later than exam end ({formatDateTime(selectedExam.verification_to)}).
+              Valid to cannot be later than {afterExam.exam_code} end ({formatDateTime(afterExam.verification_to)}).
             </p>
           )}
         </div>
