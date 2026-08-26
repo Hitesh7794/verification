@@ -1,7 +1,6 @@
 import { useEffect } from 'react'
 import { createPortal } from 'react-dom'
 import { motion, AnimatePresence } from 'framer-motion'
-import { Icon } from '../ui/extras.jsx'
 import { toDatetimeLocal } from '../../lib/dates.js'
 
 function formatDate(isoStr) {
@@ -75,7 +74,7 @@ export default function ExamWindowReminderModal({
     return () => window.removeEventListener('keydown', onKey)
   }, [open, onClose])
 
-  if (typeof document === 'undefined') return null
+  if (!open || typeof document === 'undefined') return null
 
   const daysRemaining = getDaysRemaining(verificationFrom)
   const isFuture = type === 'future'
@@ -137,7 +136,9 @@ export default function ExamWindowReminderModal({
                       : 'bg-rose-50 text-rose-600 border-rose-200/80 shadow-sm'
                   }`}
                 >
-                  <Icon.Calendar className="h-6 w-6 stroke-[2.2]" />
+                  <svg className="h-6 w-6" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M6.75 3v2.25M17.25 3v2.25M3 18.75V7.5a2.25 2.25 0 012.25-2.25h13.5A2.25 2.25 0 0121 7.5v11.25m-18 0A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75m-18 0v-7.5A2.25 2.25 0 015.25 9h13.5A2.25 2.25 0 0121 11.25v7.5" />
+                  </svg>
                 </div>
 
                 <div className="flex-1 min-w-0">
@@ -179,7 +180,9 @@ export default function ExamWindowReminderModal({
                   className="rounded-lg p-1.5 text-stone-400 hover:text-stone-700 hover:bg-stone-100 transition-colors"
                   aria-label="Close"
                 >
-                  <Icon.X className="h-5 w-5" />
+                  <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <path d="M6 18L18 6M6 6l12 12" />
+                  </svg>
                 </button>
               </div>
 
@@ -236,7 +239,10 @@ export default function ExamWindowReminderModal({
 
               {/* Explanatory Message */}
               <div className="mt-4 rounded-xl bg-amber-50/60 border border-amber-200/60 p-3.5 text-xs text-amber-900 leading-relaxed flex items-start gap-2.5">
-                <Icon.Clock className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" />
+                <svg className="h-4 w-4 text-amber-700 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                  <circle cx="12" cy="12" r="10" />
+                  <polyline points="12 6 12 12 16 14" />
+                </svg>
                 <div>
                   <span className="font-semibold">Operator Notice: </span>
                   {message || (
@@ -254,7 +260,9 @@ export default function ExamWindowReminderModal({
                   onClick={onClose}
                   className="w-full sm:w-auto inline-flex items-center justify-center gap-2 rounded-xl bg-stone-900 px-5 py-2.5 text-sm font-semibold text-white shadow-sm hover:bg-stone-800 focus:outline-none focus:ring-2 focus:ring-stone-500 focus:ring-offset-1 transition-all"
                 >
-                  <Icon.Check className="h-4 w-4" />
+                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                    <polyline points="20 6 9 17 4 12" />
+                  </svg>
                   Understood, Return to Dashboard
                 </button>
               </div>

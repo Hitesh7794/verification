@@ -33,6 +33,7 @@ package api
 //   no duplicate roll_no inside one file
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"database/sql"
@@ -450,6 +451,319 @@ func (s *Server) superadminCreateExam(w http.ResponseWriter, r *http.Request) {
 	// time still fires for exams that existed pre-approval.
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id": id, "name": name, "exam_code": code,
+	})
+}
+
+// ── BULK EXAM CSV UPLOAD ──────────────────────────────────────────────
+
+type parsedExamRow struct {
+	Name             string
+	ExamCode         string
+	TrustviewRef     string
+	VerificationFrom time.Time
+	VerificationTo   time.Time
+	RequiresFace     bool
+	RequiresFP       bool
+	RequiresIris     bool
+	Line             int
+}
+
+func parseBoolOpt(s string, defaultVal bool) bool {
+	v := strings.ToLower(strings.TrimSpace(s))
+	if v == "" {
+		return defaultVal
+	}
+	switch v {
+	case "1", "t", "true", "yes", "y", "on", "enable", "enabled":
+		return true
+	case "0", "f", "false", "no", "n", "off", "disable", "disabled":
+		return false
+	}
+	return defaultVal
+}
+
+func parseBulkExamsCSV(buf []byte) ([]parsedExamRow, []csvValidationErr) {
+	rd := csv.NewReader(bytes.NewReader(buf))
+	rd.TrimLeadingSpace = true
+	rd.FieldsPerRecord = -1
+
+	hdr, err := rd.Read()
+	if err != nil {
+		return nil, []csvValidationErr{{Line: 1, Msg: "cannot read header: " + err.Error()}}
+	}
+
+	nameIdx := -1
+	codeIdx := -1
+	fromIdx := -1
+	toIdx := -1
+	faceIdx := -1
+	fpIdx := -1
+	irisIdx := -1
+	trustIdx := -1
+
+	for i, raw := range hdr {
+		key := strings.ToLower(strings.TrimSpace(raw))
+		key = strings.TrimPrefix(key, "\ufeff") // strip UTF-8 BOM if present
+		switch key {
+		case "name", "exam_name", "exam", "title":
+			nameIdx = i
+		case "exam_code", "code", "examcode":
+			codeIdx = i
+		case "verification_from", "from", "start_date", "start_time", "from_date", "start":
+			fromIdx = i
+		case "verification_to", "to", "end_date", "end_time", "to_date", "end":
+			toIdx = i
+		case "requires_face", "face", "require_face":
+			faceIdx = i
+		case "requires_fp", "requires_fingerprint", "fp", "fingerprint", "require_fp", "require_fingerprint":
+			fpIdx = i
+		case "requires_iris", "iris", "require_iris":
+			irisIdx = i
+		case "trustview_ref", "trustview", "ref":
+			trustIdx = i
+		}
+	}
+
+	if nameIdx < 0 || codeIdx < 0 || fromIdx < 0 || toIdx < 0 {
+		return nil, []csvValidationErr{{Line: 1,
+			Msg: "header must contain 'exam_name', 'exam_code', 'verification_from', and 'verification_to'"}}
+	}
+
+	pick := func(row []string, idx int) string {
+		if idx < 0 || idx >= len(row) {
+			return ""
+		}
+		return strings.TrimSpace(row[idx])
+	}
+
+	var out []parsedExamRow
+	var verrs []csvValidationErr
+	seenCodes := map[string]int{}
+	line := 1
+
+	for {
+		row, err := rd.Read()
+		if errors.Is(err, io.EOF) {
+			break
+		}
+		line++
+		if err != nil {
+			verrs = append(verrs, csvValidationErr{Line: line, Msg: err.Error()})
+			continue
+		}
+
+		empty := true
+		for _, cell := range row {
+			if strings.TrimSpace(cell) != "" {
+				empty = false
+				break
+			}
+		}
+		if empty {
+			continue
+		}
+
+		name := pick(row, nameIdx)
+		code := strings.ToUpper(pick(row, codeIdx))
+		fromStr := pick(row, fromIdx)
+		toStr := pick(row, toIdx)
+
+		if len(name) < 2 || len(name) > 200 {
+			verrs = append(verrs, csvValidationErr{Line: line, Msg: "exam_name required (2-200 characters)"})
+			continue
+		}
+		if len(code) < 2 || len(code) > 60 {
+			verrs = append(verrs, csvValidationErr{Line: line, Msg: "exam_code required (2-60 characters)"})
+			continue
+		}
+		if strings.ContainsAny(code, " \t\r\n") {
+			verrs = append(verrs, csvValidationErr{Line: line, Msg: "exam_code cannot contain spaces"})
+			continue
+		}
+
+		if firstLine, exists := seenCodes[code]; exists {
+			verrs = append(verrs, csvValidationErr{Line: line,
+				Msg: fmt.Sprintf("duplicate exam_code %q in CSV (first defined on line %d)", code, firstLine)})
+			continue
+		}
+		seenCodes[code] = line
+
+		fromT, err := parseDateTimeWindow(fromStr, false)
+		if err != nil {
+			verrs = append(verrs, csvValidationErr{Line: line,
+				Msg: fmt.Sprintf("invalid verification_from %q (use YYYY-MM-DD or YYYY-MM-DD HH:MM)", fromStr)})
+			continue
+		}
+
+		toT, err := parseDateTimeWindow(toStr, true)
+		if err != nil {
+			verrs = append(verrs, csvValidationErr{Line: line,
+				Msg: fmt.Sprintf("invalid verification_to %q (use YYYY-MM-DD or YYYY-MM-DD HH:MM)", toStr)})
+			continue
+		}
+
+		if fromT.After(toT) {
+			verrs = append(verrs, csvValidationErr{Line: line,
+				Msg: fmt.Sprintf("verification_from (%s) must be before or equal to verification_to (%s)", fromStr, toStr)})
+			continue
+		}
+
+		reqFace := parseBoolOpt(pick(row, faceIdx), true)
+		reqFP := parseBoolOpt(pick(row, fpIdx), true)
+		reqIris := parseBoolOpt(pick(row, irisIdx), false)
+
+		if !reqFace && !reqFP && !reqIris {
+			verrs = append(verrs, csvValidationErr{Line: line,
+				Msg: "at least one biometric requirement (face, fingerprint, or iris) must be enabled"})
+			continue
+		}
+
+		out = append(out, parsedExamRow{
+			Name:             name,
+			ExamCode:         code,
+			TrustviewRef:     pick(row, trustIdx),
+			VerificationFrom: fromT,
+			VerificationTo:   toT,
+			RequiresFace:     reqFace,
+			RequiresFP:       reqFP,
+			RequiresIris:     reqIris,
+			Line:             line,
+		})
+	}
+
+	return out, verrs
+}
+
+func (s *Server) superadminBulkCreateExamsCSV(w http.ResponseWriter, r *http.Request) {
+	clientID, err := parseInt64(chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad client id")
+		return
+	}
+	if _, err := s.loadClient(r.Context(), clientID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			writeErr(w, http.StatusNotFound, "client not found")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, err.Error())
+		return
+	}
+
+	r.Body = http.MaxBytesReader(w, r.Body, maxExamCSVBytes)
+	if err := r.ParseMultipartForm(maxExamCSVBytes); err != nil {
+		writeErr(w, http.StatusBadRequest, "multipart parse: "+err.Error())
+		return
+	}
+	file, _, err := r.FormFile("file")
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "file required (form field 'file')")
+		return
+	}
+	defer file.Close()
+
+	buf, err := io.ReadAll(file)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "read file: "+err.Error())
+		return
+	}
+
+	parsed, verrs := parseBulkExamsCSV(buf)
+	if len(verrs) > 0 {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+			"validation_errors": verrs,
+		})
+		return
+	}
+	if len(parsed) == 0 {
+		writeErr(w, http.StatusBadRequest, "csv contains no data rows")
+		return
+	}
+	if len(parsed) > 1000 {
+		writeErr(w, http.StatusRequestEntityTooLarge, fmt.Sprintf("csv has %d exams, max 1000 per bulk upload", len(parsed)))
+		return
+	}
+
+	// Check for collision with existing exam codes in DB
+	codeLineMap := make(map[string]int, len(parsed))
+	placeholders := make([]string, len(parsed))
+	args := make([]any, len(parsed))
+	for i, p := range parsed {
+		upper := strings.ToUpper(p.ExamCode)
+		codeLineMap[upper] = p.Line
+		placeholders[i] = "?"
+		args[i] = upper
+	}
+
+	q := "SELECT exam_code FROM exams WHERE UPPER(exam_code) IN (" + strings.Join(placeholders, ",") + ")"
+	rows, err := s.deps.DB.QueryContext(r.Context(), db.Q(q), args...)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db check existing codes: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	var existingVerrs []csvValidationErr
+	for rows.Next() {
+		var existingCode string
+		if err := rows.Scan(&existingCode); err == nil {
+			lineNum := codeLineMap[strings.ToUpper(existingCode)]
+			existingVerrs = append(existingVerrs, csvValidationErr{
+				Line: lineNum,
+				Msg:  fmt.Sprintf("exam_code %q already exists in database", existingCode),
+			})
+		}
+	}
+	if len(existingVerrs) > 0 {
+		writeJSON(w, http.StatusUnprocessableEntity, map[string]any{
+			"validation_errors": existingVerrs,
+		})
+		return
+	}
+
+	tx, err := s.deps.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db begin: "+err.Error())
+		return
+	}
+	defer tx.Rollback()
+
+	createdExams := make([]map[string]any, 0, len(parsed))
+	for _, p := range parsed {
+		var examID int64
+		err := tx.QueryRowContext(r.Context(), db.Q(`
+			INSERT INTO exams(client_id, name, exam_code, trustview_ref,
+			                  verification_from, verification_to,
+			                  requires_face, requires_fp, requires_iris)
+			VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+			RETURNING id`),
+			clientID, p.Name, p.ExamCode, nullable(strings.TrimSpace(p.TrustviewRef)),
+			p.VerificationFrom.Format("2006-01-02T15:04:05Z07:00"),
+			p.VerificationTo.Format("2006-01-02T15:04:05Z07:00"),
+			boolToInt(p.RequiresFace), boolToInt(p.RequiresFP), boolToInt(p.RequiresIris),
+		).Scan(&examID)
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, fmt.Sprintf("db insert line %d: %v", p.Line, err))
+			return
+		}
+		createdExams = append(createdExams, map[string]any{
+			"id":        examID,
+			"name":      p.Name,
+			"exam_code": p.ExamCode,
+		})
+	}
+
+	if err := tx.Commit(); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db commit: "+err.Error())
+		return
+	}
+
+	s.auditFromRequest(r, "exam.bulk_create", "client", clientID, map[string]any{
+		"count": len(parsed),
+	})
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"rows_seeded": len(parsed),
+		"exams":       createdExams,
 	})
 }
 

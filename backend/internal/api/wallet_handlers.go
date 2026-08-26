@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/veni/neet-verification/internal/db"
 	"github.com/veni/neet-verification/internal/wallet"
 )
 
@@ -158,6 +159,8 @@ type walletSummaryResp struct {
 	AssignedExamName             string `json:"assigned_exam_name,omitempty"`
 	AssignedExamVerificationFrom string `json:"assigned_exam_verification_from,omitempty"`
 	AssignedExamVerificationTo   string `json:"assigned_exam_verification_to,omitempty"`
+	OperatorValidFrom            string `json:"operator_valid_from,omitempty"`
+	OperatorValidTo              string `json:"operator_valid_to,omitempty"`
 }
 
 func (s *Server) walletSummary(w http.ResponseWriter, r *http.Request) {
@@ -173,14 +176,19 @@ func (s *Server) walletSummary(w http.ResponseWriter, r *http.Request) {
 	// Load this user's cap + spent. Admin/superadmin rows may not have
 	// these (they don't spend), so we tolerate NULL cap + zero spent.
 	var (
-		cap   sql.NullInt64
-		spent int
+		cap       sql.NullInt64
+		spent     int
+		userVFrom sql.NullString
+		userVTo   sql.NullString
 	)
 	if claims != nil && claims.UserID != 0 {
-		if err := s.deps.DB.QueryRowContext(r.Context(),
-			`SELECT spending_cap_paise, COALESCE(spent_paise, 0) FROM users WHERE id = $1`,
+		if err := s.deps.DB.QueryRowContext(r.Context(), db.Q(
+			`SELECT spending_cap_paise, COALESCE(spent_paise, 0),
+			        COALESCE(TO_CHAR(valid_from, 'YYYY-MM-DD"T"HH24:MI'), ''),
+			        COALESCE(TO_CHAR(valid_to,   'YYYY-MM-DD"T"HH24:MI'), '')
+			   FROM users WHERE id = ?`),
 			claims.UserID,
-		).Scan(&cap, &spent); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		).Scan(&cap, &spent, &userVFrom, &userVTo); err != nil && !errors.Is(err, sql.ErrNoRows) {
 			writeErr(w, http.StatusInternalServerError, "user read: "+err.Error())
 			return
 		}
@@ -199,6 +207,12 @@ func (s *Server) walletSummary(w http.ResponseWriter, r *http.Request) {
 		v := int(cap.Int64)
 		resp.CapPaise = &v
 	}
+	if userVFrom.Valid {
+		resp.OperatorValidFrom = userVFrom.String
+	}
+	if userVTo.Valid {
+		resp.OperatorValidTo = userVTo.String
+	}
 	// Look up the operator's assigned exam (client role only). Empty
 	// result -> no exam assigned; frontend renders the "ask your
 	// admin" banner. Ignore any error -- the wallet fields are more
@@ -212,15 +226,15 @@ func (s *Server) walletSummary(w http.ResponseWriter, r *http.Request) {
 			vFrom sql.NullString
 			vTo   sql.NullString
 		)
-		_ = s.deps.DB.QueryRowContext(r.Context(), `
+		_ = s.deps.DB.QueryRowContext(r.Context(), db.Q(`
 			SELECT e.id, e.exam_code, e.name,
 			       COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD"T"HH24:MI'), ''),
 			       COALESCE(TO_CHAR(e.verification_to,   'YYYY-MM-DD"T"HH24:MI'), '')
 			  FROM operator_exams oe
 			  JOIN exams e ON e.id = oe.exam_id
-			 WHERE oe.user_id = $1
+			 WHERE oe.user_id = ?
 			 LIMIT 1
-		`, claims.UserID).Scan(&eid, &code, &name, &vFrom, &vTo)
+		`), claims.UserID).Scan(&eid, &code, &name, &vFrom, &vTo)
 		if eid.Valid {
 			resp.AssignedExamID = eid.Int64
 			resp.AssignedExamCode = code.String

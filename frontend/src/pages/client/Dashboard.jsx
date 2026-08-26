@@ -56,7 +56,13 @@ const STATE_KEY = 'nv_verify_state_v1'
 function loadPersistedState() {
   try {
     const raw = sessionStorage.getItem(STATE_KEY)
-    return raw ? JSON.parse(raw) : null
+    if (!raw) return null
+    const parsed = JSON.parse(raw)
+    if (!parsed || typeof parsed !== 'object' || !parsed.roll) {
+      sessionStorage.removeItem(STATE_KEY)
+      return null
+    }
+    return parsed
   } catch {
     return null
   }
@@ -343,43 +349,68 @@ export default function ClientDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  // Compute verification window status
+  const now = new Date()
+  const examFromStr = wallet?.assigned_exam_verification_from
+  const examToStr = wallet?.assigned_exam_verification_to
+  const opFromStr = wallet?.operator_valid_from
+  const opToStr = wallet?.operator_valid_to
+
+  const isExamFuture = !!(examFromStr && !isNaN(new Date(examFromStr).getTime()) && now < new Date(examFromStr))
+  const isExamExpired = !!(examToStr && !isNaN(new Date(examToStr).getTime()) && now > new Date(examToStr))
+  const isOpFuture = !!(opFromStr && !isNaN(new Date(opFromStr).getTime()) && now < new Date(opFromStr))
+  const isOpExpired = !!(opToStr && !isNaN(new Date(opToStr).getTime()) && now > new Date(opToStr))
+  const isWindowClosed = isExamFuture || isExamExpired || isOpFuture || isOpExpired
+
   async function lookupRoll(e) {
     e?.preventDefault()
     setLookupErr('')
     setWalletEmpty(false)
     if (!roll.trim()) return
 
-    const now = new Date()
-    const fromStr = wallet?.assigned_exam_verification_from
-    const toStr = wallet?.assigned_exam_verification_to
-
-    if (fromStr) {
-      const fromDt = new Date(fromStr)
-      if (!isNaN(fromDt.getTime()) && now < fromDt) {
-        setWindowReminder({
-          type: 'future',
-          examName: wallet.assigned_exam_name,
-          examCode: wallet.assigned_exam_code,
-          verificationFrom: fromStr,
-          verificationTo: toStr,
-          message: `Candidate verification for ${wallet.assigned_exam_name || wallet.assigned_exam_code} is scheduled to start on ${formatDateTime(fromStr)}. Live biometric verifications cannot be started before this time.`,
-        })
-        return
-      }
+    if (isExamFuture) {
+      setWindowReminder({
+        type: 'future',
+        examName: wallet.assigned_exam_name,
+        examCode: wallet.assigned_exam_code,
+        verificationFrom: examFromStr,
+        verificationTo: examToStr,
+        message: `Candidate verification for ${wallet.assigned_exam_name || wallet.assigned_exam_code} is scheduled to start on ${formatDateTime(examFromStr)}. Live biometric verifications cannot be started before this time.`,
+      })
+      return
     }
-    if (toStr) {
-      const toDt = new Date(toStr)
-      if (!isNaN(toDt.getTime()) && now > toDt) {
-        setWindowReminder({
-          type: 'expired',
-          examName: wallet.assigned_exam_name,
-          examCode: wallet.assigned_exam_code,
-          verificationFrom: fromStr,
-          verificationTo: toStr,
-          message: `The verification window for ${wallet.assigned_exam_name || wallet.assigned_exam_code} closed on ${formatDateTime(toStr)}. Verifications are no longer accepted.`,
-        })
-        return
-      }
+    if (isExamExpired) {
+      setWindowReminder({
+        type: 'expired',
+        examName: wallet.assigned_exam_name,
+        examCode: wallet.assigned_exam_code,
+        verificationFrom: examFromStr,
+        verificationTo: examToStr,
+        message: `The verification window for ${wallet.assigned_exam_name || wallet.assigned_exam_code} closed on ${formatDateTime(examToStr)}. Verifications are no longer accepted.`,
+      })
+      return
+    }
+    if (isOpFuture) {
+      setWindowReminder({
+        type: 'future',
+        examName: wallet.assigned_exam_name,
+        examCode: wallet.assigned_exam_code,
+        verificationFrom: opFromStr,
+        verificationTo: opToStr,
+        message: `Your agent account is scheduled to activate on ${formatDateTime(opFromStr)}. Verifications cannot be started yet.`,
+      })
+      return
+    }
+    if (isOpExpired) {
+      setWindowReminder({
+        type: 'expired',
+        examName: wallet.assigned_exam_name,
+        examCode: wallet.assigned_exam_code,
+        verificationFrom: opFromStr,
+        verificationTo: opToStr,
+        message: `Your agent account access expired on ${formatDateTime(opToStr)}. Please contact your administrator.`,
+      })
+      return
     }
 
     try {
@@ -430,15 +461,19 @@ export default function ClientDashboard() {
         e.status === 403 &&
         (e.body?.code === 'EXAM_WINDOW_FUTURE' ||
           e.body?.code === 'EXAM_WINDOW_EXPIRED' ||
+          e.body?.code === 'OPERATOR_WINDOW_FUTURE' ||
+          e.body?.code === 'OPERATOR_WINDOW_EXPIRED' ||
           e.body?.verification_from ||
-          e.body?.verification_to)
+          e.body?.verification_to ||
+          e.body?.valid_from ||
+          e.body?.valid_to)
       ) {
         setWindowReminder({
-          type: e.body?.code === 'EXAM_WINDOW_EXPIRED' ? 'expired' : 'future',
+          type: e.body?.code?.includes('EXPIRED') ? 'expired' : 'future',
           examName: e.body?.exam_name || wallet?.assigned_exam_name || '',
           examCode: e.body?.exam_code || wallet?.assigned_exam_code || '',
-          verificationFrom: e.body?.verification_from || wallet?.assigned_exam_verification_from || '',
-          verificationTo: e.body?.verification_to || wallet?.assigned_exam_verification_to || '',
+          verificationFrom: e.body?.verification_from || e.body?.valid_from || '',
+          verificationTo: e.body?.verification_to || e.body?.valid_to || '',
           message: e.body?.error || e.message,
         })
         return
@@ -690,35 +725,93 @@ export default function ClientDashboard() {
             <CardTitle>Step 1 — Roll number</CardTitle>
           </CardHeader>
           <CardBody>
-            {wallet?.assigned_exam_verification_from &&
-              new Date() < new Date(wallet.assigned_exam_verification_from) && (
-                <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50/80 p-4 text-xs text-amber-900 flex items-start gap-3 shadow-2xs">
-                  <div className="h-7 w-7 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
-                    <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-                      <rect x="3" y="4" width="18" height="18" rx="2" ry="2" />
-                      <line x1="16" y1="2" x2="16" y2="6" />
-                      <line x1="8" y1="2" x2="8" y2="6" />
-                      <line x1="3" y1="10" x2="21" y2="10" />
-                    </svg>
-                  </div>
-                  <div>
-                    <p className="font-semibold text-amber-900 text-sm">
-                      Upcoming Examination Verification Window
-                    </p>
-                    <p className="mt-0.5 text-amber-800 leading-relaxed">
-                      Verification for <strong>{wallet.assigned_exam_name || wallet.assigned_exam_code}</strong> is scheduled to begin on <strong>{formatDateTime(wallet.assigned_exam_verification_from)}</strong>. Candidate biometric lookups will unlock at that time.
-                    </p>
-                  </div>
+            {isExamFuture && (
+              <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50/80 p-4 text-xs text-amber-900 flex items-start gap-3 shadow-2xs">
+                <div className="h-7 w-7 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="10" />
+                    <polyline points="12 6 12 12 16 14" />
+                  </svg>
                 </div>
-              )}
+                <div>
+                  <p className="font-semibold text-amber-900 text-sm">
+                    Upcoming Examination Verification Window
+                  </p>
+                  <p className="mt-0.5 text-amber-800 leading-relaxed">
+                    Verification for <strong>{wallet?.assigned_exam_name || wallet?.assigned_exam_code}</strong> is scheduled to begin on <strong>{formatDateTime(examFromStr)}</strong>. Candidate biometric lookups will unlock at that time.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {isExamExpired && (
+              <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50/80 p-4 text-xs text-rose-900 flex items-start gap-3 shadow-2xs">
+                <div className="h-7 w-7 rounded-lg bg-rose-100 text-rose-800 flex items-center justify-center shrink-0">
+                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="font-semibold text-rose-900 text-sm">
+                    Examination Verification Window Closed
+                  </p>
+                  <p className="mt-0.5 text-rose-800 leading-relaxed">
+                    The verification window for <strong>{wallet?.assigned_exam_name || wallet?.assigned_exam_code}</strong> closed on <strong>{formatDateTime(examToStr)}</strong>. Verifications are no longer accepted for this exam.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {isOpFuture && !isExamFuture && (
+              <div className="mb-5 rounded-xl border border-amber-200 bg-amber-50/80 p-4 text-xs text-amber-900 flex items-start gap-3 shadow-2xs">
+                <div className="h-7 w-7 rounded-lg bg-amber-100 text-amber-800 flex items-center justify-center shrink-0">
+                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="10" />
+                    <polyline points="12 6 12 12 16 14" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="font-semibold text-amber-900 text-sm">
+                    Operator Account Not Active Yet
+                  </p>
+                  <p className="mt-0.5 text-amber-800 leading-relaxed">
+                    Your agent account is scheduled to activate on <strong>{formatDateTime(opFromStr)}</strong>. Candidate lookups will unlock once your account window begins.
+                  </p>
+                </div>
+              </div>
+            )}
+
+            {isOpExpired && !isExamExpired && (
+              <div className="mb-5 rounded-xl border border-rose-200 bg-rose-50/80 p-4 text-xs text-rose-900 flex items-start gap-3 shadow-2xs">
+                <div className="h-7 w-7 rounded-lg bg-rose-100 text-rose-800 flex items-center justify-center shrink-0">
+                  <svg className="h-4 w-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                    <circle cx="12" cy="12" r="10" />
+                    <line x1="12" y1="8" x2="12" y2="12" />
+                    <line x1="12" y1="16" x2="12.01" y2="16" />
+                  </svg>
+                </div>
+                <div>
+                  <p className="font-semibold text-rose-900 text-sm">
+                    Operator Account Access Expired
+                  </p>
+                  <p className="mt-0.5 text-rose-800 leading-relaxed">
+                    Your agent account access expired on <strong>{formatDateTime(opToStr)}</strong>. Please contact your college administrator.
+                  </p>
+                </div>
+              </div>
+            )}
+
             <form onSubmit={lookupRoll} className="max-w-md space-y-4">
               <div>
                 <Label>Candidate roll number</Label>
                 <Input
                   value={roll}
                   onChange={(e) => setRoll(e.target.value)}
-                  placeholder="e.g. 10001"
-                  autoFocus
+                  placeholder={isWindowClosed ? 'Verification window is currently closed' : 'e.g. 10001'}
+                  disabled={isWindowClosed}
+                  autoFocus={!isWindowClosed}
                 />
               </div>
               {lookupErr && (
@@ -726,8 +819,29 @@ export default function ClientDashboard() {
                   {lookupErr}
                 </div>
               )}
-              <Button type="submit">Look up candidate</Button>
+              <Button type="submit" disabled={isWindowClosed || !roll.trim()}>
+                {isWindowClosed ? 'Window closed' : 'Look up candidate'}
+              </Button>
             </form>
+          </CardBody>
+        </Card>
+      )}
+
+      {/* Recovery card — if a session was restored past step 0 but
+          candidate is not yet loaded, park the operator with a
+          spinner + Start over. Prevents rendering the liveness card
+          with a null candidate after a reload. Added on the rahul-FE
+          side of the merge; kept because it's a real UX guard. */}
+      {step > 0 && !candidate && (
+        <Card>
+          <CardBody className="py-12 text-center text-slate-500">
+            <div className="flex flex-col items-center justify-center gap-3">
+              <div className="h-6 w-6 animate-spin rounded-full border-2 border-slate-300 border-t-stone-800" />
+              <p className="text-sm">Restoring verification session...</p>
+              <Button variant="secondary" size="sm" onClick={reset}>
+                Start over
+              </Button>
+            </div>
           </CardBody>
         </Card>
       )}

@@ -321,6 +321,7 @@ func (s *Server) Router() http.Handler {
 		// Phase-2 admin surface: multi-operator management.
 		r.Get("/api/admin/operators",                  s.requireRole("admin")(s.adminListOperators))
 		r.Post("/api/admin/operators",                 s.requireRole("admin")(s.adminCreateOperator))
+		r.Post("/api/admin/operators/csv",             s.requireRole("admin")(s.adminBulkCreateOperatorsCSV))
 		r.Get("/api/admin/operators/{id}",             s.requireRole("admin")(s.adminGetOperator))
 		r.Patch("/api/admin/operators/{id}",           s.requireRole("admin")(s.adminPatchOperator))
 		r.Post("/api/admin/operators/{id}/disable",    s.requireRole("admin")(s.adminDisableOperator))
@@ -408,6 +409,7 @@ func (s *Server) Router() http.Handler {
 		r.Delete("/api/superadmin/clients/{id}",                       s.requireRole("superadmin")(s.superadminDeleteClient))
 
 		r.Post("/api/superadmin/clients/{id}/exams",                   s.requireRole("superadmin")(s.superadminCreateExam))
+		r.Post("/api/superadmin/clients/{id}/exams/csv",               s.requireRole("superadmin")(s.superadminBulkCreateExamsCSV))
 		r.Get("/api/superadmin/exams/{id}",                            s.requireRole("superadmin")(s.superadminGetExam))
 		r.Patch("/api/superadmin/exams/{id}",                          s.requireRole("superadmin")(s.superadminPatchExam))
 		r.Post("/api/superadmin/exams/{id}/visibility",                s.requireRole("superadmin")(s.superadminToggleExamVisibility))

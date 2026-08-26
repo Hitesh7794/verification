@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"strings"
 	"time"
@@ -11,6 +12,7 @@ import (
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/veni/neet-verification/internal/auth"
+	"github.com/veni/neet-verification/internal/db"
 	"github.com/veni/neet-verification/internal/email"
 	"github.com/veni/neet-verification/internal/magiclink"
 )
@@ -38,7 +40,6 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		passHash       string
 		role           string
 		orgID          sql.NullInt64
-		clientID       sql.NullInt64
 		displayName    string
 		disabledAt     sql.NullTime
 		passChangeReq  int
@@ -51,15 +52,15 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	// the email side of the OR to match.
 	identifier := strings.TrimSpace(req.Username)
 	emailLower := strings.ToLower(identifier)
-	err := s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT id, password_hash, role, org_id, client_id, display_name,
+	err := s.deps.DB.QueryRowContext(r.Context(), db.Q(
+		`SELECT id, password_hash, role, org_id, display_name,
 		        disabled_at, password_change_required, username
 		   FROM users
-		  WHERE username = $1
-		     OR (email = $2 AND role IN ('admin','client','client_reviewer'))
-		  LIMIT 1`,
+		  WHERE username = ?
+		     OR (email = ? AND role IN ('admin','client','client_reviewer'))
+		  LIMIT 1`),
 		identifier, emailLower,
-	).Scan(&id, &passHash, &role, &orgID, &clientID, &displayName,
+	).Scan(&id, &passHash, &role, &orgID, &displayName,
 		&disabledAt, &passChangeReq, &actualUsername)
 	if err == sql.ErrNoRows {
 		s.auditAnonymous(r, "login.failure", map[string]any{
@@ -69,6 +70,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
+		log.Printf("login query error: %v", err)
 		writeErr(w, http.StatusInternalServerError, "db error")
 		return
 	}
@@ -88,25 +90,6 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusForbidden, "account disabled — contact your administrator")
 		return
 	}
-	// A client_reviewer account can only sign in while the client's
-	// review portal is enabled. This is the front-door signal: if the
-	// superadmin has turned the toggle off, existing reviewers hit a
-	// clear 403 the next time they log in, rather than getting an
-	// authenticated session that then silently blocks every action.
-	// The approve/reject helpers also re-check portal_enabled server
-	// side (defence in depth: a JWT minted just before the toggle
-	// flipped stays valid for its 12h expiry, and shouldn't be usable
-	// to act during the disabled window).
-	if role == "client_reviewer" && clientID.Valid {
-		var portalOn bool
-		if err := s.deps.DB.QueryRowContext(r.Context(),
-			`SELECT portal_enabled FROM clients WHERE id = $1`, clientID.Int64,
-		).Scan(&portalOn); err != nil || !portalOn {
-			writeErr(w, http.StatusForbidden,
-				"this board's review portal is currently disabled — contact the platform team")
-			return
-		}
-	}
 
 	claims := auth.Claims{
 		UserID:   id,
@@ -117,12 +100,9 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 		v := orgID.Int64
 		claims.OrgID = &v
 	}
-	if clientID.Valid {
-		v := clientID.Int64
-		claims.ClientID = &v
-	}
 	tok, err := s.deps.JWT.Issue(claims)
 	if err != nil {
+		log.Printf("login token issue error: %v", err)
 		writeErr(w, http.StatusInternalServerError, "token error")
 		return
 	}
@@ -137,7 +117,6 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 			"role":                     role,
 			"display_name":             displayName,
 			"org_id":                   claims.OrgID,
-			"client_id":                claims.ClientID,
 			"password_change_required": passChangeReq != 0,
 		},
 	})
@@ -285,30 +264,18 @@ func (s *Server) authRefresh(w http.ResponseWriter, r *http.Request) {
 		displayName    string
 		disabledAt     sql.NullTime
 		orgID          sql.NullInt64
-		clientID       sql.NullInt64
 	)
-	if err := s.deps.DB.QueryRowContext(r.Context(),
+	if err := s.deps.DB.QueryRowContext(r.Context(), db.Q(
 		`SELECT username, role, COALESCE(display_name, username),
-		        disabled_at, org_id, client_id
-		 FROM users WHERE id = $1`, c.UserID,
-	).Scan(&actualUsername, &role, &displayName, &disabledAt, &orgID, &clientID); err != nil {
+		        disabled_at, org_id
+		 FROM users WHERE id = ?`), c.UserID,
+	).Scan(&actualUsername, &role, &displayName, &disabledAt, &orgID); err != nil {
 		writeErr(w, http.StatusUnauthorized, "user not found")
 		return
 	}
 	if disabledAt.Valid {
 		writeErr(w, http.StatusForbidden, "account disabled")
 		return
-	}
-
-	if role == "client_reviewer" && clientID.Valid {
-		var portalOn bool
-		if err := s.deps.DB.QueryRowContext(r.Context(),
-			`SELECT portal_enabled FROM clients WHERE id = $1`, clientID.Int64,
-		).Scan(&portalOn); err != nil || !portalOn {
-			writeErr(w, http.StatusForbidden,
-				"this board's review portal is currently disabled — contact the platform team")
-			return
-		}
 	}
 
 	claims := auth.Claims{
@@ -320,12 +287,9 @@ func (s *Server) authRefresh(w http.ResponseWriter, r *http.Request) {
 		v := orgID.Int64
 		claims.OrgID = &v
 	}
-	if clientID.Valid {
-		v := clientID.Int64
-		claims.ClientID = &v
-	}
 	tok, err := s.deps.JWT.Issue(claims)
 	if err != nil {
+		log.Printf("authRefresh token issue error: %v", err)
 		writeErr(w, http.StatusInternalServerError, "token error")
 		return
 	}

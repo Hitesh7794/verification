@@ -18,6 +18,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/veni/neet-verification/internal/auth"
+	"github.com/veni/neet-verification/internal/db"
 	"github.com/veni/neet-verification/internal/storage"
 )
 
@@ -69,14 +70,49 @@ func (s *Server) getCandidate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Exam active-window enforcement — only for operators.
+	// Active-window enforcement — only for operators (client role).
 	// Admin / superadmin / ops_admin can still fetch a candidate
 	// outside the exam window for audit or review; the operator
 	// (client role) can't because that's where a new verification
-	// would begin. Empty From/To strings mean "no window set" and
-	// are treated as always-on for backward compat with legacy rows.
+	// would begin.
 	if claims.Role == "client" {
 		now := time.Now().UTC()
+
+		// 1. Operator account validity window check
+		if claims.UserID != 0 {
+			var uFrom, uTo sql.NullString
+			_ = s.deps.DB.QueryRowContext(r.Context(), db.Q(`
+				SELECT COALESCE(TO_CHAR(valid_from, 'YYYY-MM-DD"T"HH24:MI'), ''),
+				       COALESCE(TO_CHAR(valid_to,   'YYYY-MM-DD"T"HH24:MI'), '')
+				  FROM users WHERE id = ?`), claims.UserID).Scan(&uFrom, &uTo)
+
+			if uFrom.Valid && strings.TrimSpace(uFrom.String) != "" {
+				if fromT, err := parseDateTimeWindow(uFrom.String, false); err == nil && now.Before(fromT) {
+					writeJSON(w, http.StatusForbidden, map[string]any{
+						"error": fmt.Sprintf("Your operator account is not active until %s. Candidate verifications cannot be started yet.",
+							uFrom.String),
+						"code":       "OPERATOR_WINDOW_FUTURE",
+						"valid_from": uFrom.String,
+						"valid_to":   uTo.String,
+					})
+					return
+				}
+			}
+			if uTo.Valid && strings.TrimSpace(uTo.String) != "" {
+				if toT, err := parseDateTimeWindow(uTo.String, true); err == nil && now.After(toT) {
+					writeJSON(w, http.StatusForbidden, map[string]any{
+						"error": fmt.Sprintf("Your operator account access expired on %s. Candidate verifications are no longer accepted.",
+							uTo.String),
+						"code":       "OPERATOR_WINDOW_EXPIRED",
+						"valid_from": uFrom.String,
+						"valid_to":   uTo.String,
+					})
+					return
+				}
+			}
+		}
+
+		// 2. Exam verification window check
 		if ec.VerificationFrom != "" {
 			if fromT, err := parseDateTimeWindow(ec.VerificationFrom, false); err == nil && now.Before(fromT) {
 				writeJSON(w, http.StatusForbidden, map[string]any{
@@ -932,7 +968,7 @@ func (s *Server) lookupExamCandidate(r *http.Request, claims *authClaims, roll s
 	}
 
 	var out examCandidateRow
-	err := s.deps.DB.QueryRowContext(r.Context(), query, args...).Scan(
+	err := s.deps.DB.QueryRowContext(r.Context(), db.Q(query), args...).Scan(
 		&out.ID, &out.ExamID, &out.ExamCode, &out.ExamName,
 		&out.ClientID, &out.ClientName,
 		&out.RollNo, &out.Name, &out.VerificationDate,

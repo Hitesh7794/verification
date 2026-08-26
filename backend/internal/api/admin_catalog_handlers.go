@@ -408,12 +408,12 @@ func (s *Server) setOperatorExams(tx *sql.Tx, orgID, userID int64, examIDs []int
 	}
 
 	// Replace: delete all + re-insert. Small list, cheap.
-	if _, err := tx.Exec(db.Q(`DELETE FROM operator_exams WHERE user_id = $1`), userID); err != nil {
+	if _, err := tx.Exec(db.Q(`DELETE FROM operator_exams WHERE user_id = ?`), userID); err != nil {
 		return err
 	}
 	for _, id := range examIDs {
 		if _, err := tx.Exec(
-			`INSERT INTO operator_exams(user_id, exam_id) VALUES($1, $2)`,
+			db.Q(`INSERT INTO operator_exams(user_id, exam_id) VALUES(?, ?)`),
 			userID, id,
 		); err != nil {
 			return err
