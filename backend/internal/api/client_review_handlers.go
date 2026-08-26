@@ -38,16 +38,28 @@ import (
 	"github.com/veni/neet-verification/internal/db"
 )
 
-// clientReviewerScope pulls the caller's client_id from JWT claims.
-// Returns a *sql.NullInt64-friendly value plus a bool indicating whether
-// the caller is allowed at all — false means the handler should 403
-// (missing claim, wrong role, or no client_id attached).
-func clientReviewerScope(r *http.Request) (int64, bool) {
+// clientReviewerScope pulls the caller's client_id from JWT claims,
+// falling back to a DB lookup for tokens minted before client_id was embedded.
+// Returns the clientID plus a bool indicating whether the caller is allowed.
+func (s *Server) clientReviewerScope(r *http.Request) (int64, bool) {
 	c := claimsFrom(r)
-	if c == nil || c.Role != "client_reviewer" || c.ClientID == nil {
+	if c == nil || c.Role != "client_reviewer" {
 		return 0, false
 	}
-	return *c.ClientID, true
+	if c.ClientID != nil && *c.ClientID > 0 {
+		return *c.ClientID, true
+	}
+	// Fallback DB lookup
+	var clientID sql.NullInt64
+	if err := s.deps.DB.QueryRowContext(r.Context(), db.Q(
+		`SELECT client_id FROM users WHERE id = ? AND role = 'client_reviewer' AND disabled_at IS NULL`),
+		c.UserID,
+	).Scan(&clientID); err == nil && clientID.Valid && clientID.Int64 > 0 {
+		v := clientID.Int64
+		c.ClientID = &v
+		return v, true
+	}
+	return 0, false
 }
 
 // ---------- GET /api/client/applications ----------
@@ -55,7 +67,7 @@ func clientReviewerScope(r *http.Request) (int64, bool) {
 // Same shape as superadmin's list — thin variant, no free-text search
 // yet (client inboxes are typically small; add search if / when it hurts).
 func (s *Server) clientListApplications(w http.ResponseWriter, r *http.Request) {
-	clientID, ok := clientReviewerScope(r)
+	clientID, ok := s.clientReviewerScope(r)
 	if !ok {
 		writeErr(w, http.StatusForbidden, "client reviewer context required")
 		return
@@ -144,7 +156,7 @@ func (s *Server) clientListApplications(w http.ResponseWriter, r *http.Request) 
 // ---------- GET /api/client/applications/{id} ----------
 
 func (s *Server) clientGetApplication(w http.ResponseWriter, r *http.Request) {
-	clientID, ok := clientReviewerScope(r)
+	clientID, ok := s.clientReviewerScope(r)
 	if !ok {
 		writeErr(w, http.StatusForbidden, "client reviewer context required")
 		return
@@ -203,7 +215,7 @@ func (s *Server) clientGetApplication(w http.ResponseWriter, r *http.Request) {
 // but the SQL WHERE joins to institution_applications.client_id so a
 // reviewer for one client can never read another client's uploads.
 func (s *Server) clientDownloadDoc(w http.ResponseWriter, r *http.Request) {
-	clientID, ok := clientReviewerScope(r)
+	clientID, ok := s.clientReviewerScope(r)
 	if !ok {
 		writeErr(w, http.StatusForbidden, "client reviewer context required")
 		return
@@ -247,7 +259,7 @@ func (s *Server) clientDownloadDoc(w http.ResponseWriter, r *http.Request) {
 // ---------- POST /api/client/applications/{id}/approve ----------
 
 func (s *Server) clientApproveApplication(w http.ResponseWriter, r *http.Request) {
-	clientID, ok := clientReviewerScope(r)
+	clientID, ok := s.clientReviewerScope(r)
 	if !ok {
 		writeErr(w, http.StatusForbidden, "client reviewer context required")
 		return
@@ -289,7 +301,7 @@ func (s *Server) clientApproveApplication(w http.ResponseWriter, r *http.Request
 // ---------- POST /api/client/applications/{id}/reject ----------
 
 func (s *Server) clientRejectApplication(w http.ResponseWriter, r *http.Request) {
-	clientID, ok := clientReviewerScope(r)
+	clientID, ok := s.clientReviewerScope(r)
 	if !ok {
 		writeErr(w, http.StatusForbidden, "client reviewer context required")
 		return
@@ -367,7 +379,7 @@ func (s *Server) clientBulkRejectApplications(w http.ResponseWriter, r *http.Req
 }
 
 func (s *Server) clientBulkActionApplications(w http.ResponseWriter, r *http.Request, isReject bool) {
-	clientID, ok := clientReviewerScope(r)
+	clientID, ok := s.clientReviewerScope(r)
 	if !ok {
 		writeErr(w, http.StatusForbidden, "client reviewer context required")
 		return
@@ -465,7 +477,7 @@ func (s *Server) clientBulkActionApplications(w http.ResponseWriter, r *http.Req
 // dashboard mount; the alternative was passing name via the JWT which
 // would grow every issued token.
 func (s *Server) clientReviewerMe(w http.ResponseWriter, r *http.Request) {
-	clientID, ok := clientReviewerScope(r)
+	clientID, ok := s.clientReviewerScope(r)
 	if !ok {
 		writeErr(w, http.StatusForbidden, "client reviewer context required")
 		return
@@ -536,7 +548,7 @@ type subscriptionRejectReq struct {
 
 // ---------- GET /api/client/subscription-requests ----------
 func (s *Server) clientListSubscriptionRequests(w http.ResponseWriter, r *http.Request) {
-	clientID, ok := clientReviewerScope(r)
+	clientID, ok := s.clientReviewerScope(r)
 	if !ok {
 		writeErr(w, http.StatusForbidden, "client reviewer context required")
 		return
@@ -724,7 +736,7 @@ func (s *Server) clientListSubscriptionRequests(w http.ResponseWriter, r *http.R
 
 // ---------- POST /api/client/subscription-requests/{org_id}/{exam_id}/approve ----------
 func (s *Server) clientApproveSubscriptionRequest(w http.ResponseWriter, r *http.Request) {
-	clientID, ok := clientReviewerScope(r)
+	clientID, ok := s.clientReviewerScope(r)
 	if !ok {
 		writeErr(w, http.StatusForbidden, "client reviewer context required")
 		return
@@ -892,7 +904,7 @@ func (s *Server) clientApproveSubscriptionRequest(w http.ResponseWriter, r *http
 
 // ---------- POST /api/client/subscription-requests/{org_id}/{exam_id}/reject ----------
 func (s *Server) clientRejectSubscriptionRequest(w http.ResponseWriter, r *http.Request) {
-	clientID, ok := clientReviewerScope(r)
+	clientID, ok := s.clientReviewerScope(r)
 	if !ok {
 		writeErr(w, http.StatusForbidden, "client reviewer context required")
 		return
@@ -977,7 +989,7 @@ func (s *Server) clientRejectSubscriptionRequest(w http.ResponseWriter, r *http.
 // institution_applications so orgs that were seeded directly (no KYC
 // row) still export with blank fields instead of dropping the row.
 func (s *Server) clientExportApprovedSubscriptionsCSV(w http.ResponseWriter, r *http.Request) {
-	clientID, ok := clientReviewerScope(r)
+	clientID, ok := s.clientReviewerScope(r)
 	if !ok {
 		writeErr(w, http.StatusForbidden, "client reviewer context required")
 		return
@@ -1096,7 +1108,7 @@ func (s *Server) clientExportApprovedSubscriptionsCSV(w http.ResponseWriter, r *
 // row back to 'pending' (or straight to 'approved' if the client
 // has a blanket approval for the org).
 func (s *Server) clientRevokeSubscriptionRequest(w http.ResponseWriter, r *http.Request) {
-	clientID, ok := clientReviewerScope(r)
+	clientID, ok := s.clientReviewerScope(r)
 	if !ok {
 		writeErr(w, http.StatusForbidden, "client reviewer context required")
 		return
@@ -1215,7 +1227,7 @@ func (s *Server) clientRevokeSubscriptionRequest(w http.ResponseWriter, r *http.
 
 // ---------- POST /api/client/subscription-requests/{org_id}/{exam_id}/reset-pending ----------
 func (s *Server) clientResetSubscriptionRequestToPending(w http.ResponseWriter, r *http.Request) {
-	clientID, ok := clientReviewerScope(r)
+	clientID, ok := s.clientReviewerScope(r)
 	if !ok {
 		writeErr(w, http.StatusForbidden, "client reviewer context required")
 		return
@@ -1294,7 +1306,7 @@ type subscriptionBulkRejectReq struct {
 
 // ---------- POST /api/client/subscription-requests/bulk-approve ----------
 func (s *Server) clientBulkApproveSubscriptionRequests(w http.ResponseWriter, r *http.Request) {
-	clientID, ok := clientReviewerScope(r)
+	clientID, ok := s.clientReviewerScope(r)
 	if !ok {
 		writeErr(w, http.StatusForbidden, "client reviewer context required")
 		return
@@ -1421,7 +1433,7 @@ func (s *Server) clientBulkApproveSubscriptionRequests(w http.ResponseWriter, r 
 
 // ---------- POST /api/client/subscription-requests/bulk-reject ----------
 func (s *Server) clientBulkRejectSubscriptionRequests(w http.ResponseWriter, r *http.Request) {
-	clientID, ok := clientReviewerScope(r)
+	clientID, ok := s.clientReviewerScope(r)
 	if !ok {
 		writeErr(w, http.StatusForbidden, "client reviewer context required")
 		return
@@ -1542,7 +1554,7 @@ func (s *Server) clientBulkRejectSubscriptionRequests(w http.ResponseWriter, r *
 // the entire operation so the reviewer never lands in a half-applied
 // state.
 func (s *Server) clientBulkDecideSubscriptionRequestsCSV(w http.ResponseWriter, r *http.Request) {
-	clientID, ok := clientReviewerScope(r)
+	clientID, ok := s.clientReviewerScope(r)
 	if !ok {
 		writeErr(w, http.StatusForbidden, "client reviewer context required")
 		return

@@ -366,17 +366,17 @@ type createExamReq struct {
 	RequiresIris *bool `json:"requires_iris,omitempty"`
 }
 
-func resolveExamCreateClientID(r *http.Request) (int64, int, string) {
+func (s *Server) resolveExamCreateClientID(r *http.Request) (int64, int, string) {
 	claims := claimsFrom(r)
 	if claims == nil {
 		return 0, http.StatusUnauthorized, "unauthorized"
 	}
 	paramIDStr := chi.URLParam(r, "id")
 	if claims.Role == "client_reviewer" {
-		if claims.ClientID == nil {
+		clientID, ok := s.clientReviewerScope(r)
+		if !ok {
 			return 0, http.StatusForbidden, "client reviewer context required"
 		}
-		clientID := *claims.ClientID
 		if paramIDStr != "" {
 			paramID, err := parseInt64(paramIDStr)
 			if err != nil || paramID != clientID {
@@ -400,7 +400,7 @@ func resolveExamCreateClientID(r *http.Request) (int64, int, string) {
 
 // GET /api/client/exams
 func (s *Server) clientReviewerListExams(w http.ResponseWriter, r *http.Request) {
-	clientID, ok := clientReviewerScope(r)
+	clientID, ok := s.clientReviewerScope(r)
 	if !ok {
 		writeErr(w, http.StatusForbidden, "client reviewer context required")
 		return
@@ -414,7 +414,7 @@ func (s *Server) clientReviewerListExams(w http.ResponseWriter, r *http.Request)
 }
 
 func (s *Server) superadminCreateExam(w http.ResponseWriter, r *http.Request) {
-	clientID, status, msg := resolveExamCreateClientID(r)
+	clientID, status, msg := s.resolveExamCreateClientID(r)
 	if status != 0 {
 		writeErr(w, status, msg)
 		return
@@ -682,7 +682,7 @@ func parseBulkExamsCSV(buf []byte) ([]parsedExamRow, []csvValidationErr) {
 }
 
 func (s *Server) superadminBulkCreateExamsCSV(w http.ResponseWriter, r *http.Request) {
-	clientID, status, msg := resolveExamCreateClientID(r)
+	clientID, status, msg := s.resolveExamCreateClientID(r)
 	if status != 0 {
 		writeErr(w, status, msg)
 		return
