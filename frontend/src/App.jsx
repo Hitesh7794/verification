@@ -30,6 +30,7 @@ import ReviewerLogin from './pages/reviewer/Login.jsx'
 import ReviewerApplicationDetail from './pages/reviewer/ApplicationDetail.jsx'
 import ReviewerKycInbox from './pages/reviewer/KycInbox.jsx'
 import ReviewerExams from './pages/reviewer/Exams.jsx'
+import ReviewerExamDetail from './pages/reviewer/ExamDetail.jsx'
 
 import Register from './pages/register/Register.jsx'
 import SetPassword from './pages/register/SetPassword.jsx'
@@ -257,6 +258,14 @@ export default function App() {
             element={
               <RequireRole role="client_reviewer">
                 <ReviewerExams />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/reviewer/exams/:id"
+            element={
+              <RequireRole role="client_reviewer">
+                <ReviewerExamDetail />
               </RequireRole>
             }
           />

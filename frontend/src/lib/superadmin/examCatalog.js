@@ -185,7 +185,7 @@ export function bulkUploadBiometrics(examId, modality, zipFile, onProgress) {
     const fd = new FormData()
     fd.append('file', zipFile)
     xhr.open('POST', `/api/superadmin/exams/${examId}/bulk/${modality}`)
-    const token = getStoredToken('superadmin')
+    const token = getStoredToken(getRoleScope() || 'superadmin')
     if (token) xhr.setRequestHeader('Authorization', `Bearer ${token}`)
     xhr.upload.onprogress = (e) => {
       if (e.lengthComputable && onProgress) {
@@ -268,7 +268,7 @@ export async function listUploads(examId) {
 export async function uploadCandidateCSV(examId, file) {
   const fd = new FormData()
   fd.append('file', file)
-  const token = getStoredToken('superadmin')
+  const token = getStoredToken(getRoleScope() || 'superadmin')
   const res = await fetch(`/api/superadmin/exams/${examId}/candidates`, {
     method: 'POST',
     headers: token ? { Authorization: `Bearer ${token}` } : {},
@@ -288,7 +288,7 @@ export async function uploadCandidateCSV(examId, file) {
 // (Signed download would be nicer but the endpoint requires the Bearer
 // token, so we open it in a new tab via a fetch → blob → objectURL.)
 export async function downloadRawCSV(uploadId, filename) {
-  const token = getStoredToken('superadmin')
+  const token = getStoredToken(getRoleScope() || 'superadmin')
   const res = await fetch(`/api/superadmin/uploads/${uploadId}/raw`, {
     headers: token ? { Authorization: `Bearer ${token}` } : {},
   })

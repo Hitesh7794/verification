@@ -1,5 +1,8 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
+import { Link, useNavigate } from 'react-router-dom'
+import { motion, AnimatePresence } from 'framer-motion'
 import ReviewerShell, { ReviewerPageHead } from '../../components/reviewer/ReviewerShell.jsx'
+import ConfirmDialog from '../../components/shell/ConfirmDialog.jsx'
 import { Button, Card, CardBody, Input, Label } from '../../components/ui/ui.jsx'
 import { Icon, Pill } from '../../components/ui/extras.jsx'
 import { FadeIn } from '../../components/ui/motion.jsx'
@@ -8,25 +11,15 @@ import {
   createReviewerExam,
   bulkCreateReviewerExamsCSV,
   downloadSampleExamCSV,
+  reviewerMe,
 } from '../../lib/reviewer/api.js'
-
-function formatShortDateTime(iso) {
-  if (!iso) return '—'
-  try {
-    const d = new Date(iso)
-    if (isNaN(d.getTime())) return iso
-    return d.toLocaleDateString('en-IN', {
-      day: '2-digit',
-      month: 'short',
-      year: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-      hour12: false,
-    })
-  } catch {
-    return String(iso).slice(0, 16).replace('T', ' ')
-  }
-}
+import {
+  toggleExamVisibility,
+  closeExam,
+  reopenExam,
+  deleteExam,
+} from '../../lib/superadmin/examCatalog.js'
+import { dateRange } from '../../lib/dates.js'
 
 function FormSection({ num, title, hint, children }) {
   return (
@@ -202,57 +195,84 @@ function NewExamForm({ onCancel, onCreated, onBulkCreated }) {
                   <Input
                     value={code}
                     onChange={(e) => setCode(e.target.value.toUpperCase())}
-                    placeholder="e.g. NET-2026-01"
-                    maxLength={60}
+                    placeholder="e.g. NET-2026"
+                    maxLength={64}
                     required
-                    className="font-mono uppercase tracking-wide"
+                    className="font-mono"
                   />
-                  <p className="text-[11px] text-slate-500 mt-1">Globally unique. Uppercase, no spaces.</p>
                 </div>
               </div>
             </FormSection>
 
-            <FormSection num="2" title="Verification Window" hint="Colleges can only verify candidates for this exam inside this date & time range.">
+            <FormSection num="2" title="Verification window" hint="Date and time when operators are permitted to verify candidates for this exam.">
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                 <div>
-                  <Label>From (date & time) <span className="text-rose-500">*</span></Label>
-                  <Input type="datetime-local" value={from} onChange={(e) => setFrom(e.target.value)} required />
+                  <Label>Window start (From) <span className="text-rose-500">*</span></Label>
+                  <Input
+                    type="datetime-local"
+                    value={from}
+                    onChange={(e) => setFrom(e.target.value)}
+                    required
+                  />
                 </div>
                 <div>
-                  <Label>To (date & time) <span className="text-rose-500">*</span></Label>
-                  <Input type="datetime-local" value={to} onChange={(e) => setTo(e.target.value)} required min={from || undefined} />
+                  <Label>Window end (To) <span className="text-rose-500">*</span></Label>
+                  <Input
+                    type="datetime-local"
+                    value={to}
+                    onChange={(e) => setTo(e.target.value)}
+                    required
+                    min={from || undefined}
+                  />
                 </div>
               </div>
             </FormSection>
 
-            <FormSection num="3" title="Biometric Requirements" hint="Which biometrics the verification agent must capture for candidate verification.">
-              <div className="flex flex-wrap gap-6 pt-1">
-                <label className="inline-flex items-center gap-2 text-sm text-slate-700 font-medium cursor-pointer">
+            <FormSection num="3" title="Biometric requirements" hint="Select which biometric capture channels are enforced for candidates of this exam.">
+              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
+                <label className={`flex items-start gap-3 rounded-xl border p-3.5 transition-all cursor-pointer ${
+                  reqFace ? 'border-stone-900 bg-stone-50/50 shadow-xs' : 'border-slate-200 hover:border-slate-300'
+                }`}>
                   <input
                     type="checkbox"
                     checked={reqFace}
                     onChange={(e) => setReqFace(e.target.checked)}
-                    className="rounded border-slate-300 text-stone-900 focus:ring-stone-700"
+                    className="mt-0.5 h-4 w-4 rounded border-slate-300 text-stone-900 focus:ring-stone-900"
                   />
-                  Face match
+                  <div>
+                    <span className="text-xs font-bold text-slate-900 block">Facial Recognition</span>
+                    <span className="text-[11px] text-slate-500 mt-0.5 block leading-tight">Live camera face match against enrolled photo</span>
+                  </div>
                 </label>
-                <label className="inline-flex items-center gap-2 text-sm text-slate-700 font-medium cursor-pointer">
+
+                <label className={`flex items-start gap-3 rounded-xl border p-3.5 transition-all cursor-pointer ${
+                  reqFP ? 'border-stone-900 bg-stone-50/50 shadow-xs' : 'border-slate-200 hover:border-slate-300'
+                }`}>
                   <input
                     type="checkbox"
                     checked={reqFP}
                     onChange={(e) => setReqFP(e.target.checked)}
-                    className="rounded border-slate-300 text-stone-900 focus:ring-stone-700"
+                    className="mt-0.5 h-4 w-4 rounded border-slate-300 text-stone-900 focus:ring-stone-900"
                   />
-                  Fingerprint match
+                  <div>
+                    <span className="text-xs font-bold text-slate-900 block">Fingerprint</span>
+                    <span className="text-[11px] text-slate-500 mt-0.5 block leading-tight">Biometric sensor scan (ISO/FMR templates)</span>
+                  </div>
                 </label>
-                <label className="inline-flex items-center gap-2 text-sm text-slate-700 font-medium cursor-pointer">
+
+                <label className={`flex items-start gap-3 rounded-xl border p-3.5 transition-all cursor-pointer ${
+                  reqIris ? 'border-stone-900 bg-stone-50/50 shadow-xs' : 'border-slate-200 hover:border-slate-300'
+                }`}>
                   <input
                     type="checkbox"
                     checked={reqIris}
                     onChange={(e) => setReqIris(e.target.checked)}
-                    className="rounded border-slate-300 text-stone-900 focus:ring-stone-700"
+                    className="mt-0.5 h-4 w-4 rounded border-slate-300 text-stone-900 focus:ring-stone-900"
                   />
-                  Iris match
+                  <div>
+                    <span className="text-xs font-bold text-slate-900 block">Iris Scan</span>
+                    <span className="text-[11px] text-slate-500 mt-0.5 block leading-tight">Dual-eye optical iris capture & verification</span>
+                  </div>
                 </label>
               </div>
             </FormSection>
@@ -273,88 +293,76 @@ function NewExamForm({ onCancel, onCreated, onBulkCreated }) {
         ) : (
           /* Bulk CSV Upload Form */
           <form onSubmit={onBulkSubmit} className="space-y-6">
-            {/* Step 1: Download Sample Template */}
-            <div className="rounded-xl border border-slate-200 bg-slate-50/70 p-4 sm:p-5">
-              <div className="flex flex-wrap items-center justify-between gap-4">
-                <div className="min-w-0">
-                  <h4 className="text-sm font-semibold text-slate-900">1. CSV Template & Format Guidelines</h4>
-                  <p className="text-xs text-slate-500 mt-1 max-w-xl">
-                    Required headers: <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">exam_name</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">exam_code</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">verification_from</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">verification_to</code>.
-                    <br />
-                    Optional biometrics: <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">requires_face</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">requires_fp</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">requires_iris</code> (<code className="text-slate-700">yes</code> / <code className="text-slate-700">no</code>).
-                  </p>
-                </div>
-                <Button
+            <div className="rounded-xl border border-slate-200 bg-slate-50/60 p-4 text-xs text-slate-600">
+              <div className="flex items-center justify-between flex-wrap gap-2 mb-2">
+                <span className="font-semibold text-slate-800">CSV Columns Reference:</span>
+                <button
                   type="button"
-                  variant="secondary"
-                  size="sm"
                   onClick={downloadSampleExamCSV}
-                  className="bg-white hover:bg-slate-100 text-slate-800 shadow-sm shrink-0"
+                  className="inline-flex items-center gap-1.5 text-xs font-semibold text-stone-900 hover:text-stone-700 bg-white border border-slate-200 px-2.5 py-1 rounded-md shadow-2xs transition-colors"
                 >
-                  <Icon.Download className="h-4 w-4 mr-1.5 text-slate-600" />
-                  Download sample CSV
-                </Button>
+                  <Icon.Download className="h-3.5 w-3.5" />
+                  Download sample CSV template
+                </button>
               </div>
+              <p className="leading-relaxed">
+                Required columns: <code className="bg-white px-1.5 py-0.5 rounded border font-mono text-[11px] text-stone-900">exam_name</code>,{' '}
+                <code className="bg-white px-1.5 py-0.5 rounded border font-mono text-[11px] text-stone-900">exam_code</code>,{' '}
+                <code className="bg-white px-1.5 py-0.5 rounded border font-mono text-[11px] text-stone-900">verification_from</code>,{' '}
+                <code className="bg-white px-1.5 py-0.5 rounded border font-mono text-[11px] text-stone-900">verification_to</code>.
+                <br />
+                Optional columns:{' '}
+                <code className="bg-white px-1.5 py-0.5 rounded border font-mono text-[11px] text-stone-900">requires_face</code>,{' '}
+                <code className="bg-white px-1.5 py-0.5 rounded border font-mono text-[11px] text-stone-900">requires_fp</code>,{' '}
+                <code className="bg-white px-1.5 py-0.5 rounded border font-mono text-[11px] text-stone-900">requires_iris</code> (use <code className="font-mono text-stone-800">yes</code> or <code className="font-mono text-stone-800">no</code>).
+              </p>
             </div>
 
-            {/* Step 2: Upload CSV Dropzone */}
-            <div>
-              <h4 className="text-sm font-semibold text-slate-900 mb-2">2. Upload your CSV file</h4>
-              <div
-                onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
-                onDragLeave={() => setDragOver(false)}
-                onDrop={handleFileDrop}
-                className={`relative flex flex-col items-center justify-center rounded-xl border-2 border-dashed p-8 transition-colors text-center ${
-                  dragOver
-                    ? 'border-stone-900 bg-stone-50/50'
-                    : 'border-slate-300 hover:border-slate-400 bg-white'
-                }`}
-              >
-                <input
-                  type="file"
-                  accept=".csv,text/csv"
-                  onChange={(e) => {
-                    const file = e.target.files?.[0]
-                    if (file) {
-                      setCsvFile(file)
-                      setBulkErr('')
-                      setValidationErrors([])
-                    }
-                  }}
-                  className="absolute inset-0 h-full w-full cursor-pointer opacity-0"
-                />
-                <div className="flex h-12 w-12 items-center justify-center rounded-full bg-slate-100 text-slate-600 mb-3">
-                  <Icon.Upload className="h-6 w-6" />
+            {/* Drag and Drop Box */}
+            <div
+              onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
+              onDragLeave={() => setDragOver(false)}
+              onDrop={handleFileDrop}
+              className={`relative rounded-2xl border-2 border-dashed p-8 text-center transition-all ${
+                dragOver
+                  ? 'border-stone-900 bg-stone-50/50 ring-4 ring-stone-900/10'
+                  : csvFile
+                  ? 'border-emerald-300 bg-emerald-50/30'
+                  : 'border-slate-300 hover:border-slate-400 bg-white'
+              }`}
+            >
+              <input
+                type="file"
+                accept=".csv,text/csv"
+                id="reviewer-exam-csv-input"
+                onChange={(e) => {
+                  const f = e.target.files?.[0]
+                  if (f) {
+                    setCsvFile(f)
+                    setBulkErr('')
+                    setValidationErrors([])
+                  }
+                }}
+                className="sr-only"
+              />
+              <label htmlFor="reviewer-exam-csv-input" className="cursor-pointer block">
+                <div className="mx-auto h-12 w-12 rounded-xl bg-stone-100 text-stone-700 flex items-center justify-center mb-3">
+                  {csvFile ? <Icon.Check className="h-6 w-6 text-emerald-600" /> : <Icon.Upload className="h-6 w-6" />}
                 </div>
-                <p className="text-sm font-semibold text-slate-800">
-                  {csvFile ? csvFile.name : 'Choose a CSV file or drag and drop here'}
-                </p>
-                <p className="text-xs text-slate-500 mt-1">
-                  {csvFile
-                    ? `${(csvFile.size / 1024).toFixed(1)} KB — Click or drop another file to replace`
-                    : 'Only .csv files up to 20 MB are supported'}
-                </p>
-                {csvFile && (
-                  <div className="mt-3 flex items-center gap-2">
-                    <span className="inline-flex items-center gap-1 rounded-md bg-emerald-50 px-2.5 py-1 text-xs font-medium text-emerald-700 ring-1 ring-emerald-600/20">
-                      <Icon.Check className="h-3.5 w-3.5" />
-                      Ready to upload
-                    </span>
-                    <button
-                      type="button"
-                      onClick={(e) => {
-                        e.stopPropagation()
-                        setCsvFile(null)
-                        setValidationErrors([])
-                        setBulkErr('')
-                      }}
-                      className="text-xs text-slate-500 hover:text-rose-600 underline ml-2"
-                    >
-                      Remove
-                    </button>
+                {csvFile ? (
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">{csvFile.name}</p>
+                    <p className="text-xs text-slate-500 mt-1">{(csvFile.size / 1024).toFixed(1)} KB · Click or drag another to replace</p>
+                  </div>
+                ) : (
+                  <div>
+                    <p className="text-sm font-semibold text-slate-900">
+                      <span className="text-stone-900 underline underline-offset-2">Click to browse</span> or drag and drop your CSV
+                    </p>
+                    <p className="text-xs text-slate-500 mt-1">Up to 1,000 exams per batch</p>
                   </div>
                 )}
-              </div>
+              </label>
             </div>
 
             {/* Validation Errors Table */}
@@ -411,225 +419,397 @@ function NewExamForm({ onCancel, onCreated, onBulkCreated }) {
   )
 }
 
+function EmptyExams({ onCreate }) {
+  return (
+    <div className="p-16 text-center">
+      <div className="mx-auto h-12 w-12 rounded-xl bg-stone-100 text-stone-800 flex items-center justify-center mb-3">
+        <Icon.FileText className="h-6 w-6" />
+      </div>
+      <h3 className="text-base font-semibold text-slate-900">No exams yet</h3>
+      <p className="text-xs text-slate-500 mt-1 max-w-sm mx-auto">
+        Create an exam manually or upload a batch via CSV to start receiving verifications for your board.
+      </p>
+      <Button onClick={onCreate} className="mt-4">
+        <Icon.Plus className="h-4 w-4 mr-1.5" />
+        New exam
+      </Button>
+    </div>
+  )
+}
+
 export default function ReviewerExams() {
+  const nav = useNavigate()
+  const [client, setClient] = useState(null)
   const [exams, setExams] = useState([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [tab, setTab] = useState('active') // 'active' | 'archived'
   const [search, setSearch] = useState('')
-  const [showCreate, setShowCreate] = useState(false)
 
-  const load = useCallback(async () => {
+  // Confirm-dialog state
+  const [dlg, setDlg] = useState(null)
+
+  const refresh = useCallback(async () => {
     setLoading(true)
     setErr('')
     try {
-      const data = await listReviewerExams()
-      setExams(data || [])
+      const [meRes, examsRes] = await Promise.all([
+        reviewerMe(),
+        listReviewerExams(),
+      ])
+      setClient(meRes)
+      setExams(examsRes || [])
     } catch (e) {
-      setErr(e?.body?.error || e?.message || 'Could not load exams')
+      setErr(e?.body?.error || e?.message || 'Could not load board exams')
     } finally {
       setLoading(false)
     }
   }, [])
 
-  useEffect(() => { load() }, [load])
+  useEffect(() => { refresh() }, [refresh])
 
-  const filteredExams = useMemo(() => {
+  async function onToggleVisibility(examId) {
+    await toggleExamVisibility(examId)
+    await refresh()
+  }
+
+  function askClose(examId, examName) {
+    setDlg({
+      title:        `End "${examName}"?`,
+      body:         'New verifications against this exam will be blocked.\nExisting data is preserved — you can reopen it later.',
+      confirmLabel: 'End exam',
+      tone:         'warn',
+      onConfirm:    async () => { await closeExam(examId); await refresh(); setDlg(null) },
+    })
+  }
+
+  async function onReopen(examId) {
+    await reopenExam(examId)
+    await refresh()
+  }
+
+  function askDeleteExam(examId, examName) {
+    setDlg({
+      title:        `Delete "${examName}"?`,
+      body:         'This is permanent. Only allowed if no verifications reference candidates in this exam.\n\nUse "End" instead if you want to close the exam while preserving its data.',
+      confirmLabel: 'Delete exam',
+      tone:         'danger',
+      onConfirm:    async () => { await deleteExam(examId); await refresh(); setDlg(null) },
+    })
+  }
+
+  function isExamOngoing(e) {
+    if (!e || e.closed) return false
+    const now = new Date()
+    const from = e.verification_from ? new Date(e.verification_from) : null
+    const to = e.verification_to ? new Date(e.verification_to) : null
+    if (from && !isNaN(from.getTime()) && now < from) return false
+    if (to && !isNaN(to.getTime()) && now > to) return false
+    return true
+  }
+
+  function isExamArchived(e) {
+    if (!e) return false
+    if (e.closed) return true
+    if (e.verification_to) {
+      const to = new Date(e.verification_to)
+      if (!isNaN(to.getTime()) && new Date() > to) return true
+    }
+    return false
+  }
+
+  const totalCandidates = useMemo(() => exams.reduce((s, e) => s + (e.candidate_count || 0), 0), [exams])
+  const openExams = useMemo(() => exams.filter(isExamOngoing).length, [exams])
+
+  const activeExams = useMemo(() => exams.filter((e) => !isExamArchived(e)), [exams])
+  const archivedExams = useMemo(() => exams.filter(isExamArchived), [exams])
+
+  const displayedExams = useMemo(() => {
+    const list = tab === 'active' ? activeExams : archivedExams
     const s = search.trim().toLowerCase()
-    if (!s) return exams
-    return exams.filter((e) =>
+    if (!s) return list
+    return list.filter((e) =>
       (e.name || '').toLowerCase().includes(s) ||
       (e.exam_code || '').toLowerCase().includes(s)
     )
-  }, [exams, search])
-
-  const activeCount = useMemo(() => exams.filter((e) => !e.closed).length, [exams])
-  const closedCount = useMemo(() => exams.filter((e) => e.closed).length, [exams])
+  }, [tab, activeExams, archivedExams, search])
 
   return (
     <ReviewerShell>
       <FadeIn>
-        <ReviewerPageHead
-          eyebrow="Exam Management"
-          title="Board Exams"
-          subtitle="Manage exams under your exam board. Create individual exams or upload bulk rosters via CSV."
-          right={
-            <Button
-              onClick={() => setShowCreate((v) => !v)}
-              className="shadow-sm"
-            >
-              {showCreate ? (
-                <>
-                  <Icon.X className="h-4 w-4 mr-1.5" />
-                  Close form
-                </>
-              ) : (
-                <>
+        {/* Client board hero banner matching superadmin ClientDetail */}
+        <div className="mb-8 rounded-xl bg-warm-surface ring-1 ring-warm overflow-hidden shadow-sm">
+          <div className="h-1 bg-stone-900" />
+          <div className="p-5 sm:p-6">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="flex items-start gap-4 min-w-0">
+                <div className="h-12 w-12 rounded-xl bg-stone-100 text-stone-800 flex items-center justify-center shrink-0">
+                  <Icon.Building className="h-6 w-6" />
+                </div>
+                <div className="min-w-0">
+                  <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
+                    {client?.name || 'Board Examinations'}
+                  </h1>
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                    {client?.visible ? <Pill tone="emerald" dot>Visible</Pill> : <Pill tone="slate" dot>Hidden</Pill>}
+                    {client?.closed && <Pill tone="amber" dot>Closed</Pill>}
+                    <span className="text-slate-300">·</span>
+                    <span className="text-slate-600">Exam Controller Portal</span>
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button onClick={() => setCreating((v) => !v)}>
                   <Icon.Plus className="h-4 w-4 mr-1.5" />
-                  New exam
-                </>
-              )}
-            </Button>
-          }
-        />
+                  {creating ? 'Cancel' : 'New exam'}
+                </Button>
+              </div>
+            </div>
 
-        {showCreate && (
-          <NewExamForm
-            onCancel={() => setShowCreate(false)}
-            onCreated={() => {
-              setShowCreate(false)
-              load()
-            }}
-            onBulkCreated={() => {
-              setShowCreate(false)
-              load()
-            }}
-          />
-        )}
-
-        {/* Filter and stats bar */}
-        <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
-          <div className="w-full sm:w-72">
-            <Input
-              type="search"
-              placeholder="Search exams by name or code…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="bg-white"
-            />
-          </div>
-          <div className="flex items-center gap-3 text-xs text-slate-500">
-            <span className="font-medium text-slate-700">
-              Total: <strong className="text-slate-900">{exams.length}</strong>
-            </span>
-            <span>·</span>
-            <span className="text-emerald-700 font-medium">
-              Active: <strong>{activeCount}</strong>
-            </span>
-            {closedCount > 0 && (
-              <>
-                <span>·</span>
-                <span className="text-slate-500">
-                  Closed: <strong>{closedCount}</strong>
-                </span>
-              </>
-            )}
+            <div className="mt-5 pt-5 border-t border-slate-100 grid grid-cols-3 gap-6 text-sm">
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Total Exams</p>
+                <p className="text-lg font-semibold text-slate-900 mt-0.5 tabular-nums">{exams.length}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Open / Live</p>
+                <p className="text-lg font-semibold text-emerald-700 mt-0.5 tabular-nums">{openExams}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Enrolled Candidates</p>
+                <p className="text-lg font-semibold text-slate-900 mt-0.5 tabular-nums">{totalCandidates.toLocaleString()}</p>
+              </div>
+            </div>
           </div>
         </div>
 
         {err && (
-          <div role="alert" className="mb-6 rounded-xl bg-rose-50 border border-rose-200 p-4 text-sm text-rose-800">
+          <div role="alert" className="mb-4 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">
             {err}
           </div>
         )}
 
-        {loading ? (
-          <div className="p-16 text-center text-sm text-slate-500 bg-white rounded-2xl border border-warm shadow-sm">
-            <div className="inline-block h-6 w-6 animate-spin rounded-full border-2 border-stone-900 border-r-transparent mb-2" />
-            <p>Loading exams…</p>
+        <AnimatePresence initial={false}>
+          {creating && (
+            <motion.div
+              initial={{ opacity: 0, y: -8, height: 0 }}
+              animate={{ opacity: 1, y: 0, height: 'auto' }}
+              exit={{ opacity: 0, y: -8, height: 0 }}
+              transition={{ duration: 0.2, ease: 'easeOut' }}
+              className="overflow-hidden"
+            >
+              <NewExamForm
+                onCancel={() => setCreating(false)}
+                onCreated={async (examId) => {
+                  setCreating(false)
+                  await refresh()
+                  if (examId) nav(`/reviewer/exams/${examId}`)
+                }}
+                onBulkCreated={async () => {
+                  setCreating(false)
+                  await refresh()
+                }}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
+
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-3">
+          <div className="inline-flex rounded-xl bg-slate-100 p-1 text-sm font-medium">
+            <button
+              type="button"
+              onClick={() => setTab('active')}
+              className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-all ${
+                tab === 'active'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span>Active & Upcoming</span>
+              <span className={`rounded-full px-2 py-0.5 text-[10px] ${
+                tab === 'active' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'
+              }`}>
+                {activeExams.length}
+              </span>
+            </button>
+            <button
+              type="button"
+              onClick={() => setTab('archived')}
+              className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-all ${
+                tab === 'archived'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span>Archived</span>
+              <span className={`rounded-full px-2 py-0.5 text-[10px] ${
+                tab === 'archived' ? 'bg-amber-100 text-amber-800' : 'bg-slate-200 text-slate-700'
+              }`}>
+                {archivedExams.length}
+              </span>
+            </button>
           </div>
-        ) : filteredExams.length === 0 ? (
-          <Card className="border-warm shadow-sm">
-            <CardBody className="p-16 text-center">
-              <div className="mx-auto h-14 w-14 rounded-2xl bg-slate-100 text-slate-400 flex items-center justify-center mb-4">
-                <Icon.FileText className="h-7 w-7" />
-              </div>
-              <h3 className="text-base font-semibold text-slate-900">
-                {search ? 'No matching exams found' : 'No exams created yet'}
-              </h3>
-              <p className="text-sm text-slate-500 mt-1 max-w-md mx-auto">
-                {search
-                  ? `No exams matched "${search}". Try searching for another keyword or clear the search input.`
-                  : 'Get started by creating your first exam manually or uploading a batch using a CSV file.'}
-              </p>
-              {!search && (
-                <Button className="mt-5" onClick={() => setShowCreate(true)}>
-                  <Icon.Plus className="h-4 w-4 mr-1.5" />
-                  Create first exam
-                </Button>
-              )}
-            </CardBody>
-          </Card>
-        ) : (
-          <div className="grid grid-cols-1 gap-4">
-            {filteredExams.map((exam) => (
-              <div
-                key={exam.id}
-                className="rounded-2xl bg-white border border-stone-200/80 p-5 shadow-sm hover:shadow-md transition-shadow"
-              >
-                <div className="flex flex-wrap items-start justify-between gap-3 mb-3">
-                  <div>
-                    <div className="flex items-center gap-2.5">
-                      <h3 className="text-base font-bold text-slate-900">{exam.name}</h3>
-                      <span className="inline-flex items-center px-2 py-0.5 rounded-md bg-stone-100 border border-stone-200 text-xs font-mono font-semibold text-stone-800 tracking-wide">
-                        {exam.exam_code}
-                      </span>
-                    </div>
-                    {exam.client_name && (
-                      <p className="text-xs text-slate-500 mt-0.5">Exam Body: {exam.client_name}</p>
-                    )}
-                  </div>
-                  <div className="flex items-center gap-2 shrink-0">
-                    {exam.closed ? (
-                      <Pill variant="neutral">Closed</Pill>
-                    ) : (
-                      <Pill variant="success">Active</Pill>
-                    )}
-                    {exam.visible ? (
-                      <span className="text-[11px] font-medium text-slate-500 bg-slate-100 px-2 py-0.5 rounded-md">
-                        Visible
-                      </span>
-                    ) : (
-                      <span className="text-[11px] font-medium text-amber-700 bg-amber-50 px-2 py-0.5 rounded-md border border-amber-200">
-                        Hidden
-                      </span>
-                    )}
-                  </div>
-                </div>
 
-                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4 pt-3 border-t border-slate-100 text-xs">
-                  <div>
-                    <span className="text-slate-500 block">Verification Window:</span>
-                    <span className="font-medium text-slate-800 mt-0.5 block">
-                      {formatShortDateTime(exam.verification_from)} → {formatShortDateTime(exam.verification_to)}
-                    </span>
-                  </div>
-
-                  <div>
-                    <span className="text-slate-500 block">Candidate Roster:</span>
-                    <span className="font-medium text-slate-800 mt-0.5 block">
-                      {exam.candidate_count ?? 0} candidate(s) enrolled
-                    </span>
-                  </div>
-
-                  <div>
-                    <span className="text-slate-500 block mb-1">Required Biometrics:</span>
-                    <div className="flex flex-wrap gap-1.5">
-                      {exam.requires_face && (
-                        <span className="inline-flex items-center gap-1 rounded bg-stone-100 px-1.5 py-0.5 text-[11px] font-medium text-stone-700">
-                          Face
-                        </span>
-                      )}
-                      {exam.requires_fp && (
-                        <span className="inline-flex items-center gap-1 rounded bg-stone-100 px-1.5 py-0.5 text-[11px] font-medium text-stone-700">
-                          Fingerprint
-                        </span>
-                      )}
-                      {exam.requires_iris && (
-                        <span className="inline-flex items-center gap-1 rounded bg-stone-100 px-1.5 py-0.5 text-[11px] font-medium text-stone-700">
-                          Iris
-                        </span>
-                      )}
-                      {!exam.requires_face && !exam.requires_fp && !exam.requires_iris && (
-                        <span className="text-slate-400">None specified</span>
-                      )}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ))}
+          <div className="w-full sm:w-64">
+            <Input
+              type="search"
+              placeholder="Search by code or name…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="bg-white text-xs"
+            />
           </div>
+        </div>
+
+        {tab === 'archived' && (
+          <p className="text-xs text-slate-500 mb-3">
+            Exams with expired verification windows or ended status. Extending an exam's window to a future date will automatically unarchive it.
+          </p>
         )}
+
+        <Card>
+          <CardBody className="p-0">
+            {loading ? (
+              <div className="p-12 text-center text-sm text-slate-500">Loading exams…</div>
+            ) : displayedExams.length === 0 ? (
+              tab === 'active' ? (
+                exams.length === 0 ? (
+                  <EmptyExams onCreate={() => setCreating(true)} />
+                ) : (
+                  <div className="p-10 text-center">
+                    <p className="text-sm text-slate-600 font-medium">No active or upcoming exams.</p>
+                    <p className="text-xs text-slate-400 mt-1">
+                      All exams under your board are archived ({archivedExams.length}). You can create a new exam or extend an archived exam's verification window.
+                    </p>
+                  </div>
+                )
+              ) : (
+                <div className="p-10 text-center">
+                  <p className="text-sm text-slate-600 font-medium">No archived exams.</p>
+                  <p className="text-xs text-slate-400 mt-1">
+                    Exams whose verification window has passed or that are ended will automatically appear here.
+                  </p>
+                </div>
+              )
+            ) : (
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wider text-slate-500 bg-slate-50/70">
+                      <th className="px-5 py-3">Exam code</th>
+                      <th className="px-5 py-3">Name</th>
+                      <th className="px-5 py-3">Window</th>
+                      <th className="px-5 py-3">Candidates</th>
+                      <th className="px-5 py-3">Status</th>
+                      <th className="px-5 py-3 text-right">Actions</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {displayedExams.map((e) => {
+                      const ongoing = isExamOngoing(e)
+                      const isExpired = e.verification_to && new Date() > new Date(e.verification_to)
+                      return (
+                        <tr key={e.id} className="border-b border-slate-100 last:border-none hover:bg-slate-50/60 transition-colors">
+                          <td className="px-5 py-3.5">
+                            <Link
+                              to={`/reviewer/exams/${e.id}`}
+                              className="font-mono text-xs font-semibold text-indigo-700 hover:underline tabular-nums"
+                            >
+                              {e.exam_code}
+                            </Link>
+                          </td>
+                          <td className="px-5 py-3.5 font-medium text-slate-900">{e.name}</td>
+                          <td className="px-5 py-3.5 text-xs text-slate-600 tabular-nums whitespace-nowrap">
+                            {dateRange(e.verification_from, e.verification_to)}
+                          </td>
+                          <td className="px-5 py-3.5 text-slate-700 tabular-nums font-mono">{e.candidate_count ?? 0}</td>
+                          <td className="px-5 py-3.5">
+                            <div className="flex gap-1.5 flex-wrap">
+                              {tab === 'archived' ? (
+                                <>
+                                  {e.closed && <Pill tone="amber" dot>Ended</Pill>}
+                                  {isExpired && !e.closed && <Pill tone="amber" dot>Window Expired</Pill>}
+                                  {e.visible ? <Pill tone="slate" dot>Listed</Pill> : <Pill tone="slate" dot>Unlisted</Pill>}
+                                </>
+                              ) : (
+                                <>
+                                  {ongoing && <Pill tone="emerald" dot>Live</Pill>}
+                                  {!ongoing && !e.closed && <Pill tone="blue" dot>Upcoming</Pill>}
+                                  {e.visible ? <Pill tone="emerald" dot>Listed</Pill> : <Pill tone="slate" dot>Unlisted</Pill>}
+                                </>
+                              )}
+                            </div>
+                          </td>
+                          <td className="px-5 py-3.5">
+                            <div className="flex justify-end gap-1.5">
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => onToggleVisibility(e.id)}
+                                title={e.visible
+                                  ? 'Remove from the catalog admins subscribe from (reversible)'
+                                  : 'Add back to the catalog admins subscribe from'}
+                              >
+                                {e.visible ? 'Unlist' : 'List'}
+                              </Button>
+                              {e.closed ? (
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  onClick={() => onReopen(e.id)}
+                                  title="Allow new verifications against this exam again"
+                                >
+                                  Reopen
+                                </Button>
+                              ) : (
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  onClick={() => askClose(e.id, e.name)}
+                                  title="Stop accepting new verifications (existing data preserved, reversible)"
+                                >
+                                  End
+                                </Button>
+                              )}
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => askDeleteExam(e.id, e.name)}
+                                title="Permanently delete — only allowed if no verifications reference this exam's candidates"
+                                className="!text-rose-700 !border-rose-200 hover:!bg-rose-50 hover:!border-rose-300"
+                              >
+                                Delete
+                              </Button>
+                              <Link
+                                to={`/reviewer/exams/${e.id}`}
+                                className="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-lg bg-stone-900 text-white hover:bg-stone-800 transition-colors"
+                                title="Open this exam's detail page to upload CSVs, edit window, and manage candidates"
+                              >
+                                Manage
+                              </Link>
+                            </div>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </tbody>
+                </table>
+              </div>
+            )}
+          </CardBody>
+        </Card>
       </FadeIn>
+
+      <ConfirmDialog
+        open={!!dlg}
+        onCancel={() => setDlg(null)}
+        onConfirm={dlg?.onConfirm || (() => {})}
+        title={dlg?.title}
+        body={dlg?.body}
+        confirmLabel={dlg?.confirmLabel}
+        tone={dlg?.tone}
+      />
     </ReviewerShell>
   )
 }

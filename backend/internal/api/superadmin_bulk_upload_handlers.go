@@ -143,6 +143,10 @@ func (s *Server) superadminBulkUpload(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad exam id")
 		return
 	}
+	if !s.checkExamScope(r, examID) {
+		writeErr(w, http.StatusNotFound, "exam not found")
+		return
+	}
 	modalityName := chi.URLParam(r, "modality")
 	m, ok := bulkModalities[modalityName]
 	if !ok {

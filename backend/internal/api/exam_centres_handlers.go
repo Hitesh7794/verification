@@ -2,7 +2,6 @@ package api
 
 import (
 	"context"
-	"database/sql"
 	"encoding/csv"
 	"errors"
 	"fmt"
@@ -140,15 +139,8 @@ func (s *Server) uploadExamCentres(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "invalid exam id")
 		return
 	}
-	// Confirm the exam exists so we don't accept centres for ghosts.
-	var probe int64
-	if err := s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT id FROM exams WHERE id = $1`, examID).Scan(&probe); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			writeErr(w, http.StatusNotFound, "exam not found")
-			return
-		}
-		writeErr(w, http.StatusInternalServerError, err.Error())
+	if !s.checkExamScope(r, examID) {
+		writeErr(w, http.StatusNotFound, "exam not found")
 		return
 	}
 
@@ -248,6 +240,10 @@ func (s *Server) listExamCentres(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusNotFound, "exam not found")
 			return
 		}
+	}
+	if claims.Role == "client_reviewer" && !s.checkExamScope(r, examID) {
+		writeErr(w, http.StatusNotFound, "exam not found")
+		return
 	}
 	rows, err := s.deps.DB.QueryContext(r.Context(), `
 		SELECT centre_code, centre_name,
