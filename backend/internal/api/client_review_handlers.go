@@ -495,6 +495,117 @@ func (s *Server) clientReviewerMe(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ---------- GET /api/client/stats ----------
+//
+// Dashboard tiles for the reviewer landing screen. Everything scoped
+// to the caller's client_id — a reviewer only sees numbers for the
+// board they belong to. One round-trip that fans out over three
+// tables via CTEs; each subquery is either indexed or trivially small
+// (per-client apps rarely exceed a few thousand rows).
+//
+// Response:
+//
+//	{
+//	  "active_institutes":       int,
+//	  "pending_review":          int,     // in *my* queue (pending_reviewer='client')
+//	  "oldest_pending_days":     float?,  // days since oldest pending was submitted; null if none
+//	  "approved_this_week":      int,     // all approvals under this client, last 7d
+//	  "rejected_this_week":      int,     // all rejections under this client, last 7d
+//	  "verifications_this_week": int,     // candidate verifications by orgs under this client
+//	  "personal": {
+//	    "approved_this_week":  int,       // decisions made by ME
+//	    "rejected_this_week":  int,       // decisions made by ME
+//	    "avg_review_hours":    float?,    // MY median review time last 30d, null if I've made no decisions
+//	  }
+//	}
+//
+// Wallet + billing metrics are deliberately omitted — reviewers don't
+// handle billing and it would leak commercial info they don't need to
+// see. Subscription-request stats are omitted too since exam subs are
+// auto-approved on Subscribe (superadmin_exam_catalog_handlers) so
+// there's never a pending queue for that.
+func (s *Server) clientReviewerStats(w http.ResponseWriter, r *http.Request) {
+	clientID, ok := clientReviewerScope(r)
+	if !ok {
+		writeErr(w, http.StatusForbidden, "client reviewer context required")
+		return
+	}
+	claims := claimsFrom(r)
+	reviewerID := claims.UserID
+
+	var (
+		active, pending, approvedWeek, rejectedWeek int64
+		verificationsWeek                           int64
+		oldestPendingDays                           sql.NullFloat64
+		myApprovedWeek, myRejectedWeek              int64
+		myAvgReviewHours                            sql.NullFloat64
+	)
+
+	// One query, one row, LEFT JOINs so the reviewer-owned aggregates
+	// come back even when they haven't made any decisions yet.
+	err := s.deps.DB.QueryRowContext(r.Context(), `
+		WITH apps AS (
+		  SELECT status, pending_reviewer, reviewed_at, reviewed_by_user_id, created_at
+		    FROM institution_applications
+		   WHERE client_id = $1
+		),
+		verif AS (
+		  SELECT COUNT(*) AS n
+		    FROM verifications v
+		    JOIN organizations o     ON o.id = v.org_id
+		    JOIN institution_applications a ON a.id = o.application_id
+		   WHERE a.client_id = $1
+		     AND v.created_at >= NOW() - INTERVAL '7 days'
+		)
+		SELECT
+		  COUNT(*) FILTER (WHERE status = 'approved')                                                                AS active,
+		  COUNT(*) FILTER (WHERE status = 'pending' AND pending_reviewer = 'client')                                 AS pending,
+		  EXTRACT(EPOCH FROM (NOW() - MIN(created_at) FILTER (WHERE status = 'pending' AND pending_reviewer = 'client'))) / 86400 AS oldest_pending_days,
+		  COUNT(*) FILTER (WHERE status = 'approved' AND reviewed_at >= NOW() - INTERVAL '7 days')                   AS approved_week,
+		  COUNT(*) FILTER (WHERE status = 'rejected' AND reviewed_at >= NOW() - INTERVAL '7 days')                   AS rejected_week,
+		  (SELECT n FROM verif)                                                                                      AS verifications_week,
+		  COUNT(*) FILTER (WHERE status = 'approved' AND reviewed_at >= NOW() - INTERVAL '7 days'  AND reviewed_by_user_id = $2) AS my_approved_week,
+		  COUNT(*) FILTER (WHERE status = 'rejected' AND reviewed_at >= NOW() - INTERVAL '7 days'  AND reviewed_by_user_id = $2) AS my_rejected_week,
+		  AVG(EXTRACT(EPOCH FROM (reviewed_at - created_at)) / 3600.0)
+		    FILTER (WHERE reviewed_by_user_id = $2 AND reviewed_at >= NOW() - INTERVAL '30 days')                    AS my_avg_review_hours
+		  FROM apps`,
+		clientID, reviewerID,
+	).Scan(
+		&active, &pending, &oldestPendingDays,
+		&approvedWeek, &rejectedWeek, &verificationsWeek,
+		&myApprovedWeek, &myRejectedWeek, &myAvgReviewHours,
+	)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db stats: "+err.Error())
+		return
+	}
+
+	// nullable → JSON: nil-out when there's no data so the FE renders
+	// a dash instead of "0.00 days" / "0h".
+	var oldestOut any
+	if oldestPendingDays.Valid {
+		oldestOut = oldestPendingDays.Float64
+	}
+	var avgOut any
+	if myAvgReviewHours.Valid {
+		avgOut = myAvgReviewHours.Float64
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"active_institutes":       active,
+		"pending_review":          pending,
+		"oldest_pending_days":     oldestOut,
+		"approved_this_week":      approvedWeek,
+		"rejected_this_week":      rejectedWeek,
+		"verifications_this_week": verificationsWeek,
+		"personal": map[string]any{
+			"approved_this_week": myApprovedWeek,
+			"rejected_this_week": myRejectedWeek,
+			"avg_review_hours":   avgOut,
+		},
+	})
+}
+
 // ── Exam Subscription Requests Reviewer Endpoints ──────────────────────
 
 type subscriptionRequestItem struct {

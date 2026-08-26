@@ -369,6 +369,7 @@ func (s *Server) Router() http.Handler {
 		// keeps using /api/superadmin/applications/*, which sees every
 		// row regardless of client_id.
 		r.Get("/api/client/me",                              s.requireRole("client_reviewer")(s.clientReviewerMe))
+		r.Get("/api/client/stats",                           s.requireRole("client_reviewer")(s.clientReviewerStats))
 		r.Get("/api/client/applications",                    s.requireRole("client_reviewer")(s.clientListApplications))
 		r.Get("/api/client/applications/{id}",               s.requireRole("client_reviewer")(s.clientGetApplication))
 		r.Get("/api/client/applications/{id}/docs/{doc_id}", s.requireRole("client_reviewer")(s.clientDownloadDoc))

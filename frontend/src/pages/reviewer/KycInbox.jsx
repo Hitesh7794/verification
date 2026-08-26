@@ -8,6 +8,7 @@ import {
   listReviewerApplications,
   bulkApproveReviewerApplications,
   bulkRejectReviewerApplications,
+  reviewerStats,
 } from '../../lib/reviewer/api.js'
 
 // Reviewer > KYC applications.
@@ -30,6 +31,17 @@ export default function ReviewerKycInbox() {
   const [total, setTotal] = useState(0)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
+
+  // Stats-tile row: fetched once on mount + refetched after every bulk
+  // action so the numbers stay in sync with the operator's own edits
+  // without a manual refresh. Failure is silent — the tiles are a
+  // nice-to-have; the inbox itself remains fully functional if the
+  // stats endpoint hiccups.
+  const [stats, setStats] = useState(null)
+  const loadStats = useCallback(async () => {
+    try { setStats(await reviewerStats()) } catch { /* silent */ }
+  }, [])
+  useEffect(() => { loadStats() }, [loadStats])
 
   // Selection state — only meaningful on the 'pending' tab. Cleared on
   // tab switch + on refresh so the count in the mass-action bar never
@@ -105,6 +117,7 @@ export default function ReviewerKycInbox() {
       setModal(null)
       setSelectedIds(new Set())
       await load()
+      loadStats()
     } catch (e) {
       setActionErr(e?.body?.error || e?.message || 'Action failed')
     } finally {
@@ -120,11 +133,17 @@ export default function ReviewerKycInbox() {
           title="KYC applications"
           subtitle="Institutions registering for this client. Approve or reject individually, or check multiple to act in bulk."
           right={
-            <Button variant="secondary" size="sm" onClick={load} disabled={loading}>
+            <Button variant="secondary" size="sm" onClick={() => { load(); loadStats() }} disabled={loading}>
               <Icon.RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
               <span className="ml-1.5">{loading ? 'Refreshing…' : 'Refresh'}</span>
             </Button>
           }
+        />
+
+        <StatsRow
+          stats={stats}
+          activeTab={status}
+          onTileClick={(k) => setStatus(k)}
         />
 
         <div className="mb-5 flex items-center gap-1 border-b border-warm">
@@ -386,4 +405,148 @@ function MassActionModal({ kind, count, note, setNote, onClose, onConfirm, busy,
       </div>
     </div>
   )
+}
+
+// ── Stats row ─────────────────────────────────────────────────────────
+//
+// Four tiles above the tab strip. Each tile that maps to a tab is a
+// button that switches the inbox to that tab on click; the "Active
+// institutes" tile is inert (no matching tab to jump to). The active
+// tab's tile gets a lifted / ringed look so the reviewer sees which
+// slice they're looking at.
+//
+// Numbers animate up from 0 the first time they land (CountUp) so a
+// screen refresh feels alive; that's the "interactive" hint — beyond
+// that we intentionally kept motion cheap so a reviewer scrolling
+// through the inbox isn't distracted by numbers popping constantly.
+
+const TILE_TAB_MAP = {
+  pending:  'pending',
+  approved: 'approved',
+  rejected: 'rejected',
+  // 'active' has no matching tab — it's a portfolio-size stat, not a
+  // slice of the inbox — so its tile is rendered as an inert card.
+}
+
+function StatsRow({ stats, activeTab, onTileClick }) {
+  // Oldest-pending chip on the Pending tile — turns a raw count into
+  // an SLA signal. A "3 pending" all from today is fine; a "3
+  // pending" with one 6 days old is what needs attention. Days come
+  // back as a float from the backend (fractional 0.3 = ~7h old); we
+  // round + label for the chip. Threshold for the "warn" colour is
+  // 2 days — anything older reads as risk. Null hides the chip.
+  const oldestDays = stats?.oldest_pending_days
+  let pendingBadge = null
+  if (typeof oldestDays === 'number' && oldestDays >= 1) {
+    const d = Math.round(oldestDays)
+    pendingBadge = { label: `oldest ${d}d`, warn: d >= 2 }
+  }
+
+  const tiles = [
+    { key: 'active',    label: 'Active institutes', hint: 'KYC-approved orgs', value: stats?.active_institutes,        tone: 'slate',   icon: <Icon.ShieldCheck className="h-4 w-4" /> },
+    { key: 'pending',   label: 'Pending KYC',       hint: 'in your queue',     value: stats?.pending_review,           tone: 'amber',   icon: <Icon.Clock className="h-4 w-4" />,        badge: pendingBadge },
+    { key: 'approved',  label: 'Approved · 7d',     hint: 'this week',         value: stats?.approved_this_week,       tone: 'emerald', icon: <Icon.Check className="h-4 w-4" /> },
+    { key: 'rejected',  label: 'Rejected · 7d',     hint: 'this week',         value: stats?.rejected_this_week,       tone: 'rose',    icon: <Icon.X className="h-4 w-4" /> },
+    { key: 'verifs',    label: 'Verifications · 7d',hint: 'by your institutes',value: stats?.verifications_this_week,  tone: 'indigo',  icon: <Icon.ShieldCheck className="h-4 w-4" /> },
+  ]
+  return (
+    <>
+      <div className="mb-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
+        {tiles.map((t) => {
+          const targetTab = TILE_TAB_MAP[t.key]
+          const isClickable = !!targetTab
+          const isActive = isClickable && targetTab === activeTab
+          return (
+            <StatTile
+              key={t.key}
+              {...t}
+              isClickable={isClickable}
+              isActive={isActive}
+              onClick={isClickable ? () => onTileClick(targetTab) : undefined}
+            />
+          )
+        })}
+      </div>
+    </>
+  )
+}
+
+function StatTile({ label, hint, value, tone, icon, isClickable, isActive, onClick, badge }) {
+  const toneStyles = {
+    slate:   { text: 'text-slate-900',   ring: 'ring-slate-900/10',   dot: 'bg-slate-400',   activeBorder: 'border-slate-900' },
+    amber:   { text: 'text-amber-800',   ring: 'ring-amber-900/10',   dot: 'bg-amber-500',   activeBorder: 'border-amber-600' },
+    emerald: { text: 'text-emerald-800', ring: 'ring-emerald-900/10', dot: 'bg-emerald-500', activeBorder: 'border-emerald-600' },
+    rose:    { text: 'text-rose-800',    ring: 'ring-rose-900/10',    dot: 'bg-rose-500',    activeBorder: 'border-rose-600' },
+    indigo:  { text: 'text-indigo-800',  ring: 'ring-indigo-900/10',  dot: 'bg-indigo-500',  activeBorder: 'border-indigo-600' },
+  }[tone] || {}
+  const Wrapper = isClickable ? 'button' : 'div'
+  const wrapperProps = isClickable
+    ? { type: 'button', onClick, 'aria-pressed': isActive }
+    : {}
+  return (
+    <Wrapper
+      {...wrapperProps}
+      className={[
+        'group text-left rounded-xl border bg-white px-3.5 py-3 transition-all',
+        isActive
+          ? `${toneStyles.activeBorder} ring-2 ${toneStyles.ring} -translate-y-0.5 shadow-sm`
+          : 'border-warm hover:border-warm-strong hover:-translate-y-0.5 hover:shadow-sm',
+        isClickable ? 'cursor-pointer' : 'cursor-default',
+      ].join(' ')}
+    >
+      <div className="flex items-start justify-between gap-2">
+        <div className="min-w-0">
+          <p className="text-[11px] uppercase tracking-wide font-semibold text-stone-500 flex items-center gap-1.5">
+            <span className={`h-1.5 w-1.5 rounded-full ${toneStyles.dot}`} />
+            {label}
+          </p>
+          <p className={`mt-1 text-2xl font-bold tabular-nums leading-none ${toneStyles.text}`}>
+            <CountUp value={value} />
+          </p>
+          <div className="mt-1 flex items-center gap-1.5 text-[11px] text-stone-500">
+            <span>{hint}</span>
+            {badge && (
+              <span
+                className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
+                  badge.warn
+                    ? 'bg-rose-100 text-rose-700 border border-rose-200'
+                    : 'bg-amber-100 text-amber-800 border border-amber-200'
+                }`}
+                title={badge.warn ? 'SLA warning — oldest waiting >2 days' : 'oldest submitted 1 day ago'}
+              >
+                {badge.label}
+              </span>
+            )}
+          </div>
+        </div>
+        <div className={`shrink-0 opacity-40 group-hover:opacity-70 transition-opacity ${toneStyles.text}`}>
+          {icon}
+        </div>
+      </div>
+    </Wrapper>
+  )
+}
+
+// CountUp — cheap requestAnimationFrame ramp from 0 → value on first
+// paint (and re-ramps whenever the value changes). No easing lib; a
+// short linear ramp reads as "live" without being fiddly. Falls back
+// to '—' while the stats endpoint hasn't resolved yet.
+function CountUp({ value, durationMs = 500 }) {
+  const [display, setDisplay] = useState(0)
+  useEffect(() => {
+    if (typeof value !== 'number') return
+    let raf
+    const start = performance.now()
+    const from = 0
+    const to = value
+    const step = (now) => {
+      const t = Math.min(1, (now - start) / durationMs)
+      setDisplay(Math.round(from + (to - from) * t))
+      if (t < 1) raf = requestAnimationFrame(step)
+    }
+    raf = requestAnimationFrame(step)
+    return () => cancelAnimationFrame(raf)
+  }, [value, durationMs])
+  if (typeof value !== 'number') return <>—</>
+  return <>{display.toLocaleString()}</>
 }

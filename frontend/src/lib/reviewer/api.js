@@ -16,6 +16,14 @@ export async function reviewerMe() {
   return api('/client/me')
 }
 
+// GET /api/client/stats
+// Dashboard tiles for the reviewer landing screen. Scoped server-side
+// to the reviewer's client_id. Returns:
+//   { active_institutes, pending_review, approved_this_week, rejected_this_week }
+export async function reviewerStats() {
+  return api('/client/stats')
+}
+
 // GET /api/client/applications
 // Same shape as the superadmin list, minus cross-client rows.
 export async function listReviewerApplications({ status = 'pending', limit = 25, offset = 0 } = {}) {
