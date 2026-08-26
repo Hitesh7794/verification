@@ -357,10 +357,16 @@ export function KYCReviewModePicker({ value, onChange, clientName }) {
     let nextClient = clientChecked
     if (which === 'admin')  nextAdmin  = !adminChecked
     if (which === 'client') nextClient = !clientChecked
-    // Guard: at least one box has to remain ticked. If the user tries
-    // to untick the last one, ignore the change and keep the current
-    // mode — leaving nobody assigned would strand every incoming KYC.
-    if (!nextAdmin && !nextClient) return
+    // Nobody assigned would strand every incoming KYC, so untick-the-
+    // only-box means "switch to the other one" rather than "nothing
+    // happens". Previous behaviour silently swallowed the click and
+    // the operator got no visual response — they'd click Save/Create
+    // and the mode would revert to admin because that's still what
+    // was ticked.
+    if (!nextAdmin && !nextClient) {
+      if (which === 'admin') nextClient = true
+      else nextAdmin = true
+    }
     const nextMode = nextAdmin && nextClient ? 'both'
       : nextAdmin ? 'admin'
       : 'client'
