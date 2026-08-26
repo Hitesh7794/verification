@@ -389,6 +389,11 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/client/subscription-requests/export.csv",                     s.requireRole("client_reviewer")(s.clientExportApprovedSubscriptionsCSV))
 		r.Post("/api/client/subscription-requests/{org_id}/{exam_id}/reset-pending", s.requireRole("client_reviewer")(s.clientResetSubscriptionRequestToPending))
 
+		// Client-reviewer exam management
+		r.Get("/api/client/exams",                                                 s.requireRole("client_reviewer")(s.clientReviewerListExams))
+		r.Post("/api/client/exams",                                                s.requireRole("client_reviewer")(s.superadminCreateExam))
+		r.Post("/api/client/exams/csv",                                            s.requireRole("client_reviewer")(s.superadminBulkCreateExamsCSV))
+
 		// Superadmin management of the per-client portal — enable/disable
 		// the client's inbox and CRUD the reviewer users that log into it.
 		r.Post("/api/superadmin/clients/{id}/portal",              s.requireRole("superadmin")(s.superadminSetClientPortal))
@@ -407,8 +412,8 @@ func (s *Server) Router() http.Handler {
 		r.Post("/api/superadmin/clients/{id}/reopen",                  s.requireRole("superadmin")(s.superadminReopenClient))
 		r.Delete("/api/superadmin/clients/{id}",                       s.requireRole("superadmin")(s.superadminDeleteClient))
 
-		r.Post("/api/superadmin/clients/{id}/exams",                   s.requireRole("superadmin")(s.superadminCreateExam))
-		r.Post("/api/superadmin/clients/{id}/exams/csv",               s.requireRole("superadmin")(s.superadminBulkCreateExamsCSV))
+		r.Post("/api/superadmin/clients/{id}/exams",                   s.requireRole("superadmin", "client_reviewer")(s.superadminCreateExam))
+		r.Post("/api/superadmin/clients/{id}/exams/csv",               s.requireRole("superadmin", "client_reviewer")(s.superadminBulkCreateExamsCSV))
 		r.Get("/api/superadmin/exams/{id}",                            s.requireRole("superadmin")(s.superadminGetExam))
 		r.Patch("/api/superadmin/exams/{id}",                          s.requireRole("superadmin")(s.superadminPatchExam))
 		r.Post("/api/superadmin/exams/{id}/visibility",                s.requireRole("superadmin")(s.superadminToggleExamVisibility))

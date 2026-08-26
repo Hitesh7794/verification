@@ -366,10 +366,57 @@ type createExamReq struct {
 	RequiresIris *bool `json:"requires_iris,omitempty"`
 }
 
-func (s *Server) superadminCreateExam(w http.ResponseWriter, r *http.Request) {
-	clientID, err := parseInt64(chi.URLParam(r, "id"))
+func resolveExamCreateClientID(r *http.Request) (int64, int, string) {
+	claims := claimsFrom(r)
+	if claims == nil {
+		return 0, http.StatusUnauthorized, "unauthorized"
+	}
+	paramIDStr := chi.URLParam(r, "id")
+	if claims.Role == "client_reviewer" {
+		if claims.ClientID == nil {
+			return 0, http.StatusForbidden, "client reviewer context required"
+		}
+		clientID := *claims.ClientID
+		if paramIDStr != "" {
+			paramID, err := parseInt64(paramIDStr)
+			if err != nil || paramID != clientID {
+				return 0, http.StatusForbidden, "cannot create exam for another client"
+			}
+		}
+		return clientID, 0, ""
+	}
+	if claims.Role == "superadmin" {
+		if paramIDStr == "" {
+			return 0, http.StatusBadRequest, "client id required"
+		}
+		id, err := parseInt64(paramIDStr)
+		if err != nil {
+			return 0, http.StatusBadRequest, "bad client id"
+		}
+		return id, 0, ""
+	}
+	return 0, http.StatusForbidden, "forbidden"
+}
+
+// GET /api/client/exams
+func (s *Server) clientReviewerListExams(w http.ResponseWriter, r *http.Request) {
+	clientID, ok := clientReviewerScope(r)
+	if !ok {
+		writeErr(w, http.StatusForbidden, "client reviewer context required")
+		return
+	}
+	exams, err := s.listExamsForClient(r.Context(), clientID)
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "bad client id")
+		writeErr(w, http.StatusInternalServerError, "db list exams: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"exams": exams})
+}
+
+func (s *Server) superadminCreateExam(w http.ResponseWriter, r *http.Request) {
+	clientID, status, msg := resolveExamCreateClientID(r)
+	if status != 0 {
+		writeErr(w, status, msg)
 		return
 	}
 	// Confirm client exists so the FK error becomes a clean 404.
@@ -635,9 +682,9 @@ func parseBulkExamsCSV(buf []byte) ([]parsedExamRow, []csvValidationErr) {
 }
 
 func (s *Server) superadminBulkCreateExamsCSV(w http.ResponseWriter, r *http.Request) {
-	clientID, err := parseInt64(chi.URLParam(r, "id"))
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "bad client id")
+	clientID, status, msg := resolveExamCreateClientID(r)
+	if status != 0 {
+		writeErr(w, status, msg)
 		return
 	}
 	if _, err := s.loadClient(r.Context(), clientID); err != nil {

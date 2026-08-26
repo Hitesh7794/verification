@@ -1,8 +1,13 @@
 import { useEffect, useState } from 'react'
-import { useNavigate } from 'react-router-dom'
+import { NavLink, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { useAuth } from '../../lib/auth.jsx'
 import { reviewerMe } from '../../lib/reviewer/api.js'
+
+const tabs = [
+  { to: '/reviewer', label: 'KYC Applications', end: true },
+  { to: '/reviewer/exams', label: 'Exams', end: false },
+]
 
 // ReviewerShell — page shell for the client-reviewer portal.
 //
@@ -130,11 +135,33 @@ function ReviewerHeader({ meOverride }) {
           </div>
         </div>
 
-        {/* Reviewer's only surface is the KYC inbox (2026-08-25 cleanup),
-            so no tab strip is rendered — the identity anchor on the
-            left is enough. Add tabs here when a second surface arrives. */}
-
-        <div className="flex-1" />
+        {/* Tab navigation: KYC Applications & Exams */}
+        <nav className="flex-1 ml-4">
+          <ul className="flex gap-1">
+            {tabs.map((t) => (
+              <li key={t.to}>
+                <NavLink to={t.to} end={t.end}>
+                  {({ isActive }) => (
+                    <div className={`relative inline-flex items-center px-3 py-1.5 text-[13px] font-medium rounded-md transition-colors ${isActive ? '' : 'hover:bg-[#F5EEDF]'}`}>
+                      {isActive && (
+                        <motion.span
+                          layoutId="reviewer-nav-indicator"
+                          className="absolute inset-0 rounded-md bg-white ring-1 ring-stone-900/15"
+                          transition={{ type: 'spring', stiffness: 380, damping: 30 }}
+                        />
+                      )}
+                      <span className={`relative z-10 ${isActive
+                        ? 'text-stone-900'
+                        : 'text-stone-600 hover:text-stone-900 transition-colors'}`}>
+                        {t.label}
+                      </span>
+                    </div>
+                  )}
+                </NavLink>
+              </li>
+            ))}
+          </ul>
+        </nav>
 
         {/* Right cluster: username + time + logout */}
         <div className="flex items-center gap-3 shrink-0">
