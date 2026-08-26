@@ -439,7 +439,6 @@ export default function ExamDetail() {
             </div>
             <div className="grid grid-cols-2 sm:grid-cols-4 gap-3">
               <BioMetric label="Photo"       have={completeness.with_photo}       total={completeness.total} />
-              <BioMetric label="FP image"    have={completeness.with_fp_image}    total={completeness.total} />
               <BioMetric label="FP template" have={completeness.with_fp_template} total={completeness.total} />
               <BioMetric label="Iris"        have={completeness.with_iris}        total={completeness.total} />
             </div>
@@ -489,7 +488,6 @@ export default function ExamDetail() {
                           <td className="px-4 py-3">
                             <div className="inline-flex items-center gap-2">
                               <BioDot label="Photo"       ok={bio.has_photo} />
-                              <BioDot label="FP image"    ok={bio.has_fp_image} />
                               <BioDot label="FP template" ok={bio.has_fp_template} />
                               <BioDot label="Iris"        ok={bio.has_iris} />
                             </div>
@@ -610,7 +608,6 @@ function BiometricUploadModal({ open, examId, candidate, currentStatus, onClose,
         </div>
         <div className="p-6 space-y-4">
           <BioUploadRow label="Photo"        kind="photo"       accept=".jpg,.jpeg,.png"       have={currentStatus.has_photo}       busy={uploadingKind === 'photo'}       onFile={(f) => handleUpload('photo', f)} />
-          <BioUploadRow label="FP image"     kind="fp_image"    accept=".jpg,.jpeg,.png,.bmp"  have={currentStatus.has_fp_image}    busy={uploadingKind === 'fp_image'}    onFile={(f) => handleUpload('fp_image', f)} />
           <BioUploadRow label="FP template"  kind="fp_template" accept=".iso,.dat,.bin"        have={currentStatus.has_fp_template} busy={uploadingKind === 'fp_template'} onFile={(f) => handleUpload('fp_template', f)} />
           <BioUploadRow label="Iris"         kind="iris"        accept=".iso,.k7,.bmp"         have={currentStatus.has_iris}        busy={uploadingKind === 'iris'}        onFile={(f) => handleUpload('iris', f)} />
 
