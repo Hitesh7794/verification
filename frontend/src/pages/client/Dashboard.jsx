@@ -14,10 +14,9 @@ import {
 } from '../../components/ui/ui.jsx'
 import FingerprintCapture from '../../components/verify/FingerprintCapture.jsx'
 import IrisCapture from '../../components/verify/IrisCapture.jsx'
-import FaceMatchPanel from '../../components/verify/FaceMatchPanel.jsx'
 import LivenessPanel from '../../components/verify/LivenessPanel.jsx'
 import ExamWindowReminderModal from '../../components/verify/ExamWindowReminderModal.jsx'
-import { api, fetchFPTemplate, fetchPhotoBlob, isWalletEmptyError, getCandidateAttempts, downloadVerificationPDF } from '../../lib/api.js'
+import { api, fetchFPTemplate, fetchPhotoBlob, isWalletEmptyError, getCandidateAttempts, downloadVerificationPDF, postFaceMatch } from '../../lib/api.js'
 import { getWalletSummary, formatRupees } from '../../lib/wallet/wallet.js'
 import { formatDateTime } from '../../lib/dates.js'
 
@@ -655,8 +654,8 @@ export default function ClientDashboard() {
         }
       />
 
-      <Card className="mb-6">
-        <CardBody>
+      <Card className="mb-3">
+        <CardBody className="py-3">
           <Stepper step={step} />
         </CardBody>
       </Card>
@@ -733,63 +732,61 @@ export default function ClientDashboard() {
         </Card>
       )}
 
-      {/* Step 1 — active liveness gate. Free, unpaid; the operator must
-          pass a blink challenge before the enrolled record is unlocked
-          and before the payable face-match runs. Backend records a
-          liveness_checks row keyed by the same idempotency_key face-match
-          will use; face-match refuses without it. */}
+      {/* Step 2 — active liveness + face capture, one continuous flow.
+          Operator clicks "Start liveness check" ONCE. The blink burst
+          runs, wallet debits on pass, and the final frame from the same
+          burst is reused as the TrustView probe — no second camera
+          panel, no second click. Backend keys /face-match on the
+          liveness_checks row (same idempotency_key), so it accepts. */}
       {step === S_LIVENESS && candidate && (
         <Card>
           <CardHeader>
-            <CardTitle>Step 2 — Liveness check</CardTitle>
+            <CardTitle>Step 2 — Liveness &amp; face match</CardTitle>
           </CardHeader>
-          <CardBody>
-            <p className="text-sm text-slate-600 mb-4">
-              Prove you're a real person in front of the camera. This is
-              the payable step — the wallet is charged when the liveness
-              check passes (₹ per verification; same-roll retries within
-              5 minutes are free). Failed attempts don't cost anything —
-              retry as many times as you need.
+          <CardBody className="py-4">
+            <p className="text-xs text-slate-600 mb-2">
+              Prove you're a real person in front of the camera. Wallet
+              charges on pass (retries within 5 minutes are free); face
+              match runs automatically on the captured frame.
             </p>
             <LivenessPanel
               rollNo={candidate.roll_no}
               sessionId={idempotencyKey}
-              onPass={() => {
+              onPass={async ({ faceFrame }) => {
                 setLivenessResult({ pass: true })
-                if (step < S_FACE) setStep(S_FACE)
-                // Wallet debit fires on the liveness pass now; refresh
-                // the header pill so the operator sees the debited
-                // balance immediately.
+                // Wallet debits on the liveness pass — refresh the
+                // header pill so the operator sees the debited balance.
                 refreshWallet()
-              }}
-            />
-          </CardBody>
-        </Card>
-      )}
-
-      {/* Step 2 — face capture. Candidate summary is deliberately
-          hidden here: the operator must capture a face before the
-          enrolled record is revealed. Wallet debit already happened
-          on the liveness step, so this panel is a pure biometric
-          match with no billing side-effects. */}
-      {step === S_FACE && candidate && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Step 3 — Live face capture</CardTitle>
-          </CardHeader>
-          <CardBody>
-            <p className="text-sm text-slate-600 mb-4">
-              Capture the candidate's face to match against the enrolled
-              photo. No additional wallet charge — you paid on the
-              liveness step above.
-            </p>
-            <FaceMatchPanel
-              rollNo={candidate.roll_no}
-              idempotencyKey={idempotencyKey}
-              onResult={(r) => {
-                setFaceResult(r)
-                setSnap(r?.snapshot ?? null)
-                if (step < S_FINGERPRINT) setStep(S_FINGERPRINT)
+                // Reuse the last liveness burst frame as the TrustView
+                // probe. No second camera panel, no second click.
+                if (faceFrame) {
+                  try {
+                    const resp = await postFaceMatch(candidate.roll_no, faceFrame, idempotencyKey)
+                    const out = {
+                      ok: !!resp.status,
+                      captured: true,
+                      faceFound: !!resp.face_found,
+                      score: typeof resp.score === 'number' ? resp.score : 0,
+                      threshold: typeof resp.threshold === 'number' ? resp.threshold : 0,
+                      snapshot: faceFrame,
+                      raw: resp,
+                    }
+                    setFaceResult(out)
+                    setSnap(faceFrame)
+                  } catch (e) {
+                    setFaceResult({
+                      ok: false, captured: false, faceFound: false,
+                      score: 0, threshold: 0, snapshot: null,
+                      error: e?.message || 'face match failed',
+                    })
+                  }
+                } else {
+                  // No frame captured (should not happen on pass, but be
+                  // defensive) — mark face as skipped so downstream flow
+                  // still advances to fingerprint.
+                  setFaceResult({ ok: false, captured: false, faceFound: false, score: 0, threshold: 0, snapshot: null, skipped: true })
+                }
+                setStep(S_FINGERPRINT)
               }}
             />
           </CardBody>
@@ -797,13 +794,13 @@ export default function ClientDashboard() {
       )}
 
       {step >= S_FINGERPRINT && candidate && (
-        <div className="grid gap-6 lg:grid-cols-3">
+        <div className="grid gap-4 lg:grid-cols-3">
           <Card className="lg:col-span-1 self-start">
             <CardHeader>
               <CardTitle>Candidate on file</CardTitle>
             </CardHeader>
-            <CardBody>
-              <div className="aspect-square w-full rounded-lg bg-slate-100 overflow-hidden mb-4">
+            <CardBody className="py-4">
+              <div className="aspect-[4/3] w-full rounded-lg bg-slate-100 overflow-hidden mb-3">
                 {photoBlob ? (
                   <img src={photoBlob} alt="enrolled" className="w-full h-full object-cover" />
                 ) : (
@@ -848,7 +845,7 @@ export default function ClientDashboard() {
             </CardBody>
           </Card>
 
-          <div className="lg:col-span-2 space-y-6">
+          <div className="lg:col-span-2 space-y-4">
 
             {step >= S_FINGERPRINT && !!candidate?.requires_fp && !!candidate?.has_iso_template && (
               <Card>

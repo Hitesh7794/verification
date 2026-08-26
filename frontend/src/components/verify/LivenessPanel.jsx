@@ -122,14 +122,18 @@ export default function LivenessPanel({ rollNo, sessionId, onPass }) {
       setResult(r)
       if (r.pass) {
         // Dwell on the success state for a beat so the operator sees the
-        // green checkmark before the parent yanks them to face capture.
-        // ~1.6s is long enough to register as a distinct moment ("it
-        // worked!") but short enough that it doesn't feel like a wait.
+        // green checkmark before the parent runs face-match against the
+        // final frame. ~1.6s is long enough to register as a distinct
+        // moment ("it worked!") but short enough not to feel like a wait.
         setPhase('pass')
         await sleep(1600)
+        // Hand the last captured frame back to the parent so it can
+        // reuse it as the TrustView probe — no separate capture step,
+        // no second webcam boot, no extra click.
         onPass?.({
           sessionId: r.session_id,
           expiresIn: r.expires_in_seconds || 90,
+          faceFrame: frames[frames.length - 1] || null,
         })
       } else {
         setPhase('fail')
@@ -143,11 +147,11 @@ export default function LivenessPanel({ rollNo, sessionId, onPass }) {
   const active = phase === 'priming' || phase === 'recording' || phase === 'uploading'
 
   return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-2 gap-3">
+    <div className="space-y-2">
+      <div className="grid grid-cols-2 gap-2">
         {/* Live preview — always shows the stream, even during upload,
             so the operator has visual confirmation the camera is on. */}
-        <div className="aspect-video w-full rounded-lg bg-slate-900 overflow-hidden border border-slate-200 relative">
+        <div className="aspect-[16/10] w-full rounded-lg bg-slate-900 overflow-hidden border border-slate-200 relative">
           <video
             ref={videoRef}
             autoPlay
@@ -198,7 +202,7 @@ export default function LivenessPanel({ rollNo, sessionId, onPass }) {
         </div>
 
         {/* Instructions / result panel */}
-        <div className="aspect-video w-full rounded-lg bg-slate-50 border border-dashed border-slate-300 flex items-center justify-center text-center p-4">
+        <div className="aspect-[16/10] w-full rounded-lg bg-slate-50 border border-dashed border-slate-300 flex items-center justify-center text-center p-3">
           {phase === 'idle' && !streaming && !webcamErr && (
             <p className="text-xs text-slate-500">Starting camera…</p>
           )}
