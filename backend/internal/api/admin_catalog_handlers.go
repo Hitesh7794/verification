@@ -70,7 +70,7 @@ func (s *Server) adminCatalog(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.deps.DB.QueryContext(r.Context(), `
 		SELECT
 			c.id, c.name, COALESCE(c.notes,''),
-			CASE WHEN coa.client_id IS NOT NULL THEN 1 ELSE 0 END AS client_blanket_approved,
+			CASE WHEN (coa.client_id IS NOT NULL AND coa.status = 'approved') THEN 1 ELSE 0 END AS client_blanket_approved,
 			e.id, e.name, e.exam_code,
 			COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD"T"HH24:MI'), ''),
 			COALESCE(TO_CHAR(e.verification_to,   'YYYY-MM-DD"T"HH24:MI'), ''),
@@ -80,7 +80,7 @@ func (s *Server) adminCatalog(w http.ResponseWriter, r *http.Request) {
 			s.requested_at
 		FROM clients c
 		LEFT JOIN client_organization_approvals coa
-			ON coa.client_id = c.id AND coa.org_id = $1
+			ON coa.client_id = c.id AND coa.org_id = $1 AND coa.status = 'approved'
 		LEFT JOIN exams e
 			ON e.client_id = c.id
 			AND e.visible = 1
@@ -89,6 +89,7 @@ func (s *Server) adminCatalog(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN organization_exam_subscriptions s
 			ON s.exam_id = e.id AND s.org_id = $2
 		WHERE c.visible = 1 AND c.closed = 0
+		  AND ((coa.client_id IS NOT NULL AND coa.status = 'approved') OR s.status = 'approved')
 		ORDER BY c.name, e.created_at DESC`, orgID, orgID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())

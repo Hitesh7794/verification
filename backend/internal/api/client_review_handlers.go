@@ -64,8 +64,11 @@ func (s *Server) clientReviewerScope(r *http.Request) (int64, bool) {
 
 // ---------- GET /api/client/applications ----------
 
-// Same shape as superadmin's list — thin variant, no free-text search
-// yet (client inboxes are typically small; add search if / when it hurts).
+// Lists applications scoped to this client reviewer board.
+// An application is considered:
+// - "approved" for this client if client_organization_approvals row exists for (clientID, org_id)
+// - "rejected" if application status is 'rejected'
+// - "pending" if submitted and not yet approved by this client board
 func (s *Server) clientListApplications(w http.ResponseWriter, r *http.Request) {
 	clientID, ok := s.clientReviewerScope(r)
 	if !ok {
@@ -96,37 +99,61 @@ func (s *Server) clientListApplications(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	where := []string{"(client_id = ? OR client_id IS NULL OR id IN (SELECT o.application_id FROM organizations o JOIN organization_exam_subscriptions s ON s.org_id = o.id JOIN exams e ON e.id = s.exam_id WHERE e.client_id = ?))"}
-	args := []any{clientID, clientID}
-	if status != "" && status != "all" {
-		where = append(where, "status = ?")
-		args = append(args, status)
+	var whereSQL string
+	var args []any
+	switch status {
+	case "approved":
+		whereSQL = `a.status != 'draft' AND EXISTS (
+			SELECT 1 FROM client_organization_approvals coa 
+			JOIN organizations o ON o.id = coa.org_id 
+			WHERE coa.client_id = ? AND o.application_id = a.id AND coa.status = 'approved'
+		)`
+		args = []any{clientID}
+	case "rejected":
+		whereSQL = `a.status = 'rejected' OR EXISTS (
+			SELECT 1 FROM client_organization_approvals coa 
+			JOIN organizations o ON o.id = coa.org_id 
+			WHERE coa.client_id = ? AND o.application_id = a.id AND coa.status = 'rejected'
+		)`
+		args = []any{clientID}
+	default: // "pending"
+		whereSQL = `a.status != 'draft' AND a.status != 'rejected' 
+			AND (a.client_id = ? OR a.client_id IS NULL)
+			AND NOT EXISTS (
+				SELECT 1 FROM client_organization_approvals coa 
+				JOIN organizations o ON o.id = coa.org_id 
+				WHERE coa.client_id = ? AND o.application_id = a.id
+			)`
+		args = []any{clientID, clientID}
 	}
-	where = append(where, "(status != 'pending' OR pending_reviewer = 'client' OR pending_reviewer IS NULL)")
-	whereSQL := strings.Join(where, " AND ")
 
 	var total int
 	if err := s.deps.DB.QueryRowContext(r.Context(),
-		db.Q("SELECT COUNT(*) FROM institution_applications WHERE "+whereSQL), args...,
+		db.Q("SELECT COUNT(*) FROM institution_applications a WHERE "+whereSQL), args...,
 	).Scan(&total); err != nil {
-		writeErr(w, http.StatusInternalServerError, "db count")
+		writeErr(w, http.StatusInternalServerError, "db count: "+err.Error())
 		return
 	}
 
 	listArgs := append([]any{}, args...)
 	listArgs = append(listArgs, limit, offset)
 	rows, err := s.deps.DB.QueryContext(r.Context(),
-		db.Q(`SELECT id, status, institution_name, institution_type,
-		             COALESCE(tier,''), COALESCE(aishe_code,''),
-		             state, city, head_name, head_email, created_at,
+		db.Q(`SELECT a.id, a.status, a.institution_name, a.institution_type,
+		             COALESCE(a.tier,''), COALESCE(a.aishe_code,''),
+		             a.state, a.city, a.head_name, a.head_email, a.created_at,
 		             (SELECT COUNT(*) FROM institution_application_documents d
-		                WHERE d.application_id = institution_applications.id)
-		        FROM institution_applications WHERE `+whereSQL+`
-		       ORDER BY created_at DESC LIMIT ? OFFSET ?`),
-		listArgs...,
+		                WHERE d.application_id = a.id),
+		             COALESCE((
+		                 SELECT coa.status FROM client_organization_approvals coa 
+		                 JOIN organizations o ON o.id = coa.org_id 
+		                 WHERE coa.client_id = ? AND o.application_id = a.id
+		             ), '') AS client_decision
+		        FROM institution_applications a WHERE `+whereSQL+`
+		       ORDER BY a.created_at DESC LIMIT ? OFFSET ?`),
+		append([]any{clientID}, listArgs...)...,
 	)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "db list")
+		writeErr(w, http.StatusInternalServerError, "db list: "+err.Error())
 		return
 	}
 	defer rows.Close()
@@ -135,12 +162,20 @@ func (s *Server) clientListApplications(w http.ResponseWriter, r *http.Request) 
 	for rows.Next() {
 		var it applicationListItem
 		var createdAt time.Time
+		var clientDecision string
 		if err := rows.Scan(&it.ID, &it.Status, &it.InstitutionName, &it.InstitutionType,
 			&it.Tier, &it.AisheCode, &it.State, &it.City,
-			&it.HeadName, &it.HeadEmail, &createdAt, &it.DocCount); err != nil {
+			&it.HeadName, &it.HeadEmail, &createdAt, &it.DocCount, &clientDecision); err != nil {
 			continue
 		}
 		it.CreatedAt = createdAt.UTC().Format(time.RFC3339)
+		if clientDecision == "approved" {
+			it.Status = "approved"
+		} else if clientDecision == "rejected" || it.Status == "rejected" {
+			it.Status = "rejected"
+		} else {
+			it.Status = "pending"
+		}
 		out = append(out, it)
 	}
 	writeJSON(w, http.StatusOK, applicationListResp{
@@ -162,22 +197,18 @@ func (s *Server) clientGetApplication(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Pre-check scope so a reviewer for one client can't fetch an
-	// application belonging to another (would be an info leak).
 	var appScope sql.NullInt64
 	if err := s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT client_id FROM institution_applications WHERE id = $1`, appID,
+		`SELECT client_id FROM institution_applications WHERE id = $1 AND status != 'draft'`, appID,
 	).Scan(&appScope); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			writeErr(w, http.StatusNotFound, "application not found")
 			return
 		}
-		writeErr(w, http.StatusInternalServerError, "db read")
+		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
 		return
 	}
-	if !appScope.Valid || appScope.Int64 != clientID {
-		// Same 404 message as "doesn't exist" so a scope probe returns
-		// the same shape as an unknown id.
+	if appScope.Valid && appScope.Int64 != clientID {
 		writeErr(w, http.StatusNotFound, "application not found")
 		return
 	}
@@ -188,14 +219,26 @@ func (s *Server) clientGetApplication(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "db read")
+		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
 		return
 	}
-	// loadApplicationDetail stamps each doc's download_url with the
-	// superadmin path because it was written before the reviewer role
-	// existed. Rewrite to the scoped mirror so the reviewer's browser
-	// hits /api/client/... (which enforces the client_id predicate on
-	// the doc's parent application).
+
+	// Determine status for this client board:
+	var clientDecision sql.NullString
+	_ = s.deps.DB.QueryRowContext(r.Context(), `
+		SELECT coa.status FROM client_organization_approvals coa 
+		JOIN organizations o ON o.id = coa.org_id 
+		WHERE coa.client_id = $1 AND o.application_id = $2
+	`, clientID, appID).Scan(&clientDecision)
+
+	if clientDecision.Valid && clientDecision.String == "approved" {
+		d.Status = "approved"
+	} else if (clientDecision.Valid && clientDecision.String == "rejected") || d.Status == "rejected" {
+		d.Status = "rejected"
+	} else {
+		d.Status = "pending"
+	}
+
 	for i := range d.Docs {
 		d.Docs[i].DownloadURL = fmt.Sprintf(
 			"/api/client/applications/%d/docs/%d", appID, d.Docs[i].DocID,
@@ -205,10 +248,7 @@ func (s *Server) clientGetApplication(w http.ResponseWriter, r *http.Request) {
 }
 
 // ---------- GET /api/client/applications/{id}/docs/{doc_id} ----------
-//
-// Scoped mirror of superadminDownloadDoc — same streaming behaviour,
-// but the SQL WHERE joins to institution_applications.client_id so a
-// reviewer for one client can never read another client's uploads.
+
 func (s *Server) clientDownloadDoc(w http.ResponseWriter, r *http.Request) {
 	clientID, ok := s.clientReviewerScope(r)
 	if !ok {
@@ -230,7 +270,7 @@ func (s *Server) clientDownloadDoc(w http.ResponseWriter, r *http.Request) {
 		`SELECT d.storage_path, d.mime, d.original_name
 		   FROM institution_application_documents d
 		   JOIN institution_applications a ON a.id = d.application_id
-		  WHERE d.id = $1 AND d.application_id = $2 AND a.client_id = $3`,
+		  WHERE d.id = $1 AND d.application_id = $2 AND (a.client_id = $3 OR a.client_id IS NULL)`,
 		docID, appID, clientID,
 	).Scan(&storagePath, &mime, &original)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -269,27 +309,74 @@ func (s *Server) clientApproveApplication(w http.ResponseWriter, r *http.Request
 	var req approveReq
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
-	out, err := s.approveApplication(r, appID, claims.UserID, &clientID, req.Note)
+	prov, err := s.provisionOrgAndAdmin(r, appID, false)
 	if err != nil {
-		code, msg := mapReviewErrorToHTTP(err)
-		writeErr(w, code, msg)
+		writeErr(w, http.StatusInternalServerError, "provision org: "+err.Error())
 		return
 	}
+
+	// 1. Insert or update client_organization_approvals
+	if _, err := s.deps.DB.ExecContext(r.Context(), `
+		INSERT INTO client_organization_approvals(client_id, org_id, status, approved_by, approved_at, note)
+		VALUES($1, $2, 'approved', $3, NOW(), $4)
+		ON CONFLICT (client_id, org_id) DO UPDATE SET
+			status = 'approved',
+			approved_by = EXCLUDED.approved_by,
+			approved_at = NOW(),
+			note = EXCLUDED.note`,
+		clientID, prov.OrgID, claims.UserID, req.Note,
+	); err != nil {
+		writeErr(w, http.StatusInternalServerError, "client approval: "+err.Error())
+		return
+	}
+
+	// 2. Grant blanket approved subscriptions for all open exams of this client
+	if _, err := s.deps.DB.ExecContext(r.Context(), `
+		INSERT INTO organization_exam_subscriptions(
+		    org_id, exam_id, status, approval_type,
+		    subscribed_by, requested_at,
+		    reviewed_at, reviewed_by, review_note)
+		SELECT $1, e.id, 'approved', 'blanket_client',
+		       $2, NOW(),
+		       NOW(), $2, 'Approved by Client Reviewer'
+		  FROM exams e
+		 WHERE e.client_id = $3 AND e.visible = 1 AND e.closed = 0
+		ON CONFLICT (org_id, exam_id) DO UPDATE SET
+		    status = 'approved',
+		    approval_type = EXCLUDED.approval_type,
+		    reviewed_at = EXCLUDED.reviewed_at,
+		    reviewed_by = EXCLUDED.reviewed_by,
+		    review_note = EXCLUDED.review_note`,
+		prov.OrgID, claims.UserID, clientID,
+	); err != nil {
+		writeErr(w, http.StatusInternalServerError, "exam subscriptions: "+err.Error())
+		return
+	}
+
+	// 3. Mark application status = 'approved' if still pending
+	_, _ = s.deps.DB.ExecContext(r.Context(), `
+		UPDATE institution_applications
+		   SET status = 'approved',
+		       updated_at = NOW()
+		 WHERE id = $1 AND status = 'pending'`,
+		appID,
+	)
+
 	s.auditFromRequest(r, "application.approve", "application", appID, map[string]any{
-		"org_id":           out.OrgID,
-		"institution_name": out.InstitutionName,
-		"admin_user_id":    out.AdminUserID,
+		"org_id":           prov.OrgID,
+		"institution_name": prov.InstitutionName,
+		"admin_user_id":    prov.AdminUserID,
 		"actor":            "client_reviewer",
 		"client_id":        clientID,
 	})
 	writeJSON(w, http.StatusOK, approveResp{
-		ApplicationID:    out.ApplicationID,
-		OrgID:            out.OrgID,
-		AdminUserID:      out.AdminUserID,
-		AdminUsername:    out.AdminUsername,
-		MagicLinkURL:     out.MagicLinkURL,
-		OperatorUsername: out.OperatorUsername,
-		OperatorPassword: out.OperatorPassword,
+		ApplicationID:    appID,
+		OrgID:            prov.OrgID,
+		AdminUserID:      prov.AdminUserID,
+		AdminUsername:    prov.AdminUsername,
+		MagicLinkURL:     prov.MagicLinkURL,
+		OperatorUsername: prov.OperatorUsername,
+		OperatorPassword: prov.OperatorPassword,
 	})
 }
 
@@ -311,14 +398,42 @@ func (s *Server) clientRejectApplication(w http.ResponseWriter, r *http.Request)
 	var req rejectReq
 	_ = json.NewDecoder(r.Body).Decode(&req)
 
-	if err := s.rejectApplication(r.Context(), appID, claims.UserID, &clientID, req.Note); err != nil {
-		code, msg := mapReviewErrorToHTTP(err)
-		writeErr(w, code, msg)
+	prov, err := s.provisionOrgAndAdmin(r, appID, false)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "provision org: "+err.Error())
 		return
 	}
+
+	// 1. Record rejection in client_organization_approvals
+	if _, err := s.deps.DB.ExecContext(r.Context(), `
+		INSERT INTO client_organization_approvals(client_id, org_id, status, approved_by, approved_at, note)
+		VALUES($1, $2, 'rejected', $3, NOW(), $4)
+		ON CONFLICT (client_id, org_id) DO UPDATE SET
+			status = 'rejected',
+			approved_by = EXCLUDED.approved_by,
+			approved_at = NOW(),
+			note = EXCLUDED.note`,
+		clientID, prov.OrgID, claims.UserID, req.Note,
+	); err != nil {
+		writeErr(w, http.StatusInternalServerError, "client rejection: "+err.Error())
+		return
+	}
+
+	// 2. Mark exam subscriptions as rejected for this client
+	_, _ = s.deps.DB.ExecContext(r.Context(), `
+		UPDATE organization_exam_subscriptions
+		   SET status = 'rejected',
+		       reviewed_at = NOW(),
+		       reviewed_by = $1,
+		       review_note = $2
+		 WHERE org_id = $3 AND exam_id IN (SELECT id FROM exams WHERE client_id = $4)`,
+		claims.UserID, req.Note, prov.OrgID, clientID,
+	)
+
 	s.auditFromRequest(r, "application.reject", "application", appID, map[string]any{
 		"actor":     "client_reviewer",
 		"client_id": clientID,
+		"note":      req.Note,
 	})
 	writeJSON(w, http.StatusOK, map[string]any{
 		"application_id": appID,
@@ -421,20 +536,73 @@ func (s *Server) clientBulkActionApplications(w http.ResponseWriter, r *http.Req
 	for _, appID := range ids {
 		res := bulkKycActionResult{ApplicationID: appID}
 		if isReject {
-			if err := s.rejectApplication(r.Context(), appID, claims.UserID, &clientID, req.Note); err != nil {
-				_, msg := mapReviewErrorToHTTP(err)
-				res.Error = msg
+			prov, err := s.provisionOrgAndAdmin(r, appID, false)
+			if err != nil {
+				res.Error = err.Error()
 			} else {
+				_, _ = s.deps.DB.ExecContext(r.Context(), `
+					INSERT INTO client_organization_approvals(client_id, org_id, status, approved_by, approved_at, note)
+					VALUES($1, $2, 'rejected', $3, NOW(), $4)
+					ON CONFLICT (client_id, org_id) DO UPDATE SET
+						status = 'rejected',
+						approved_by = EXCLUDED.approved_by,
+						approved_at = NOW(),
+						note = EXCLUDED.note`,
+					clientID, prov.OrgID, claims.UserID, req.Note,
+				)
+				_, _ = s.deps.DB.ExecContext(r.Context(), `
+					UPDATE organization_exam_subscriptions
+					   SET status = 'rejected',
+					       reviewed_at = NOW(),
+					       reviewed_by = $1,
+					       review_note = $2
+					 WHERE org_id = $3 AND exam_id IN (SELECT id FROM exams WHERE client_id = $4)`,
+					claims.UserID, req.Note, prov.OrgID, clientID,
+				)
 				res.OK = true
 			}
 		} else {
-			out, err := s.approveApplication(r, appID, claims.UserID, &clientID, req.Note)
+			prov, err := s.provisionOrgAndAdmin(r, appID, false)
 			if err != nil {
-				_, msg := mapReviewErrorToHTTP(err)
-				res.Error = msg
+				res.Error = err.Error()
 			} else {
+				_, _ = s.deps.DB.ExecContext(r.Context(), `
+					INSERT INTO client_organization_approvals(client_id, org_id, status, approved_by, approved_at, note)
+					VALUES($1, $2, 'approved', $3, NOW(), $4)
+					ON CONFLICT (client_id, org_id) DO UPDATE SET
+						status = 'approved',
+						approved_by = EXCLUDED.approved_by,
+						approved_at = NOW(),
+						note = EXCLUDED.note`,
+					clientID, prov.OrgID, claims.UserID, req.Note,
+				)
+				_, _ = s.deps.DB.ExecContext(r.Context(), `
+					INSERT INTO organization_exam_subscriptions(
+					    org_id, exam_id, status, approval_type,
+					    subscribed_by, requested_at,
+					    reviewed_at, reviewed_by, review_note)
+					SELECT $1, e.id, 'approved', 'blanket_client',
+					       $2, NOW(),
+					       NOW(), $2, 'Approved by Client Reviewer'
+					  FROM exams e
+					 WHERE e.client_id = $3 AND e.visible = 1 AND e.closed = 0
+					ON CONFLICT (org_id, exam_id) DO UPDATE SET
+					    status = 'approved',
+					    approval_type = EXCLUDED.approval_type,
+					    reviewed_at = EXCLUDED.reviewed_at,
+					    reviewed_by = EXCLUDED.reviewed_by,
+					    review_note = EXCLUDED.review_note`,
+					prov.OrgID, claims.UserID, clientID,
+				)
+				_, _ = s.deps.DB.ExecContext(r.Context(), `
+					UPDATE institution_applications
+					   SET status = 'approved',
+					       updated_at = NOW()
+					 WHERE id = $1 AND status = 'pending'`,
+					appID,
+				)
 				res.OK = true
-				res.OrgID = out.OrgID
+				res.OrgID = prov.OrgID
 			}
 		}
 		if res.OK {
@@ -501,44 +669,36 @@ func (s *Server) clientReviewerMe(w http.ResponseWriter, r *http.Request) {
 		univCount     int
 	)
 	_ = s.deps.DB.QueryRowContext(r.Context(), db.Q(`
-		SELECT 
-			COUNT(*),
-			COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END), 0),
-			COALESCE(COUNT(DISTINCT CASE WHEN status = 'approved' THEN id END), 0)
-		FROM institution_applications
-		WHERE client_id = ? 
-		   OR client_id IS NULL 
-		   OR id IN (
-		       SELECT o.application_id 
-		       FROM organizations o 
-		       JOIN organization_exam_subscriptions s ON s.org_id = o.id 
-		       JOIN exams e ON e.id = s.exam_id 
-		       WHERE e.client_id = ?
+		SELECT COUNT(*) 
+		  FROM institution_applications a 
+		 WHERE a.status != 'draft' AND a.status != 'rejected'
+		   AND (a.client_id = ? OR a.client_id IS NULL)
+		   AND NOT EXISTS (
+		       SELECT 1 FROM client_organization_approvals coa 
+		       JOIN organizations o ON o.id = coa.org_id 
+		       WHERE coa.client_id = ? AND o.application_id = a.id
 		   )`), clientID, clientID,
-	).Scan(&totalCount, &pendingCount, &approvedCount, &rejectedCount, &univCount)
+	).Scan(&pendingCount)
 
-	var orgsCount int
 	_ = s.deps.DB.QueryRowContext(r.Context(), db.Q(`
-		SELECT COUNT(DISTINCT o.id)
-		FROM organizations o
-		LEFT JOIN institution_applications a ON a.id = o.application_id
-		LEFT JOIN organization_exam_subscriptions s ON s.org_id = o.id
-		LEFT JOIN exams e ON e.id = s.exam_id
-		WHERE a.client_id = ? 
-		   OR e.client_id = ? 
-		   OR a.client_id IS NULL`), clientID, clientID,
-	).Scan(&orgsCount)
-	if orgsCount > univCount {
-		univCount = orgsCount
-	}
-	if approvedCount < univCount {
-		approvedCount = univCount
-	}
-	if totalCount < approvedCount+pendingCount+rejectedCount {
-		totalCount = approvedCount + pendingCount + rejectedCount
-	}
+		SELECT COUNT(*) 
+		  FROM client_organization_approvals coa 
+		 WHERE coa.client_id = ? AND coa.status = 'approved'`), clientID,
+	).Scan(&approvedCount)
+
+	_ = s.deps.DB.QueryRowContext(r.Context(), db.Q(`
+		SELECT COUNT(*) 
+		  FROM institution_applications a 
+		 WHERE (a.status = 'rejected' AND (a.client_id = ? OR a.client_id IS NULL))
+		    OR EXISTS (
+		        SELECT 1 FROM client_organization_approvals coa 
+		        JOIN organizations o ON o.id = coa.org_id 
+		        WHERE coa.client_id = ? AND o.application_id = a.id AND coa.status = 'rejected'
+		    )`), clientID, clientID,
+	).Scan(&rejectedCount)
+
+	univCount = approvedCount
+	totalCount = pendingCount + approvedCount + rejectedCount
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"client_id":      clientID,

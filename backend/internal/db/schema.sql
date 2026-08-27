@@ -193,6 +193,7 @@ CREATE INDEX idx_org_exam_subs_status ON organization_exam_subscriptions(status)
 CREATE TABLE client_organization_approvals (
     client_id   BIGINT NOT NULL REFERENCES clients(id) ON DELETE CASCADE,
     org_id      BIGINT NOT NULL REFERENCES organizations(id) ON DELETE CASCADE,
+    status      TEXT NOT NULL DEFAULT 'approved',
     approved_at TIMESTAMPTZ NOT NULL DEFAULT NOW(),
     approved_by BIGINT REFERENCES users(id),
     note        TEXT,
