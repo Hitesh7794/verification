@@ -190,28 +190,13 @@ export default function ApplicationDetail() {
 
   const meta = STATUS_LABELS[app.status] || STATUS_LABELS.draft
   const isPending = app.status === 'pending'
-  // V15 gating rules:
-  //   • Un-routed pending app (client_id NULL) → superadmin's ONLY
-  //     action is to route. Approve/Reject blocked server-side too;
-  //     the UI just doesn't offer them.
-  //   • Routed to mode='client' → decision belongs to that client's
-  //     reviewer. KYC docs are also sealed off (backend refuses the
-  //     download call); the doc panel is replaced with an explanatory
-  //     strip.
-  //   • Routed to mode='admin' or 'both' → superadmin acts normally.
-  //     In 'both' the button label reflects the intermediate hand-off.
   const isRouted = !!app.client_id
   const isClientOnly = isRouted && app.client_kyc_review_mode === 'client'
-  const superadminOwnsDecision = isPending && isRouted && !isClientOnly
+  const superadminOwnsDecision = isPending
   const bothModeIntermediate =
-    isPending && app.pending_reviewer === 'admin' && app.client_kyc_review_mode === 'both'
-  // Docs are visible to superadmin ONLY when the app is routed to a
-  // board they have decision authority on (admin or both). Un-routed
-  // apps and client-only routed apps → docs sealed. Basic contact +
-  // institution data stays visible in every case so the superadmin
-  // can decide/verify routing.
-  const showDocs = isRouted && !isClientOnly
-  const activeDoc = showDocs ? app.docs.find((d) => d.doc_id === activeDocId) : null
+    isPending && (app.client_kyc_review_mode === 'both' || app.client_kyc_review_mode === 'client' || !isRouted)
+  const showDocs = true
+  const activeDoc = app.docs?.find((d) => d.doc_id === activeDocId) || (app.docs?.length > 0 ? app.docs[0] : null)
 
   return (
     <SuperShell>

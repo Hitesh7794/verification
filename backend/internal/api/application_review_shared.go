@@ -295,18 +295,49 @@ func (s *Server) approveApplication(
 		return nil, errAppNotPending
 	}
 
-	// V15 exam fan-out — if a client_id is attached, grant this org
-	// access to every visible + open exam under that client. Same
-	// insert as before the rebuild.
-	if appClientID.Valid {
-		if _, err := s.deps.DB.ExecContext(ctx, `
+	// Record client approvals and exam subscriptions according to scope and kyc_review_mode:
+	if scope != nil {
+		// Client Reviewer approving for their specific board:
+		_, _ = s.deps.DB.ExecContext(ctx, `
+			INSERT INTO client_organization_approvals(client_id, org_id, approved_by, approved_at, note)
+			VALUES($1, $2, $3, NOW(), $4)
+			ON CONFLICT (client_id, org_id) DO NOTHING`,
+			*scope, prov.OrgID, reviewerUserID, note,
+		)
+		_, _ = s.deps.DB.ExecContext(ctx, `
 			INSERT INTO organization_exam_subscriptions(
 			    org_id, exam_id, status, approval_type,
 			    subscribed_by, requested_at,
 			    reviewed_at, reviewed_by, review_note)
 			SELECT $1, e.id, 'approved', 'blanket_client',
 			       $2, NOW(),
-			       NOW(), $2, 'Auto-granted on KYC approval (V15)'
+			       NOW(), $2, 'Auto-granted on Client KYC approval'
+			  FROM exams e
+			 WHERE e.client_id = $3 AND e.visible = 1 AND e.closed = 0
+			ON CONFLICT (org_id, exam_id) DO UPDATE SET
+			    status = 'approved',
+			    approval_type = EXCLUDED.approval_type,
+			    reviewed_at = EXCLUDED.reviewed_at,
+			    reviewed_by = EXCLUDED.reviewed_by,
+			    review_note = EXCLUDED.review_note`,
+			prov.OrgID, reviewerUserID, *scope,
+		)
+	} else if appClientID.Valid {
+		// Superadmin approving an application routed to a specific board:
+		_, _ = s.deps.DB.ExecContext(ctx, `
+			INSERT INTO client_organization_approvals(client_id, org_id, approved_by, approved_at, note)
+			VALUES($1, $2, $3, NOW(), $4)
+			ON CONFLICT (client_id, org_id) DO NOTHING`,
+			appClientID.Int64, prov.OrgID, reviewerUserID, note,
+		)
+		_, _ = s.deps.DB.ExecContext(ctx, `
+			INSERT INTO organization_exam_subscriptions(
+			    org_id, exam_id, status, approval_type,
+			    subscribed_by, requested_at,
+			    reviewed_at, reviewed_by, review_note)
+			SELECT $1, e.id, 'approved', 'blanket_client',
+			       $2, NOW(),
+			       NOW(), $2, 'Auto-granted on KYC approval'
 			  FROM exams e
 			 WHERE e.client_id = $3 AND e.visible = 1 AND e.closed = 0
 			ON CONFLICT (org_id, exam_id) DO UPDATE SET
@@ -316,9 +347,38 @@ func (s *Server) approveApplication(
 			    reviewed_by = EXCLUDED.reviewed_by,
 			    review_note = EXCLUDED.review_note`,
 			prov.OrgID, reviewerUserID, appClientID.Int64,
-		); err != nil {
-			return nil, fmt.Errorf("exam fan-out: %w", err)
-		}
+		)
+	} else {
+		// Superadmin approving generic registration across multiple clients:
+		// Auto-grant for clients with kyc_review_mode = 'admin'
+		_, _ = s.deps.DB.ExecContext(ctx, `
+			INSERT INTO client_organization_approvals(client_id, org_id, approved_by, approved_at, note)
+			SELECT c.id, $1, $2, NOW(), 'Approved via Superadmin KYC'
+			  FROM clients c
+			 WHERE c.visible = 1 AND c.closed = 0 AND c.kyc_review_mode = 'admin'
+			ON CONFLICT (client_id, org_id) DO NOTHING`,
+			prov.OrgID, reviewerUserID,
+		)
+		_, _ = s.deps.DB.ExecContext(ctx, `
+			INSERT INTO organization_exam_subscriptions(
+			    org_id, exam_id, status, approval_type,
+			    subscribed_by, requested_at,
+			    reviewed_at, reviewed_by, review_note)
+			SELECT $1, e.id, 'approved', 'blanket_client',
+			       $2, NOW(),
+			       NOW(), $2, 'Auto-granted on Superadmin KYC'
+			  FROM exams e
+			  JOIN clients c ON c.id = e.client_id
+			 WHERE c.visible = 1 AND c.closed = 0 AND c.kyc_review_mode = 'admin'
+			   AND e.visible = 1 AND e.closed = 0
+			ON CONFLICT (org_id, exam_id) DO UPDATE SET
+			    status = 'approved',
+			    approval_type = EXCLUDED.approval_type,
+			    reviewed_at = EXCLUDED.reviewed_at,
+			    reviewed_by = EXCLUDED.reviewed_by,
+			    review_note = EXCLUDED.review_note`,
+			prov.OrgID, reviewerUserID,
+		)
 	}
 
 	// Post-approval email — the applicant already has their password

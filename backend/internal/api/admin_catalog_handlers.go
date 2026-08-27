@@ -89,6 +89,7 @@ func (s *Server) adminCatalog(w http.ResponseWriter, r *http.Request) {
 		LEFT JOIN organization_exam_subscriptions s
 			ON s.exam_id = e.id AND s.org_id = $2
 		WHERE c.visible = 1 AND c.closed = 0
+		  AND (coa.client_id IS NOT NULL OR s.status = 'approved')
 		ORDER BY c.name, e.created_at DESC`, orgID, orgID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())

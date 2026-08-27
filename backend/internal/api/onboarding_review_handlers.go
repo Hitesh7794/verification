@@ -471,35 +471,13 @@ func (s *Server) superadminApproveApplication(w http.ResponseWriter, r *http.Req
 	// V15 authorization gates. Order matters so the error message the
 	// caller sees names the actual missing precondition.
 	mode, clientID, err := s.applicationReviewMode(r.Context(), appID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			writeErr(w, http.StatusNotFound, "application not found")
-			return
-		}
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
 		return
 	}
-	// (1) Un-routed apps must be routed first — superadmin's job on a
-	//     no-client app is to pick which board it belongs to, not to
-	//     approve blind.
-	if clientID == nil {
-		writeErr(w, http.StatusBadRequest,
-			"Route this application to a client first — approving without a client would strand the new org with no exam access.")
-		return
-	}
-	// (2) Client-only mode → superadmin has no approve authority at
-	//     all; the client reviewer alone decides. Superadmin's only
-	//     action here is to re-route (or leave alone).
-	if mode == "client" {
-		writeErr(w, http.StatusForbidden,
-			"This application is routed to a client-only board. Only that client's reviewer can approve it.")
-		return
-	}
-	// (3) 'both' mode → superadmin's approve is the first of two
-	//     gates. Move the row into the client queue; the org/admin/
-	//     magic-link only get created when the client reviewer also
-	//     approves.
-	if mode == "both" {
+
+	// (1) If application is single-routed to a 'both' mode client:
+	if clientID != nil && mode == "both" {
 		if err := s.advanceApplicationToClientQueue(r.Context(), appID, claims.UserID, req.Note); err != nil {
 			code, msg := mapReviewErrorToHTTP(err)
 			writeErr(w, code, msg)
