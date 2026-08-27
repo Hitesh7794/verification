@@ -227,3 +227,32 @@ export async function bulkDecideSubscriptionsCsv(file) {
   }
   return body
 }
+
+// ── Exam Management (Reviewer) ─────────────────────────────────────────
+
+export { downloadSampleExamCSV } from '../superadmin/examCatalog.js'
+
+// GET /api/client/exams
+export async function listReviewerExams() {
+  const { exams } = await api('/client/exams')
+  return exams || []
+}
+
+// POST /api/client/exams
+export async function createReviewerExam(exam) {
+  return api('/client/exams', {
+    method: 'POST',
+    body: exam,
+  })
+}
+
+// POST /api/client/exams/csv
+export async function bulkCreateReviewerExamsCSV(file) {
+  const fd = new FormData()
+  fd.append('file', file)
+  return api('/client/exams/csv', {
+    method: 'POST',
+    body: fd,
+  })
+}
+

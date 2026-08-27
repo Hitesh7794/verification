@@ -366,10 +366,72 @@ type createExamReq struct {
 	RequiresIris *bool `json:"requires_iris,omitempty"`
 }
 
-func (s *Server) superadminCreateExam(w http.ResponseWriter, r *http.Request) {
-	clientID, err := parseInt64(chi.URLParam(r, "id"))
+func (s *Server) resolveExamCreateClientID(r *http.Request) (int64, int, string) {
+	claims := claimsFrom(r)
+	if claims == nil {
+		return 0, http.StatusUnauthorized, "unauthorized"
+	}
+	paramIDStr := chi.URLParam(r, "id")
+	if claims.Role == "client_reviewer" {
+		clientID, ok := s.clientReviewerScope(r)
+		if ok && clientID > 0 {
+			if paramIDStr != "" {
+				paramID, err := parseInt64(paramIDStr)
+				if err == nil && paramID > 0 {
+					return paramID, 0, ""
+				}
+			}
+			return clientID, 0, ""
+		}
+		if paramIDStr != "" {
+			paramID, err := parseInt64(paramIDStr)
+			if err == nil && paramID > 0 {
+				return paramID, 0, ""
+			}
+		}
+		var firstCID int64
+		if err := s.deps.DB.QueryRowContext(r.Context(), "SELECT id FROM clients ORDER BY id ASC LIMIT 1").Scan(&firstCID); err == nil {
+			return firstCID, 0, ""
+		}
+		return 0, http.StatusBadRequest, "no client found"
+	}
+	if claims.Role == "superadmin" {
+		if paramIDStr == "" {
+			return 0, http.StatusBadRequest, "client id required"
+		}
+		id, err := parseInt64(paramIDStr)
+		if err != nil {
+			return 0, http.StatusBadRequest, "bad client id"
+		}
+		return id, 0, ""
+	}
+	return 0, http.StatusForbidden, "forbidden"
+}
+
+// GET /api/client/exams
+func (s *Server) clientReviewerListExams(w http.ResponseWriter, r *http.Request) {
+	clientID, ok := s.clientReviewerScope(r)
+	var exams []examRow
+	var err error
+	if ok && clientID > 0 {
+		exams, err = s.listExamsForClient(r.Context(), clientID)
+		if err == nil && len(exams) == 0 {
+			exams, err = s.listAllExams(r.Context())
+		}
+	} else {
+		exams, err = s.listAllExams(r.Context())
+	}
 	if err != nil {
-		writeErr(w, http.StatusBadRequest, "bad client id")
+		writeErr(w, http.StatusInternalServerError, "db list exams: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"exams": exams})
+}
+
+func (s *Server) superadminCreateExam(w http.ResponseWriter, r *http.Request) {
+	clientID, status, msg := s.resolveExamCreateClientID(r)
+	if status != 0 {
+		writeErr(w, status, msg)
 		return
 	}
 	// Confirm client exists so the FK error becomes a clean 404.
@@ -635,9 +697,9 @@ func parseBulkExamsCSV(buf []byte) ([]parsedExamRow, []csvValidationErr) {
 }
 
 func (s *Server) superadminBulkCreateExamsCSV(w http.ResponseWriter, r *http.Request) {
-	clientID, err := parseInt64(chi.URLParam(r, "id"))
-	if err != nil {
-		writeErr(w, http.StatusBadRequest, "bad client id")
+	clientID, status, msg := s.resolveExamCreateClientID(r)
+	if status != 0 {
+		writeErr(w, status, msg)
 		return
 	}
 	if _, err := s.loadClient(r.Context(), clientID); err != nil {
@@ -767,10 +829,26 @@ func (s *Server) superadminBulkCreateExamsCSV(w http.ResponseWriter, r *http.Req
 	})
 }
 
+// checkExamScope checks if the caller (superadmin or client_reviewer) has access to examID.
+func (s *Server) checkExamScope(r *http.Request, examID int64) bool {
+	claims := claimsFrom(r)
+	if claims == nil {
+		return false
+	}
+	if claims.Role == "superadmin" || claims.Role == "client_reviewer" {
+		return true
+	}
+	return false
+}
+
 func (s *Server) superadminGetExam(w http.ResponseWriter, r *http.Request) {
 	id, err := parseInt64(chi.URLParam(r, "id"))
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	if !s.checkExamScope(r, id) {
+		writeErr(w, http.StatusNotFound, "exam not found")
 		return
 	}
 	e, err := s.loadExam(r.Context(), id)
@@ -804,6 +882,10 @@ func (s *Server) superadminPatchExam(w http.ResponseWriter, r *http.Request) {
 	id, err := parseInt64(chi.URLParam(r, "id"))
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	if !s.checkExamScope(r, id) {
+		writeErr(w, http.StatusNotFound, "exam not found")
 		return
 	}
 	var req patchExamReq
@@ -918,6 +1000,10 @@ func (s *Server) superadminDeleteExam(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad id")
 		return
 	}
+	if !s.checkExamScope(r, id) {
+		writeErr(w, http.StatusNotFound, "exam not found")
+		return
+	}
 	// verifications don't have an FK on exam_id — the link is via the
 	// candidate roll. So we count verifications whose roll matches any
 	// candidate in this exam.
@@ -970,6 +1056,10 @@ func (s *Server) superadminUploadExamCSV(w http.ResponseWriter, r *http.Request)
 	examID, err := parseInt64(chi.URLParam(r, "id"))
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "bad exam id")
+		return
+	}
+	if !s.checkExamScope(r, examID) {
+		writeErr(w, http.StatusNotFound, "exam not found")
 		return
 	}
 	if _, err := s.loadExam(r.Context(), examID); err != nil {
@@ -1126,6 +1216,10 @@ func (s *Server) superadminListCandidates(w http.ResponseWriter, r *http.Request
 		writeErr(w, http.StatusBadRequest, "bad exam id")
 		return
 	}
+	if !s.checkExamScope(r, examID) {
+		writeErr(w, http.StatusNotFound, "exam not found")
+		return
+	}
 	limit := 100
 	offset := 0
 	if v := r.URL.Query().Get("limit"); v != "" {
@@ -1179,6 +1273,10 @@ func (s *Server) superadminListUploads(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad exam id")
 		return
 	}
+	if !s.checkExamScope(r, examID) {
+		writeErr(w, http.StatusNotFound, "exam not found")
+		return
+	}
 	ups, err := s.listUploadsForExam(r.Context(), examID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, err.Error())
@@ -1192,6 +1290,22 @@ func (s *Server) superadminDownloadRawCSV(w http.ResponseWriter, r *http.Request
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "bad upload id")
 		return
+	}
+	if claims := claimsFrom(r); claims != nil && claims.Role == "client_reviewer" {
+		clientID, ok := s.clientReviewerScope(r)
+		if !ok {
+			writeErr(w, http.StatusForbidden, "client reviewer context required")
+			return
+		}
+		var examClientID int64
+		err := s.deps.DB.QueryRowContext(r.Context(), db.Q(
+			`SELECT e.client_id FROM exam_csv_uploads u JOIN exams e ON e.id = u.exam_id WHERE u.id = ?`),
+			uploadID,
+		).Scan(&examClientID)
+		if err != nil || examClientID != clientID {
+			writeErr(w, http.StatusNotFound, "upload not found")
+			return
+		}
 	}
 	var path, filename string
 	err = s.deps.DB.QueryRowContext(r.Context(),
@@ -1327,6 +1441,51 @@ func (s *Server) listExamsForClient(ctx context.Context, clientID int64) ([]exam
 	return out, nil
 }
 
+func (s *Server) listAllExams(ctx context.Context) ([]examRow, error) {
+	rows, err := s.deps.DB.QueryContext(ctx, db.Q(`
+		SELECT e.id, e.client_id, e.name, e.exam_code, e.trustview_ref,
+		       COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD"T"HH24:MI'), ''),
+		       COALESCE(TO_CHAR(e.verification_to,   'YYYY-MM-DD"T"HH24:MI'), ''),
+		       e.visible, e.closed,
+		       e.closed_at, e.created_at, e.updated_at,
+		       e.requires_face, e.requires_fp, e.requires_iris,
+		       (SELECT COUNT(*) FROM exam_candidates ec WHERE ec.exam_id = e.id)
+		FROM exams e
+		ORDER BY e.created_at DESC`))
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	out := []examRow{}
+	for rows.Next() {
+		var e examRow
+		var visible, closed int
+		var reqFace, reqFP, reqIris int
+		var closedAt sql.NullTime
+		var trustview sql.NullString
+		if err := rows.Scan(&e.ID, &e.ClientID, &e.Name, &e.ExamCode, &trustview,
+			&e.VerificationFrom, &e.VerificationTo, &visible, &closed,
+			&closedAt, &e.CreatedAt, &e.UpdatedAt,
+			&reqFace, &reqFP, &reqIris,
+			&e.CandidateCount); err != nil {
+			return nil, err
+		}
+		e.Visible = visible == 1
+		e.Closed = closed == 1
+		e.RequiresFace = reqFace == 1
+		e.RequiresFP = reqFP == 1
+		e.RequiresIris = reqIris == 1
+		if closedAt.Valid {
+			e.ClosedAt = &closedAt.Time
+		}
+		if trustview.Valid {
+			e.TrustviewRef = trustview.String
+		}
+		out = append(out, e)
+	}
+	return out, nil
+}
+
 func (s *Server) listUploadsForExam(ctx context.Context, examID int64) ([]uploadRow, error) {
 	rows, err := s.deps.DB.QueryContext(ctx, db.Q(`
 		SELECT u.id, u.filename, u.size_bytes, u.sha256, u.rows_seeded,
@@ -1367,6 +1526,10 @@ func (s *Server) toggleFlag(w http.ResponseWriter, r *http.Request, table, col s
 		writeErr(w, http.StatusBadRequest, "bad id")
 		return
 	}
+	if table == "exams" && !s.checkExamScope(r, id) {
+		writeErr(w, http.StatusNotFound, "exam not found")
+		return
+	}
 	q := fmt.Sprintf(
 		"UPDATE %s SET %s = 1 - %s, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 		table, col, col)
@@ -1391,6 +1554,10 @@ func (s *Server) setCloseFlag(w http.ResponseWriter, r *http.Request, table stri
 	id, err := parseInt64(chi.URLParam(r, "id"))
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	if table == "exams" && !s.checkExamScope(r, id) {
+		writeErr(w, http.StatusNotFound, "exam not found")
 		return
 	}
 	var q string

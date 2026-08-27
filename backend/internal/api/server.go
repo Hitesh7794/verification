@@ -393,6 +393,11 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/client/subscription-requests/export.csv",                     s.requireRole("client_reviewer")(s.clientExportApprovedSubscriptionsCSV))
 		r.Post("/api/client/subscription-requests/{org_id}/{exam_id}/reset-pending", s.requireRole("client_reviewer")(s.clientResetSubscriptionRequestToPending))
 
+		// Client-reviewer exam management
+		r.Get("/api/client/exams",                                                 s.requireRole("client_reviewer")(s.clientReviewerListExams))
+		r.Post("/api/client/exams",                                                s.requireRole("client_reviewer")(s.superadminCreateExam))
+		r.Post("/api/client/exams/csv",                                            s.requireRole("client_reviewer")(s.superadminBulkCreateExamsCSV))
+
 		// Superadmin management of the per-client portal — enable/disable
 		// the client's inbox and CRUD the reviewer users that log into it.
 		r.Post("/api/superadmin/clients/{id}/portal",              s.requireRole("superadmin")(s.superadminSetClientPortal))
@@ -401,29 +406,29 @@ func (s *Server) Router() http.Handler {
 		r.Delete("/api/superadmin/clients/{id}/reviewers/{uid}",   s.requireRole("superadmin")(s.superadminDeleteReviewer))
 
 		// ── Exam catalog (Phase 1: superadmin creates clients + exams + candidates)
-		// Everything under this prefix is superadmin-only.
+		// Everything under this prefix is superadmin and reviewer accessible.
 		r.Post("/api/superadmin/clients",                              s.requireRole("superadmin")(s.superadminCreateClient))
-		r.Get("/api/superadmin/clients",                               s.requireRole("superadmin")(s.superadminListClients))
-		r.Get("/api/superadmin/clients/{id}",                          s.requireRole("superadmin")(s.superadminGetClient))
-		r.Patch("/api/superadmin/clients/{id}",                        s.requireRole("superadmin")(s.superadminPatchClient))
-		r.Post("/api/superadmin/clients/{id}/visibility",              s.requireRole("superadmin")(s.superadminToggleClientVisibility))
-		r.Post("/api/superadmin/clients/{id}/close",                   s.requireRole("superadmin")(s.superadminCloseClient))
-		r.Post("/api/superadmin/clients/{id}/reopen",                  s.requireRole("superadmin")(s.superadminReopenClient))
+		r.Get("/api/superadmin/clients",                               s.requireRole("superadmin", "client_reviewer")(s.superadminListClients))
+		r.Get("/api/superadmin/clients/{id}",                          s.requireRole("superadmin", "client_reviewer")(s.superadminGetClient))
+		r.Patch("/api/superadmin/clients/{id}",                        s.requireRole("superadmin", "client_reviewer")(s.superadminPatchClient))
+		r.Post("/api/superadmin/clients/{id}/visibility",              s.requireRole("superadmin", "client_reviewer")(s.superadminToggleClientVisibility))
+		r.Post("/api/superadmin/clients/{id}/close",                   s.requireRole("superadmin", "client_reviewer")(s.superadminCloseClient))
+		r.Post("/api/superadmin/clients/{id}/reopen",                  s.requireRole("superadmin", "client_reviewer")(s.superadminReopenClient))
 		r.Delete("/api/superadmin/clients/{id}",                       s.requireRole("superadmin")(s.superadminDeleteClient))
 
-		r.Post("/api/superadmin/clients/{id}/exams",                   s.requireRole("superadmin")(s.superadminCreateExam))
-		r.Post("/api/superadmin/clients/{id}/exams/csv",               s.requireRole("superadmin")(s.superadminBulkCreateExamsCSV))
-		r.Get("/api/superadmin/exams/{id}",                            s.requireRole("superadmin")(s.superadminGetExam))
-		r.Patch("/api/superadmin/exams/{id}",                          s.requireRole("superadmin")(s.superadminPatchExam))
-		r.Post("/api/superadmin/exams/{id}/visibility",                s.requireRole("superadmin")(s.superadminToggleExamVisibility))
-		r.Post("/api/superadmin/exams/{id}/close",                     s.requireRole("superadmin")(s.superadminCloseExam))
-		r.Post("/api/superadmin/exams/{id}/reopen",                    s.requireRole("superadmin")(s.superadminReopenExam))
-		r.Delete("/api/superadmin/exams/{id}",                         s.requireRole("superadmin")(s.superadminDeleteExam))
+		r.Post("/api/superadmin/clients/{id}/exams",                   s.requireRole("superadmin", "client_reviewer")(s.superadminCreateExam))
+		r.Post("/api/superadmin/clients/{id}/exams/csv",               s.requireRole("superadmin", "client_reviewer")(s.superadminBulkCreateExamsCSV))
+		r.Get("/api/superadmin/exams/{id}",                            s.requireRole("superadmin", "client_reviewer")(s.superadminGetExam))
+		r.Patch("/api/superadmin/exams/{id}",                          s.requireRole("superadmin", "client_reviewer")(s.superadminPatchExam))
+		r.Post("/api/superadmin/exams/{id}/visibility",                s.requireRole("superadmin", "client_reviewer")(s.superadminToggleExamVisibility))
+		r.Post("/api/superadmin/exams/{id}/close",                     s.requireRole("superadmin", "client_reviewer")(s.superadminCloseExam))
+		r.Post("/api/superadmin/exams/{id}/reopen",                    s.requireRole("superadmin", "client_reviewer")(s.superadminReopenExam))
+		r.Delete("/api/superadmin/exams/{id}",                         s.requireRole("superadmin", "client_reviewer")(s.superadminDeleteExam))
 
-		r.Post("/api/superadmin/exams/{id}/candidates",                s.requireRole("superadmin")(s.superadminUploadExamCSV))
-		r.Get("/api/superadmin/exams/{id}/candidates",                 s.requireRole("superadmin")(s.superadminListCandidates))
-		r.Get("/api/superadmin/exams/{id}/completeness",               s.requireRole("superadmin")(s.superadminExamCompleteness))
-		r.Post("/api/superadmin/exams/{id}/candidates/{roll}/biometric", s.requireRole("superadmin")(s.superadminUploadBiometric))
+		r.Post("/api/superadmin/exams/{id}/candidates",                s.requireRole("superadmin", "client_reviewer")(s.superadminUploadExamCSV))
+		r.Get("/api/superadmin/exams/{id}/candidates",                 s.requireRole("superadmin", "client_reviewer")(s.superadminListCandidates))
+		r.Get("/api/superadmin/exams/{id}/completeness",               s.requireRole("superadmin", "client_reviewer")(s.superadminExamCompleteness))
+		r.Post("/api/superadmin/exams/{id}/candidates/{roll}/biometric", s.requireRole("superadmin", "client_reviewer")(s.superadminUploadBiometric))
 		// Bulk zip upload — one route per modality. Superadmin picks a
 		// .zip on their machine, browser POSTs it here, backend streams
 		// entries straight into S3 keyed by <exam_code>/<modality>/<roll>.<ext>
@@ -431,15 +436,15 @@ func (s *Server) Router() http.Handler {
 		// convention (<roll>.<ext>) — bad names land in the per-file
 		// summary as "skipped".
 		r.Post("/api/superadmin/exams/{id}/bulk/{modality}",
-			s.requireRole("superadmin")(s.superadminBulkUpload))
+			s.requireRole("superadmin", "client_reviewer")(s.superadminBulkUpload))
 		r.Post("/api/superadmin/reindex",                              s.requireRole("superadmin")(s.superadminReindex))
-		r.Get("/api/superadmin/exams/{id}/uploads",                    s.requireRole("superadmin")(s.superadminListUploads))
-		r.Get("/api/superadmin/uploads/{upload_id}/raw",               s.requireRole("superadmin")(s.superadminDownloadRawCSV))
+		r.Get("/api/superadmin/exams/{id}/uploads",                    s.requireRole("superadmin", "client_reviewer")(s.superadminListUploads))
+		r.Get("/api/superadmin/uploads/{upload_id}/raw",               s.requireRole("superadmin", "client_reviewer")(s.superadminDownloadRawCSV))
 
 		// Per-exam centre catalog (migration 019). Superadmin uploads /
 		// lists (board-owned data); admin reads if their org is subscribed.
-		r.Post("/api/superadmin/exams/{id}/centres/upload", s.requireRole("superadmin")(s.uploadExamCentres))
-		r.Get("/api/superadmin/exams/{id}/centres",         s.requireRole("superadmin")(s.listExamCentres))
+		r.Post("/api/superadmin/exams/{id}/centres/upload", s.requireRole("superadmin", "client_reviewer")(s.uploadExamCentres))
+		r.Get("/api/superadmin/exams/{id}/centres",         s.requireRole("superadmin", "client_reviewer")(s.listExamCentres))
 		r.Get("/api/admin/exams/{id}/centres",              s.requireRole("admin")(s.listExamCentres))
 
 		// Per-exam bulk operator upload — admin creates their own

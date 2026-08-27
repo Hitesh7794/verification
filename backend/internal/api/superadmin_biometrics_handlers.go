@@ -77,6 +77,10 @@ func (s *Server) superadminUploadBiometric(w http.ResponseWriter, r *http.Reques
 		writeErr(w, http.StatusBadRequest, "bad exam id")
 		return
 	}
+	if !s.checkExamScope(r, examID) {
+		writeErr(w, http.StatusNotFound, "exam not found")
+		return
+	}
 	roll := strings.TrimSpace(chi.URLParam(r, "roll"))
 	if roll == "" || strings.ContainsAny(roll, `/\`) || roll == "." || roll == ".." {
 		writeErr(w, http.StatusBadRequest, "bad roll number")
@@ -275,6 +279,10 @@ func (s *Server) superadminExamCompleteness(w http.ResponseWriter, r *http.Reque
 	examID, err := parseInt64(chi.URLParam(r, "id"))
 	if err != nil || examID <= 0 {
 		writeErr(w, http.StatusBadRequest, "bad exam id")
+		return
+	}
+	if !s.checkExamScope(r, examID) {
+		writeErr(w, http.StatusNotFound, "exam not found")
 		return
 	}
 	rows, err := s.deps.DB.QueryContext(r.Context(),

@@ -126,6 +126,7 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 			"role":                     role,
 			"display_name":             displayName,
 			"org_id":                   claims.OrgID,
+			"client_id":                claims.ClientID,
 			"password_change_required": passChangeReq != 0,
 		},
 	})
@@ -236,16 +237,22 @@ func (s *Server) me(w http.ResponseWriter, r *http.Request) {
 	c := claimsFrom(r)
 	var displayName string
 	var passChangeReq int
+	var clientID sql.NullInt64
 	_ = s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT display_name, password_change_required FROM users WHERE id=$1`, c.UserID,
-	).Scan(&displayName, &passChangeReq)
+		`SELECT display_name, password_change_required, client_id FROM users WHERE id=$1`, c.UserID,
+	).Scan(&displayName, &passChangeReq, &clientID)
+	resolvedClientID := c.ClientID
+	if resolvedClientID == nil && clientID.Valid {
+		v := clientID.Int64
+		resolvedClientID = &v
+	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"id":                       c.UserID,
 		"username":                 c.Username,
 		"role":                     c.Role,
 		"display_name":             displayName,
 		"org_id":                   c.OrgID,
-		"client_id":                c.ClientID,
+		"client_id":                resolvedClientID,
 		"password_change_required": passChangeReq != 0,
 	})
 }
@@ -273,12 +280,13 @@ func (s *Server) authRefresh(w http.ResponseWriter, r *http.Request) {
 		displayName    string
 		disabledAt     sql.NullTime
 		orgID          sql.NullInt64
+		clientID       sql.NullInt64
 	)
 	if err := s.deps.DB.QueryRowContext(r.Context(), db.Q(
 		`SELECT username, role, COALESCE(display_name, username),
-		        disabled_at, org_id
+		        disabled_at, org_id, client_id
 		 FROM users WHERE id = ?`), c.UserID,
-	).Scan(&actualUsername, &role, &displayName, &disabledAt, &orgID); err != nil {
+	).Scan(&actualUsername, &role, &displayName, &disabledAt, &orgID, &clientID); err != nil {
 		writeErr(w, http.StatusUnauthorized, "user not found")
 		return
 	}
@@ -295,6 +303,10 @@ func (s *Server) authRefresh(w http.ResponseWriter, r *http.Request) {
 	if orgID.Valid {
 		v := orgID.Int64
 		claims.OrgID = &v
+	}
+	if clientID.Valid {
+		v := clientID.Int64
+		claims.ClientID = &v
 	}
 	tok, err := s.deps.JWT.Issue(claims)
 	if err != nil {

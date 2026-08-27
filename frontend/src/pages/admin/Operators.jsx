@@ -314,6 +314,9 @@ function ExamMultiSelect({ subs, value, onChange, single = false }) {
   const [open, setOpen] = useState(false)
   const boxRef = useRef(null)
 
+  const subList = Array.isArray(subs) ? subs : []
+  const valList = Array.isArray(value) ? value : []
+
   // Close on outside click or Escape — standard dropdown affordances.
   useEffect(() => {
     if (!open) return
@@ -331,13 +334,13 @@ function ExamMultiSelect({ subs, value, onChange, single = false }) {
     }
   }, [open])
 
-  const activeSubs = subs.filter((s) => {
+  const activeSubs = subList.filter((s) => {
     if (s.exam_closed) return false
     if (s.verification_to && new Date() > new Date(s.verification_to)) return false
     return true
   })
 
-  const selected = subs.filter((s) => value.includes(s.exam_id))
+  const selected = subList.filter((s) => valList.includes(s.exam_id))
   const allSelected = activeSubs.length > 0 && selected.length === activeSubs.length
 
   // single mode: clicking any exam replaces the selection with just that
@@ -345,9 +348,9 @@ function ExamMultiSelect({ subs, value, onChange, single = false }) {
   // the already-selected exam clears the assignment.
   const toggle = (id) => {
     if (single) {
-      onChange(value.includes(id) ? [] : [id])
+      onChange(valList.includes(id) ? [] : [id])
     } else {
-      onChange(value.includes(id) ? value.filter((x) => x !== id) : [...value, id])
+      onChange(valList.includes(id) ? valList.filter((x) => x !== id) : [...valList, id])
     }
   }
 
@@ -513,18 +516,23 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
     : fromAfterTo ? 'Valid from must be strictly before Valid to.'
     : ''
 
-  // Exam window validation — operator's window must be inside the superadmin-defined exam window
-  const selectedExam = subs.find((s) => examIds.includes(s.exam_id))
-  const examFromDate = selectedExam?.verification_from ? new Date(selectedExam.verification_from) : null
-  const examToDate   = selectedExam?.verification_to   ? new Date(selectedExam.verification_to)   : null
-
-  const beforeExamStart = selectedExam && examFromDate && !isNaN(examFromDate.getTime()) && fromDate && !isNaN(fromDate.getTime()) && fromDate < examFromDate
-  const afterExamEnd    = selectedExam && examToDate   && !isNaN(examToDate.getTime())   && toDate   && !isNaN(toDate.getTime())   && toDate > examToDate
-  const examWindowInvalid = beforeExamStart || afterExamEnd
-  const examWindowErrMsg = beforeExamStart
-    ? `Valid from cannot be earlier than the exam start time (${formatDateTime(selectedExam.verification_from)}).`
-    : afterExamEnd
-    ? `Valid to cannot be later than the exam end time (${formatDateTime(selectedExam.verification_to)}).`
+  // Exam window validation — operator's window must be inside the superadmin-defined window for all assigned exams
+  const selectedExams = (subs || []).filter((s) => (examIds || []).includes(s.exam_id))
+  const beforeExam = selectedExams.find((s) => {
+    if (!s.verification_from || !fromDate || isNaN(fromDate.getTime())) return false
+    const ef = new Date(s.verification_from)
+    return !isNaN(ef.getTime()) && fromDate < ef
+  })
+  const afterExam = selectedExams.find((s) => {
+    if (!s.verification_to || !toDate || isNaN(toDate.getTime())) return false
+    const et = new Date(s.verification_to)
+    return !isNaN(et.getTime()) && toDate > et
+  })
+  const examWindowInvalid = Boolean(beforeExam || afterExam)
+  const examWindowErrMsg = beforeExam
+    ? `Valid from cannot be earlier than ${beforeExam.exam_code} start time (${formatDateTime(beforeExam.verification_from)}).`
+    : afterExam
+    ? `Valid to cannot be later than ${afterExam.exam_code} end time (${formatDateTime(afterExam.verification_to)}).`
     : ''
 
   // Live cap validation — the wallet middleware enforces the runtime
@@ -702,15 +710,14 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
             value={validFrom}
             onChange={(e) => setValidFrom(e.target.value)}
             required
-            min={selectedExam?.verification_from ? selectedExam.verification_from.slice(0, 16) : undefined}
-            max={validTo || (selectedExam?.verification_to ? selectedExam.verification_to.slice(0, 16) : undefined)}
+            max={validTo || undefined}
           />
           {fromInPast && (
             <p className="text-[11px] text-rose-600 mt-1">Valid from cannot be in the past.</p>
           )}
-          {beforeExamStart && (
+          {beforeExam && (
             <p className="text-[11px] text-rose-600 font-medium mt-1">
-              Valid from cannot be earlier than exam start ({formatDateTime(selectedExam.verification_from)}).
+              Valid from cannot be earlier than {beforeExam.exam_code} start ({formatDateTime(beforeExam.verification_from)}).
             </p>
           )}
         </div>
@@ -721,17 +728,16 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
             value={validTo}
             onChange={(e) => setValidTo(e.target.value)}
             required
-            min={validFrom || (selectedExam?.verification_from ? selectedExam.verification_from.slice(0, 16) : undefined)}
-            max={selectedExam?.verification_to ? selectedExam.verification_to.slice(0, 16) : undefined}
+            min={validFrom || undefined}
           />
           {(toInPast || fromAfterTo) && (
             <p className="text-[11px] text-rose-600 mt-1">
               {toInPast ? 'Valid to cannot be in the past.' : 'Valid to must be after Valid from.'}
             </p>
           )}
-          {afterExamEnd && (
+          {afterExam && (
             <p className="text-[11px] text-rose-600 font-medium mt-1">
-              Valid to cannot be later than exam end ({formatDateTime(selectedExam.verification_to)}).
+              Valid to cannot be later than {afterExam.exam_code} end ({formatDateTime(afterExam.verification_to)}).
             </p>
           )}
         </div>
@@ -752,6 +758,26 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
               <p className="mt-1 text-xs text-rose-600">
                 Pick at least one exam.
               </p>
+            )}
+            {/* Rahul's per-exam window banner — one line per selected
+                exam so the admin sees each exam's window at a glance
+                while assigning multiple. Uses selectedExams (plural)
+                which is defined above alongside the single-exam
+                validator variables. */}
+            {selectedExams.length > 0 && selectedExams.some((s) => s.verification_from || s.verification_to) && (
+              <div className="mt-2 space-y-1">
+                {selectedExams.filter((s) => s.verification_from || s.verification_to).map((s) => (
+                  <div key={s.exam_id} className="flex items-center gap-2 text-xs text-indigo-700 bg-indigo-50 border border-indigo-200/70 rounded-md px-2.5 py-1.5">
+                    <Icon.Clock className="h-3.5 w-3.5 shrink-0 text-indigo-600" />
+                    <span>
+                      <b>{s.exam_code} Window:</b>{' '}
+                      {s.verification_from ? formatDateTime(s.verification_from) : 'Open'}
+                      {' → '}
+                      {s.verification_to ? formatDateTime(s.verification_to) : 'Open'}
+                    </span>
+                  </div>
+                ))}
+              </div>
             )}
           </>
         )}
@@ -775,21 +801,12 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
 
 function BulkOperatorForm({ subs, onCancel, onSaved }) {
   const [csvFile, setCsvFile] = useState(null)
-  const [selectedExamId, setSelectedExamId] = useState(subs[0]?.exam_id ? String(subs[0].exam_id) : '')
+  const [defaultExamId, setDefaultExamId] = useState('')
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
   const [validationErrors, setValidationErrors] = useState([])
   const [success, setSuccess] = useState(null)
   const [dragOver, setDragOver] = useState(false)
-
-  // sync default selected exam if subs change
-  useEffect(() => {
-    if (subs?.length && !selectedExamId) {
-      setSelectedExamId(String(subs[0].exam_id))
-    }
-  }, [subs, selectedExamId])
-
-  const selectedSub = subs.find((s) => String(s.exam_id) === String(selectedExamId)) || subs[0]
 
   function handleFileDrop(e) {
     e.preventDefault()
@@ -812,7 +829,7 @@ function BulkOperatorForm({ subs, onCancel, onSaved }) {
     setValidationErrors([])
     setSuccess(null)
     try {
-      const res = await bulkCreateOperatorsCSV(csvFile, selectedExamId ? [selectedExamId] : [])
+      const res = await bulkCreateOperatorsCSV(csvFile, defaultExamId ? [defaultExamId] : [])
       setSuccess(res.rows_created || res.operators?.length || 'Multiple')
       setTimeout(() => {
         if (onSaved) onSaved()
@@ -831,59 +848,78 @@ function BulkOperatorForm({ subs, onCancel, onSaved }) {
   return (
     <form onSubmit={onSubmit} className="space-y-6">
       {/* 1. CSV Template & Guidelines */}
-      <div className="rounded-xl border border-slate-200/80 bg-slate-50/50 p-4 sm:p-5">
+      <div className="rounded-xl border border-slate-200/80 bg-slate-50/60 p-4 sm:p-5">
         <div className="flex flex-wrap items-center justify-between gap-4">
           <div className="min-w-0">
-            <h4 className="text-sm font-semibold text-slate-900">1. CSV Template & Required Fields</h4>
-            <p className="text-xs text-slate-500 mt-1 max-w-2xl leading-relaxed">
+            <h4 className="text-sm font-semibold text-slate-900">1. CSV Template & Multi-Exam Support</h4>
+            <p className="text-xs text-slate-600 mt-1 max-w-2xl leading-relaxed">
               Required headers: <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">username</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">password</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">display_name</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">email</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">phone</code>.
               <br />
-              Optional columns: <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">cap_amount</code> (in ₹ rupees, e.g. <code className="text-slate-700">500</code>), <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">valid_from</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">valid_to</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">exam_codes</code>.
+              Optional columns: <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">cap_amount</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">valid_from</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">valid_to</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">exam_codes</code>.
+              <br />
+              <span className="text-indigo-700 font-medium mt-1 inline-block">
+                ✨ You can assign agents to different exams in the same CSV by specifying each exam's code in the <code className="bg-indigo-100/70 text-indigo-900 px-1 rounded font-mono text-[11px]">exam_codes</code> column.
+              </span>
             </p>
           </div>
           <Button
             type="button"
             variant="outline"
             size="sm"
-            onClick={() => downloadSampleOperatorCSV(selectedSub)}
+            onClick={() => downloadSampleOperatorCSV(subs)}
             className="bg-white hover:bg-slate-100 text-slate-800 shadow-sm shrink-0"
           >
             <Icon.Download className="h-4 w-4 mr-1.5 text-slate-600" />
-            Download sample CSV
+            Download Sample Multi-Exam CSV
           </Button>
         </div>
       </div>
 
-      {/* 2. Default Exam Scope */}
+      {/* 2. Subscribed Exams Reference & Window Boundaries */}
       {subs.length > 0 && (
         <div className="rounded-xl border border-slate-200/80 bg-white p-4">
-          <h4 className="text-sm font-semibold text-slate-900 mb-1">2. Default Assigned Exam</h4>
+          <div className="flex items-center justify-between gap-2 mb-2">
+            <h4 className="text-sm font-semibold text-slate-900">2. Subscribed Exams & Superadmin Windows</h4>
+            <span className="text-xs text-slate-500 font-mono">{subs.length} active exam{subs.length > 1 ? 's' : ''}</span>
+          </div>
           <p className="text-xs text-slate-500 mb-3">
-            If an agent's row does not specify an explicit <code>exam_codes</code> column in the CSV, they will be assigned to this selected exam:
+            Use these exact exam codes in your CSV. Each agent's <code className="text-slate-700 font-mono">valid_from</code> and <code className="text-slate-700 font-mono">valid_to</code> must fall within that exam's superadmin window:
           </p>
-          <select
-            value={selectedExamId}
-            onChange={(e) => setSelectedExamId(e.target.value)}
-            className="block w-full max-w-md rounded-md border border-slate-300 px-3 py-2 text-sm focus:border-stone-900 focus:ring-1 focus:ring-stone-900 bg-white"
-          >
+          <div className="max-h-40 overflow-y-auto rounded-lg border border-slate-200/80 divide-y divide-slate-100 text-xs">
             {subs.map((s) => (
-              <option key={s.exam_id} value={s.exam_id}>
-                {s.exam_code} — {s.exam_name}
-              </option>
+              <div key={s.exam_id} className="p-2.5 flex flex-wrap items-center justify-between gap-2 hover:bg-slate-50/50">
+                <div className="min-w-0">
+                  <span className="font-mono font-bold text-slate-900 bg-slate-100 px-1.5 py-0.5 rounded mr-2">
+                    {s.exam_code}
+                  </span>
+                  <span className="text-slate-700 font-medium">{s.exam_name}</span>
+                </div>
+                <div className="text-[11px] text-indigo-700 bg-indigo-50/80 px-2 py-0.5 rounded border border-indigo-100 font-medium">
+                  Window: {s.verification_from ? formatDateTime(s.verification_from) : 'Open'}
+                  {' → '}
+                  {s.verification_to ? formatDateTime(s.verification_to) : 'Open'}
+                </div>
+              </div>
             ))}
-          </select>
-          {selectedSub && (selectedSub.verification_from || selectedSub.verification_to) && (
-            <div className="mt-2.5 flex items-center gap-2 text-xs text-indigo-700 bg-indigo-50/80 border border-indigo-200/80 rounded-lg px-3 py-1.5">
-              <Icon.Clock className="h-3.5 w-3.5 shrink-0 text-indigo-600" />
-              <span>
-                <b>Superadmin Exam Window:</b>{' '}
-                {selectedSub.verification_from ? formatDateTime(selectedSub.verification_from) : 'Open'}
-                {' → '}
-                {selectedSub.verification_to ? formatDateTime(selectedSub.verification_to) : 'Open'}.
-                {' '}(All CSV agent validity windows must fall within this range).
-              </span>
-            </div>
-          )}
+          </div>
+
+          <div className="mt-3.5 pt-3 border-t border-slate-100">
+            <label className="block text-xs font-medium text-slate-700 mb-1">
+              Optional fallback exam (used only if a row's <code>exam_codes</code> is left empty):
+            </label>
+            <select
+              value={defaultExamId}
+              onChange={(e) => setDefaultExamId(e.target.value)}
+              className="block w-full max-w-md rounded-md border border-slate-300 px-3 py-1.5 text-xs focus:border-stone-900 focus:ring-1 focus:ring-stone-900 bg-white"
+            >
+              <option value="">None (Require exam_codes in every CSV row)</option>
+              {subs.map((s) => (
+                <option key={s.exam_id} value={s.exam_id}>
+                  {s.exam_code} — {s.exam_name}
+                </option>
+              ))}
+            </select>
+          </div>
         </div>
       )}
 

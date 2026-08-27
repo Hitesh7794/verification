@@ -29,10 +29,8 @@ import SuperExamDetail from './pages/superadmin/ExamDetail.jsx'
 import ReviewerLogin from './pages/reviewer/Login.jsx'
 import ReviewerApplicationDetail from './pages/reviewer/ApplicationDetail.jsx'
 import ReviewerKycInbox from './pages/reviewer/KycInbox.jsx'
-// Removed 2026-08-25: ReviewerDashboard (subscription-requests page).
-// V15 flow retired the admin's exam-subscribe UI, so no new pending
-// per-exam subscription requests can ever land. The tab was dead —
-// reviewer's landing is now the KYC inbox directly.
+import ReviewerExams from './pages/reviewer/Exams.jsx'
+import ReviewerExamDetail from './pages/reviewer/ExamDetail.jsx'
 
 import Register from './pages/register/Register.jsx'
 import SetPassword from './pages/register/SetPassword.jsx'
@@ -252,6 +250,22 @@ export default function App() {
             element={
               <RequireRole role="client_reviewer">
                 <ReviewerApplicationDetail />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/reviewer/exams"
+            element={
+              <RequireRole role="client_reviewer">
+                <ReviewerExams />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/reviewer/exams/:id"
+            element={
+              <RequireRole role="client_reviewer">
+                <ReviewerExamDetail />
               </RequireRole>
             }
           />

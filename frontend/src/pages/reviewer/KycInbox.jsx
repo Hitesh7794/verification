@@ -1,14 +1,14 @@
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link } from 'react-router-dom'
 import ReviewerShell, { ReviewerPageHead } from '../../components/reviewer/ReviewerShell.jsx'
-import { Button, Card, CardBody, Label } from '../../components/ui/ui.jsx'
+import { Button, Card, CardBody, Input, Label } from '../../components/ui/ui.jsx'
 import { Icon, Pill } from '../../components/ui/extras.jsx'
 import { FadeIn } from '../../components/ui/motion.jsx'
 import {
   listReviewerApplications,
   bulkApproveReviewerApplications,
   bulkRejectReviewerApplications,
-  reviewerStats,
+  reviewerMe,
 } from '../../lib/reviewer/api.js'
 
 // Reviewer > KYC applications.
@@ -19,29 +19,19 @@ import {
 // via the checkbox column + the mass-action bar that appears when at
 // least one pending row is checked.
 
-const TABS = [
-  { key: 'pending',  label: 'Pending' },
-  { key: 'approved', label: 'Approved' },
-  { key: 'rejected', label: 'Rejected' },
-]
-
 export default function ReviewerKycInbox() {
-  const [status, setStatus] = useState('pending')
+  const [status, setStatus] = useState('pending') // 'pending' | 'approved' | 'rejected'
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
+  const [client, setClient] = useState(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
+  const [search, setSearch] = useState('')
 
-  // Stats-tile row: fetched once on mount + refetched after every bulk
-  // action so the numbers stay in sync with the operator's own edits
-  // without a manual refresh. Failure is silent — the tiles are a
-  // nice-to-have; the inbox itself remains fully functional if the
-  // stats endpoint hiccups.
-  const [stats, setStats] = useState(null)
-  const loadStats = useCallback(async () => {
-    try { setStats(await reviewerStats()) } catch { /* silent */ }
-  }, [])
-  useEffect(() => { loadStats() }, [loadStats])
+  // Stats are derived below from `client?.stats` (populated by
+  // reviewerMe) with a fallback to the currently-loaded list, so there
+  // is no separate reviewerStats fetch here. See the useMemo(...)
+  // block a few lines down for the shape.
 
   // Selection state — only meaningful on the 'pending' tab. Cleared on
   // tab switch + on refresh so the count in the mass-action bar never
@@ -59,9 +49,13 @@ export default function ReviewerKycInbox() {
     setLoading(true)
     setErr('')
     try {
-      const res = await listReviewerApplications({ status, limit: 50, offset: 0 })
-      setItems(res.items || [])
-      setTotal(res.total || 0)
+      const [appRes, meRes] = await Promise.all([
+        listReviewerApplications({ status, limit: 100, offset: 0 }),
+        reviewerMe(),
+      ])
+      setItems(appRes.items || [])
+      setTotal(appRes.total || 0)
+      setClient(meRes)
     } catch (e) {
       setErr(e?.body?.error || e?.message || 'Could not load applications')
     } finally {
@@ -72,10 +66,33 @@ export default function ReviewerKycInbox() {
   useEffect(() => { load() }, [load])
   useEffect(() => { setSelectedIds(new Set()); setLastResult(null) }, [status])
 
+  const stats = useMemo(() => {
+    return {
+      total: client?.stats?.total ?? total,
+      pending: client?.stats?.pending ?? (status === 'pending' ? items.length : 0),
+      approved: client?.stats?.approved ?? (status === 'approved' ? items.length : 0),
+      rejected: client?.stats?.rejected ?? (status === 'rejected' ? items.length : 0),
+      universities: client?.stats?.universities ?? (client?.stats?.approved ?? items.length),
+    }
+  }, [client, total, status, items.length])
+
   const isPendingTab = status === 'pending'
   const selectionCount = selectedIds.size
-  const allVisibleIds = useMemo(() => items.map((i) => i.id), [items])
-  const allSelected = isPendingTab && items.length > 0 && items.every((i) => selectedIds.has(i.id))
+
+  const filteredItems = useMemo(() => {
+    const s = search.trim().toLowerCase()
+    if (!s) return items
+    return items.filter((it) =>
+      (it.institution_name || '').toLowerCase().includes(s) ||
+      (it.head_name || '').toLowerCase().includes(s) ||
+      (it.city || '').toLowerCase().includes(s) ||
+      (it.state || '').toLowerCase().includes(s) ||
+      (it.aishe_code || '').toLowerCase().includes(s)
+    )
+  }, [items, search])
+
+  const allVisibleIds = useMemo(() => filteredItems.map((i) => i.id), [filteredItems])
+  const allSelected = isPendingTab && filteredItems.length > 0 && filteredItems.every((i) => selectedIds.has(i.id))
 
   function toggleOne(id) {
     setSelectedIds((prev) => {
@@ -117,7 +134,6 @@ export default function ReviewerKycInbox() {
       setModal(null)
       setSelectedIds(new Set())
       await load()
-      loadStats()
     } catch (e) {
       setActionErr(e?.body?.error || e?.message || 'Action failed')
     } finally {
@@ -128,24 +144,62 @@ export default function ReviewerKycInbox() {
   return (
     <ReviewerShell>
       <FadeIn>
-        <ReviewerPageHead
-          eyebrow="Applications"
-          title="KYC applications"
-          subtitle="Institutions registering for this client. Approve or reject individually, or check multiple to act in bulk."
-          right={
-            <Button variant="secondary" size="sm" onClick={() => { load(); loadStats() }} disabled={loading}>
-              <Icon.RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
-              <span className="ml-1.5">{loading ? 'Refreshing…' : 'Refresh'}</span>
-            </Button>
-          }
-        />
+        {/* Hero card — client identity + at-a-glance stats strip. From
+            rahul-FE. Replaces the earlier StatsRow + ReviewerPageHead
+            pair; keeps the "count + interactive tab-swap" idea via the
+            tab strip that follows below. */}
+        <div className="mb-6 rounded-xl bg-warm-surface ring-1 ring-warm overflow-hidden shadow-sm">
+          <div className="h-1 bg-stone-900" />
+          <div className="p-5 sm:p-6">
+            <div className="flex flex-wrap items-start justify-between gap-4">
+              <div className="flex items-start gap-4 min-w-0">
+                <div className="h-12 w-12 rounded-xl bg-stone-100 text-stone-800 flex items-center justify-center shrink-0">
+                  <Icon.Building className="h-6 w-6" />
+                </div>
+                <div className="min-w-0">
+                  <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
+                    {client?.name || 'Board KYC & Institutional Approvals'}
+                  </h1>
+                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
+                    {client?.visible ? <Pill tone="emerald" dot>Visible</Pill> : <Pill tone="slate" dot>Hidden</Pill>}
+                    {client?.closed && <Pill tone="amber" dot>Closed</Pill>}
+                    <span className="text-slate-300">·</span>
+                    <span className="text-slate-600">KYC & University Verification Portal</span>
+                  </div>
+                </div>
+              </div>
+              <div className="flex items-center gap-2">
+                <Button variant="secondary" size="sm" onClick={load} disabled={loading}>
+                  <Icon.RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+                  <span className="ml-1.5">{loading ? 'Refreshing…' : 'Refresh'}</span>
+                </Button>
+              </div>
+            </div>
 
-        <StatsRow
-          stats={stats}
-          activeTab={status}
-          onTileClick={(k) => setStatus(k)}
-        />
+            {/* Statistics strip */}
+            <div className="mt-5 pt-5 border-t border-slate-100 grid grid-cols-2 sm:grid-cols-4 gap-6 text-sm">
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Total Applications</p>
+                <p className="text-lg font-semibold text-slate-900 mt-0.5 tabular-nums">{stats?.total ?? 0}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Requested / Pending</p>
+                <p className="text-lg font-semibold text-amber-700 mt-0.5 tabular-nums">{stats?.pending ?? 0}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Approved</p>
+                <p className="text-lg font-semibold text-emerald-700 mt-0.5 tabular-nums">{stats?.approved ?? 0}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Universities / Colleges</p>
+                <p className="text-lg font-semibold text-slate-900 mt-0.5 tabular-nums">{stats?.universities ?? 0}</p>
+              </div>
+            </div>
+          </div>
+        </div>
 
+        {/* Tab strip — click-to-filter kept from the earlier design so
+            the numbers above have an obvious next action. */}
         <div className="mb-5 flex items-center gap-1 border-b border-warm">
           {TABS.map((t) => (
             <button
@@ -190,9 +244,73 @@ export default function ReviewerKycInbox() {
           </div>
         )}
 
-        {/* Bulk action bar — only visible on the pending tab and only
-            when at least one row is selected. Sticky at the top so a
-            long list doesn't hide it during scroll. */}
+        {/* Tab Controls and Search Bar */}
+        <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+          <div className="inline-flex rounded-xl bg-slate-100 p-1 text-sm font-medium">
+            <button
+              type="button"
+              onClick={() => setStatus('pending')}
+              className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-all ${
+                status === 'pending'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span>Pending</span>
+              <span className={`rounded-full px-2 py-0.5 text-[10px] ${
+                status === 'pending' ? 'bg-amber-100 text-amber-800' : 'bg-slate-200 text-slate-700'
+              }`}>
+                {stats.pending}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setStatus('approved')}
+              className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-all ${
+                status === 'approved'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span>Approved</span>
+              <span className={`rounded-full px-2 py-0.5 text-[10px] ${
+                status === 'approved' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'
+              }`}>
+                {stats.approved}
+              </span>
+            </button>
+
+            <button
+              type="button"
+              onClick={() => setStatus('rejected')}
+              className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-all ${
+                status === 'rejected'
+                  ? 'bg-white text-slate-900 shadow-sm'
+                  : 'text-slate-600 hover:text-slate-900'
+              }`}
+            >
+              <span>Rejected</span>
+              <span className={`rounded-full px-2 py-0.5 text-[10px] ${
+                status === 'rejected' ? 'bg-rose-100 text-rose-800' : 'bg-slate-200 text-slate-700'
+              }`}>
+                {stats.rejected}
+              </span>
+            </button>
+          </div>
+
+          <div className="w-full sm:w-64">
+            <Input
+              type="search"
+              placeholder="Search by university, city, head…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="bg-white text-xs"
+            />
+          </div>
+        </div>
+
+        {/* Bulk action bar — only visible on the pending tab when at least one row is selected */}
         {isPendingTab && selectionCount > 0 && (
           <div className="mb-4 sticky top-14 z-30 flex flex-wrap items-center gap-3 rounded-lg border border-warm-strong bg-warm-surface/95 backdrop-blur px-4 py-2 shadow-sm">
             <span className="text-sm font-semibold text-stone-900">
@@ -223,13 +341,13 @@ export default function ReviewerKycInbox() {
         <Card>
           <CardBody className="p-0">
             {loading ? (
-              <div className="p-10 text-center text-sm text-stone-500">Loading…</div>
-            ) : items.length === 0 ? (
+              <div className="p-10 text-center text-sm text-stone-500">Loading applications…</div>
+            ) : filteredItems.length === 0 ? (
               <EmptyState status={status} />
             ) : (
               <>
                 {isPendingTab && (
-                  <div className="flex items-center gap-3 px-4 sm:px-5 py-2 border-b border-warm bg-[#FBF7F0] text-[12px] text-stone-600">
+                  <div className="flex items-center gap-3 px-4 sm:px-5 py-2.5 border-b border-warm bg-[#FBF7F0] text-[12px] text-stone-600">
                     <input
                       type="checkbox"
                       className="h-4 w-4 rounded border-stone-400 text-stone-900 focus:ring-stone-500"
@@ -237,11 +355,11 @@ export default function ReviewerKycInbox() {
                       onChange={toggleAll}
                       aria-label="Select all visible pending applications"
                     />
-                    <span>{allSelected ? 'All visible selected' : 'Select all visible'}</span>
+                    <span className="font-medium">{allSelected ? 'All visible selected' : 'Select all visible'}</span>
                   </div>
                 )}
                 <ul className="divide-y divide-warm">
-                  {items.map((it) => (
+                  {filteredItems.map((it) => (
                     <Row
                       key={it.id}
                       it={it}
@@ -256,9 +374,9 @@ export default function ReviewerKycInbox() {
           </CardBody>
         </Card>
 
-        {total > items.length && (
+        {total > filteredItems.length && !search && (
           <p className="mt-3 text-[11px] text-stone-500 text-center">
-            Showing {items.length} of {total}. Older rows aren't loaded yet.
+            Showing {filteredItems.length} of {total} applications.
           </p>
         )}
       </FadeIn>
@@ -268,137 +386,145 @@ export default function ReviewerKycInbox() {
           kind={modal.kind}
           count={selectionCount}
           note={note}
-          setNote={setNote}
-          onClose={closeModal}
-          onConfirm={confirmMassAction}
+          onNoteChange={setNote}
           busy={actionBusy}
           err={actionErr}
+          onConfirm={confirmMassAction}
+          onCancel={closeModal}
         />
       )}
     </ReviewerShell>
   )
 }
 
+function EmptyState({ status }) {
+  const label =
+    status === 'pending'
+      ? 'No pending applications'
+      : status === 'approved'
+      ? 'No approved applications'
+      : 'No rejected applications'
+  const sub =
+    status === 'pending'
+      ? 'When institutions register and select your exam board, their applications will appear here for verification.'
+      : status === 'approved'
+      ? 'Applications you approve will be listed here with their assigned credentials.'
+      : 'Applications you reject will be archived here.'
+  return (
+    <div className="p-12 text-center">
+      <div className="mx-auto h-12 w-12 rounded-xl bg-stone-100 text-stone-800 flex items-center justify-center mb-3">
+        <Icon.FileText className="h-6 w-6" />
+      </div>
+      <p className="text-sm font-semibold text-stone-900">{label}</p>
+      <p className="mt-1 text-xs text-stone-500 max-w-sm mx-auto">{sub}</p>
+    </div>
+  )
+}
+
 function Row({ it, selectable, selected, onToggle }) {
   return (
-    <li className={`p-4 sm:p-5 hover:bg-[#FBF7F0] transition-colors ${selected ? 'bg-[#F5EEDF]' : ''}`}>
-      <div className="flex items-start gap-3">
-        {selectable && (
+    <li className="flex items-start gap-3 p-4 sm:p-5 hover:bg-stone-50/70 transition-colors">
+      {selectable && (
+        <div className="pt-1">
           <input
             type="checkbox"
-            className="mt-1 h-4 w-4 rounded border-stone-400 text-stone-900 focus:ring-stone-500 shrink-0"
+            className="h-4 w-4 rounded border-stone-400 text-stone-900 focus:ring-stone-500"
             checked={selected}
             onChange={onToggle}
-            aria-label={`Select ${it.institution_name}`}
+            aria-label={`Select application ${it.id} for ${it.institution_name}`}
           />
-        )}
-        <div className="flex-1 flex items-start justify-between gap-4 min-w-0">
-          <div className="min-w-0">
-            <div className="flex items-center gap-2 flex-wrap">
-              <h3 className="text-sm font-semibold text-stone-900 truncate">{it.institution_name}</h3>
-              <StatusPill status={it.status} />
-            </div>
-            <p className="text-[11px] text-stone-500 mt-1">
-              {it.institution_type}
-              {it.aishe_code ? ` · AISHE ${it.aishe_code}` : ''}
-            </p>
-            <p className="text-[11px] text-stone-500 mt-0.5">
-              {it.city}{it.state ? ', ' + it.state : ''} · Head: {it.head_name} ({it.head_email})
-            </p>
-            <p className="text-[10px] text-stone-400 mt-1 tabular-nums">
-              Submitted {new Date(it.created_at).toLocaleString('en-IN')} · {it.doc_count} document{it.doc_count === 1 ? '' : 's'}
-            </p>
-          </div>
-          <div className="shrink-0">
-            <Link
-              to={`/reviewer/applications/${it.id}`}
-              className="inline-flex items-center px-3 py-1.5 text-[12px] font-semibold rounded-md bg-stone-900 text-white hover:bg-stone-800 transition-colors"
-            >
-              Review
-              <Icon.ChevronRight className="h-3.5 w-3.5 ml-0.5" />
-            </Link>
-          </div>
         </div>
+      )}
+      <div className="min-w-0 flex-1">
+        <div className="flex flex-wrap items-baseline gap-2">
+          <h3 className="text-sm font-semibold text-ink-900 truncate">
+            {it.institution_name}
+          </h3>
+          <span className="text-[11px] text-stone-400">·</span>
+          <span className="text-xs text-stone-600 capitalize">
+            {it.institution_type?.replace(/_/g, ' ') || 'institution'}
+          </span>
+          {it.tier && (
+            <span className="rounded-full bg-stone-100 px-2 py-0.5 text-[10px] font-medium text-stone-700">
+              Tier {it.tier}
+            </span>
+          )}
+          {it.status === 'pending' && <Pill tone="amber" dot>Pending Review</Pill>}
+          {it.status === 'approved' && <Pill tone="emerald" dot>Approved</Pill>}
+          {it.status === 'rejected' && <Pill tone="rose" dot>Rejected</Pill>}
+        </div>
+
+        <p className="mt-1 text-xs text-stone-600">
+          <span className="font-medium text-stone-800">{it.head_name}</span>
+          {it.head_email && <span className="text-stone-400 font-mono text-[11px]"> · {it.head_email}</span>}
+          {it.city && it.state && <span className="text-stone-500"> · {it.city}, {it.state}</span>}
+          {it.aishe_code && <span className="text-stone-400 font-mono text-[11px]"> · AISHE: {it.aishe_code}</span>}
+        </p>
+
+        <div className="mt-2 flex items-center gap-3 text-[11px] text-stone-400">
+          <span>Submitted {it.created_at ? new Date(it.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</span>
+          <span>·</span>
+          <span>{it.doc_count || 0} supporting doc{(it.doc_count || 0) === 1 ? '' : 's'}</span>
+        </div>
+      </div>
+
+      <div className="shrink-0 flex items-center gap-2 pt-0.5">
+        <Link
+          to={`/reviewer/applications/${it.id}`}
+          className="inline-flex items-center px-3 py-1.5 text-xs font-semibold rounded-lg bg-stone-900 text-white hover:bg-stone-800 transition-colors"
+        >
+          Review
+        </Link>
       </div>
     </li>
   )
 }
 
-function StatusPill({ status }) {
-  const map = {
-    pending:  { tone: 'amber',   label: 'Pending' },
-    approved: { tone: 'emerald', label: 'Approved' },
-    rejected: { tone: 'rose',    label: 'Rejected' },
-    draft:    { tone: 'slate',   label: 'Draft' },
-  }
-  const s = map[status] || map.pending
-  return <Pill tone={s.tone} dot>{s.label}</Pill>
-}
-
-function EmptyState({ status }) {
-  const msg = status === 'pending'
-    ? 'No KYC applications pending your review.'
-    : status === 'approved'
-      ? 'No approved applications yet.'
-      : 'No rejected applications.'
-  return (
-    <div className="p-12 text-center">
-      <div className="mx-auto h-12 w-12 rounded-xl bg-stone-100 text-stone-400 flex items-center justify-center mb-3">
-        <Icon.Inbox className="h-6 w-6" />
-      </div>
-      <p className="text-sm text-stone-600">{msg}</p>
-      <p className="text-[11px] text-stone-400 mt-1">Institutions routed to this client show up here.</p>
-    </div>
-  )
-}
-
-// MassActionModal — confirmation + optional note capture for the
-// bulk-approve / bulk-reject actions. Rendered here instead of via a
-// shared ConfirmDialog because the note textarea makes it more than
-// a plain yes/no.
-function MassActionModal({ kind, count, note, setNote, onClose, onConfirm, busy, err }) {
+function MassActionModal({ kind, count, note, onNoteChange, busy, err, onConfirm, onCancel }) {
   const isApprove = kind === 'approve'
-  const title = isApprove ? `Approve ${count} application${count === 1 ? '' : 's'}?` : `Reject ${count} application${count === 1 ? '' : 's'}?`
-  const noteRequired = !isApprove
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 backdrop-blur-sm px-4">
-      <div
-        className="w-full max-w-md rounded-xl bg-white shadow-xl overflow-hidden"
-        onClick={(e) => e.stopPropagation()}
-      >
-        <div className={`h-1 ${isApprove ? 'bg-emerald-600' : 'bg-rose-600'}`} />
-        <div className="p-5 sm:p-6">
-          <h2 className="text-base font-semibold text-slate-900">{title}</h2>
-          <p className="mt-1 text-sm text-slate-600">
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-stone-900/40 backdrop-blur-xs">
+      <div className="w-full max-w-md rounded-2xl bg-white border border-stone-200 shadow-2xl overflow-hidden">
+        <div className="p-6">
+          <h3 className="text-base font-semibold text-stone-900">
+            {isApprove ? `Approve ${count} application${count === 1 ? '' : 's'}?` : `Reject ${count} application${count === 1 ? '' : 's'}?`}
+          </h3>
+          <p className="mt-1.5 text-xs text-stone-600 leading-relaxed">
             {isApprove
-              ? 'Each institution will be unlocked and receive an approval email. Fan-out grants exam access under this client.'
-              : 'Each institution stays locked out and receives a rejection email with the note below. Their identity remains locked to this outcome — they can re-submit from their own dashboard once they log in.'}
+              ? `This will create active institution organizations and email welcome credentials to all ${count} selected applicants.`
+              : `This will reject the ${count} selected applications. The review note below will be emailed to each applicant explaining the decision.`}
           </p>
+
           <div className="mt-4">
-            <Label>Note {noteRequired && <span className="text-rose-500">*</span>}</Label>
+            <Label className="text-xs">
+              {isApprove ? 'Internal approval note (optional)' : 'Rejection reason (required)'}
+            </Label>
             <textarea
-              className="w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm focus:border-stone-700 focus:outline-none focus:ring-2 focus:ring-stone-300 resize-y min-h-[80px]"
-              placeholder={noteRequired ? 'One reason applied to every rejection…' : 'Optional — attached to the audit log.'}
+              rows={3}
               value={note}
-              onChange={(e) => setNote(e.target.value)}
-              disabled={busy}
+              onChange={(e) => onNoteChange(e.target.value)}
+              placeholder={isApprove ? 'e.g. Verified with state medical council list' : 'e.g. Incomplete AISHE accreditation documentation'}
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-800 placeholder-slate-400 focus:border-stone-900 focus:outline-none focus:ring-1 focus:ring-stone-900"
             />
           </div>
+
           {err && (
-            <p className="mt-2 text-xs text-rose-600">{err}</p>
+            <div role="alert" className="mt-3 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-700">
+              {err}
+            </div>
           )}
-          <div className="mt-5 flex justify-end gap-2">
-            <Button variant="ghost" onClick={onClose} disabled={busy}>Cancel</Button>
+
+          <div className="mt-6 flex justify-end gap-2">
+            <Button variant="secondary" size="sm" onClick={onCancel} disabled={busy}>
+              Cancel
+            </Button>
             <Button
+              size="sm"
               onClick={onConfirm}
-              disabled={busy || (noteRequired && !note.trim())}
-              className={isApprove ? '' : '!bg-rose-700 hover:!bg-rose-800 !text-white'}
+              disabled={busy || (!isApprove && !note.trim())}
+              className={!isApprove ? '!bg-rose-600 hover:!bg-rose-700 !text-white' : ''}
             >
-              {busy
-                ? 'Working…'
-                : isApprove
-                  ? `Approve ${count}`
-                  : `Reject ${count}`}
+              {busy ? 'Processing…' : (isApprove ? `Approve (${count})` : `Reject (${count})`)}
             </Button>
           </div>
         </div>
@@ -420,133 +546,10 @@ function MassActionModal({ kind, count, note, setNote, onClose, onConfirm, busy,
 // that we intentionally kept motion cheap so a reviewer scrolling
 // through the inbox isn't distracted by numbers popping constantly.
 
-const TILE_TAB_MAP = {
-  pending:  'pending',
-  approved: 'approved',
-  rejected: 'rejected',
-  // 'active' has no matching tab — it's a portfolio-size stat, not a
-  // slice of the inbox — so its tile is rendered as an inert card.
-}
-
-function StatsRow({ stats, activeTab, onTileClick }) {
-  // Oldest-pending chip on the Pending tile — turns a raw count into
-  // an SLA signal. A "3 pending" all from today is fine; a "3
-  // pending" with one 6 days old is what needs attention. Days come
-  // back as a float from the backend (fractional 0.3 = ~7h old); we
-  // round + label for the chip. Threshold for the "warn" colour is
-  // 2 days — anything older reads as risk. Null hides the chip.
-  const oldestDays = stats?.oldest_pending_days
-  let pendingBadge = null
-  if (typeof oldestDays === 'number' && oldestDays >= 1) {
-    const d = Math.round(oldestDays)
-    pendingBadge = { label: `oldest ${d}d`, warn: d >= 2 }
-  }
-
-  const tiles = [
-    { key: 'active',    label: 'Active institutes', hint: 'KYC-approved orgs', value: stats?.active_institutes,        tone: 'slate',   icon: <Icon.ShieldCheck className="h-4 w-4" /> },
-    { key: 'pending',   label: 'Pending KYC',       hint: 'in your queue',     value: stats?.pending_review,           tone: 'amber',   icon: <Icon.Clock className="h-4 w-4" />,        badge: pendingBadge },
-    { key: 'approved',  label: 'Approved · 7d',     hint: 'this week',         value: stats?.approved_this_week,       tone: 'emerald', icon: <Icon.Check className="h-4 w-4" /> },
-    { key: 'rejected',  label: 'Rejected · 7d',     hint: 'this week',         value: stats?.rejected_this_week,       tone: 'rose',    icon: <Icon.X className="h-4 w-4" /> },
-    { key: 'verifs',    label: 'Verifications · 7d',hint: 'by your institutes',value: stats?.verifications_this_week,  tone: 'indigo',  icon: <Icon.ShieldCheck className="h-4 w-4" /> },
-  ]
-  return (
-    <>
-      <div className="mb-3 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-2.5">
-        {tiles.map((t) => {
-          const targetTab = TILE_TAB_MAP[t.key]
-          const isClickable = !!targetTab
-          const isActive = isClickable && targetTab === activeTab
-          return (
-            <StatTile
-              key={t.key}
-              {...t}
-              isClickable={isClickable}
-              isActive={isActive}
-              onClick={isClickable ? () => onTileClick(targetTab) : undefined}
-            />
-          )
-        })}
-      </div>
-    </>
-  )
-}
-
-function StatTile({ label, hint, value, tone, icon, isClickable, isActive, onClick, badge }) {
-  const toneStyles = {
-    slate:   { text: 'text-slate-900',   ring: 'ring-slate-900/10',   dot: 'bg-slate-400',   activeBorder: 'border-slate-900' },
-    amber:   { text: 'text-amber-800',   ring: 'ring-amber-900/10',   dot: 'bg-amber-500',   activeBorder: 'border-amber-600' },
-    emerald: { text: 'text-emerald-800', ring: 'ring-emerald-900/10', dot: 'bg-emerald-500', activeBorder: 'border-emerald-600' },
-    rose:    { text: 'text-rose-800',    ring: 'ring-rose-900/10',    dot: 'bg-rose-500',    activeBorder: 'border-rose-600' },
-    indigo:  { text: 'text-indigo-800',  ring: 'ring-indigo-900/10',  dot: 'bg-indigo-500',  activeBorder: 'border-indigo-600' },
-  }[tone] || {}
-  const Wrapper = isClickable ? 'button' : 'div'
-  const wrapperProps = isClickable
-    ? { type: 'button', onClick, 'aria-pressed': isActive }
-    : {}
-  return (
-    <Wrapper
-      {...wrapperProps}
-      className={[
-        'group text-left rounded-xl border bg-white px-3.5 py-3 transition-all',
-        isActive
-          ? `${toneStyles.activeBorder} ring-2 ${toneStyles.ring} -translate-y-0.5 shadow-sm`
-          : 'border-warm hover:border-warm-strong hover:-translate-y-0.5 hover:shadow-sm',
-        isClickable ? 'cursor-pointer' : 'cursor-default',
-      ].join(' ')}
-    >
-      <div className="flex items-start justify-between gap-2">
-        <div className="min-w-0">
-          <p className="text-[11px] uppercase tracking-wide font-semibold text-stone-500 flex items-center gap-1.5">
-            <span className={`h-1.5 w-1.5 rounded-full ${toneStyles.dot}`} />
-            {label}
-          </p>
-          <p className={`mt-1 text-2xl font-bold tabular-nums leading-none ${toneStyles.text}`}>
-            <CountUp value={value} />
-          </p>
-          <div className="mt-1 flex items-center gap-1.5 text-[11px] text-stone-500">
-            <span>{hint}</span>
-            {badge && (
-              <span
-                className={`inline-flex items-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold ${
-                  badge.warn
-                    ? 'bg-rose-100 text-rose-700 border border-rose-200'
-                    : 'bg-amber-100 text-amber-800 border border-amber-200'
-                }`}
-                title={badge.warn ? 'SLA warning — oldest waiting >2 days' : 'oldest submitted 1 day ago'}
-              >
-                {badge.label}
-              </span>
-            )}
-          </div>
-        </div>
-        <div className={`shrink-0 opacity-40 group-hover:opacity-70 transition-opacity ${toneStyles.text}`}>
-          {icon}
-        </div>
-      </div>
-    </Wrapper>
-  )
-}
-
-// CountUp — cheap requestAnimationFrame ramp from 0 → value on first
-// paint (and re-ramps whenever the value changes). No easing lib; a
-// short linear ramp reads as "live" without being fiddly. Falls back
-// to '—' while the stats endpoint hasn't resolved yet.
-function CountUp({ value, durationMs = 500 }) {
-  const [display, setDisplay] = useState(0)
-  useEffect(() => {
-    if (typeof value !== 'number') return
-    let raf
-    const start = performance.now()
-    const from = 0
-    const to = value
-    const step = (now) => {
-      const t = Math.min(1, (now - start) / durationMs)
-      setDisplay(Math.round(from + (to - from) * t))
-      if (t < 1) raf = requestAnimationFrame(step)
-    }
-    raf = requestAnimationFrame(step)
-    return () => cancelAnimationFrame(raf)
-  }, [value, durationMs])
-  if (typeof value !== 'number') return <>—</>
-  return <>{display.toLocaleString()}</>
-}
+// StatsRow / StatTile / CountUp removed — the reviewer stats surface
+// is now the hero card at the top of KycInbox (from rahul-FE) which
+// reads a different response shape (stats.total / .pending / .approved
+// / .universities). Keep this comment as a breadcrumb: if the click-
+// to-filter interactive tiles are wanted back, they lived here and
+// consumed the older stats.pending_review / .approved_this_week fields
+// on the reviewerStats endpoint.
