@@ -96,7 +96,10 @@ func (s *Server) clientListApplications(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	where := []string{"(client_id = ? OR client_id IS NULL OR id IN (SELECT o.application_id FROM organizations o JOIN organization_exam_subscriptions s ON s.org_id = o.id JOIN exams e ON e.id = s.exam_id WHERE e.client_id = ?))"}
+	where := []string{
+		"status != 'draft'",
+		"(client_id = ? OR (client_id IS NULL AND status IN ('pending', 'approved')) OR id IN (SELECT o.application_id FROM organizations o JOIN organization_exam_subscriptions s ON s.org_id = o.id JOIN exams e ON e.id = s.exam_id WHERE e.client_id = ?))",
+	}
 	args := []any{clientID, clientID}
 	if status != "" && status != "all" {
 		where = append(where, "status = ?")
@@ -502,43 +505,24 @@ func (s *Server) clientReviewerMe(w http.ResponseWriter, r *http.Request) {
 	)
 	_ = s.deps.DB.QueryRowContext(r.Context(), db.Q(`
 		SELECT 
-			COUNT(*),
-			COALESCE(SUM(CASE WHEN status = 'pending' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN status IN ('pending', 'approved', 'rejected') THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN status = 'pending' AND (pending_reviewer = 'client' OR pending_reviewer IS NULL) THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN status = 'approved' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN status = 'rejected' THEN 1 ELSE 0 END), 0),
-			COALESCE(COUNT(DISTINCT CASE WHEN status = 'approved' THEN id END), 0)
+			COALESCE(COUNT(DISTINCT CASE WHEN status = 'approved' THEN COALESCE(org_id, id) END), 0)
 		FROM institution_applications
-		WHERE client_id = ? 
-		   OR client_id IS NULL 
-		   OR id IN (
-		       SELECT o.application_id 
-		       FROM organizations o 
-		       JOIN organization_exam_subscriptions s ON s.org_id = o.id 
-		       JOIN exams e ON e.id = s.exam_id 
-		       WHERE e.client_id = ?
-		   )`), clientID, clientID,
+		WHERE status != 'draft' AND (
+			client_id = ? 
+			OR (client_id IS NULL AND status IN ('pending', 'approved'))
+			OR id IN (
+				SELECT o.application_id 
+				FROM organizations o 
+				JOIN organization_exam_subscriptions s ON s.org_id = o.id 
+				JOIN exams e ON e.id = s.exam_id 
+				WHERE e.client_id = ?
+			)
+		)`), clientID, clientID,
 	).Scan(&totalCount, &pendingCount, &approvedCount, &rejectedCount, &univCount)
-
-	var orgsCount int
-	_ = s.deps.DB.QueryRowContext(r.Context(), db.Q(`
-		SELECT COUNT(DISTINCT o.id)
-		FROM organizations o
-		LEFT JOIN institution_applications a ON a.id = o.application_id
-		LEFT JOIN organization_exam_subscriptions s ON s.org_id = o.id
-		LEFT JOIN exams e ON e.id = s.exam_id
-		WHERE a.client_id = ? 
-		   OR e.client_id = ? 
-		   OR a.client_id IS NULL`), clientID, clientID,
-	).Scan(&orgsCount)
-	if orgsCount > univCount {
-		univCount = orgsCount
-	}
-	if approvedCount < univCount {
-		approvedCount = univCount
-	}
-	if totalCount < approvedCount+pendingCount+rejectedCount {
-		totalCount = approvedCount + pendingCount + rejectedCount
-	}
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"client_id":      clientID,
