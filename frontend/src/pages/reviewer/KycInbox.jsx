@@ -198,26 +198,6 @@ export default function ReviewerKycInbox() {
           </div>
         </div>
 
-        {/* Tab strip — click-to-filter kept from the earlier design so
-            the numbers above have an obvious next action. */}
-        <div className="mb-5 flex items-center gap-1 border-b border-warm">
-          {TABS.map((t) => (
-            <button
-              key={t.key}
-              type="button"
-              onClick={() => setStatus(t.key)}
-              className={`relative px-3 py-2 text-[13px] font-semibold transition-colors ${
-                status === t.key ? 'text-stone-900' : 'text-stone-500 hover:text-stone-800'
-              }`}
-            >
-              {t.label}
-              {status === t.key && (
-                <span className="absolute inset-x-2 bottom-[-1px] h-0.5 rounded-full bg-stone-900" />
-              )}
-            </button>
-          ))}
-        </div>
-
         {err && (
           <div role="alert" className="mb-4 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">
             {err}
