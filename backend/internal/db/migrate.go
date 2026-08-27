@@ -138,7 +138,43 @@ func Migrate(d *sql.DB) error {
 		}
 	}
 
+	if !applied[18] {
+		if err := applyV18MultiExamOperator(ctx, d); err != nil {
+			return fmt.Errorf("apply v18 multi_exam_operator: %w", err)
+		}
+	}
+
 	return nil
+}
+
+// applyV18MultiExamOperator drops the UNIQUE index on operator_exams
+// that limited each operator to exactly one exam. Composite PK
+// (user_id, exam_id) stays so duplicate rows are still refused; the
+// unique-on-user_id-alone constraint is what forbade multi-assignment.
+//
+// Data isolation between exams is enforced at the handler layer
+// (resolveExamCodeForOperator honours the X-Exam-Id header +
+// lookupExamCandidate filters by the resolved exam_id) — the schema
+// change alone can't leak data, it just permits the second row.
+func applyV18MultiExamOperator(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx,
+		`DROP INDEX IF EXISTS ux_operator_exams_user`,
+	); err != nil {
+		return fmt.Errorf("drop ux_operator_exams_user: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)`,
+		18, "multi_exam_operator",
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // applyV17OrgApplicationLink wires organizations back to the

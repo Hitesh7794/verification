@@ -16,7 +16,7 @@ import FingerprintCapture from '../../components/verify/FingerprintCapture.jsx'
 import IrisCapture from '../../components/verify/IrisCapture.jsx'
 import LivenessPanel from '../../components/verify/LivenessPanel.jsx'
 import ExamWindowReminderModal from '../../components/verify/ExamWindowReminderModal.jsx'
-import { api, fetchFPTemplate, fetchPhotoBlob, isWalletEmptyError, getCandidateAttempts, downloadVerificationPDF, postFaceMatch } from '../../lib/api.js'
+import { api, fetchFPTemplate, fetchPhotoBlob, isWalletEmptyError, getCandidateAttempts, downloadVerificationPDF, postFaceMatch, getCurrentExamId, setCurrentExamId } from '../../lib/api.js'
 import { getWalletSummary, formatRupees } from '../../lib/wallet/wallet.js'
 import { formatDateTime } from '../../lib/dates.js'
 
@@ -254,6 +254,53 @@ export default function ClientDashboard() {
   }, [])
   const refreshWallet = () => {
     getWalletSummary().then(setWallet).catch(() => {})
+  }
+
+  // Multi-exam operator picker. Fetch the operator's assigned exams
+  // once on mount; if they have >1 and no selection yet, force them
+  // to pick before anything else works. If they have exactly 1 and
+  // no selection yet, auto-select so single-exam operators don't see
+  // any change from before.
+  const [assignedExams, setAssignedExams] = useState([])
+  const [currentExamId, setCurrentExamIdState] = useState(() => getCurrentExamId())
+  useEffect(() => {
+    api('/operator/exams')
+      .then((r) => {
+        const list = r?.exams || []
+        setAssignedExams(list)
+        // Prune a stored selection that no longer matches an assigned
+        // exam (admin revoked it, exam deleted, etc.) so the header
+        // doesn't get sent an id the operator no longer owns.
+        const stored = getCurrentExamId()
+        if (stored && !list.some((e) => String(e.id) === String(stored))) {
+          setCurrentExamId(null)
+          setCurrentExamIdState(null)
+        }
+        // Auto-select the single option so single-exam operators
+        // never see a picker.
+        if (list.length === 1 && !getCurrentExamId()) {
+          setCurrentExamId(list[0].id)
+          setCurrentExamIdState(String(list[0].id))
+          // Re-fetch wallet so the "next window opens on" banner
+          // reflects the (only) assigned exam.
+          refreshWallet()
+        }
+      })
+      .catch(() => setAssignedExams([]))
+  }, [])
+
+  // Switching exam mid-flow would leave probes, idempotency keys,
+  // and any in-progress capture pointing at the wrong exam's data.
+  // The simplest safe answer is to reset() back to step 0 on any
+  // switch — the operator can start the new candidate fresh.
+  const onSwitchExam = (nextId) => {
+    if (String(nextId) === String(currentExamId)) return
+    setCurrentExamId(nextId)
+    setCurrentExamIdState(String(nextId))
+    // Wallet fields (assigned_exam_*) depend on the header we just changed.
+    refreshWallet()
+    // Wipe in-progress flow so no probe/idempotency key carries across.
+    reset()
   }
 
   // ── Auto-decide + auto-submit ────────────────────────────────────
@@ -695,10 +742,45 @@ export default function ClientDashboard() {
         </CardBody>
       </Card>
 
+      {/* Current-exam picker — shown when the operator holds more
+          than one exam. Data isolation: the picked id becomes the
+          X-Exam-Id header on every request, and the backend scopes
+          candidate/photo/face-match queries by that id so an operator
+          with e.g. NEET + JEE can't accidentally pull a JEE roll
+          while NEET is selected. Single-exam operators never see it. */}
+      {assignedExams.length > 1 && (
+        <ExamPicker
+          exams={assignedExams}
+          currentId={currentExamId}
+          onChange={onSwitchExam}
+        />
+      )}
+
+      {/* Multi-exam operator hasn't picked yet — block the roll lookup
+          with a prompt. Prevents the ambiguous-exam 400 the backend
+          would otherwise return on the first candidate fetch. */}
+      {step === 0 && assignedExams.length > 1 && !currentExamId && (
+        <Card className="border-indigo-200 bg-indigo-50">
+          <CardBody>
+            <div className="flex items-start gap-3">
+              <svg className="h-6 w-6 text-indigo-600 shrink-0 mt-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                <path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z" />
+              </svg>
+              <div>
+                <p className="text-base font-semibold text-indigo-900">Pick an exam to start</p>
+                <p className="mt-1 text-sm text-indigo-800">
+                  You're assigned to {assignedExams.length} exams. Use the picker above to choose which one you're verifying for right now — every candidate lookup will be scoped to that exam.
+                </p>
+              </div>
+            </div>
+          </CardBody>
+        </Card>
+      )}
+
       {/* No exam assigned to this operator — replace the roll input card
           with a persistent instruction banner. Zero-exam operators would
           otherwise get 404 "no data" on every lookup with no clue why. */}
-      {step === 0 && wallet && !wallet.assigned_exam_id && (
+      {step === 0 && wallet && !wallet.assigned_exam_id && assignedExams.length === 0 && (
         <Card className="border-amber-200 bg-amber-50">
           <CardBody>
             <div className="flex items-start gap-3">
@@ -1177,5 +1259,55 @@ function WalletPill({ wallet }) {
       <span>{formatRupees(remaining)}</span>
       <span className="text-xs opacity-75">· {lookupsLeft} left</span>
     </span>
+  )
+}
+
+// Compact chip-row picker for the multi-exam operator. Renders one
+// pill per assigned exam; the currently-selected one gets the filled
+// treatment. Sits directly under the stepper so it reads as part of
+// the "which context am I in" strip.
+function ExamPicker({ exams, currentId, onChange }) {
+  return (
+    <Card className="mb-3 border-slate-200 bg-white">
+      <CardBody className="py-3">
+        <div className="flex items-center gap-3 flex-wrap">
+          <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 shrink-0 flex items-center gap-1.5">
+            <span className="h-1.5 w-1.5 rounded-full bg-indigo-500" />
+            Verifying for
+          </div>
+          <div className="flex flex-wrap gap-1.5">
+            {exams.map((e) => {
+              const active = String(e.id) === String(currentId)
+              return (
+                <button
+                  key={e.id}
+                  type="button"
+                  onClick={() => onChange(e.id)}
+                  className={[
+                    'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors',
+                    active
+                      ? 'bg-stone-900 text-white border-stone-900'
+                      : 'bg-white text-slate-700 border-slate-200 hover:border-slate-400',
+                  ].join(' ')}
+                  title={`${e.name} (${e.exam_code}) — ${e.candidate_count.toLocaleString()} candidates`}
+                >
+                  <span>{e.name}</span>
+                  <span className={active ? 'text-white/70' : 'text-slate-400'}>·</span>
+                  <span className="tabular-nums">{e.exam_code}</span>
+                  {active && (
+                    <svg className="h-3 w-3 -mr-0.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round">
+                      <polyline points="5 12 10 17 20 7" />
+                    </svg>
+                  )}
+                </button>
+              )
+            })}
+          </div>
+          {!currentId && (
+            <span className="text-xs text-rose-700 font-medium">Pick one to unlock lookup</span>
+          )}
+        </div>
+      </CardBody>
+    </Card>
   )
 }

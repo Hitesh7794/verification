@@ -10,6 +10,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"time"
 
@@ -154,6 +155,11 @@ func (s *Server) faceMatch(w http.ResponseWriter, r *http.Request) {
 	var galleryBytes []byte
 	if s.deps.Cfg.PhotosBackend == "s3" && s.storage != nil && s.storage.Enabled() {
 		examCode, err := s.resolveExamCodeForOperator(r)
+		if errors.Is(err, errExamAmbiguous) {
+			writeErr(w, http.StatusBadRequest,
+				"Select an exam first — you're assigned to multiple exams. The picker at the top of the dashboard controls which exam you're verifying for.")
+			return
+		}
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError,
 				"could not resolve exam scope: "+err.Error())
@@ -266,31 +272,111 @@ var (
 	errPhotoMissing     = errors.New("candidate has no enrolled photo")
 )
 
-// resolveExamCodeForOperator returns the exam_code the requesting
-// operator is scoped to via operator_exams (UNIQUE on user_id, so at
-// most one exam per operator). Returns "" without error if the caller
-// isn't an operator or isn't subscribed to any exam.
+// errExamAmbiguous is returned when an operator has multiple exams
+// assigned but the request didn't specify which one via X-Exam-Id.
+// Handlers translate this to a 400 with a specific message so the FE
+// knows to prompt the operator to pick.
+var errExamAmbiguous = errors.New("operator has multiple exams assigned; X-Exam-Id header required")
+
+// resolveExamForOperator returns the (exam_id, exam_code) the caller
+// is currently working on. Rules, in order:
 //
-// The S3 key layout is <exam_code>/photos/<roll>.jpg, so this is the
-// missing piece the disk path doesn't need (Candidate.PhotoPath was
-// pre-baked at index-scan time from filesystem walk).
-func (s *Server) resolveExamCodeForOperator(r *http.Request) (string, error) {
+//  1. If the caller isn't a client-role operator, returns (0,"",nil) —
+//     admin/superadmin/reviewer flows don't use operator_exams.
+//  2. If the request carries an X-Exam-Id header, validate the
+//     operator actually has that exam in operator_exams. Match → return
+//     it. Mismatch → return (0,"",errExamAmbiguous) so the handler
+//     refuses cleanly instead of silently answering with a different
+//     exam's data.
+//  3. If no header AND the operator has exactly ONE exam assigned,
+//     return that (backward-compat for single-exam operators).
+//  4. If no header AND multiple exams, return errExamAmbiguous — FE
+//     must set the header before the operator can look anything up.
+//
+// This is the security gate for data isolation between exams. Every
+// candidate-lookup / photo / template / face-match handler resolves
+// the exam here and uses THAT id/code — so a roll present in two of
+// the operator's exams will only ever return the one they've
+// currently selected.
+func (s *Server) resolveExamForOperator(r *http.Request) (int64, string, error) {
 	c := claimsFrom(r)
 	if c == nil {
-		return "", nil
+		return 0, "", nil
 	}
-	var code string
-	err := s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT e.exam_code
+	if c.Role != "client" || c.UserID == 0 {
+		// Non-operator roles — no scoping here.
+		return 0, "", nil
+	}
+
+	// Explicit selection via header.
+	if hdr := strings.TrimSpace(r.Header.Get("X-Exam-Id")); hdr != "" {
+		examID, err := strconv.ParseInt(hdr, 10, 64)
+		if err != nil {
+			return 0, "", errExamAmbiguous
+		}
+		var code string
+		err = s.deps.DB.QueryRowContext(r.Context(),
+			`SELECT e.exam_code
+			   FROM operator_exams oe
+			   JOIN exams e ON e.id = oe.exam_id
+			  WHERE oe.user_id = $1 AND oe.exam_id = $2
+			  LIMIT 1`,
+			c.UserID, examID,
+		).Scan(&code)
+		if errors.Is(err, sql.ErrNoRows) {
+			// Header names an exam this operator isn't assigned to —
+			// same effective outcome as ambiguous: refuse to answer.
+			return 0, "", errExamAmbiguous
+		}
+		if err != nil {
+			return 0, "", err
+		}
+		return examID, code, nil
+	}
+
+	// No header — fall back to the single-exam case for backward
+	// compatibility. Two or more exams and no header is an error so
+	// the FE can't silently mix data across exams.
+	rows, err := s.deps.DB.QueryContext(r.Context(),
+		`SELECT e.id, e.exam_code
 		   FROM operator_exams oe
 		   JOIN exams e ON e.id = oe.exam_id
 		  WHERE oe.user_id = $1
-		  LIMIT 1`,
+		  LIMIT 2`,
 		c.UserID,
-	).Scan(&code)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil
+	)
+	if err != nil {
+		return 0, "", err
 	}
+	defer rows.Close()
+	type row struct {
+		id   int64
+		code string
+	}
+	var found []row
+	for rows.Next() {
+		var r row
+		if err := rows.Scan(&r.id, &r.code); err != nil {
+			return 0, "", err
+		}
+		found = append(found, r)
+	}
+	switch len(found) {
+	case 0:
+		return 0, "", nil
+	case 1:
+		return found[0].id, found[0].code, nil
+	default:
+		return 0, "", errExamAmbiguous
+	}
+}
+
+// resolveExamCodeForOperator kept as a shim so existing call sites
+// (verify_face_handlers.go, verify_candidate_handlers.go photo path)
+// don't need to change signatures. New code should call
+// resolveExamForOperator directly to get the id too.
+func (s *Server) resolveExamCodeForOperator(r *http.Request) (string, error) {
+	_, code, err := s.resolveExamForOperator(r)
 	return code, err
 }
 

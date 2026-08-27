@@ -366,15 +366,15 @@ func (s *Server) adminUnsubscribe(w http.ResponseWriter, r *http.Request) {
 //
 // Returns a user-facing error string when the constraints don't hold.
 func (s *Server) setOperatorExams(tx *sql.Tx, orgID, userID int64, examIDs []int64) error {
-	// Enforce exactly-one-exam-per-operator. Zero would leave the
-	// operator seeing "no data" on every lookup with no explanation;
-	// two+ would collide with the UNIQUE index from migration 022.
-	// Checking here gives a clean 4xx instead of a raw DB error.
+	// An operator with zero exams sees "no data" on every lookup with
+	// no explanation, so we still refuse the empty case. The
+	// upper-bound cap is gone (V18 migration dropped the
+	// ux_operator_exams_user unique index) — a verification agent can
+	// now hold multiple exams, and the operator picks which one they
+	// are currently working on via the X-Exam-Id header
+	// (resolveExamCodeForOperator).
 	if len(examIDs) == 0 {
-		return errors.New("a verification agent must be assigned to exactly one exam")
-	}
-	if len(examIDs) > 1 {
-		return errors.New("a verification agent can be assigned to only one exam")
+		return errors.New("a verification agent must be assigned to at least one exam")
 	}
 
 	// Sanity: user belongs to org.

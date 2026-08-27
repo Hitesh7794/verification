@@ -289,6 +289,9 @@ func (s *Server) Router() http.Handler {
 		// Client (operator) role allowed so the operator UI can render
 		// a live wallet pill.
 		r.Get("/api/wallet/summary", s.requireRole("client", "admin", "superadmin")(s.walletSummary))
+		// Operator's list of assigned exams — backs the current-exam
+		// picker on the dashboard. Client-role only.
+		r.Get("/api/operator/exams", s.requireRole("client")(s.listOperatorExams))
 		r.Post("/api/wallet/order", s.requireRole("admin")(s.walletOrder))
 		r.Post("/api/wallet/verify-payment", s.requireRole("admin")(s.walletVerifyPayment))
 

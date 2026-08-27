@@ -739,7 +739,7 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
       <div>
         <Label>Assigned exams</Label>
         <p className="text-xs text-slate-500 mb-2">
-          Pick from your college's subscribed exams. This operator will only be able to verify against these.
+          Pick one or more from your college's subscribed exams. This operator will be able to verify against any of them and will pick which one they're working on from a switcher on their dashboard.
         </p>
         {subs.length === 0 ? (
           <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
@@ -747,23 +747,11 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
           </p>
         ) : (
           <>
-            <ExamMultiSelect subs={subs} value={examIds} onChange={setExamIds} single />
+            <ExamMultiSelect subs={subs} value={examIds} onChange={setExamIds} />
             {examIds.length === 0 && (
               <p className="mt-1 text-xs text-rose-600">
-                Assigning one exam is required.
+                Pick at least one exam.
               </p>
-            )}
-            {selectedExam && (selectedExam.verification_from || selectedExam.verification_to) && (
-              <div className="mt-2 flex items-center gap-2 text-xs text-indigo-700 bg-indigo-50 border border-indigo-200/70 rounded-md px-2.5 py-1.5">
-                <Icon.Clock className="h-3.5 w-3.5 shrink-0 text-indigo-600" />
-                <span>
-                  <b>Exam Window:</b>{' '}
-                  {selectedExam.verification_from ? formatDateTime(selectedExam.verification_from) : 'Open'}
-                  {' → '}
-                  {selectedExam.verification_to ? formatDateTime(selectedExam.verification_to) : 'Open'}
-                  {' '}(Agent validity must be within this window)
-                </span>
-              </div>
             )}
           </>
         )}

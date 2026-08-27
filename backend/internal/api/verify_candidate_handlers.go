@@ -61,6 +61,11 @@ func (s *Server) getCandidate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ec, err := s.lookupExamCandidate(r, claims, roll)
+	if errors.Is(err, errExamAmbiguous) {
+		writeErr(w, http.StatusBadRequest,
+			"Select an exam first — you're assigned to multiple exams. The picker at the top of the dashboard controls which exam you're verifying for.")
+		return
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
 		return
@@ -236,6 +241,11 @@ func (s *Server) getCandidatePhoto(w http.ResponseWriter, r *http.Request) {
 	// any bandwidth threshold worth optimising for.
 	if s.deps.Cfg.PhotosBackend == "s3" && s.storage != nil && s.storage.Enabled() {
 		examCode, err := s.resolveExamCodeForOperator(r)
+		if errors.Is(err, errExamAmbiguous) {
+			writeErr(w, http.StatusBadRequest,
+				"Select an exam first — you're assigned to multiple exams. The picker at the top of the dashboard controls which exam you're verifying for.")
+			return
+		}
 		if err != nil {
 			writeErr(w, http.StatusInternalServerError,
 				"could not resolve exam scope: "+err.Error())
@@ -913,6 +923,28 @@ func (s *Server) lookupExamCandidate(r *http.Request, claims *authClaims, roll s
 		return nil, nil
 	}
 
+	// Operator branch: resolve the exam they're currently working on
+	// via X-Exam-Id (or the single-exam fallback) BEFORE the query, so
+	// a roll present in two of the operator's exams only ever returns
+	// the one they've selected. Anything else would let data cross
+	// exams — the whole point of the header.
+	var operatorExamID int64
+	if claims.Role == "client" {
+		id, _, err := s.resolveExamForOperator(r)
+		if errors.Is(err, errExamAmbiguous) {
+			// Bubble up so the caller returns a specific 400.
+			return nil, err
+		}
+		if err != nil {
+			return nil, err
+		}
+		if id == 0 {
+			// No exams assigned — nothing to look up.
+			return nil, nil
+		}
+		operatorExamID = id
+	}
+
 	var (
 		query string
 		args  []any
@@ -939,13 +971,17 @@ func (s *Server) lookupExamCandidate(r *http.Request, claims *authClaims, roll s
 		if claims.UserID == 0 {
 			return nil, nil
 		}
+		// Scope to the ONE resolved exam, not "any of my exams". This is
+		// the isolation gate — a roll from exam B is invisible while
+		// exam A is selected, even if that operator holds both.
 		query = base + `
+		  AND ec.exam_id = $2
 		  AND EXISTS (
 		    SELECT 1 FROM operator_exams oe
-		     WHERE oe.exam_id = ec.exam_id AND oe.user_id = $2
+		     WHERE oe.exam_id = ec.exam_id AND oe.user_id = $3
 		  )
 		LIMIT 1`
-		args = []any{roll, claims.UserID}
+		args = []any{roll, operatorExamID, claims.UserID}
 
 	case "admin":
 		if claims.OrgID == nil {

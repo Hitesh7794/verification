@@ -11,6 +11,39 @@ function getToken() {
   return getStoredToken(getRoleScope())
 }
 
+// localStorage key for the operator's currently-selected exam. Set by
+// the picker on client/Dashboard, read here so every operator request
+// carries the X-Exam-Id header. Backend uses it to scope candidate
+// lookups / photo fetches / face-match so a multi-exam operator can't
+// accidentally mix data between exams. Storage is per-tab-scope
+// (operator = client role) — the whole nv_ family is scoped to
+// getRoleScope() to keep parallel admin/operator tabs isolated.
+const CURRENT_EXAM_STORAGE_KEY = 'nv_current_exam_id'
+
+export function getCurrentExamId() {
+  if (typeof window === 'undefined') return null
+  try {
+    const v = window.localStorage.getItem(CURRENT_EXAM_STORAGE_KEY)
+    return v || null
+  } catch {
+    return null
+  }
+}
+
+export function setCurrentExamId(examId) {
+  if (typeof window === 'undefined') return
+  try {
+    if (examId === null || examId === undefined || examId === '') {
+      window.localStorage.removeItem(CURRENT_EXAM_STORAGE_KEY)
+    } else {
+      window.localStorage.setItem(CURRENT_EXAM_STORAGE_KEY, String(examId))
+    }
+    // Broadcast so any listener (dashboard tabs, other components) can
+    // refetch what depends on the current exam.
+    window.dispatchEvent(new CustomEvent('exam:changed', { detail: { examId } }))
+  } catch {}
+}
+
 // Bookkeeping so a flood of 401s from a polling page doesn't trigger
 // repeated location.assign calls.
 let redirectingToLogin = false
@@ -75,6 +108,15 @@ export async function api(path, { method = 'GET', body, auth = true } = {}) {
   if (auth) {
     const t = getToken()
     if (t) headers.Authorization = `Bearer ${t}`
+  }
+  // Attach the operator's currently-selected exam on every request.
+  // Only meaningful for client-role callers — other scopes ignore it
+  // server-side. The header is what pins candidate/photo/face-match
+  // lookups to one exam for multi-exam operators, so data can't leak
+  // across exams (backend refuses ambiguous requests with a 400).
+  if (auth && getRoleScope() === 'client') {
+    const examId = getCurrentExamId()
+    if (examId) headers['X-Exam-Id'] = examId
   }
   const res = await fetch(BASE + path, {
     method,

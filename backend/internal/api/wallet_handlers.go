@@ -213,30 +213,32 @@ func (s *Server) walletSummary(w http.ResponseWriter, r *http.Request) {
 	if userVTo.Valid {
 		resp.OperatorValidTo = userVTo.String
 	}
-	// Look up the operator's assigned exam (client role only). Empty
-	// result -> no exam assigned; frontend renders the "ask your
-	// admin" banner. Ignore any error -- the wallet fields are more
-	// important than this hint, and admin/superadmin skip this
-	// section entirely.
+	// Look up the operator's currently-selected exam (client role
+	// only). The FE picks which exam via the X-Exam-Id header — that
+	// resolves to a specific exam here so the "next window opens on"
+	// banner and the closed-window guard reflect the exam the
+	// operator is actively working on, not "some exam I'm assigned
+	// to". Empty result → no exam assigned; frontend renders the
+	// "ask your admin" banner. Ambiguous (multi-exam, no header)
+	// leaves the assigned_exam_* fields empty so the banner tells the
+	// operator to pick one.
 	if claims != nil && claims.Role == "client" && claims.UserID != 0 {
-		var (
-			eid   sql.NullInt64
-			code  sql.NullString
-			name  sql.NullString
-			vFrom sql.NullString
-			vTo   sql.NullString
-		)
-		_ = s.deps.DB.QueryRowContext(r.Context(), db.Q(`
-			SELECT e.id, e.exam_code, e.name,
-			       COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD"T"HH24:MI'), ''),
-			       COALESCE(TO_CHAR(e.verification_to,   'YYYY-MM-DD"T"HH24:MI'), '')
-			  FROM operator_exams oe
-			  JOIN exams e ON e.id = oe.exam_id
-			 WHERE oe.user_id = ?
-			 LIMIT 1
-		`), claims.UserID).Scan(&eid, &code, &name, &vFrom, &vTo)
-		if eid.Valid {
-			resp.AssignedExamID = eid.Int64
+		examID, _, resolveErr := s.resolveExamForOperator(r)
+		if resolveErr == nil && examID != 0 {
+			var (
+				code  sql.NullString
+				name  sql.NullString
+				vFrom sql.NullString
+				vTo   sql.NullString
+			)
+			_ = s.deps.DB.QueryRowContext(r.Context(), db.Q(`
+				SELECT e.exam_code, e.name,
+				       COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD"T"HH24:MI'), ''),
+				       COALESCE(TO_CHAR(e.verification_to,   'YYYY-MM-DD"T"HH24:MI'), '')
+				  FROM exams e
+				 WHERE e.id = ?
+			`), examID).Scan(&code, &name, &vFrom, &vTo)
+			resp.AssignedExamID = examID
 			resp.AssignedExamCode = code.String
 			resp.AssignedExamName = name.String
 			resp.AssignedExamVerificationFrom = vFrom.String
