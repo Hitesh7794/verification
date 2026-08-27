@@ -411,19 +411,17 @@ func (s *Server) resolveExamCreateClientID(r *http.Request) (int64, int, string)
 // GET /api/client/exams
 func (s *Server) clientReviewerListExams(w http.ResponseWriter, r *http.Request) {
 	clientID, ok := s.clientReviewerScope(r)
-	var exams []examRow
-	var err error
-	if ok && clientID > 0 {
-		exams, err = s.listExamsForClient(r.Context(), clientID)
-		if err == nil && len(exams) == 0 {
-			exams, err = s.listAllExams(r.Context())
-		}
-	} else {
-		exams, err = s.listAllExams(r.Context())
+	if !ok || clientID <= 0 {
+		writeErr(w, http.StatusForbidden, "client reviewer context required")
+		return
 	}
+	exams, err := s.listExamsForClient(r.Context(), clientID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db list exams: "+err.Error())
 		return
+	}
+	if exams == nil {
+		exams = []examRow{}
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"exams": exams})
 }
