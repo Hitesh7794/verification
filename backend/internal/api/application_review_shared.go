@@ -299,9 +299,13 @@ func (s *Server) approveApplication(
 	if scope != nil {
 		// Client Reviewer approving for their specific board:
 		_, _ = s.deps.DB.ExecContext(ctx, `
-			INSERT INTO client_organization_approvals(client_id, org_id, approved_by, approved_at, note)
-			VALUES($1, $2, $3, NOW(), $4)
-			ON CONFLICT (client_id, org_id) DO NOTHING`,
+			INSERT INTO client_organization_approvals(client_id, org_id, status, approved_by, approved_at, note)
+			VALUES($1, $2, 'approved', $3, NOW(), $4)
+			ON CONFLICT (client_id, org_id) DO UPDATE SET
+				status = 'approved',
+				approved_by = EXCLUDED.approved_by,
+				approved_at = NOW(),
+				note = EXCLUDED.note`,
 			*scope, prov.OrgID, reviewerUserID, note,
 		)
 		_, _ = s.deps.DB.ExecContext(ctx, `
@@ -325,9 +329,13 @@ func (s *Server) approveApplication(
 	} else if appClientID.Valid {
 		// Superadmin approving an application routed to a specific board:
 		_, _ = s.deps.DB.ExecContext(ctx, `
-			INSERT INTO client_organization_approvals(client_id, org_id, approved_by, approved_at, note)
-			VALUES($1, $2, $3, NOW(), $4)
-			ON CONFLICT (client_id, org_id) DO NOTHING`,
+			INSERT INTO client_organization_approvals(client_id, org_id, status, approved_by, approved_at, note)
+			VALUES($1, $2, 'approved', $3, NOW(), $4)
+			ON CONFLICT (client_id, org_id) DO UPDATE SET
+				status = 'approved',
+				approved_by = EXCLUDED.approved_by,
+				approved_at = NOW(),
+				note = EXCLUDED.note`,
 			appClientID.Int64, prov.OrgID, reviewerUserID, note,
 		)
 		_, _ = s.deps.DB.ExecContext(ctx, `
@@ -352,11 +360,15 @@ func (s *Server) approveApplication(
 		// Superadmin approving generic registration across multiple clients:
 		// Auto-grant for clients with kyc_review_mode = 'admin'
 		_, _ = s.deps.DB.ExecContext(ctx, `
-			INSERT INTO client_organization_approvals(client_id, org_id, approved_by, approved_at, note)
-			SELECT c.id, $1, $2, NOW(), 'Approved via Superadmin KYC'
+			INSERT INTO client_organization_approvals(client_id, org_id, status, approved_by, approved_at, note)
+			SELECT c.id, $1, 'approved', $2, NOW(), 'Approved via Superadmin KYC'
 			  FROM clients c
 			 WHERE c.visible = 1 AND c.closed = 0 AND c.kyc_review_mode = 'admin'
-			ON CONFLICT (client_id, org_id) DO NOTHING`,
+			ON CONFLICT (client_id, org_id) DO UPDATE SET
+				status = 'approved',
+				approved_by = EXCLUDED.approved_by,
+				approved_at = NOW(),
+				note = EXCLUDED.note`,
 			prov.OrgID, reviewerUserID,
 		)
 		_, _ = s.deps.DB.ExecContext(ctx, `

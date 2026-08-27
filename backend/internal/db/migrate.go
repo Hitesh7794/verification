@@ -144,7 +144,34 @@ func Migrate(d *sql.DB) error {
 		}
 	}
 
+	if !applied[19] {
+		if err := applyV19ClientOrgApprovalStatus(ctx, d); err != nil {
+			return fmt.Errorf("apply v19 client_org_approval_status: %w", err)
+		}
+	}
+
 	return nil
+}
+
+func applyV19ClientOrgApprovalStatus(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx,
+		`ALTER TABLE client_organization_approvals ADD COLUMN IF NOT EXISTS status TEXT NOT NULL DEFAULT 'approved'`,
+	); err != nil {
+		return fmt.Errorf("add status to client_organization_approvals: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)`,
+		19, "client_org_approval_status",
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // applyV18MultiExamOperator drops the UNIQUE index on operator_exams
