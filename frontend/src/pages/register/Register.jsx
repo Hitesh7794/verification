@@ -459,6 +459,7 @@ export default function Register() {
     }
     delete payload.affiliation_body_other
     delete payload.institution_type_other
+    delete payload.website
     if (!payload.client_id) delete payload.client_id
     return payload
   }
@@ -545,22 +546,11 @@ export default function Register() {
     setSubmitting(true)
     setTopError('')
     try {
-      // Atomic-ish create-app + upload-each-doc + finalize.
-      //
-      // "Atomic-ish" because we still hit three separate HTTP calls:
-      //   1. registerInit    — INSERT institution_applications (draft)
-      //   2. uploadDoc * N   — INSERT institution_application_documents + S3 put per file
-      //   3. submitApplication — UPDATE status draft → pending
-      //
-      // If step 2 or 3 fails, a draft app row (and possibly partial
-      // docs) is stranded server-side under the returned appId. The
-      // applicant sees an error banner and can retry Submit — the
-      // retry does a FRESH registerInit (new appId), so the failed
-      // one turns into a superadmin cleanup task. Small orphan
-      // exposure in exchange for the "no DB writes until Submit"
-      // policy the applicant flow now enforces.
       const initRes = await registerInit(buildRegisterPayload())
-      const newAppId = initRes.application_id
+      const newAppId = Number(initRes?.application_id)
+      if (!newAppId || isNaN(newAppId) || newAppId <= 0) {
+        throw new Error(initRes?.error || 'Could not initialize registration. Please re-verify your OTPs and try again.')
+      }
       setApplicationId(newAppId)
 
       const entries = Object.entries(uploaded).filter(([_, u]) => u?.file)
