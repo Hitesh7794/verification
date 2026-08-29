@@ -72,7 +72,7 @@ function RequireRole({ role, children }) {
   if (user.password_change_required) {
     const changePath = user.role === 'client'
       ? '/institute/operator/force-password-change'
-      : `/${user.role === 'ops_admin' ? 'admin' : user.role}/force-password-change`
+      : `/${user.role}/force-password-change`
     return <Navigate to={changePath} replace />
   }
   return children
@@ -272,20 +272,19 @@ export default function App() {
         </>
       )}
 
-      {/* OPS MODE — institution review (separate role: ops_admin). The
-          admin login screen is reused here so ops_admin users can sign
-          in. Backend enforces role at every endpoint regardless. */}
+      {/* OPS MODE — institution review. Historically a separate role
+          (ops_admin) shared this surface with superadmin; that role
+          was retired 2026-08-27 and now superadmin owns the queue
+          alone. The block name stays "ops" for the VITE_APP_MODE
+          value that gates it, but the role list is superadmin-only. */}
       {includes('ops') && (
         <>
-          {/* Ops mode also needs a login page. Reuse the admin login —
-              it's a thin form that just calls /api/auth/login. After
-              sign-in, role-based gating kicks in. */}
           {MODE === 'ops' && <Route path="/admin/login" element={<AdminLogin />} />}
 
           <Route
             path="/superadmin/applications"
             element={
-              <RequireRole role={['superadmin', 'ops_admin']}>
+              <RequireRole role="superadmin">
                 <PendingApplications />
               </RequireRole>
             }
@@ -293,7 +292,7 @@ export default function App() {
           <Route
             path="/superadmin/applications/:id"
             element={
-              <RequireRole role={['superadmin', 'ops_admin']}>
+              <RequireRole role="superadmin">
                 <ApplicationDetail />
               </RequireRole>
             }

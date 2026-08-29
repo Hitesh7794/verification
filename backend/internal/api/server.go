@@ -196,10 +196,12 @@ func (s *Server) Router() http.Handler {
 	// supported. All fields are display / soft-tuning; no secrets.
 	r.Get("/api/mobile/config", s.mobileConfig)
 
-	// ----- public password recovery & set-password endpoints -----
+	// ----- public password recovery endpoints -----
+	// /set-password/* was a duplicate pair pointing at the same handlers
+	// as /reset-password/*. FE only ever called the reset-password side
+	// (frontend/src/lib/onboarding/register.js), so the set-password
+	// aliases were retired 2026-08-27 during the dead-code sweep.
 	r.Post("/api/auth/forgot-password", s.forgotPassword)
-	r.Get("/api/set-password/verify", s.setPasswordVerify)
-	r.Post("/api/set-password", s.setPassword)
 	r.Get("/api/reset-password/verify", s.setPasswordVerify)
 	r.Post("/api/reset-password", s.setPassword)
 
@@ -232,7 +234,11 @@ func (s *Server) Router() http.Handler {
 			s.requireRole("client", "admin", "superadmin")(s.getCandidate))
 		r.Get("/api/candidates/{roll}/photo", s.requireRole("client", "admin", "superadmin")(s.getCandidatePhoto))
 		r.Get("/api/candidates/{roll}/fp-template", s.requireRole("client")(s.getCandidateFPTemplate))
-		r.Get("/api/candidates/{roll}/face-template", s.requireRole("client", "admin", "superadmin")(s.getCandidateFaceTemplate))
+		// /candidates/{roll}/face-template retired 2026-08-27 — the
+		// TrustView migration removed the client-side face-template
+		// cache (see verify_face_handlers.go comment: "retired with the
+		// TrustView migration — the hosted matcher works on raw images
+		// end-to-end"). No FE caller remains.
 		// Phase 3c: attempt counter for the operator UI's "Nth attempt" chip.
 		r.Get("/api/candidates/{roll}/attempts", s.requireRole("client", "admin")(s.getCandidateAttempts))
 		// New URL-scoped routes so the wallet middleware can extract
@@ -267,9 +273,10 @@ func (s *Server) Router() http.Handler {
 		// already covered the same-roll cache window, so iris is a free
 		// follow-on decision.
 		r.Post("/api/candidates/{roll}/iris-match", s.requireRole("client")(s.irisMatch))
-		// Legacy (kept for a release window; the new operator UI uses
-		// the URL-scoped routes above).
-		r.Post("/api/face-match", s.requireRole("client")(s.faceMatch))
+		// Legacy body-only fp-match retained for a release window; the
+		// new operator UI uses the URL-scoped route above. The legacy
+		// /api/face-match twin was retired 2026-08-27 — the unified
+		// liveness+face flow only calls the candidate-scoped URL.
 		r.Post("/api/fp-match",   s.requireRole("client")(s.fpMatch))
 		r.Post("/api/verifications", s.requireRole("client")(s.createVerification))
 		// Mobile app calls the candidate-scoped URL for symmetry with
@@ -348,24 +355,29 @@ func (s *Server) Router() http.Handler {
 
 		r.Get("/api/super/stats", s.requireRole("superadmin")(s.superStats))
 		r.Get("/api/super/organizations", s.requireRole("superadmin")(s.superOrganizations))
-		r.Get("/api/super/top-centers", s.requireRole("superadmin")(s.superTopCenters))
-		r.Get("/api/super/metrics", s.requireRole("superadmin")(s.superMetrics))
-		r.Get("/api/super/audit", s.requireRole("superadmin")(s.superAuditList))
+		// /super/top-centers, /super/metrics, /super/audit retired
+		// 2026-08-27 — the superadmin Dashboard never called them
+		// (only /super/stats + /super/organizations). Handler funcs
+		// (superTopCenters, superMetrics, superAuditList) removed too.
 
 		// Institution-application review queue. Superadmin-only — the
 		// docs contain head-of-institution PII (mobile, email, PAN) so
 		// admin role intentionally doesn't have read access.
-		// Institution-application review queue. Allowed for
-		// superadmin (platform owner) AND ops_admin (dedicated
-		// onboarding-team role). Same endpoints, two roles — see
-		// migration 7 for the role split rationale.
-		r.Get("/api/superadmin/applications", s.requireRole("superadmin", "ops_admin")(s.superadminListApplications))
-		r.Get("/api/superadmin/applications/{id}", s.requireRole("superadmin", "ops_admin")(s.superadminGetApplication))
-		r.Get("/api/superadmin/applications/{id}/docs/{doc_id}", s.requireRole("superadmin", "ops_admin")(s.superadminDownloadDoc))
-		r.Post("/api/superadmin/applications/{id}/approve", s.requireRole("superadmin", "ops_admin")(s.superadminApproveApplication))
-		r.Post("/api/superadmin/applications/{id}/reject", s.requireRole("superadmin", "ops_admin")(s.superadminRejectApplication))
-		r.Post("/api/superadmin/applications/{id}/route",  s.requireRole("superadmin", "ops_admin")(s.superadminRouteApplication))
-		r.Post("/api/superadmin/applications/{id}/resend-admin-link", s.requireRole("superadmin", "ops_admin")(s.superadminResendAdminLink))
+		// The ops_admin role that used to share this surface was retired
+		// 2026-08-27: superadmin already had every ops_admin permission,
+		// and Rahul's multi-client reviewer flow moved KYC decisions
+		// into each client's own inbox — no dedicated onboarding queue
+		// remained for a separate role to own.
+		r.Get("/api/superadmin/applications", s.requireRole("superadmin")(s.superadminListApplications))
+		r.Get("/api/superadmin/applications/{id}", s.requireRole("superadmin")(s.superadminGetApplication))
+		r.Get("/api/superadmin/applications/{id}/docs/{doc_id}", s.requireRole("superadmin")(s.superadminDownloadDoc))
+		r.Post("/api/superadmin/applications/{id}/approve", s.requireRole("superadmin")(s.superadminApproveApplication))
+		r.Post("/api/superadmin/applications/{id}/reject", s.requireRole("superadmin")(s.superadminRejectApplication))
+		// /route endpoint retired 2026-08-27 — the FE route-to-client
+		// panel was removed 2026-08-25 (see ApplicationDetail.jsx
+		// comment). Rahul's multi-client flow routes via each client
+		// reviewer's own inbox now, not a superadmin picker.
+		r.Post("/api/superadmin/applications/{id}/resend-admin-link", s.requireRole("superadmin")(s.superadminResendAdminLink))
 
 		// ── Client-reviewer portal (per-client KYC inbox)
 		// A client_reviewer user's JWT carries their client_id; every
@@ -437,7 +449,10 @@ func (s *Server) Router() http.Handler {
 		// summary as "skipped".
 		r.Post("/api/superadmin/exams/{id}/bulk/{modality}",
 			s.requireRole("superadmin", "client_reviewer")(s.superadminBulkUpload))
-		r.Post("/api/superadmin/reindex",                              s.requireRole("superadmin")(s.superadminReindex))
+		// /superadmin/reindex retired 2026-08-27 — the disk-backed
+		// candidate index rebuilds itself on server boot and after
+		// each biometric upload; there was no manual re-scan surfaced
+		// on the FE, so nothing called this.
 		r.Get("/api/superadmin/exams/{id}/uploads",                    s.requireRole("superadmin", "client_reviewer")(s.superadminListUploads))
 		r.Get("/api/superadmin/uploads/{upload_id}/raw",               s.requireRole("superadmin", "client_reviewer")(s.superadminDownloadRawCSV))
 
@@ -454,7 +469,7 @@ func (s *Server) Router() http.Handler {
 		// PDF verification receipt — role-scoped inside the handler
 		// (operator: own rows; admin: org rows; superadmin: all).
 		r.Get("/api/verifications/{id}/pdf",
-			s.requireRole("client", "admin", "superadmin", "ops_admin")(s.verificationPDF))
+			s.requireRole("client", "admin", "superadmin")(s.verificationPDF))
 	})
 
 	return r

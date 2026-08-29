@@ -150,7 +150,57 @@ func Migrate(d *sql.DB) error {
 		}
 	}
 
+	if !applied[20] {
+		if err := applyV20DropOpsAdminRole(ctx, d); err != nil {
+			return fmt.Errorf("apply v20 drop_ops_admin_role: %w", err)
+		}
+	}
+
 	return nil
+}
+
+// applyV20DropOpsAdminRole retires the ops_admin role entirely. It:
+//
+//  1. Deletes any lingering ops_admin users (typically the seed
+//     account id 724). No production data attaches to them, so a
+//     straight DELETE is safe.
+//  2. Narrows the users_role_check CHECK constraint to exclude
+//     ops_admin, so no future INSERT can resurrect it.
+//
+// See the 2026-08-27 dead-code sweep: the role had zero unique
+// endpoints (every guard was ("superadmin", "ops_admin") so superadmin
+// already covered it), no live users, and no FE surface distinguished
+// it from superadmin.
+func applyV20DropOpsAdminRole(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx,
+		`DELETE FROM users WHERE role = 'ops_admin'`,
+	); err != nil {
+		return fmt.Errorf("delete ops_admin users: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`ALTER TABLE users DROP CONSTRAINT IF EXISTS users_role_check`,
+	); err != nil {
+		return fmt.Errorf("drop users_role_check: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`ALTER TABLE users ADD CONSTRAINT users_role_check
+		    CHECK (role IN ('client','admin','superadmin','client_reviewer'))`,
+	); err != nil {
+		return fmt.Errorf("add users_role_check: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)`,
+		20, "drop_ops_admin_role",
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 func applyV19ClientOrgApprovalStatus(ctx context.Context, d *sql.DB) error {

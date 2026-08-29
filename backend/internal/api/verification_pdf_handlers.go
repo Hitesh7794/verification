@@ -131,7 +131,7 @@ func (s *Server) verificationPDF(w http.ResponseWriter, r *http.Request) {
 		}
 		query += ` AND v.org_id = ?`
 		args = append(args, *claims.OrgID)
-	case "superadmin", "ops_admin":
+	case "superadmin":
 		// no additional filter
 	default:
 		writeErr(w, http.StatusForbidden, "role not allowed")

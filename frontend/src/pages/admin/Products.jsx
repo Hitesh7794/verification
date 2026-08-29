@@ -5,6 +5,7 @@ import { FadeIn, StaggerList, StaggerItem } from '../../components/ui/motion.jsx
 
 import mfs500Img from '../../assets/products/mantra-mfs500.jpg'
 import mis100v2Img from '../../assets/products/mantra-mis100v2.jpg'
+import startekFm220uImg from '../../assets/products/startek-fm220u.jpg'
 
 // Verified hardware catalog for exam center administrators
 const PRODUCTS = [
@@ -24,6 +25,24 @@ const PRODUCTS = [
       'Built-in fake finger & active liveness detection',
       'Sub-second minutiae capture (< 500ms) with ISO 19794-2 standard output',
       'Plug-and-play USB connectivity for center operator laptops',
+    ],
+  },
+  {
+    id: 'startek-fm220u',
+    name: 'ACPL Startek FM220U L1 Biometric Fingerprint Scanner',
+    category: 'fingerprint',
+    categoryLabel: 'Fingerprint Scanner',
+    tag: 'Fingerprint Scanner',
+    image: startekFm220uImg,
+    amazonUrl: 'https://www.amazon.in/Access-FM220U-L1-biometric-Scanner/dp/B0CKX5S7RK',
+    modelNumber: 'FM220U L1',
+    description: 'Compact single-finger optical scanner with L1-certified fake finger detection, ready for Aadhaar-grade candidate verification at examination centers.',
+    highlights: [
+      'STQC + UIDAI Level-1 (L1) certified for public Aadhaar authentication',
+      '500 DPI optical sensor with anti-spoof / fake-finger detection',
+      'ISO/IEC 19794-2 template output — compatible with the portal fingerprint match service',
+      'Rugged scratch-resistant scanning window built for daily centre use',
+      'Plug-and-play USB — no external power, works from a laptop USB port',
     ],
   },
   {

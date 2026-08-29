@@ -153,8 +153,8 @@ type changePasswordReq struct {
 // For shared client-role users whose password_plaintext is stored
 // (so the admin dashboard can display it), we update plaintext too
 // — otherwise the admin's "Operator access" view would show a stale
-// password. Admin / superadmin / ops_admin password_plaintext stays
-// NULL by design (these accounts go through bcrypt-only).
+// password. Admin / superadmin password_plaintext stays NULL by
+// design (these accounts go through bcrypt-only).
 func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 	c := claimsFrom(r)
 	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
@@ -205,8 +205,8 @@ func (s *Server) changePassword(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Sync plaintext only when it was already populated (shared
-	// operator). For admin / superadmin / ops_admin we keep
-	// plaintext NULL — these accounts go through bcrypt-only.
+	// operator). For admin / superadmin we keep plaintext NULL —
+	// these accounts go through bcrypt-only.
 	// Also clear password_change_required: if the user was being
 	// forced to rotate the seeded default, this is the moment that
 	// gate drops.
@@ -376,7 +376,7 @@ func (s *Server) forgotPassword(w http.ResponseWriter, r *http.Request) {
 		query += ` AND role = $2`
 		args = append(args, roleFilter)
 	} else {
-		query += ` AND role IN ('admin', 'client_reviewer', 'client', 'superadmin', 'ops_admin')`
+		query += ` AND role IN ('admin', 'client_reviewer', 'client', 'superadmin')`
 	}
 	query += ` LIMIT 1`
 

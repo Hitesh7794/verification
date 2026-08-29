@@ -522,115 +522,13 @@ func (s *Server) superadminApproveApplication(w http.ResponseWriter, r *http.Req
 	})
 }
 
-// ----- POST /api/superadmin/applications/{id}/route -----
-//
-// Attaches a client_id to a pending application and re-computes
-// pending_reviewer from that client's kyc_review_mode. Real-world use
-// case: institutions register through the public form without
-// specifying a target exam board (no picker on the form). Superadmin
-// receives the app in their queue and decides which client owns it —
-// routing it hands the KYC over to that client's reviewer (or keeps it
-// in the superadmin queue for admin/both modes).
-//
-// Only pending apps can be routed. Already-approved/rejected apps are
-// terminal; re-routing them would either bypass a decision that's been
-// made or leave the created org tied to the wrong client.
-//
-//   admin  → pending_reviewer='admin'  (superadmin still decides)
-//   both   → pending_reviewer='admin'  (superadmin decides first, then reviewer)
-//   client → pending_reviewer='client' (app moves to reviewer's inbox immediately)
-
-type routeApplicationReq struct {
-	ClientID int64 `json:"client_id"`
-}
-
-func (s *Server) superadminRouteApplication(w http.ResponseWriter, r *http.Request) {
-	appID, err := parseInt64(chi.URLParam(r, "id"))
-	if err != nil || appID <= 0 {
-		writeErr(w, http.StatusBadRequest, "invalid id")
-		return
-	}
-	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
-	var req routeApplicationReq
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeErr(w, http.StatusBadRequest, "invalid body")
-		return
-	}
-	if req.ClientID <= 0 {
-		writeErr(w, http.StatusBadRequest, "client_id is required")
-		return
-	}
-
-	// Verify app is still pending. Terminal apps can't be re-routed.
-	var status string
-	if err := s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT status FROM institution_applications WHERE id = $1`, appID,
-	).Scan(&status); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			writeErr(w, http.StatusNotFound, "application not found")
-			return
-		}
-		writeErr(w, http.StatusInternalServerError, "db read")
-		return
-	}
-	if status != "pending" {
-		writeErr(w, http.StatusConflict,
-			fmt.Sprintf("only pending applications can be routed (this one is %s)", status))
-		return
-	}
-
-	// Look up client + its mode. Reject closed/hidden clients so
-	// routing doesn't strand an app under a client no one can
-	// operationally handle.
-	var mode string
-	var closed int
-	if err := s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT kyc_review_mode, closed FROM clients WHERE id = $1`, req.ClientID,
-	).Scan(&mode, &closed); err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			writeErr(w, http.StatusNotFound, "client not found")
-			return
-		}
-		writeErr(w, http.StatusInternalServerError, "db read")
-		return
-	}
-	if closed == 1 {
-		writeErr(w, http.StatusBadRequest, "cannot route to a closed client")
-		return
-	}
-
-	// mode → pending_reviewer. Same table used at submit time in
-	// registerSubmit — kept in sync so the routing logic stays in one
-	// mental model.
-	pendingReviewer := "admin"
-	if mode == "client" {
-		pendingReviewer = "client"
-	}
-
-	if _, err := s.deps.DB.ExecContext(r.Context(),
-		`UPDATE institution_applications
-		    SET client_id = $1,
-		        pending_reviewer = $2,
-		        updated_at = CURRENT_TIMESTAMP
-		  WHERE id = $3 AND status = 'pending'`,
-		req.ClientID, pendingReviewer, appID,
-	); err != nil {
-		writeErr(w, http.StatusInternalServerError, "db update: "+err.Error())
-		return
-	}
-
-	s.auditFromRequest(r, "application.route", "application", appID, map[string]any{
-		"client_id":         req.ClientID,
-		"client_mode":       mode,
-		"pending_reviewer":  pendingReviewer,
-	})
-	writeJSON(w, http.StatusOK, map[string]any{
-		"application_id":    appID,
-		"client_id":         req.ClientID,
-		"client_mode":       mode,
-		"pending_reviewer":  pendingReviewer,
-	})
-}
+// POST /api/superadmin/applications/{id}/route retired 2026-08-27.
+// The FE panel that called it was removed 2026-08-25; Rahul's
+// multi-client flow now routes via each client reviewer's own inbox
+// (unattached KYCs appear in every reviewer queue, each decides for
+// their client). If a superadmin-picks-clients flow returns, resurrect
+// from git — routeApplicationReq + superadminRouteApplication were the
+// entire surface.
 
 // ----- POST /api/superadmin/applications/{id}/resend-admin-link -----
 //

@@ -8,10 +8,11 @@ import (
 	"github.com/veni/neet-verification/internal/data"
 )
 
-// Seed sets up the two system-baked accounts the portal needs to boot:
-// the superadmin (`super`) and the onboarding ops admin (`ops`). Both
-// use INSERT ... ON CONFLICT DO NOTHING so that first-run seeds them
-// but subsequent boots leave any password change intact.
+// Seed sets up the system-baked superadmin account (`super`) the
+// portal needs to boot. Uses INSERT ... ON CONFLICT DO NOTHING so
+// first-run seeds it but subsequent boots leave any password change
+// intact. The `ops` (ops_admin) seed was retired 2026-08-27 with the
+// role.
 //
 // History note (2026-08-24 cleanup):
 //   - Removed the filesystem-index → organizations sync (auto-created
@@ -54,19 +55,9 @@ func Seed(d *sql.DB, idx *data.Index) error {
 		return err
 	}
 
-	// 2. Ensure onboarding ops_admin exists. Same DO NOTHING pattern.
-	opsHash, err := bcrypt.GenerateFromPassword([]byte("ops123"), bcrypt.DefaultCost)
-	if err != nil {
-		return err
-	}
-	if _, err := tx.Exec(
-		`INSERT INTO users(username, password_hash, role, display_name)
-		 VALUES($1, $2, 'ops_admin', $3)
-		 ON CONFLICT (username) DO NOTHING`,
-		"ops", string(opsHash), "Onboarding Ops Admin",
-	); err != nil {
-		return err
-	}
+	// The ops_admin seed was retired 2026-08-27 — the role no longer
+	// exists in code. Legacy prod DBs may still have the row (id 724);
+	// delete it manually if desired.
 
 	return tx.Commit()
 }

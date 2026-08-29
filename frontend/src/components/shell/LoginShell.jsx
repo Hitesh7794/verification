@@ -18,7 +18,6 @@ const ROLE_LABEL = {
   client:          'Verification Agent',
   admin:           'Administrator',
   superadmin:      'Superadmin',
-  ops_admin:       'Operations',
   client_reviewer: 'Review portal',
 }
 

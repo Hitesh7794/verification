@@ -76,7 +76,7 @@ func (s *Server) getCandidate(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Active-window enforcement — only for operators (client role).
-	// Admin / superadmin / ops_admin can still fetch a candidate
+	// Admin / superadmin can still fetch a candidate
 	// outside the exam window for audit or review; the operator
 	// (client role) can't because that's where a new verification
 	// would begin.
@@ -995,7 +995,7 @@ func (s *Server) lookupExamCandidate(r *http.Request, claims *authClaims, roll s
 		LIMIT 1`
 		args = []any{roll, *claims.OrgID}
 
-	case "superadmin", "ops_admin":
+	case "superadmin":
 		query = base + ` LIMIT 1`
 		args = []any{roll}
 

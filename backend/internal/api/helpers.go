@@ -195,7 +195,7 @@ func (s *Server) requireRoleOpen(roles ...string) func(http.HandlerFunc) http.Ha
 // to an org whose linked institution_application is status='approved'.
 // A pending / rejected KYC returns 403 with a machine-readable
 // x-kyc-state header so the FE lock screen can render the right copy.
-// Roles that don't carry an org (superadmin, ops_admin, client_reviewer)
+// Roles that don't carry an org (superadmin, client_reviewer)
 // always bypass the KYC check — it doesn't apply to them.
 func (s *Server) requireRoleGated(kycGate bool, roles ...string) func(http.HandlerFunc) http.HandlerFunc {
 	allowed := map[string]bool{}

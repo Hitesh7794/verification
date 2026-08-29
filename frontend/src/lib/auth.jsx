@@ -93,7 +93,6 @@ export function AuthProvider({ children }) {
       // scope (`reviewer`) so its session doesn't collide with the
       // operator (`client`) surface on the same origin.
       const responseScope =
-        res.user?.role === 'ops_admin' ? 'admin' :
         res.user?.role === 'client_reviewer' ? 'reviewer' :
         res.user?.role
       if (

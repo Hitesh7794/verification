@@ -4,7 +4,7 @@ import { Button, Input, Label } from '../ui/ui.jsx'
 import { api } from '../../lib/api.js'
 
 // ChangePasswordModal — invoked from AvatarMenu, lets any logged-in
-// user (admin, superadmin, ops_admin, operator) rotate their own
+// user (admin, superadmin, operator) rotate their own
 // password. Same validation rules as the magic-link set-password flow
 // (≥10 chars, letter + digit) — the strength floor is consistent
 // across the product so we never have an "easier" path that weakens

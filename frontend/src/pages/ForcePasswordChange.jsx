@@ -66,7 +66,7 @@ export default function ForcePasswordChange() {
       // routes the user into their actual dashboard. Simpler and
       // more reliable than mutating the cached user object in place.
       logout()
-      nav(`/${user.role === 'ops_admin' ? 'admin' : user.role}/login?just_activated=1`)
+      nav(`/${user.role}/login?just_activated=1`)
     } catch (e) {
       setErr(e.message || 'failed to update password')
     } finally {

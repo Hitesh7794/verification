@@ -46,17 +46,6 @@ type faceMatchResp struct {
 	Status    bool    `json:"status"`
 }
 
-// getCandidateFaceTemplate used to lazy-extract a Luxand face template
-// from the enrolled photo and cache it as <FACE_TEMPLATE_DIR>/<roll>.tpl.
-// Deprecated with the TrustView migration — the hosted matcher works on
-// raw images end-to-end so no server-side template exists any more.
-// Returning 410 Gone (instead of silently serving stale cached bytes)
-// so any caller that hasn't updated fails loudly.
-func (s *Server) getCandidateFaceTemplate(w http.ResponseWriter, r *http.Request) {
-	writeErr(w, http.StatusGone,
-		"face templates were removed with the TrustView migration; POST /api/candidates/{roll}/face-match with the probe image instead")
-}
-
 // faceMatch is the operator hot path. After the webcam capture, the
 // frontend POSTs the JPEG bytes here; we read the candidate's enrolled
 // gallery photo from disk, base64 both images, forward them to the

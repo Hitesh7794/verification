@@ -1439,50 +1439,9 @@ func (s *Server) listExamsForClient(ctx context.Context, clientID int64) ([]exam
 	return out, nil
 }
 
-func (s *Server) listAllExams(ctx context.Context) ([]examRow, error) {
-	rows, err := s.deps.DB.QueryContext(ctx, db.Q(`
-		SELECT e.id, e.client_id, e.name, e.exam_code, e.trustview_ref,
-		       COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD"T"HH24:MI'), ''),
-		       COALESCE(TO_CHAR(e.verification_to,   'YYYY-MM-DD"T"HH24:MI'), ''),
-		       e.visible, e.closed,
-		       e.closed_at, e.created_at, e.updated_at,
-		       e.requires_face, e.requires_fp, e.requires_iris,
-		       (SELECT COUNT(*) FROM exam_candidates ec WHERE ec.exam_id = e.id)
-		FROM exams e
-		ORDER BY e.created_at DESC`))
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []examRow{}
-	for rows.Next() {
-		var e examRow
-		var visible, closed int
-		var reqFace, reqFP, reqIris int
-		var closedAt sql.NullTime
-		var trustview sql.NullString
-		if err := rows.Scan(&e.ID, &e.ClientID, &e.Name, &e.ExamCode, &trustview,
-			&e.VerificationFrom, &e.VerificationTo, &visible, &closed,
-			&closedAt, &e.CreatedAt, &e.UpdatedAt,
-			&reqFace, &reqFP, &reqIris,
-			&e.CandidateCount); err != nil {
-			return nil, err
-		}
-		e.Visible = visible == 1
-		e.Closed = closed == 1
-		e.RequiresFace = reqFace == 1
-		e.RequiresFP = reqFP == 1
-		e.RequiresIris = reqIris == 1
-		if closedAt.Valid {
-			e.ClosedAt = &closedAt.Time
-		}
-		if trustview.Valid {
-			e.TrustviewRef = trustview.String
-		}
-		out = append(out, e)
-	}
-	return out, nil
-}
+// listAllExams retired 2026-08-27 — no callers. If the "all exams
+// across every client" query returns, the parallel listExamsForClient
+// helper above is the template to copy.
 
 func (s *Server) listUploadsForExam(ctx context.Context, examID int64) ([]uploadRow, error) {
 	rows, err := s.deps.DB.QueryContext(ctx, db.Q(`
