@@ -28,7 +28,7 @@ export function getRoleScope(pathname) {
   if (p.startsWith('/reviewer')) return 'reviewer'
   if (p.startsWith('/client')) return 'client'
   if (p.startsWith('/superadmin')) return 'superadmin'
-  return null
+  return 'superadmin'
 }
 
 // loginPathForScope returns the current login URL for a given scope.

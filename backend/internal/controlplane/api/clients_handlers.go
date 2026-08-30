@@ -89,11 +89,11 @@ func (s *Server) getClient(w http.ResponseWriter, r *http.Request) {
 	}
 	var c clientRow
 	err = s.deps.DB.QueryRowContext(r.Context(), `
-		SELECT id, name, kyc_review_mode, status, api_url, COALESCE(notes,''),
+		SELECT id, name, COALESCE(code, ''), kyc_review_mode, status, api_url, COALESCE(notes,''),
 		       created_at, updated_at
 		  FROM clients_registry
 		 WHERE id = $1 AND status <> 'deleted'`, id,
-	).Scan(&c.ID, &c.Name, &c.KYCReviewMode, &c.Status, &c.APIURL, &c.Notes,
+	).Scan(&c.ID, &c.Name, &c.Code, &c.KYCReviewMode, &c.Status, &c.APIURL, &c.Notes,
 		&c.CreatedAt, &c.UpdatedAt)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeErr(w, http.StatusNotFound, "client not found")
@@ -103,7 +103,92 @@ func (s *Server) getClient(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
 		return
 	}
-	writeJSON(w, http.StatusOK, c)
+	if c.Status == "suspended" {
+		c.Closed = 1
+	}
+
+	type examItem struct {
+		ID               int64  `json:"id"`
+		ClientID         int64  `json:"client_id"`
+		ClientName       string `json:"client_name"`
+		Name             string `json:"name"`
+		ExamCode         string `json:"exam_code"`
+		Status           string `json:"status"`
+		Closed           bool   `json:"closed"`
+		Visible          bool   `json:"visible"`
+		VerificationFrom string `json:"verification_from"`
+		VerificationTo   string `json:"verification_to"`
+		CandidateCount   int64  `json:"candidate_count"`
+	}
+	exams := []examItem{}
+	rows, err := s.deps.DB.QueryContext(r.Context(), `
+		SELECT id, client_id, name, exam_code,
+		       COALESCE(status, 'active') as status,
+		       COALESCE(closed, 0) as closed,
+		       COALESCE(visible, 1) as visible,
+		       COALESCE(verification_from::text, ''),
+		       COALESCE(verification_to::text, '')
+		  FROM exams
+		 WHERE client_id = $1
+		 ORDER BY created_at DESC`, id)
+	if err == nil {
+		defer rows.Close()
+		for rows.Next() {
+			var (
+				e examItem
+				closedInt, visibleInt int
+			)
+			if err := rows.Scan(&e.ID, &e.ClientID, &e.Name, &e.ExamCode, &e.Status,
+				&closedInt, &visibleInt, &e.VerificationFrom, &e.VerificationTo); err == nil {
+				e.ClientName = c.Name
+				e.Closed = closedInt == 1 || e.Status == "archived" || e.Status == "ended"
+				e.Visible = visibleInt == 1
+				var candCount int64
+				_ = s.deps.DB.QueryRowContext(r.Context(),
+					`SELECT COUNT(*) FROM exam_candidates WHERE exam_id = $1`, e.ID).Scan(&candCount)
+				e.CandidateCount = candCount
+				exams = append(exams, e)
+			}
+		}
+	}
+	c.ExamCount = len(exams)
+
+	// Fetch reviewers
+	type reviewerItem struct {
+		ID          int64  `json:"id"`
+		Username    string `json:"username"`
+		DisplayName string `json:"display_name"`
+		Email       string `json:"email"`
+		CreatedAt   string `json:"created_at"`
+	}
+	reviewers := []reviewerItem{}
+	uRows, err := s.deps.DB.QueryContext(r.Context(), `
+		SELECT id, username, COALESCE(display_name, ''), COALESCE(email, ''), created_at
+		  FROM users
+		 WHERE role = 'client_reviewer' AND client_id = $1
+		 ORDER BY created_at DESC`, id)
+	if err == nil {
+		defer uRows.Close()
+		for uRows.Next() {
+			var u reviewerItem
+			var t time.Time
+			if err := uRows.Scan(&u.ID, &u.Username, &u.DisplayName, &u.Email, &t); err == nil {
+				u.CreatedAt = t.UTC().Format(time.RFC3339)
+				reviewers = append(reviewers, u)
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"client":    c,
+		"exams":     exams,
+		"reviewers": reviewers,
+		"id":        c.ID,
+		"name":      c.Name,
+		"code":      c.Code,
+		"status":    c.Status,
+		"notes":     c.Notes,
+	})
 }
 
 // ── POST /api/superadmin/clients ─────────────────────────────────

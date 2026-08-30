@@ -94,6 +94,22 @@ func (s *Server) Router() http.Handler {
 		r.Post("/api/superadmin/clients/{id}/reopen", s.reopenClient)
 		r.Post("/api/superadmin/clients/{id}/visibility", s.toggleClientVisibility)
 
+		// Per-client Reviewer Portal & Reviewer Management
+		r.Post("/api/superadmin/clients/{id}/portal", s.setClientPortal)
+		r.Get("/api/superadmin/clients/{id}/reviewers", s.listClientReviewers)
+		r.Post("/api/superadmin/clients/{id}/reviewers", s.createClientReviewer)
+		r.Delete("/api/superadmin/clients/{id}/reviewers/{userId}", s.deleteClientReviewer)
+
+		// Exams Management
+		r.Post("/api/superadmin/clients/{id}/exams", s.createExam)
+		r.Get("/api/superadmin/exams/{id}", s.getExam)
+		r.Patch("/api/superadmin/exams/{id}", s.patchExam)
+		r.Post("/api/superadmin/exams/{id}/visibility", s.toggleExamVisibility)
+		r.Post("/api/superadmin/exams/{id}/close", s.closeExam)
+		r.Post("/api/superadmin/exams/{id}/reopen", s.reopenExam)
+		r.Delete("/api/superadmin/exams/{id}", s.deleteExam)
+		r.Get("/api/superadmin/exams/{id}/completeness", s.getExamCompleteness)
+
 		// Federated dashboard (Phase 2E).
 		r.Get("/api/superadmin/dashboard", s.federatedDashboard)
 		r.Get("/api/super/dashboard", s.federatedDashboard)
