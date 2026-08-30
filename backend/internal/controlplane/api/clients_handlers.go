@@ -36,7 +36,7 @@ type clientRow struct {
 	Code          string    `json:"code,omitempty"`
 	KYCReviewMode string    `json:"kyc_review_mode"`
 	Status        string    `json:"status"`
-	Closed        int       `json:"closed"`
+	Closed        bool      `json:"closed"`
 	ExamCount     int       `json:"exam_count"`
 	APIURL        string    `json:"api_url"`
 	Notes         string    `json:"notes,omitempty"`
@@ -67,9 +67,7 @@ func (s *Server) listClients(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, "row scan: "+err.Error())
 			return
 		}
-		if c.Status == "suspended" {
-			c.Closed = 1
-		}
+		c.Closed = c.Status == "suspended"
 		var examCount int
 		_ = s.deps.DB.QueryRowContext(r.Context(),
 			`SELECT COUNT(*) FROM exams WHERE client_id = $1`, c.ID).Scan(&examCount)

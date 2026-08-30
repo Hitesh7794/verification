@@ -262,8 +262,12 @@ export default function Clients() {
                         </td>
                         <td className="px-5 py-3.5 text-slate-700 tabular-nums">{c.exam_count}</td>
                         <td className="px-5 py-3.5">
-                          <div className="flex gap-1.5 flex-wrap">
-                            {c.closed && <Pill tone="amber" dot>Ended</Pill>}
+                          <div className="flex gap-1.5 flex-wrap items-center">
+                            {Boolean(c.closed) ? (
+                              <Pill tone="amber" dot>Ended</Pill>
+                            ) : (
+                              <Pill tone="emerald" dot>Active</Pill>
+                            )}
                             <KYCReviewModePill mode={c.kyc_review_mode || 'admin'} clientName={c.name} />
                           </div>
                         </td>

@@ -164,7 +164,7 @@ export default function ClientDetail() {
                   <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{client.name}</h1>
                   <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
                     {client.visible ? <Pill tone="emerald" dot>Visible</Pill> : <Pill tone="slate" dot>Hidden</Pill>}
-                    {client.closed && <Pill tone="amber" dot>Closed</Pill>}
+                    {Boolean(client.closed) && <Pill tone="amber" dot>Closed</Pill>}
                     {client.notes && (
                       <>
                         <span className="text-slate-300">·</span>
@@ -339,7 +339,7 @@ export default function ClientDetail() {
                             <div className="flex gap-1.5 flex-wrap">
                               {tab === 'archived' ? (
                                 <>
-                                  {e.closed && <Pill tone="amber" dot>Ended</Pill>}
+                                  {Boolean(e.closed) && <Pill tone="amber" dot>Ended</Pill>}
                                   {isExpired && !e.closed && <Pill tone="amber" dot>Window Expired</Pill>}
                                   {e.visible ? <Pill tone="slate" dot>Listed</Pill> : <Pill tone="slate" dot>Unlisted</Pill>}
                                 </>

@@ -203,7 +203,7 @@ export default function ExamDetail() {
               <span className="text-slate-400">·</span>
               <span>{dateRange(exam.verification_from, exam.verification_to)}</span>
               <span className="text-slate-400">·</span>
-              {exam.closed && <Pill tone="amber" dot>Ended</Pill>}
+              {Boolean(exam.closed) && <Pill tone="amber" dot>Ended</Pill>}
               {isExpired && !exam.closed && <Pill tone="amber" dot>Archived (Window Expired)</Pill>}
               {isOngoing && <Pill tone="emerald" dot>Live</Pill>}
               {!isOngoing && !isExpired && !exam.closed && <Pill tone="blue" dot>Upcoming</Pill>}
