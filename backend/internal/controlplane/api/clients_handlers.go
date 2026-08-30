@@ -101,9 +101,7 @@ func (s *Server) getClient(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
 		return
 	}
-	if c.Status == "suspended" {
-		c.Closed = 1
-	}
+	c.Closed = c.Status == "suspended"
 
 	type examItem struct {
 		ID               int64  `json:"id"`
