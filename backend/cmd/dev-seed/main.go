@@ -145,6 +145,14 @@ func main() {
 		); err != nil {
 			log.Fatalf("seed reviewer %s: %v", c.reviewerUser, err)
 		}
+
+		// Also ensure client exists in Control Plane clients_registry
+		_, _ = tx.ExecContext(ctx, `
+			INSERT INTO clients_registry(name, kyc_review_mode, status, api_url, api_key, notes)
+			VALUES($1, 'both', 'active', 'http://localhost:8080', 'dev-internal-secret', $2)
+			ON CONFLICT (name) DO UPDATE SET status = 'active', api_url = EXCLUDED.api_url`,
+			c.name, c.notes,
+		)
 	}
 
 	// ─────────────────────────────────────────────────────────────────────────
