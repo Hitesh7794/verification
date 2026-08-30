@@ -104,12 +104,14 @@ type federatedErrorRow struct {
 func (s *Server) federatedDashboard(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
 
-	// Pull the target list once. status='active' only — suspended
-	// and deleted rows never contribute.
+	// Pull the target list once. 'active' + 'ready' contribute — both
+	// mean the DP is reachable. 'infra_pending' skipped (no DP up yet,
+	// would only add timeouts). 'suspended' and 'deleted' never
+	// contribute.
 	rows, err := s.deps.DB.QueryContext(ctx, `
 		SELECT id, name, api_url, api_key
 		  FROM clients_registry
-		 WHERE status = 'active'
+		 WHERE status IN ('active','ready')
 		 ORDER BY name`)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
@@ -282,4 +284,147 @@ func trimNetErr(s string) string {
 		return s[:117] + "…"
 	}
 	return s
+}
+
+// ── Compat shims for Rahul's frontend-control-plane ──────────────
+//
+// Rahul's FE (checked out from github/rahul-FE) was authored against
+// his own CP backend which exposed /api/super/stats + /api/super/
+// organizations. Those handlers queried DP-only tables (organizations,
+// verifications) directly — which returns zero on THIS CP because
+// verification_cp doesn't have those tables. So we implement the same
+// route names here but back them with the correct federated fan-out:
+// aggregate metrics across every active DP via /internal/metrics.
+
+// superStatsResp mirrors the shape Rahul's Dashboard.jsx expects.
+type superStatsResp struct {
+	Organizations      int64 `json:"organizations"`
+	Users              int64 `json:"users"`
+	VerificationsTotal int64 `json:"total"`
+	VerificationsToday int64 `json:"verified"`
+	Denied             int64 `json:"denied"`
+	Exams              int64 `json:"exams"`
+	Candidates         int64 `json:"candidates"`
+}
+
+// superStatsCompat fans out to every ready/active DP and sums the
+// counters. Uses the same per-DP fetcher as the canonical federated
+// dashboard so any DP going down degrades this endpoint the same way
+// (partial totals, no 500).
+func (s *Server) superStatsCompat(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	// Inline target loader — same query the main federated dashboard
+	// uses, kept local so this handler has no other-function dep.
+	rows, err := s.deps.DB.QueryContext(ctx, `
+		SELECT id, name, api_url, api_key
+		  FROM clients_registry
+		 WHERE status IN ('active','ready')
+		 ORDER BY name`)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
+		return
+	}
+	defer rows.Close()
+	type target struct{ id int64; name, apiURL, apiKey string }
+	var targets []target
+	for rows.Next() {
+		var t target
+		if err := rows.Scan(&t.id, &t.name, &t.apiURL, &t.apiKey); err == nil {
+			targets = append(targets, t)
+		}
+	}
+
+	timeout := time.Duration(s.deps.Cfg.FederatedTimeoutMS) * time.Millisecond
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+
+	var out superStatsResp
+	for _, t := range targets {
+		res := s.fetchOneDataPlaneMetrics(ctx, t.id, t.name, t.apiURL, t.apiKey, timeout)
+		if res.metrics == nil {
+			// DP unreachable — just skip its contribution.
+			continue
+		}
+		out.Organizations += res.metrics.Organizations
+		out.Users += res.metrics.Users
+		out.VerificationsTotal += res.metrics.VerificationsTotal
+		out.VerificationsToday += res.metrics.VerificationsToday
+		out.Exams += res.metrics.Exams
+		out.Candidates += res.metrics.Candidates
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// superOrganizationsCompat returns a per-DP row list — one row per
+// registered client, carrying its aggregate counts (rather than a full
+// per-org expansion which would require every DP to expose its
+// organizations list). Rahul's FE Dashboard uses this to render the
+// "connected boards fleet" table, so per-DP grain matches how it's
+// rendered.
+type superOrgRow struct {
+	ID       int64  `json:"id"`
+	Code     string `json:"code"`
+	Name     string `json:"name"`
+	Total    int64  `json:"total"`
+	Verified int64  `json:"verified"`
+	Denied   int64  `json:"denied"`
+	// Extra fields carried through for the fleet-view UI.
+	APIURL string `json:"api_url"`
+	Status string `json:"status"`
+}
+
+func (s *Server) superOrganizationsCompat(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	// Full row list including non-active statuses so the FE can render
+	// "connected", "pending infra", "suspended" side by side.
+	rows, err := s.deps.DB.QueryContext(ctx, `
+		SELECT id, name, api_url, api_key, status
+		  FROM clients_registry
+		 WHERE status <> 'deleted'
+		 ORDER BY name`)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	type target struct {
+		id     int64
+		name   string
+		apiURL string
+		apiKey string
+		status string
+	}
+	var targets []target
+	for rows.Next() {
+		var t target
+		if err := rows.Scan(&t.id, &t.name, &t.apiURL, &t.apiKey, &t.status); err != nil {
+			continue
+		}
+		targets = append(targets, t)
+	}
+
+	timeout := time.Duration(s.deps.Cfg.FederatedTimeoutMS) * time.Millisecond
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+
+	out := []superOrgRow{}
+	for _, t := range targets {
+		row := superOrgRow{
+			ID: t.id, Name: t.name, Code: t.name, APIURL: t.apiURL, Status: t.status,
+		}
+		// Only fetch metrics for statuses that indicate a reachable DP.
+		if t.status == "active" || t.status == "ready" {
+			res := s.fetchOneDataPlaneMetrics(ctx, t.id, t.name, t.apiURL, t.apiKey, timeout)
+			if res.metrics != nil {
+				row.Total = res.metrics.VerificationsTotal
+				row.Verified = res.metrics.VerificationsToday
+				// No denied counter in /internal/metrics today — leave 0.
+			}
+		}
+		out = append(out, row)
+	}
+	writeJSON(w, http.StatusOK, out)
 }

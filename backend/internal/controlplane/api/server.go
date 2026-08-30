@@ -70,6 +70,10 @@ func (s *Server) Router() http.Handler {
 	// Public: liveness probes + platform login.
 	r.Get("/api/health", s.health)
 	r.Post("/api/superadmin/login", s.login)
+	// Alias for Rahul's CP frontend which posts to /api/auth/login.
+	// Same handler, same response shape; keeps two branches of FE work
+	// (his commits + mine) compatible without a rebase.
+	r.Post("/api/auth/login", s.login)
 
 	// Authenticated superadmin surface.
 	r.Group(func(r chi.Router) {
@@ -83,6 +87,56 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/superadmin/clients/{id}", s.getClient)
 		r.Patch("/api/superadmin/clients/{id}", s.patchClient)
 		r.Delete("/api/superadmin/clients/{id}", s.deleteClient)
+		// Client lifecycle actions — Rahul's FE calls these directly
+		// instead of PATCH-ing status. Kept as thin wrappers to match.
+		r.Post("/api/superadmin/clients/{id}/close", s.closeClient)
+		r.Post("/api/superadmin/clients/{id}/reopen", s.reopenClient)
+		r.Post("/api/superadmin/clients/{id}/visibility", s.toggleClientVisibility)
+		r.Post("/api/superadmin/clients/{id}/portal", s.setClientPortal)
+		r.Get("/api/superadmin/clients/{id}/reviewers", s.listClientReviewers)
+		// Track 2: reviewer provisioning fires an internal call to the
+		// target DP; CP DB stores nothing about the reviewer.
+		r.Post("/api/superadmin/clients/{id}/reviewers", s.createReviewer)
+		// Hard-delete: fires internal DELETE on target DP. Reviewer row
+		// vanishes from DP DB; username immediately reusable.
+		r.Delete("/api/superadmin/clients/{id}/reviewers/{uid}", s.deleteReviewer)
+		// Exam create — proxies to DP's /api/internal/exams.
+		r.Post("/api/superadmin/clients/{id}/exams", s.createExam)
+		// Bulk exam CSV upload — proxies to DP legacy superadmin.
+		r.Post("/api/superadmin/clients/{id}/exams/csv", s.proxyClientExamsCSV)
+		// Exam management — all proxy to DP's /api/superadmin/exams/*
+		// using a cached DP superadmin JWT (see exam_proxy.go).
+		r.Get("/api/superadmin/exams/{id}", s.proxyExamGet)
+		r.Patch("/api/superadmin/exams/{id}", s.proxyExamPatch)
+		r.Delete("/api/superadmin/exams/{id}", s.proxyExamDelete)
+		r.Post("/api/superadmin/exams/{id}/visibility", s.proxyExamVisibility)
+		r.Post("/api/superadmin/exams/{id}/close", s.proxyExamClose)
+		r.Post("/api/superadmin/exams/{id}/reopen", s.proxyExamReopen)
+		r.Get("/api/superadmin/exams/{id}/candidates", s.proxyExamCandidatesList)
+		r.Post("/api/superadmin/exams/{id}/candidates", s.proxyExamCandidatesUpload)
+		r.Get("/api/superadmin/exams/{id}/completeness", s.proxyExamCompleteness)
+		r.Get("/api/superadmin/exams/{id}/uploads", s.proxyExamUploadsList)
+		r.Post("/api/superadmin/exams/{id}/candidates/{roll}/biometric", s.proxyExamCandidateBiometric)
+		r.Post("/api/superadmin/exams/{id}/bulk/{modality}", s.proxyExamBulkModality)
+		// Self-service password change on CP.
+		r.Post("/api/me/change-password", s.changePassword)
+		// Downloads panel stub — not implemented, returns empty list.
+		r.Get("/api/downloads", s.downloadsList)
+		// Superadmin-facing central KYC queue. Same underlying data as
+		// /api/reviewer/applications but not scoped to a single client.
+		r.Get("/api/superadmin/applications", s.superadminApplicationsList)
+		r.Get("/api/superadmin/applications/{id}", s.superadminApplicationGet)
+		r.Post("/api/superadmin/applications/{id}/approve", s.superadminApplicationApprove)
+		r.Post("/api/superadmin/applications/{id}/reject", s.superadminApplicationReject)
+		// Doc download — streams from S3 via DP internal (superadmin path).
+		r.Get("/api/superadmin/applications/{id}/docs/{doc_id}/download", s.proxyDocDownloadSuperadmin)
+		// Track 3: compat aliases for Rahul's CP frontend, which was
+		// authored against Rahul's own CP backend and calls a few
+		// endpoints under different paths. Aliases point at the same
+		// handlers as the canonical routes so the FE works with this
+		// backend as-is; no FE code churn.
+		r.Get("/api/super/stats", s.superStatsCompat)
+		r.Get("/api/super/organizations", s.superOrganizationsCompat)
 
 		// Federated dashboard (Phase 2E).
 		r.Get("/api/superadmin/dashboard", s.federatedDashboard)
@@ -107,6 +161,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/reviewer/applications/{id}", s.cpReviewerGet)
 		r.Post("/api/reviewer/applications/{id}/approve", s.cpReviewerApprove)
 		r.Post("/api/reviewer/applications/{id}/reject", s.cpReviewerReject)
+		r.Get("/api/reviewer/applications/{id}/docs/{doc_id}/download", s.proxyDocDownloadReviewer)
 	})
 
 	return r

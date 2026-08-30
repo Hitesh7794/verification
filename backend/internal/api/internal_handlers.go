@@ -40,7 +40,9 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
+	"github.com/go-chi/chi/v5"
 	"golang.org/x/crypto/bcrypt"
 
 	"github.com/veni/neet-verification/internal/db"
@@ -168,6 +170,17 @@ type internalOrgsCreateReq struct {
 	// "you're onboarded" mail. Default true; set false when the
 	// Control Plane wants to email the applicant itself.
 	SendWelcomeEmail bool `json:"send_welcome_email"`
+	// ClientID, when set, attaches the newly-provisioned org to a
+	// specific client (exam board) and fans out subscriptions for
+	// that client's currently open exams. Mirrors what Rahul's
+	// on-DP reviewer approve does — without this, an org created
+	// via /orgs/create has no client_organization_approvals row
+	// and the institute admin's catalog is empty on first login.
+	//
+	// Zero (default) skips the fan-out entirely so legacy callers
+	// keep the old behaviour. Set by the Control Plane's approve
+	// handler using the CP's target_client_id column.
+	ClientID int64 `json:"client_id,omitempty"`
 }
 
 type internalOrgsCreateResp struct {
@@ -312,6 +325,73 @@ func (s *Server) internalOrgsCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "user insert: "+err.Error())
 		return
 	}
+
+	// Multi-client fan-out — matches what the on-DP reviewer approve
+	// handler writes (client_review_handlers.go, clientApproveApplication):
+	// one client_organization_approvals row, plus organization_exam_subscriptions
+	// for every currently visible + open exam under that client. Kept in
+	// the same tx as the org + user inserts so a fan-out failure rolls
+	// the whole provisioning back.
+	//
+	// approved_by / subscribed_by / reviewed_by are NULL — the actual
+	// human reviewer lives on the Control Plane's platform_users table,
+	// which the DP has no foreign key to. The note field records
+	// provenance for audits.
+	if req.ClientID > 0 {
+		// Ensure the client actually exists on this DP; if not we can't
+		// fan out and the whole provisioning should fail rather than
+		// silently drop the coa. A missing client here means the CP's
+		// clients_registry has drifted from the DP's clients table.
+		var clientExists int
+		if err := tx.QueryRowContext(ctx,
+			`SELECT 1 FROM clients WHERE id = $1`, req.ClientID,
+		).Scan(&clientExists); err != nil {
+			if errors.Is(err, sql.ErrNoRows) {
+				writeErr(w, http.StatusBadRequest,
+					fmt.Sprintf("client_id %d not found on this data plane", req.ClientID))
+				return
+			}
+			writeErr(w, http.StatusInternalServerError, "client lookup: "+err.Error())
+			return
+		}
+
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO client_organization_approvals(
+				client_id, org_id, status, approved_by, approved_at, note
+			) VALUES ($1, $2, 'approved', NULL, NOW(), 'Approved via Control Plane')
+			ON CONFLICT (client_id, org_id) DO UPDATE SET
+				status = 'approved',
+				approved_at = NOW(),
+				note = EXCLUDED.note`,
+			req.ClientID, orgID,
+		); err != nil {
+			writeErr(w, http.StatusInternalServerError, "coa insert: "+err.Error())
+			return
+		}
+
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO organization_exam_subscriptions(
+				org_id, exam_id, status, approval_type,
+				subscribed_by, requested_at,
+				reviewed_at, reviewed_by, review_note
+			)
+			SELECT $1, e.id, 'approved', 'blanket_client',
+			       NULL, NOW(),
+			       NOW(), NULL, 'Approved via Control Plane'
+			  FROM exams e
+			 WHERE e.client_id = $2 AND e.visible = 1 AND e.closed = 0
+			ON CONFLICT (org_id, exam_id) DO UPDATE SET
+				status = 'approved',
+				approval_type = EXCLUDED.approval_type,
+				reviewed_at = EXCLUDED.reviewed_at,
+				review_note = EXCLUDED.review_note`,
+			orgID, req.ClientID,
+		); err != nil {
+			writeErr(w, http.StatusInternalServerError, "exam subs fan-out: "+err.Error())
+			return
+		}
+	}
+
 	if err := tx.Commit(); err != nil {
 		writeErr(w, http.StatusInternalServerError, "commit: "+err.Error())
 		return
@@ -352,4 +432,738 @@ func (s *Server) internalOrgsCreate(w http.ResponseWriter, r *http.Request) {
 		MagicLinkURL:  linkURL,
 		Idempotent:    false,
 	})
+}
+
+// ── POST /internal/users/create ──────────────────────────────────
+//
+// Provisions a user on this Data Plane on behalf of the Control Plane
+// (Track 2, per-client DP model — 2026-08-30). Superadmin clicks
+// "Add reviewer" on the CP UI, CP fires this endpoint on the target
+// DP, DP writes into its own users table. The CP DB never stores
+// the user or password — it's a stateless trigger, so the DP retains
+// exclusive ownership of its user credentials.
+//
+// Supported roles:
+//   - "client_reviewer"  — client_id required, scopes the reviewer to
+//                          that DP-side exam board
+//   - "admin"            — org_id required, provisions an institute admin
+//                          (rare from this path; usually /orgs/create
+//                          handles admins)
+//
+// Idempotency: username UNIQUE constraint. If the username already
+// exists we DO NOT overwrite — return 409 so the caller knows to pick
+// a different username or explicitly call a reset-password endpoint
+// (which we intentionally do NOT auto-fold into this handler so accidental
+// creates never silently clobber a live account's password).
+
+type internalUsersCreateReq struct {
+	Username    string `json:"username"`
+	Password    string `json:"password"`
+	Role        string `json:"role"`
+	DisplayName string `json:"display_name"`
+	Email       string `json:"email,omitempty"`
+	// ClientID: required when role='client_reviewer'. FKs to the DP's
+	// clients table (NOT the CP's clients_registry). If not set for a
+	// reviewer, we return 400.
+	ClientID int64 `json:"client_id,omitempty"`
+	// OrgID: required when role='admin'. FKs to the DP's organizations
+	// table. Left unset for reviewers.
+	OrgID int64 `json:"org_id,omitempty"`
+}
+
+type internalUsersCreateResp struct {
+	UserID   int64  `json:"user_id"`
+	Username string `json:"username"`
+	Role     string `json:"role"`
+}
+
+func (s *Server) internalUsersCreate(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+
+	var req internalUsersCreateReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+
+	// Trim + validate shape.
+	req.Username = strings.TrimSpace(req.Username)
+	req.DisplayName = strings.TrimSpace(req.DisplayName)
+	req.Email = strings.ToLower(strings.TrimSpace(req.Email))
+	req.Role = strings.TrimSpace(req.Role)
+
+	if req.Username == "" {
+		writeErr(w, http.StatusBadRequest, "username required")
+		return
+	}
+	if len(req.Username) > 128 {
+		writeErr(w, http.StatusBadRequest, "username too long (max 128)")
+		return
+	}
+	if len(req.Password) < 8 || len(req.Password) > 200 {
+		writeErr(w, http.StatusBadRequest, "password must be 8-200 chars")
+		return
+	}
+	if req.DisplayName == "" {
+		writeErr(w, http.StatusBadRequest, "display_name required")
+		return
+	}
+
+	// Role-specific validation.
+	var (
+		orgIDArg    any = nil
+		clientIDArg any = nil
+	)
+	switch req.Role {
+	case "client_reviewer":
+		// Auto-attach fallback: if the caller didn't supply a client_id
+		// AND this DP has exactly ONE visible+open client, use it.
+		// Matches Rahul's DP-side registerSubmit auto-attach and makes
+		// the superadmin UX bearable — they shouldn't need to know
+		// DP-internal ids. Requires exactly one candidate; 0 or >1
+		// forces the explicit-client_id path.
+		if req.ClientID <= 0 {
+			var count int
+			var candidate int64
+			if err := s.deps.DB.QueryRowContext(ctx,
+				`SELECT COUNT(*), COALESCE(MIN(id), 0)
+				   FROM clients
+				  WHERE visible = 1 AND closed = 0`,
+			).Scan(&count, &candidate); err == nil && count == 1 && candidate > 0 {
+				req.ClientID = candidate
+			}
+		}
+		if req.ClientID <= 0 {
+			writeErr(w, http.StatusBadRequest,
+				"client_id required for role=client_reviewer (this Data Plane hosts multiple exam boards; specify which)")
+			return
+		}
+		// Sanity: DP client must exist. Prevents an orphaned reviewer
+		// row that references a client that doesn't exist on THIS DP.
+		var exists int
+		err := s.deps.DB.QueryRowContext(ctx,
+			`SELECT 1 FROM clients WHERE id = $1`, req.ClientID,
+		).Scan(&exists)
+		if errors.Is(err, sql.ErrNoRows) {
+			writeErr(w, http.StatusBadRequest,
+				fmt.Sprintf("client_id %d not found on this data plane", req.ClientID))
+			return
+		}
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "client lookup: "+err.Error())
+			return
+		}
+		clientIDArg = req.ClientID
+	case "admin":
+		if req.OrgID <= 0 {
+			writeErr(w, http.StatusBadRequest, "org_id required for role=admin")
+			return
+		}
+		var exists int
+		err := s.deps.DB.QueryRowContext(ctx,
+			`SELECT 1 FROM organizations WHERE id = $1`, req.OrgID,
+		).Scan(&exists)
+		if errors.Is(err, sql.ErrNoRows) {
+			writeErr(w, http.StatusBadRequest,
+				fmt.Sprintf("org_id %d not found on this data plane", req.OrgID))
+			return
+		}
+		if err != nil {
+			writeErr(w, http.StatusInternalServerError, "org lookup: "+err.Error())
+			return
+		}
+		orgIDArg = req.OrgID
+	default:
+		writeErr(w, http.StatusBadRequest,
+			"role must be one of: client_reviewer, admin")
+		return
+	}
+
+	// bcrypt the password before any DB write. DefaultCost keeps this
+	// under a second even on the smallest EC2 tier.
+	hash, err := bcrypt.GenerateFromPassword([]byte(req.Password), bcrypt.DefaultCost)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "bcrypt: "+err.Error())
+		return
+	}
+
+	var userID int64
+	err = s.deps.DB.QueryRowContext(ctx, `
+		INSERT INTO users(username, password_hash, role, display_name, email,
+		                  org_id, client_id, activated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())
+		RETURNING id`,
+		req.Username, string(hash), req.Role, req.DisplayName,
+		nullable(req.Email),
+		orgIDArg, clientIDArg,
+	).Scan(&userID)
+	if err != nil {
+		// Differentiate the specific unique constraints so the
+		// superadmin sees actionable feedback instead of a generic
+		// "already exists". Order matters: the one-reviewer-per-client
+		// constraint (ux_users_client_reviewer_single) is more
+		// specific than username, so check it first.
+		errMsg := err.Error()
+		if strings.Contains(errMsg, "ux_users_client_reviewer_single") {
+			// Business rule: at most one active client_reviewer per
+			// client (V12 originally, V24 dropped, V25 restored). The
+			// superadmin has to delete the existing reviewer before
+			// adding another one for the same client.
+			writeErr(w, http.StatusConflict,
+				fmt.Sprintf("client_id %d already has a reviewer — delete the existing one first", req.ClientID))
+			return
+		}
+		if strings.Contains(errMsg, "users_username_key") {
+			writeErr(w, http.StatusConflict, "username already exists on this data plane")
+			return
+		}
+		if strings.Contains(errMsg, "ux_users_org_email_ci") {
+			writeErr(w, http.StatusConflict, "email already used by another user in this organisation")
+			return
+		}
+		if strings.Contains(errMsg, "unique") || strings.Contains(errMsg, "duplicate key") {
+			// Generic fallback for any other unique constraint we
+			// haven't specifically named.
+			writeErr(w, http.StatusConflict, "duplicate value violates a unique constraint: "+errMsg)
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "user insert: "+err.Error())
+		return
+	}
+
+	log.Printf("internalUsersCreate: created user id=%d username=%s role=%s (client=%v org=%v)",
+		userID, req.Username, req.Role, clientIDArg, orgIDArg)
+
+	writeJSON(w, http.StatusCreated, internalUsersCreateResp{
+		UserID:   userID,
+		Username: req.Username,
+		Role:     req.Role,
+	})
+}
+
+// ── GET /api/internal/users?role=&client_id=&org_id= ────────────
+//
+// Lists users on this Data Plane filtered by role and/or client_id
+// and/or org_id. Called by the Control Plane's listClientReviewers
+// so the superadmin UI can show the actual reviewers assigned to a
+// client (CP itself stores no user data).
+//
+// Returns a plain JSON array — matches what Rahul's FE expects at
+// `const rows = await listClientReviewers(client.id)`. Empty filters
+// mean "no filter"; combining several ANDs them.
+//
+// Deliberately does NOT return password_hash or password_plaintext.
+
+func (s *Server) internalUsersList(w http.ResponseWriter, r *http.Request) {
+	role := strings.TrimSpace(r.URL.Query().Get("role"))
+	clientIDStr := strings.TrimSpace(r.URL.Query().Get("client_id"))
+	orgIDStr := strings.TrimSpace(r.URL.Query().Get("org_id"))
+
+	where := []string{"1=1"}
+	args := []any{}
+	if role != "" {
+		where = append(where, fmt.Sprintf("role = $%d", len(args)+1))
+		args = append(args, role)
+	}
+	if clientIDStr != "" {
+		cid, err := strconv.ParseInt(clientIDStr, 10, 64)
+		if err != nil || cid <= 0 {
+			writeErr(w, http.StatusBadRequest, "bad client_id")
+			return
+		}
+		where = append(where, fmt.Sprintf("client_id = $%d", len(args)+1))
+		args = append(args, cid)
+	}
+	if orgIDStr != "" {
+		oid, err := strconv.ParseInt(orgIDStr, 10, 64)
+		if err != nil || oid <= 0 {
+			writeErr(w, http.StatusBadRequest, "bad org_id")
+			return
+		}
+		where = append(where, fmt.Sprintf("org_id = $%d", len(args)+1))
+		args = append(args, oid)
+	}
+
+	q := `SELECT id, username, role, COALESCE(display_name,''), COALESCE(email,''),
+	             client_id, org_id, disabled_at, created_at
+	        FROM users
+	       WHERE ` + strings.Join(where, " AND ") + `
+	       ORDER BY id`
+	rows, err := s.deps.DB.QueryContext(r.Context(), q, args...)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "list: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	out := []map[string]any{}
+	for rows.Next() {
+		var (
+			id                                            int64
+			username, roleCol, displayName, emailCol      string
+			clientID, orgID                               sql.NullInt64
+			disabledAt                                    sql.NullTime
+			createdAt                                     time.Time
+		)
+		if err := rows.Scan(&id, &username, &roleCol, &displayName, &emailCol,
+			&clientID, &orgID, &disabledAt, &createdAt); err != nil {
+			continue
+		}
+		row := map[string]any{
+			"id":           id,
+			"username":     username,
+			"role":         roleCol,
+			"display_name": displayName,
+			"email":        emailCol,
+			"created_at":   createdAt.UTC().Format(time.RFC3339),
+		}
+		if clientID.Valid {
+			row["client_id"] = clientID.Int64
+		}
+		if orgID.Valid {
+			row["org_id"] = orgID.Int64
+		}
+		if disabledAt.Valid {
+			row["disabled_at"] = disabledAt.Time.UTC().Format(time.RFC3339)
+		}
+		out = append(out, row)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// ── DELETE /api/internal/users/{id} ─────────────────────────────
+//
+// Hard-delete a user. Called by the Control Plane's
+// deleteClientReviewer so the superadmin can remove a reviewer and
+// then re-create with the same username (soft-disable would keep the
+// username reserved and confuse the operator).
+//
+// Because a user may have referenced rows across the DB (approved
+// KYCs, subscribed exams, wallet transactions, etc.), the handler
+// nullifies those FKs first inside a transaction — none of the
+// business tables have ON DELETE SET NULL on their user references,
+// so a bare DELETE would fail with a foreign-key violation for any
+// reviewer who's ever done anything.
+//
+// Superadmin users are refused as a safety — they must be removed
+// through a deliberate SQL command, not a CP UI click.
+
+type internalUsersDeleteResp struct {
+	Ok            bool   `json:"ok"`
+	DeletedUserID int64  `json:"deleted_user_id"`
+	Username      string `json:"username"`
+	Role          string `json:"role"`
+}
+
+func (s *Server) internalUsersDelete(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+
+	var username, role string
+	err = s.deps.DB.QueryRowContext(r.Context(),
+		`SELECT username, role FROM users WHERE id = $1`, id,
+	).Scan(&username, &role)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeErr(w, http.StatusNotFound, "user not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "lookup: "+err.Error())
+		return
+	}
+	if role == "superadmin" {
+		writeErr(w, http.StatusForbidden, "refusing to delete a superadmin user via internal API")
+		return
+	}
+
+	tx, err := s.deps.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db begin: "+err.Error())
+		return
+	}
+	defer tx.Rollback()
+
+	// Nullify every FK ref to this user id so the DELETE doesn't
+	// violate a constraint. Every one of these is nullable in the
+	// schema; the actual audit information (what happened when) is
+	// preserved on the referring rows via their own timestamps +
+	// notes. ON DELETE CASCADE tables (magic_links, operator_exams)
+	// clean themselves.
+	nullifies := []string{
+		`UPDATE client_organization_approvals SET approved_by = NULL WHERE approved_by = $1`,
+		`UPDATE organization_exam_subscriptions SET subscribed_by = NULL WHERE subscribed_by = $1`,
+		`UPDATE organization_exam_subscriptions SET reviewed_by = NULL WHERE reviewed_by = $1`,
+		`UPDATE institution_applications SET reviewed_by_user_id = NULL WHERE reviewed_by_user_id = $1`,
+		`UPDATE exam_csv_uploads SET uploaded_by = NULL WHERE uploaded_by = $1`,
+		`UPDATE wallet_transactions SET actor_user_id = NULL WHERE actor_user_id = $1`,
+		`UPDATE razorpay_orders SET actor_user_id = NULL WHERE actor_user_id = $1`,
+	}
+	for _, q := range nullifies {
+		if _, err := tx.ExecContext(r.Context(), q, id); err != nil {
+			// Table might not exist on some deployment; log + continue
+			// only for missing-relation. Any other error rolls back.
+			if strings.Contains(err.Error(), "does not exist") {
+				log.Printf("internalUsersDelete: skipping cleanup on missing table: %v", err)
+				continue
+			}
+			writeErr(w, http.StatusInternalServerError, "fk cleanup: "+err.Error())
+			return
+		}
+	}
+
+	if _, err := tx.ExecContext(r.Context(), `DELETE FROM users WHERE id = $1`, id); err != nil {
+		writeErr(w, http.StatusInternalServerError, "delete: "+err.Error())
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		writeErr(w, http.StatusInternalServerError, "commit: "+err.Error())
+		return
+	}
+
+	log.Printf("internalUsersDelete: hard-deleted user id=%d username=%s role=%s", id, username, role)
+	writeJSON(w, http.StatusOK, internalUsersDeleteResp{
+		Ok:            true,
+		DeletedUserID: id,
+		Username:      username,
+		Role:          role,
+	})
+}
+
+// ── POST /api/internal/clients/{id}/domain ──────────────────────
+//
+// Sets clients.domain — the public hostname that maps to this client
+// (e.g. "nta.13-127-17-248.nip.io"). CP calls this whenever a domain
+// is configured for a client so DP's registerInit can auto-attach
+// client_id based on the Host header.
+//
+// Body: {"domain": "<hostname>"}
+// Auth: X-Internal-API-Key.
+func (s *Server) internalClientDomain(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
+	var req struct {
+		Domain string `json:"domain"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	domain := strings.ToLower(strings.TrimSpace(req.Domain))
+	// Nil-domain support so CP can clear it later.
+	var domainArg any
+	if domain == "" {
+		domainArg = nil
+	} else {
+		domainArg = domain
+	}
+	res, err := s.deps.DB.ExecContext(r.Context(),
+		`UPDATE clients SET domain = $2, updated_at = NOW() WHERE id = $1`,
+		id, domainArg,
+	)
+	if err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "idx_clients_domain") ||
+			strings.Contains(strings.ToLower(err.Error()), "unique") {
+			writeErr(w, http.StatusConflict,
+				fmt.Sprintf("domain %q is already assigned to another client", domain))
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "update: "+err.Error())
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		writeErr(w, http.StatusNotFound, "client not found on this data plane")
+		return
+	}
+	log.Printf("internalClientDomain: dp client %d domain=%q", id, domain)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "domain": domain})
+}
+
+// ── GET /api/internal/documents/download?path=X ────────────────
+//
+// Streams a KYC document from S3 given its storage_path. The CP calls
+// this on behalf of a superadmin or reviewer clicking a doc — CP has
+// no S3 creds, DP does, so DP streams the bytes.
+//
+// Path is validated to be under a known KYC prefix so this endpoint
+// can't be abused as a generic S3 bytes-fetcher.
+func (s *Server) internalDocumentsDownload(w http.ResponseWriter, r *http.Request) {
+	path := strings.TrimSpace(r.URL.Query().Get("path"))
+	if path == "" {
+		writeErr(w, http.StatusBadRequest, "path required")
+		return
+	}
+	// Allow-list KYC-related prefixes only — never exam photos or other
+	// storage families. The CP's institution_application_documents can
+	// store paths as either bare keys ("apps/...") or full S3 URIs
+	// ("s3://bucket/_kyc/..."). Normalise by stripping any s3://<bucket>/
+	// prefix before checking + passing through to the stream helper.
+	checkPath := path
+	if strings.HasPrefix(checkPath, "s3://") {
+		// s3://bucket/key/here → key/here
+		rest := checkPath[len("s3://"):]
+		if slash := strings.IndexByte(rest, '/'); slash > 0 {
+			checkPath = rest[slash+1:]
+		}
+	}
+	if !strings.HasPrefix(checkPath, "apps/") &&
+		!strings.HasPrefix(checkPath, "institution_docs/") &&
+		!strings.HasPrefix(checkPath, "_kyc/") {
+		writeErr(w, http.StatusForbidden, "path prefix not allowed via internal API")
+		return
+	}
+	// Content-Type + Content-Disposition are set by the CALLER (CP)
+	// before streaming — this handler just returns raw bytes.
+	if err := s.streamDocBytes(w, r, path); err != nil {
+		log.Printf("internalDocumentsDownload: stream failed for %s: %v", path, err)
+	}
+}
+
+// ── POST /api/internal/clients/{id}/portal ──────────────────────
+//
+// Toggles DP-side clients.portal_enabled. Called by the CP's
+// setClientPortal handler so the CP UI's portal toggle actually
+// propagates to the DP gates (reviewer login, register-form dropdown).
+//
+// Body: {"enabled": bool}
+// Auth: X-Internal-API-Key.
+
+type internalClientPortalReq struct {
+	Enabled bool `json:"enabled"`
+}
+
+func (s *Server) internalClientPortal(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<10)
+	var req internalClientPortalReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	res, err := s.deps.DB.ExecContext(r.Context(),
+		`UPDATE clients SET portal_enabled = $2, updated_at = NOW() WHERE id = $1`,
+		id, req.Enabled,
+	)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "update: "+err.Error())
+		return
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		writeErr(w, http.StatusNotFound, "client not found on this data plane")
+		return
+	}
+	log.Printf("internalClientPortal: dp client %d portal_enabled=%v", id, req.Enabled)
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "portal_enabled": req.Enabled})
+}
+
+// ── POST /api/internal/exams ────────────────────────────────────
+//
+// Provisions an exam on this Data Plane on behalf of the Control
+// Plane. Same shape as the DP-native superadminCreateExam, but gated
+// by X-Internal-API-Key instead of a superadmin JWT. When client_id
+// is omitted, auto-attaches to the sole visible+open client on this
+// DP (matches Rahul's registerSubmit auto-attach logic + keeps the
+// per-client-DP flow simple).
+
+type internalExamCreateReq struct {
+	ClientID         int64  `json:"client_id,omitempty"`
+	Name             string `json:"name"`
+	ExamCode         string `json:"exam_code"`
+	TrustviewRef     string `json:"trustview_ref,omitempty"`
+	VerificationFrom string `json:"verification_from"`
+	VerificationTo   string `json:"verification_to"`
+	RequiresFace     *bool  `json:"requires_face,omitempty"`
+	RequiresFP       *bool  `json:"requires_fp,omitempty"`
+	RequiresIris     *bool  `json:"requires_iris,omitempty"`
+}
+
+func (s *Server) internalExamsCreate(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	var req internalExamCreateReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+
+	// Auto-attach if client_id not supplied. Matches the reviewer
+	// auto-attach: works iff DP has exactly one visible+open client.
+	if req.ClientID <= 0 {
+		var count int
+		var candidate int64
+		if err := s.deps.DB.QueryRowContext(ctx,
+			`SELECT COUNT(*), COALESCE(MIN(id), 0)
+			   FROM clients WHERE visible = 1 AND closed = 0`,
+		).Scan(&count, &candidate); err == nil && count == 1 && candidate > 0 {
+			req.ClientID = candidate
+		}
+	}
+	if req.ClientID <= 0 {
+		writeErr(w, http.StatusBadRequest,
+			"client_id required (this Data Plane hosts multiple clients; specify which)")
+		return
+	}
+
+	// Confirm client exists.
+	var exists int
+	err := s.deps.DB.QueryRowContext(ctx,
+		`SELECT 1 FROM clients WHERE id = $1`, req.ClientID,
+	).Scan(&exists)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeErr(w, http.StatusBadRequest,
+			fmt.Sprintf("client_id %d not found on this data plane", req.ClientID))
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "client lookup: "+err.Error())
+		return
+	}
+
+	name := strings.TrimSpace(req.Name)
+	code := strings.TrimSpace(req.ExamCode)
+	from := strings.TrimSpace(req.VerificationFrom)
+	to := strings.TrimSpace(req.VerificationTo)
+	if len(name) < 2 || len(name) > 200 {
+		writeErr(w, http.StatusBadRequest, "name required (2-200 chars)")
+		return
+	}
+	if len(code) < 2 || len(code) > 60 {
+		writeErr(w, http.StatusBadRequest, "exam_code required (2-60 chars)")
+		return
+	}
+	fromT, err := parseDateTimeWindow(from, false)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "verification_from must be YYYY-MM-DD or YYYY-MM-DDTHH:MM")
+		return
+	}
+	toT, err := parseDateTimeWindow(to, true)
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "verification_to must be YYYY-MM-DD or YYYY-MM-DDTHH:MM")
+		return
+	}
+	if fromT.After(toT) {
+		writeErr(w, http.StatusBadRequest, "verification_from must be <= verification_to")
+		return
+	}
+
+	// Modality flags with same defaults as superadminCreateExam.
+	rFace, rFP, rIris := true, true, false
+	if req.RequiresFace != nil {
+		rFace = *req.RequiresFace
+	}
+	if req.RequiresFP != nil {
+		rFP = *req.RequiresFP
+	}
+	if req.RequiresIris != nil {
+		rIris = *req.RequiresIris
+	}
+	if !rFace && !rFP && !rIris {
+		writeErr(w, http.StatusBadRequest,
+			"at least one biometric must be required (face, fp, or iris)")
+		return
+	}
+
+	var id int64
+	if err := s.deps.DB.QueryRowContext(ctx, `
+		INSERT INTO exams(client_id, name, exam_code, trustview_ref,
+		                  verification_from, verification_to,
+		                  requires_face, requires_fp, requires_iris)
+		VALUES($1, $2, $3, $4, $5, $6, $7, $8, $9)
+		RETURNING id`,
+		req.ClientID, name, code, nullable(strings.TrimSpace(req.TrustviewRef)),
+		fromT.Format("2006-01-02T15:04:05Z07:00"), toT.Format("2006-01-02T15:04:05Z07:00"),
+		boolToInt(rFace), boolToInt(rFP), boolToInt(rIris),
+	).Scan(&id); err != nil {
+		if strings.Contains(strings.ToLower(err.Error()), "idx_exams_code") ||
+			strings.Contains(strings.ToLower(err.Error()), "exam_code") {
+			writeErr(w, http.StatusConflict, "an exam with this code already exists")
+			return
+		}
+		writeErr(w, http.StatusInternalServerError, "insert: "+err.Error())
+		return
+	}
+	log.Printf("internalExamsCreate: created exam id=%d code=%s client_id=%d", id, code, req.ClientID)
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"id":                id,
+		"name":              name,
+		"exam_code":         code,
+		"client_id":         req.ClientID,
+		"verification_from": fromT.Format("2006-01-02T15:04:05Z07:00"),
+		"verification_to":   toT.Format("2006-01-02T15:04:05Z07:00"),
+		"requires_face":     rFace,
+		"requires_fp":       rFP,
+		"requires_iris":     rIris,
+	})
+}
+
+// ── GET /api/internal/exams?client_id=X ─────────────────────────
+//
+// Lists exams on this DP filtered by client_id (required). Used by
+// CP's getClient handler to populate the exams[] envelope for the
+// ClientDetail page.
+
+func (s *Server) internalExamsList(w http.ResponseWriter, r *http.Request) {
+	clientIDStr := strings.TrimSpace(r.URL.Query().Get("client_id"))
+	if clientIDStr == "" {
+		writeErr(w, http.StatusBadRequest, "client_id query param required")
+		return
+	}
+	clientID, err := strconv.ParseInt(clientIDStr, 10, 64)
+	if err != nil || clientID <= 0 {
+		writeErr(w, http.StatusBadRequest, "bad client_id")
+		return
+	}
+	rows, err := s.deps.DB.QueryContext(r.Context(), `
+		SELECT id, name, exam_code, COALESCE(trustview_ref,''),
+		       verification_from, verification_to,
+		       visible, closed, requires_face, requires_fp, requires_iris,
+		       created_at
+		  FROM exams WHERE client_id = $1
+		 ORDER BY created_at DESC`, clientID)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "list: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	out := []map[string]any{}
+	for rows.Next() {
+		var (
+			id                                       int64
+			name, code, tvRef                        string
+			verFrom, verTo, createdAt                time.Time
+			visible, closed, rFace, rFP, rIris       int
+		)
+		if err := rows.Scan(&id, &name, &code, &tvRef,
+			&verFrom, &verTo, &visible, &closed, &rFace, &rFP, &rIris, &createdAt); err != nil {
+			continue
+		}
+		out = append(out, map[string]any{
+			"id":                id,
+			"client_id":         clientID,
+			"name":              name,
+			"exam_code":         code,
+			"trustview_ref":     tvRef,
+			"verification_from": verFrom.UTC().Format(time.RFC3339),
+			"verification_to":   verTo.UTC().Format(time.RFC3339),
+			"visible":           visible == 1,
+			"closed":            closed == 1,
+			"requires_face":     rFace == 1,
+			"requires_fp":       rFP == 1,
+			"requires_iris":     rIris == 1,
+			"created_at":        createdAt.UTC().Format(time.RFC3339),
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
 }

@@ -518,10 +518,16 @@ func (s *Server) registerInit(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Optional client_id — verify the referenced client is real +
-	// portal-enabled before we bind the application to it. Rejecting
-	// here beats letting a request slip through with a bogus id that
-	// no reviewer can act on.
+	// Optional client_id — either the FE passed one explicitly (dropdown
+	// selection or deep-linked ?client_id=X) OR we resolve it from the
+	// Host header if the applicant hit a client-specific subdomain like
+	// nta.13-127-17-248.nip.io. That's cleaner UX + prevents an
+	// applicant on the NTA URL from accidentally submitting an SSC KYC.
+	if req.ClientID == 0 {
+		if hostClientID := s.resolveClientIDFromHost(r); hostClientID > 0 {
+			req.ClientID = hostClientID
+		}
+	}
 	if req.ClientID > 0 {
 		var portalOn bool
 		err := s.deps.DB.QueryRowContext(r.Context(),

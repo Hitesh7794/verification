@@ -1,0 +1,24 @@
+[Unit]
+Description=Verification Portal Data Plane — __SLUG__
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/opt/verificationportal-__SLUG__
+EnvironmentFile=/opt/verificationportal-__SLUG__/.env
+ExecStart=/opt/verificationportal-__SLUG__/portal-server
+Restart=on-failure
+RestartSec=3s
+StandardOutput=append:/opt/verificationportal-__SLUG__/logs/portal-server.log
+StandardError=append:/opt/verificationportal-__SLUG__/logs/portal-server.log
+
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=/opt/verificationportal-__SLUG__
+PrivateTmp=true
+
+[Install]
+WantedBy=multi-user.target

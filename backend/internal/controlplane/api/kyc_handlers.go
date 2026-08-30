@@ -155,15 +155,64 @@ type registerSubmitReq struct {
 	// falls back to the caller's own client id from the DP-auth
 	// header. Never trusted from an unauthed proxy.
 	TargetClientIDOverride int64 `json:"target_client_id,omitempty"`
+	// ExternalApplicationID is the DP's own institution_applications.id
+	// for this draft. When the DP's proxyRegisterSubmit finalises the
+	// multi-step wizard, it sends the draft's local id here so the CP
+	// can:
+	//   1. Idempotently upsert (unique index on
+	//      target_client_id + external_application_id).
+	//   2. Give the caller back the CP-side id so the DP can store
+	//      it on its own row for later status polls.
+	//
+	// Zero means single-shot flow (no DP-side draft to reconcile against).
+	ExternalApplicationID int64 `json:"external_application_id,omitempty"`
+	// DpSubmittedAt is when the applicant finalised the draft on the
+	// DP (may be earlier than CP created_at if the CP was briefly
+	// unreachable and the DP retried). Optional.
+	DpSubmittedAt string `json:"dp_submitted_at,omitempty"`
+	// Documents inherited from the DP's institution_application_documents
+	// table. The CP stores the S3 paths so the reviewer UI can render
+	// them; the DP still owns the underlying bytes in its own S3 bucket.
+	Documents []docPayload `json:"documents,omitempty"`
+	// DpClientID is the DP-side exam board this KYC belongs to (from
+	// the DP's clients table — e.g. NTA=38, SSC=39). Distinct from
+	// target_client_id, which identifies WHICH Data Plane. Persisted
+	// on the CP row so the approve handler can pass it back down to
+	// /internal/orgs/create for the multi-client fan-out (coa row +
+	// organization_exam_subscriptions). Zero → no fan-out on approve
+	// (admin catalog will be empty until manually attached).
+	DpClientID int64 `json:"dp_client_id,omitempty"`
+}
+
+// docPayload — single document row copied from the DP's
+// institution_application_documents into the CP's mirror table.
+type docPayload struct {
+	DocKind      string `json:"doc_kind"`
+	OriginalName string `json:"original_name"`
+	StoragePath  string `json:"storage_path"`
+	Mime         string `json:"mime"`
+	SizeBytes    int64  `json:"size_bytes"`
+	Sha256       string `json:"sha256"`
 }
 
 type registerSubmitResp struct {
 	ApplicationID int64  `json:"application_id"`
 	Status        string `json:"status"`
+	// Idempotent is true when the CP already had a row for
+	// (target_client_id, external_application_id) and returned the
+	// pre-existing id without re-inserting. DP callers can use this
+	// to decide whether to send doc-updates or treat as a repeat.
+	Idempotent bool `json:"idempotent,omitempty"`
 }
 
+// Max size bumped so a fully-populated payload (17 metadata fields plus
+// up to a handful of ~1 KB document rows) fits comfortably. Docs
+// themselves carry S3 paths + sha256, not blobs, so the ceiling stays
+// modest.
+const cpRegisterSubmitMaxBytes = 128 << 10
+
 func (s *Server) cpRegisterSubmit(w http.ResponseWriter, r *http.Request) {
-	r.Body = http.MaxBytesReader(w, r.Body, 32<<10)
+	r.Body = http.MaxBytesReader(w, r.Body, cpRegisterSubmitMaxBytes)
 	var req registerSubmitReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body")
@@ -195,21 +244,102 @@ func (s *Server) cpRegisterSubmit(w http.ResponseWriter, r *http.Request) {
 		targetClientID = req.TargetClientIDOverride
 	}
 
+	// Idempotency short-circuit: if the DP retried a submit for a draft
+	// we've already persisted, return the pre-existing row without
+	// hitting the unique-index paths at all. Cheaper + surfaces the
+	// idempotent=true flag so the DP knows it's a repeat.
+	if req.ExternalApplicationID > 0 && targetClientID > 0 {
+		var existingID int64
+		var existingStatus string
+		err := s.deps.DB.QueryRowContext(r.Context(),
+			`SELECT id, status FROM institution_applications
+			  WHERE target_client_id = $1 AND external_application_id = $2`,
+			targetClientID, req.ExternalApplicationID,
+		).Scan(&existingID, &existingStatus)
+		if err == nil {
+			writeJSON(w, http.StatusOK, registerSubmitResp{
+				ApplicationID: existingID,
+				Status:        existingStatus,
+				Idempotent:    true,
+			})
+			return
+		}
+		if !errors.Is(err, sql.ErrNoRows) {
+			log.Printf("cpRegisterSubmit: idempotency lookup failed (client=%d ext=%d): %v",
+				targetClientID, req.ExternalApplicationID, err)
+			// Fall through to INSERT — the unique-index will catch a
+			// true dup if the lookup only failed transiently.
+		}
+	}
+
+	// Validate documents payload before we open a tx. Cheap sanity
+	// checks — any malformed row bounces the whole submit with a clear
+	// error rather than opening a transaction we'd have to roll back.
+	for i, d := range req.Documents {
+		if d.DocKind == "" || d.OriginalName == "" || d.StoragePath == "" ||
+			d.Mime == "" || d.Sha256 == "" {
+			writeErr(w, http.StatusBadRequest,
+				fmt.Sprintf("documents[%d]: missing required field", i))
+			return
+		}
+	}
+
+	// dp_submitted_at — parse best-effort; unparseable stays NULL.
+	var dpSubmittedAt sql.NullTime
+	if s := strings.TrimSpace(req.DpSubmittedAt); s != "" {
+		if t, err := time.Parse(time.RFC3339, s); err == nil {
+			dpSubmittedAt = sql.NullTime{Time: t, Valid: true}
+		}
+	}
+
+	// One transaction: institution_applications row + N document rows.
+	// Either both land or neither does — no half-migrated KYC on the CP.
+	tx, err := s.deps.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db begin: "+err.Error())
+		return
+	}
+	defer tx.Rollback()
+
+	// Determine pending_reviewer based on the target client's
+	// kyc_review_mode. 'admin' + 'both' → superadmin first. 'client'
+	// → straight to client. Default 'admin' when we can't look up.
+	pendingReviewer := "admin"
+	if targetClientID > 0 {
+		var mode string
+		if err := tx.QueryRowContext(r.Context(),
+			`SELECT kyc_review_mode FROM clients_registry WHERE id = $1`,
+			targetClientID,
+		).Scan(&mode); err == nil {
+			if mode == "client" {
+				pendingReviewer = "client"
+			}
+			// 'admin' + 'both' both start at admin. 'both' handoff
+			// to client happens on superadmin approve, not here.
+		}
+	}
+
 	var appID int64
-	err := s.deps.DB.QueryRowContext(r.Context(), `
+	err = tx.QueryRowContext(r.Context(), `
 		INSERT INTO institution_applications(
 			status, target_client_id,
 			institution_name, institution_type, aishe_code, pan,
 			year_established, affiliation_body, approx_student_count,
 			address_line1, address_line2, city, district, state, pin_code,
 			head_name, head_designation, head_email, head_mobile,
-			submitter_ip
+			submitter_ip,
+			external_application_id, dp_submitted_at,
+			dp_client_id,
+			pending_reviewer
 		) VALUES ('pending', $1,
 			$2, $3, $4, $5,
 			$6, $7, $8,
 			$9, $10, $11, $12, $13, $14,
 			$15, $16, $17, $18,
-			$19)
+			$19,
+			$20, $21,
+			$22,
+			$23)
 		RETURNING id`,
 		nullableInt64(targetClientID),
 		req.InstitutionName, req.InstitutionType,
@@ -220,10 +350,31 @@ func (s *Server) cpRegisterSubmit(w http.ResponseWriter, r *http.Request) {
 		req.City, nullableStr(req.District), req.State, req.PinCode,
 		req.HeadName, req.HeadDesignation, req.HeadEmail, req.HeadMobile,
 		nullableStr(req.SubmitterIP),
+		nullableInt64(req.ExternalApplicationID), dpSubmittedAt,
+		nullableInt64(req.DpClientID),
+		pendingReviewer,
 	).Scan(&appID)
 	if err != nil {
 		// Unique-constraint violations bubble up as "already
 		// registered" — matches the DP's pre-migration behaviour.
+		// Idempotency index handled by short-circuit above, but a
+		// racy DP retry can still land here; treat it as a lookup +
+		// return, not a 409.
+		if strings.Contains(err.Error(), "idx_cp_inst_apps_external_ref") &&
+			req.ExternalApplicationID > 0 && targetClientID > 0 {
+			var raceID int64
+			var raceStatus string
+			if lookupErr := s.deps.DB.QueryRowContext(r.Context(),
+				`SELECT id, status FROM institution_applications
+				  WHERE target_client_id = $1 AND external_application_id = $2`,
+				targetClientID, req.ExternalApplicationID,
+			).Scan(&raceID, &raceStatus); lookupErr == nil {
+				writeJSON(w, http.StatusOK, registerSubmitResp{
+					ApplicationID: raceID, Status: raceStatus, Idempotent: true,
+				})
+				return
+			}
+		}
 		if strings.Contains(err.Error(), "idx_cp_inst_apps_head_email_active") {
 			writeErr(w, http.StatusConflict, "an application with this head email is already on file")
 			return
@@ -241,6 +392,32 @@ func (s *Server) cpRegisterSubmit(w http.ResponseWriter, r *http.Request) {
 			return
 		}
 		writeErr(w, http.StatusInternalServerError, "insert: "+err.Error())
+		return
+	}
+
+	// Documents. Insert one row per doc. Small N (typically 2-4), so no
+	// batch insert needed. CHECK constraint on doc_kind bubbles up as
+	// 400 with the kind that broke.
+	for i, d := range req.Documents {
+		if _, err := tx.ExecContext(r.Context(), `
+			INSERT INTO institution_application_documents(
+				application_id, doc_kind, original_name, storage_path, mime, size_bytes, sha256
+			) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+			appID, d.DocKind, d.OriginalName, d.StoragePath, d.Mime, d.SizeBytes, d.Sha256,
+		); err != nil {
+			if strings.Contains(err.Error(), "institution_application_documents_doc_kind_check") {
+				writeErr(w, http.StatusBadRequest,
+					fmt.Sprintf("documents[%d]: unknown doc_kind %q", i, d.DocKind))
+				return
+			}
+			writeErr(w, http.StatusInternalServerError,
+				fmt.Sprintf("insert document [%d]: %v", i, err))
+			return
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		writeErr(w, http.StatusInternalServerError, "db commit: "+err.Error())
 		return
 	}
 
@@ -325,15 +502,30 @@ func (s *Server) cpReviewerList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Reviewer's queue: pending rows require pending_reviewer='client'
+	// so superadmin-first ('both' mode pre-handoff) apps don't leak
+	// into the client's inbox. Approved + rejected rows are visible
+	// regardless — reviewer needs to see the history of their client's
+	// decisions.
+	var (
+		reviewerWhere string
+		args          []any
+	)
+	if status == "pending" {
+		reviewerWhere = `target_client_id = $1 AND status = $2 AND pending_reviewer = 'client'`
+		args = []any{clientID, status}
+	} else {
+		reviewerWhere = `target_client_id = $1 AND status = $2`
+		args = []any{clientID, status}
+	}
 	rows, err := s.deps.DB.QueryContext(r.Context(), `
 		SELECT id, status, institution_name, institution_type,
 		       city, state, head_name, head_email, head_mobile,
 		       COALESCE(aishe_code, ''), created_at
 		  FROM institution_applications
-		 WHERE target_client_id = $1
-		   AND status = $2
+		 WHERE `+reviewerWhere+`
 		 ORDER BY created_at DESC
-		 LIMIT 200`, clientID, status,
+		 LIMIT 200`, args...,
 	)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
@@ -416,29 +608,87 @@ func (s *Server) cpReviewerGet(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
 		return
 	}
+	// Docs — same shape the FE expects (docs[] with doc_id per row +
+	// download_url pointing at the CP proxy that streams from S3).
+	docs := []map[string]any{}
+	docsRows, dErr := s.deps.DB.QueryContext(r.Context(), `
+		SELECT id, doc_kind, original_name, storage_path, mime, size_bytes, sha256, created_at
+		  FROM institution_application_documents
+		 WHERE application_id = $1
+		 ORDER BY id`, id)
+	if dErr == nil {
+		defer docsRows.Close()
+		for docsRows.Next() {
+			var (
+				dID       int64
+				dKind, dName, dPath, dMime, dSha string
+				dSize     int64
+				dCreated  time.Time
+			)
+			if err := docsRows.Scan(&dID, &dKind, &dName, &dPath, &dMime, &dSize, &dSha, &dCreated); err != nil {
+				continue
+			}
+			docs = append(docs, map[string]any{
+				"id":            dID,
+				"doc_id":        dID,
+				"doc_kind":      dKind,
+				"original_name": dName,
+				"storage_path":  dPath,
+				"mime":          dMime,
+				"size_bytes":    dSize,
+				"sha256":        dSha,
+				"created_at":    dCreated.UTC().Format(time.RFC3339),
+				// Reviewer's browser is on the DP subdomain, so the
+				// download URL must be a DP-side path — DP's
+				// proxyReviewerDocDownload forwards to us.
+				"download_url":  fmt.Sprintf("/api/client/applications/%d/docs/%d", id, dID),
+			})
+		}
+	}
+
+	// Enrich with the target client's name + kyc_review_mode so the FE
+	// header can render "NTA · reviewer" without a second lookup.
+	var clientName, clientKycMode string
+	_ = s.deps.DB.QueryRowContext(r.Context(),
+		`SELECT name, kyc_review_mode FROM clients_registry WHERE id = $1`, clientID,
+	).Scan(&clientName, &clientKycMode)
+
+	// Combined address for the FE's "address_line" field.
+	addressLine := row.AddressLine1
+	if row.AddressLine2.Valid && strings.TrimSpace(row.AddressLine2.String) != "" {
+		addressLine = row.AddressLine1 + ", " + row.AddressLine2.String
+	}
+
 	writeJSON(w, http.StatusOK, map[string]any{
-		"id":                   row.ID,
-		"status":               row.Status,
-		"institution_name":     row.InstitutionName,
-		"institution_type":     row.InstitutionType,
-		"aishe_code":           row.AisheCode.String,
-		"pan":                  row.Pan.String,
-		"year_established":     row.YearEstablished.Int64,
-		"affiliation_body":     row.AffiliationBody.String,
-		"approx_student_count": row.ApproxStudentCount.Int64,
-		"address_line1":        row.AddressLine1,
-		"address_line2":        row.AddressLine2.String,
-		"city":                 row.City,
-		"district":             row.District.String,
-		"state":                row.State,
-		"pin_code":             row.PinCode,
-		"head_name":            row.HeadName,
-		"head_designation":     row.HeadDesignation,
-		"head_email":           row.HeadEmail,
-		"head_mobile":          row.HeadMobile,
-		"review_note":          row.ReviewNote.String,
-		"reviewed_at":          nullTimeToString(row.ReviewedAt),
-		"created_at":           row.CreatedAt.UTC().Format(time.RFC3339),
+		"id":                     row.ID,
+		"status":                 row.Status,
+		"institution_name":       row.InstitutionName,
+		"institution_type":       row.InstitutionType,
+		"aishe_code":             row.AisheCode.String,
+		"pan":                    row.Pan.String,
+		"year_established":       row.YearEstablished.Int64,
+		"affiliation_body":       row.AffiliationBody.String,
+		"approx_student_count":   row.ApproxStudentCount.Int64,
+		"address_line":           addressLine,
+		"address_line1":          row.AddressLine1,
+		"address_line2":          row.AddressLine2.String,
+		"city":                   row.City,
+		"district":               row.District.String,
+		"state":                  row.State,
+		"pin_code":               row.PinCode,
+		"head_name":              row.HeadName,
+		"head_designation":       row.HeadDesignation,
+		"head_email":             row.HeadEmail,
+		"head_mobile":            row.HeadMobile,
+		"review_note":            row.ReviewNote.String,
+		"reviewed_at":            nullTimeToString(row.ReviewedAt),
+		"created_at":             row.CreatedAt.UTC().Format(time.RFC3339),
+		"client_id":              clientID,
+		"client_name":            clientName,
+		"client_kyc_review_mode": clientKycMode,
+		"can_act":                row.Status == "pending",
+		"docs":                   docs,
+		"documents":              docs,
 	})
 }
 
@@ -490,14 +740,15 @@ func (s *Server) cpReviewerApprove(w http.ResponseWriter, r *http.Request) {
 	var (
 		status, instName, headName, headDesignation, headEmail string
 		aishe                                                   sql.NullString
+		dpClientID                                              sql.NullInt64
 	)
 	err = tx.QueryRowContext(r.Context(), `
 		SELECT status, institution_name, head_name, head_designation,
-		       head_email, aishe_code
+		       head_email, aishe_code, dp_client_id
 		  FROM institution_applications
 		 WHERE id = $1 AND target_client_id = $2
 		 FOR UPDATE`, id, clientID,
-	).Scan(&status, &instName, &headName, &headDesignation, &headEmail, &aishe)
+	).Scan(&status, &instName, &headName, &headDesignation, &headEmail, &aishe, &dpClientID)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeErr(w, http.StatusNotFound, "application not found")
 		return
@@ -539,6 +790,19 @@ func (s *Server) cpReviewerApprove(w http.ResponseWriter, r *http.Request) {
 	// losing the fan-out.
 	resp := approveResp{ApplicationID: id, Status: "approved"}
 
+	// Fan-out ClientID is the DP-SIDE exam-board id (dp_client_id column
+	// on the CP row) — NOT the CP's own clients_registry.id (which
+	// identifies the whole DP, not any specific board on it). When the
+	// applicant deep-linked to a client during registration, dp_client_id
+	// carries their choice through. When they didn't (or landed on a
+	// generic form), dp_client_id is NULL and the fan-out is skipped —
+	// the org is still provisioned, but the admin will see an empty
+	// catalog until superadmin manually attaches them.
+	fanoutClient := int64(0)
+	if dpClientID.Valid {
+		fanoutClient = dpClientID.Int64
+	}
+
 	provResp, provErr := s.fireInternalOrgsCreate(r.Context(), clientID, internalOrgsCreatePayload{
 		ExternalApplicationID: id,
 		InstitutionName:       instName,
@@ -547,6 +811,7 @@ func (s *Server) cpReviewerApprove(w http.ResponseWriter, r *http.Request) {
 		HeadEmail:             headEmail,
 		AisheCode:             aishe.String,
 		SendWelcomeEmail:      true,
+		ClientID:              fanoutClient,
 	})
 	if provErr != nil {
 		resp.ProvisioningError = provErr.Error()
@@ -614,6 +879,11 @@ type internalOrgsCreatePayload struct {
 	HeadEmail             string `json:"head_email"`
 	AisheCode             string `json:"aishe_code,omitempty"`
 	SendWelcomeEmail      bool   `json:"send_welcome_email"`
+	// ClientID tells the DP to also write a client_organization_approvals
+	// row + fan out organization_exam_subscriptions for that client's
+	// open exams. Populated from institution_applications.target_client_id.
+	// Zero skips the fan-out (legacy behaviour).
+	ClientID int64 `json:"client_id,omitempty"`
 }
 
 type internalOrgsCreateReply struct {

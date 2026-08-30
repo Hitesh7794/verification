@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	_ "embed"
 	"fmt"
+	"strings"
 )
 
 //go:embed schema.sql
@@ -156,7 +157,262 @@ func Migrate(d *sql.DB) error {
 		}
 	}
 
+	if !applied[23] {
+		if err := applyV23CpApplicationIdRef(ctx, d); err != nil {
+			return fmt.Errorf("apply v23 cp_application_id_ref: %w", err)
+		}
+	}
+
+	if !applied[24] {
+		if err := applyV24DropOneReviewerPerClient(ctx, d); err != nil {
+			return fmt.Errorf("apply v24 drop_one_reviewer_per_client: %w", err)
+		}
+	}
+
+	if !applied[25] {
+		if err := applyV25RestoreOneReviewerPerClient(ctx, d); err != nil {
+			return fmt.Errorf("apply v25 restore_one_reviewer_per_client: %w", err)
+		}
+	}
+
+	if !applied[26] {
+		if err := applyV26ClientDomain(ctx, d); err != nil {
+			return fmt.Errorf("apply v26 client_domain: %w", err)
+		}
+	}
+
 	return nil
+}
+
+// applyV26ClientDomain adds clients.domain — the public hostname
+// applicants use to reach a specific client's register wizard, and
+// reviewers use to sign in to their client's inbox.
+//
+// registerInit reads r.Host, looks up clients.domain, and auto-sets
+// the application's client_id when the applicant hits a
+// client-specific subdomain. Removes the need for a client-picker
+// dropdown on the register form when the URL already tells us which
+// client this is for.
+//
+// Case-insensitive unique index — real DNS is case-insensitive and
+// browsers may send Host in any case, so normalise on lookup.
+func applyV26ClientDomain(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmts := []string{
+		`ALTER TABLE clients ADD COLUMN IF NOT EXISTS domain TEXT`,
+		`CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_domain
+		    ON clients(LOWER(domain))
+		    WHERE domain IS NOT NULL AND domain <> ''`,
+	}
+	for _, s := range stmts {
+		if _, err := tx.ExecContext(ctx, s); err != nil {
+			return fmt.Errorf("v26 stmt: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)
+		 ON CONFLICT (version) DO NOTHING`,
+		26, "client_domain",
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// applyV25RestoreOneReviewerPerClient reinstates the "at most one
+// active client_reviewer per client" rule that V12 originally added
+// and V24 dropped. Product decision: superadmin wants a single
+// reviewer per client to keep accountability crisp; replacing means
+// explicit delete + create.
+//
+// Requires cleanup: this migration runs on prod DBs that may already
+// have MULTIPLE active reviewers per client (V24's window let extras
+// in). Before creating the unique index we hard-delete the extras
+// (keeping the OLDEST reviewer per client — usually the one the
+// superadmin created first + hasn't touched since). FK refs from the
+// extras are nullified in the same tx so the DELETE doesn't violate.
+//
+// After this migration, any second-reviewer attempt via
+// /api/internal/users/create hits the unique constraint and the
+// handler returns a specific 409 with the message "client_id X already
+// has an active reviewer — disable them first".
+func applyV25RestoreOneReviewerPerClient(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// 1. Pick the extras (all-but-oldest active reviewer per client).
+	//    Collect their ids into a temp view we can reuse.
+	//    Using MIN(id) as "oldest" because id is a monotonic serial.
+	extrasSQL := `
+		WITH oldest AS (
+			SELECT client_id, MIN(id) AS keep_id
+			  FROM users
+			 WHERE role = 'client_reviewer'
+			   AND disabled_at IS NULL
+			   AND client_id IS NOT NULL
+			 GROUP BY client_id
+		)
+		SELECT u.id
+		  FROM users u
+		  JOIN oldest o ON o.client_id = u.client_id
+		 WHERE u.role = 'client_reviewer'
+		   AND u.disabled_at IS NULL
+		   AND u.id <> o.keep_id`
+
+	// 2. Nullify FK refs from extras — same list as
+	//    internalUsersDelete. Keeps audit trail nullable so DELETE
+	//    doesn't fail on any constraint.
+	nullifies := []string{
+		`UPDATE client_organization_approvals SET approved_by = NULL WHERE approved_by IN (` + extrasSQL + `)`,
+		`UPDATE organization_exam_subscriptions SET subscribed_by = NULL WHERE subscribed_by IN (` + extrasSQL + `)`,
+		`UPDATE organization_exam_subscriptions SET reviewed_by = NULL WHERE reviewed_by IN (` + extrasSQL + `)`,
+		`UPDATE institution_applications SET reviewed_by_user_id = NULL WHERE reviewed_by_user_id IN (` + extrasSQL + `)`,
+		`UPDATE exam_csv_uploads SET uploaded_by = NULL WHERE uploaded_by IN (` + extrasSQL + `)`,
+		`UPDATE wallet_transactions SET actor_user_id = NULL WHERE actor_user_id IN (` + extrasSQL + `)`,
+		`UPDATE razorpay_orders SET actor_user_id = NULL WHERE actor_user_id IN (` + extrasSQL + `)`,
+	}
+	for _, q := range nullifies {
+		if _, err := tx.ExecContext(ctx, q); err != nil {
+			// If a referring table doesn't exist yet on this deployment,
+			// log + skip (won't have any refs to nullify).
+			if strings.Contains(err.Error(), "does not exist") {
+				continue
+			}
+			return fmt.Errorf("v25 cleanup nullify: %w", err)
+		}
+	}
+
+	// 3. Hard-delete the extras.
+	res, err := tx.ExecContext(ctx, `DELETE FROM users WHERE id IN (`+extrasSQL+`)`)
+	if err != nil {
+		return fmt.Errorf("v25 delete extras: %w", err)
+	}
+	n, _ := res.RowsAffected()
+
+	// 4. Drop the non-unique helper index V24 added so we can
+	//    replace it with the unique one.
+	if _, err := tx.ExecContext(ctx,
+		`DROP INDEX IF EXISTS idx_users_client_reviewer`,
+	); err != nil {
+		return fmt.Errorf("drop idx_users_client_reviewer: %w", err)
+	}
+
+	// 5. Recreate V12's unique partial index.
+	if _, err := tx.ExecContext(ctx,
+		`CREATE UNIQUE INDEX IF NOT EXISTS ux_users_client_reviewer_single
+		    ON users(client_id)
+		    WHERE role = 'client_reviewer' AND disabled_at IS NULL`,
+	); err != nil {
+		return fmt.Errorf("create ux_users_client_reviewer_single: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)
+		 ON CONFLICT (version) DO NOTHING`,
+		25, "restore_one_reviewer_per_client",
+	); err != nil {
+		return err
+	}
+	if err := tx.Commit(); err != nil {
+		return err
+	}
+	// Log after commit so it's visible in journalctl on first boot.
+	fmt.Printf("v25: hard-deleted %d duplicate client_reviewer users; unique constraint restored\n", n)
+	return nil
+}
+
+// applyV24DropOneReviewerPerClient drops the ux_users_client_reviewer_single
+// unique index that Rahul added in V12. That constraint enforced "at
+// most one active reviewer per client", which is an artificial limit
+// — a real board needs multiple reviewers (weekend cover, escalation).
+//
+// Login continues to work fine with multiple reviewers per client:
+// authentication is keyed on username (unique), and the KYC-inbox
+// filter uses client_id from the JWT, so each reviewer sees the same
+// queue. Nothing in the code path assumes "only one reviewer".
+//
+// Kept as a separate migration (not folded into V12) so history stays
+// legible — someone reading V12's comment will see V24 dropped it and
+// can find the rationale here.
+func applyV24DropOneReviewerPerClient(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx,
+		`DROP INDEX IF EXISTS ux_users_client_reviewer_single`,
+	); err != nil {
+		return fmt.Errorf("drop ux_users_client_reviewer_single: %w", err)
+	}
+	// Replace with a non-unique btree so client-scoped queries stay
+	// index-driven (reviewer inbox queries filter on client_id).
+	if _, err := tx.ExecContext(ctx,
+		`CREATE INDEX IF NOT EXISTS idx_users_client_reviewer
+		    ON users(client_id)
+		    WHERE role = 'client_reviewer' AND disabled_at IS NULL`,
+	); err != nil {
+		return fmt.Errorf("create idx_users_client_reviewer: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)
+		 ON CONFLICT (version) DO NOTHING`,
+		24, "drop_one_reviewer_per_client",
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// applyV23CpApplicationIdRef adds institution_applications.cp_application_id,
+// the bridge between a DP-side draft and the row the Control Plane
+// created for it in Phase 3. Populated by proxyRegisterSubmit AFTER a
+// successful CP round-trip so subsequent status polls
+// (proxyRegisterStatus) can look up the CP row without a translation
+// table. NULL means the draft never reached the CP (either because
+// SERVE_KYC_LOCALLY=true or because a CP submit failed) — in that case
+// the DP falls back to its own local status.
+//
+// Version 23 (not 21) skips the numbers a co-developer's branch reserves
+// on their local fork; on merge the ordering is stable either way
+// because each migration is idempotent under `applied[N]`.
+func applyV23CpApplicationIdRef(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx,
+		`ALTER TABLE institution_applications
+		    ADD COLUMN IF NOT EXISTS cp_application_id BIGINT`,
+	); err != nil {
+		return fmt.Errorf("add cp_application_id column: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`CREATE INDEX IF NOT EXISTS idx_inst_apps_cp_app
+		    ON institution_applications(cp_application_id)
+		    WHERE cp_application_id IS NOT NULL`,
+	); err != nil {
+		return fmt.Errorf("index cp_application_id: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)
+		 ON CONFLICT (version) DO NOTHING`,
+		23, "cp_application_id_ref",
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // applyV20DropOpsAdminRole retires the ops_admin role entirely. It:

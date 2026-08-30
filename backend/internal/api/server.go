@@ -186,6 +186,10 @@ func (s *Server) Router() http.Handler {
 	// /api/register/{submit,{id}} which own institution_applications
 	// writes. Rollback = flip the env flag, no code change.
 	r.Post("/api/register/check", s.registerCheckIdentifiers)
+	// Public: tells the FE which client this subdomain belongs to so
+	// the register wizard can hide the client-picker + show a branded
+	// header. 404 if the domain is unmapped.
+	r.Get("/api/register/current-client", s.registerCurrentClient)
 	r.Post("/api/register/init", s.registerInit)
 	r.Post("/api/register/{id}/docs", s.registerUploadDoc)
 	r.Delete("/api/register/{id}/docs/{doc_id}", s.registerDeleteDoc)
@@ -237,6 +241,21 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/internal/health", s.internalHealth)
 		r.Get("/api/internal/metrics", s.internalMetrics)
 		r.Post("/api/internal/orgs/create", s.internalOrgsCreate)
+		// Track 2 (per-client DP model): Control Plane calls this to
+		// provision reviewer / admin users on this Data Plane. User rows
+		// live on the DP only — the CP DB never stores credentials.
+		r.Post("/api/internal/users/create", s.internalUsersCreate)
+		r.Get("/api/internal/users", s.internalUsersList)
+		r.Delete("/api/internal/users/{id}", s.internalUsersDelete)
+		// Exam catalog operations for the CP superadmin UI. Same auth
+		// (X-Internal-API-Key), same DB writes as superadminCreateExam,
+		// no per-user JWT round-trip needed.
+		r.Post("/api/internal/exams", s.internalExamsCreate)
+		r.Get("/api/internal/exams", s.internalExamsList)
+		r.Post("/api/internal/clients/{id}/portal", s.internalClientPortal)
+		r.Post("/api/internal/clients/{id}/domain", s.internalClientDomain)
+		// Stream KYC docs from S3 on behalf of CP (superadmin + reviewer).
+		r.Get("/api/internal/documents/download", s.internalDocumentsDownload)
 	})
 
 	r.Group(func(r chi.Router) {
@@ -424,13 +443,14 @@ func (s *Server) Router() http.Handler {
 			r.Get("/api/client/applications/{id}",               s.requireRole("client_reviewer")(s.clientGetApplication))
 			r.Post("/api/client/applications/{id}/approve",      s.requireRole("client_reviewer")(s.clientApproveApplication))
 			r.Post("/api/client/applications/{id}/reject",       s.requireRole("client_reviewer")(s.clientRejectApplication))
+			r.Get("/api/client/applications/{id}/docs/{doc_id}", s.requireRole("client_reviewer")(s.clientDownloadDoc))
 		} else {
 			r.Get("/api/client/applications",                    s.requireRole("client_reviewer")(s.proxyReviewerList))
 			r.Get("/api/client/applications/{id}",               s.requireRole("client_reviewer")(s.proxyReviewerGet))
 			r.Post("/api/client/applications/{id}/approve",      s.requireRole("client_reviewer")(s.proxyReviewerApprove))
 			r.Post("/api/client/applications/{id}/reject",       s.requireRole("client_reviewer")(s.proxyReviewerReject))
+			r.Get("/api/client/applications/{id}/docs/{doc_id}", s.requireRole("client_reviewer")(s.proxyReviewerDocDownload))
 		}
-		r.Get("/api/client/applications/{id}/docs/{doc_id}", s.requireRole("client_reviewer")(s.clientDownloadDoc))
 		r.Post("/api/client/applications/bulk-approve",      s.requireRole("client_reviewer")(s.clientBulkApproveApplications))
 		r.Post("/api/client/applications/bulk-reject",       s.requireRole("client_reviewer")(s.clientBulkRejectApplications))
 
