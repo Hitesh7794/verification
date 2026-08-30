@@ -108,6 +108,12 @@ func (s *Server) proxyToCP(w http.ResponseWriter, r *http.Request, cpPath string
 		req.Header.Set("X-Forwarded-For", callerIP)
 	}
 
+	// Forward reviewer identity if authenticated on Data Plane
+	if c := claimsFrom(r); c != nil {
+		req.Header.Set("X-Data-Plane-Reviewer-User", c.Username)
+		req.Header.Set("X-Data-Plane-Reviewer-ID", strconv.FormatInt(c.UserID, 10))
+	}
+
 	resp, err := client.Do(req)
 	if err != nil {
 		// context.DeadlineExceeded shows up here as a wrapped

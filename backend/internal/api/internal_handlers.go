@@ -312,6 +312,80 @@ func (s *Server) internalOrgsCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "user insert: "+err.Error())
 		return
 	}
+
+	// 3. Client Board approval association & exam catalog subscriptions:
+	dpClientID := s.deps.Cfg.DataPlaneClientID
+	if dpClientID > 0 {
+		_, _ = tx.ExecContext(ctx, `
+			INSERT INTO client_organization_approvals(client_id, org_id, status, approved_by, approved_at, note)
+			VALUES($1, $2, 'approved', $3, NOW(), 'Approved via Control Plane KYC')
+			ON CONFLICT (client_id, org_id) DO UPDATE SET
+				status = 'approved',
+				approved_by = EXCLUDED.approved_by,
+				approved_at = NOW(),
+				note = EXCLUDED.note`,
+			dpClientID, orgID, userID,
+		)
+		_, _ = tx.ExecContext(ctx, `
+			INSERT INTO organization_exam_subscriptions(
+			    org_id, exam_id, status, approval_type,
+			    subscribed_by, requested_at,
+			    reviewed_at, reviewed_by, review_note)
+			SELECT $1, e.id, 'approved', 'blanket_client',
+			       $2, NOW(),
+			       NOW(), $2, 'Auto-granted on KYC approval'
+			  FROM exams e
+			 WHERE e.client_id = $3 AND e.visible = 1 AND e.closed = 0
+			ON CONFLICT (org_id, exam_id) DO UPDATE SET
+			    status = 'approved',
+			    approval_type = EXCLUDED.approval_type,
+			    reviewed_at = EXCLUDED.reviewed_at,
+			    reviewed_by = EXCLUDED.reviewed_by,
+			    review_note = EXCLUDED.review_note`,
+			orgID, userID, dpClientID,
+		)
+	} else {
+		// Fallback for generic multi-client dev environment:
+		_, _ = tx.ExecContext(ctx, `
+			INSERT INTO client_organization_approvals(client_id, org_id, status, approved_by, approved_at, note)
+			SELECT c.id, $1, 'approved', $2, NOW(), 'Approved via Control Plane KYC'
+			  FROM clients c
+			 WHERE c.visible = 1 AND c.closed = 0
+			ON CONFLICT (client_id, org_id) DO UPDATE SET
+				status = 'approved',
+				approved_by = EXCLUDED.approved_by,
+				approved_at = NOW(),
+				note = EXCLUDED.note`,
+			orgID, userID,
+		)
+		_, _ = tx.ExecContext(ctx, `
+			INSERT INTO organization_exam_subscriptions(
+			    org_id, exam_id, status, approval_type,
+			    subscribed_by, requested_at,
+			    reviewed_at, reviewed_by, review_note)
+			SELECT $1, e.id, 'approved', 'blanket_client',
+			       $2, NOW(),
+			       NOW(), $2, 'Auto-granted on KYC approval'
+			  FROM exams e
+			 WHERE e.visible = 1 AND e.closed = 0
+			ON CONFLICT (org_id, exam_id) DO UPDATE SET
+			    status = 'approved',
+			    approval_type = EXCLUDED.approval_type,
+			    reviewed_at = EXCLUDED.reviewed_at,
+			    reviewed_by = EXCLUDED.reviewed_by,
+			    review_note = EXCLUDED.review_note`,
+			orgID, userID,
+		)
+	}
+
+	// 4. Initial wallet creation:
+	_, _ = tx.ExecContext(ctx, `
+		INSERT INTO wallets(org_id, balance_paise, updated_at)
+		VALUES($1, 0, NOW())
+		ON CONFLICT (org_id) DO NOTHING`,
+		orgID,
+	)
+
 	if err := tx.Commit(); err != nil {
 		writeErr(w, http.StatusInternalServerError, "commit: "+err.Error())
 		return

@@ -235,8 +235,11 @@ func (s *Server) Router() http.Handler {
 	r.Group(func(r chi.Router) {
 		r.Use(s.internalAuth)
 		r.Get("/api/internal/health", s.internalHealth)
+		r.Get("/internal/health", s.internalHealth)
 		r.Get("/api/internal/metrics", s.internalMetrics)
+		r.Get("/internal/metrics", s.internalMetrics)
 		r.Post("/api/internal/orgs/create", s.internalOrgsCreate)
+		r.Post("/internal/orgs/create", s.internalOrgsCreate)
 	})
 
 	r.Group(func(r chi.Router) {
