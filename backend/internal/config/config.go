@@ -145,6 +145,56 @@ type Config struct {
 	AuthKeySMSCompany     string
 	AuthKeySMSCountryCode string
 	AuthKeySMSURL         string
+
+	// ─── Control Plane <-> Data Plane bridge (multi-tenant migration
+	// Phase 1) ────────────────────────────────────────────────────────
+	//
+	// The Data Plane exposes an /internal/* API — health, metrics, and
+	// org provisioning — that the Control Plane calls server-to-server.
+	// Two layers of auth guard the surface:
+	//
+	//   1. InternalAPIKey — shared secret required in the
+	//      X-Internal-API-Key header. Empty in dev unless explicitly set;
+	//      when empty the middleware refuses every /internal/* request
+	//      (fail-closed), so a deployment that hasn't configured this
+	//      accidentally can't expose the surface. Rotate by updating
+	//      both the Control Plane and every Data Plane in one window.
+	//
+	//   2. ControlPlaneAllowedIPs — optional CIDR/IP allowlist. When
+	//      non-empty, /internal/* only accepts requests whose remote IP
+	//      (post-proxy-header resolution via clientIP()) is in this
+	//      list. Empty = no IP filter (rely on the shared secret + a
+	//      firewall / security group upstream). Format: comma-separated,
+	//      e.g. "10.0.1.5,10.0.2.0/24".
+	InternalAPIKey          string
+	ControlPlaneAllowedIPs  []string
+
+	// ─── Phase 3 (KYC reverse-proxy) ─────────────────────────────
+	//
+	// When this Data Plane's /api/register/* and /api/client/*
+	// endpoints receive a request, they forward it to
+	// ControlPlaneURL after attaching two auth headers:
+	//   X-Data-Plane-Client-ID : DataPlaneClientID (numeric)
+	//   X-Data-Plane-Api-Key   : DataPlaneAPIKey   (the value the
+	//                            superadmin echoed once when
+	//                            creating this row in
+	//                            clients_registry on the Control
+	//                            Plane; also stored on the CP so it
+	//                            can constant-time compare).
+	//
+	// ServeKYCLocally is the feature flag: when true the DP keeps
+	// its own local register/reviewer handlers running (single-DB
+	// legacy mode). When false the same URLs get replaced by the
+	// reverse-proxy handlers. Default true during rollout so an
+	// unconfigured deployment doesn't silently break.
+	//
+	// All four values empty on dev machines that don't yet talk to
+	// a Control Plane — proxy attempts then log + 503 rather than
+	// hang or masquerade as success.
+	ControlPlaneURL   string
+	DataPlaneClientID int64
+	DataPlaneAPIKey   string
+	ServeKYCLocally   bool
 }
 
 func loadDotEnv() {
@@ -211,6 +261,23 @@ func Load() Config {
 		AuthKeySMSCompany:         envOr("AUTHKEY_SMS_COMPANY", "seQRview"),
 		AuthKeySMSCountryCode:     envOr("AUTHKEY_SMS_COUNTRY_CODE", "91"),
 		AuthKeySMSURL:             envOr("AUTHKEY_SMS_URL", "https://api.authkey.io/request"),
+
+		// Multi-tenant Phase 1 — Control Plane bridge. Both empty by
+		// default; the /internal/* middleware fails closed when the
+		// key is empty so accidentally-exposed dev boxes stay safe.
+		InternalAPIKey:         envOr("INTERNAL_API_KEY", ""),
+		ControlPlaneAllowedIPs: envOrigins("CONTROL_PLANE_ALLOWED_IPS"),
+
+		// Multi-tenant Phase 3 — DP reverse-proxy to Control Plane.
+		// Empty defaults keep pre-migration deployments running the
+		// local register/reviewer handlers. ServeKYCLocally defaults
+		// TRUE — the flag has to be explicitly flipped to hand KYC
+		// off to the Control Plane. That's the intentional rollout
+		// order: build CP, verify, then flip flag per-client.
+		ControlPlaneURL:   strings.TrimRight(envOr("CONTROL_PLANE_URL", ""), "/"),
+		DataPlaneClientID: int64(envInt("DATA_PLANE_CLIENT_ID", 0)),
+		DataPlaneAPIKey:   envOr("DATA_PLANE_API_KEY", ""),
+		ServeKYCLocally:   envOr("SERVE_KYC_LOCALLY", "true") != "false",
 	}
 }
 

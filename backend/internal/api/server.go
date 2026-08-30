@@ -177,12 +177,25 @@ func (s *Server) Router() http.Handler {
 	// These are intentionally unauthenticated — anyone with the form
 	// can apply. Spam/abuse defence is per-IP rate limiting + honeypot
 	// + superadmin manual review before any side-effect lands.
+	//
+	// Phase 3 (multi-tenant migration) shim: /check, /init, and
+	// /{id}/docs stay LOCAL — they exercise OTP + S3 that haven't
+	// been moved to the Control Plane yet. /submit and /GET status
+	// flip behind SERVE_KYC_LOCALLY: TRUE keeps the legacy handlers
+	// (single-DB shape), FALSE reverse-proxies to the Control Plane's
+	// /api/register/{submit,{id}} which own institution_applications
+	// writes. Rollback = flip the env flag, no code change.
 	r.Post("/api/register/check", s.registerCheckIdentifiers)
 	r.Post("/api/register/init", s.registerInit)
 	r.Post("/api/register/{id}/docs", s.registerUploadDoc)
 	r.Delete("/api/register/{id}/docs/{doc_id}", s.registerDeleteDoc)
-	r.Post("/api/register/{id}/submit", s.registerSubmit)
-	r.Get("/api/register/{id}", s.registerStatus)
+	if s.deps.Cfg.ServeKYCLocally {
+		r.Post("/api/register/{id}/submit", s.registerSubmit)
+		r.Get("/api/register/{id}", s.registerStatus)
+	} else {
+		r.Post("/api/register/{id}/submit", s.proxyRegisterSubmit)
+		r.Get("/api/register/{id}", s.proxyRegisterStatus)
+	}
 
 	// ----- public: which clients accept KYC -----
 	// Feeds the register form's exam-board dropdown. Filters to clients
@@ -211,6 +224,20 @@ func (s *Server) Router() http.Handler {
 	// RAZORPAY_WEBHOOK_SECRET; the handler refuses any unsigned POST.
 	// Public on purpose — Razorpay's servers can't carry our JWTs.
 	r.Post("/api/razorpay/webhook", s.razorpayWebhook)
+
+	// ----- /internal/* — Control Plane bridge (multi-tenant Phase 1) -----
+	// Server-to-server surface for the Control Plane. Gated by
+	// internalAuth (shared secret in X-Internal-API-Key + optional IP
+	// allowlist). Not a JWT surface — the Control Plane calls with a
+	// pre-shared key, not a user session. See internal_middleware.go
+	// for the auth details and internal_handlers.go for the three
+	// endpoints.
+	r.Group(func(r chi.Router) {
+		r.Use(s.internalAuth)
+		r.Get("/api/internal/health", s.internalHealth)
+		r.Get("/api/internal/metrics", s.internalMetrics)
+		r.Post("/api/internal/orgs/create", s.internalOrgsCreate)
+	})
 
 	r.Group(func(r chi.Router) {
 		r.Use(s.authMiddleware)
@@ -386,11 +413,24 @@ func (s *Server) Router() http.Handler {
 		// row regardless of client_id.
 		r.Get("/api/client/me",                              s.requireRole("client_reviewer")(s.clientReviewerMe))
 		r.Get("/api/client/stats",                           s.requireRole("client_reviewer")(s.clientReviewerStats))
-		r.Get("/api/client/applications",                    s.requireRole("client_reviewer")(s.clientListApplications))
-		r.Get("/api/client/applications/{id}",               s.requireRole("client_reviewer")(s.clientGetApplication))
+		// list / get / approve / reject flip behind the KYC feature
+		// flag: LOCAL keeps the legacy single-DB reviewer inbox;
+		// PROXY forwards to CP /api/reviewer/applications after the
+		// DP-side JWT gate passes. The docs download always stays
+		// LOCAL — doc bytes live on this Data Plane's S3 until a
+		// follow-up migration moves them.
+		if s.deps.Cfg.ServeKYCLocally {
+			r.Get("/api/client/applications",                    s.requireRole("client_reviewer")(s.clientListApplications))
+			r.Get("/api/client/applications/{id}",               s.requireRole("client_reviewer")(s.clientGetApplication))
+			r.Post("/api/client/applications/{id}/approve",      s.requireRole("client_reviewer")(s.clientApproveApplication))
+			r.Post("/api/client/applications/{id}/reject",       s.requireRole("client_reviewer")(s.clientRejectApplication))
+		} else {
+			r.Get("/api/client/applications",                    s.requireRole("client_reviewer")(s.proxyReviewerList))
+			r.Get("/api/client/applications/{id}",               s.requireRole("client_reviewer")(s.proxyReviewerGet))
+			r.Post("/api/client/applications/{id}/approve",      s.requireRole("client_reviewer")(s.proxyReviewerApprove))
+			r.Post("/api/client/applications/{id}/reject",       s.requireRole("client_reviewer")(s.proxyReviewerReject))
+		}
 		r.Get("/api/client/applications/{id}/docs/{doc_id}", s.requireRole("client_reviewer")(s.clientDownloadDoc))
-		r.Post("/api/client/applications/{id}/approve",      s.requireRole("client_reviewer")(s.clientApproveApplication))
-		r.Post("/api/client/applications/{id}/reject",       s.requireRole("client_reviewer")(s.clientRejectApplication))
 		r.Post("/api/client/applications/bulk-approve",      s.requireRole("client_reviewer")(s.clientBulkApproveApplications))
 		r.Post("/api/client/applications/bulk-reject",       s.requireRole("client_reviewer")(s.clientBulkRejectApplications))
 
