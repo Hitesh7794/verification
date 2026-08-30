@@ -32,6 +32,7 @@ package api
 // via DATABASE_URL and these queries will scope themselves naturally.
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -40,6 +41,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	"golang.org/x/crypto/bcrypt"
 
@@ -409,14 +411,18 @@ func (s *Server) internalOrgsCreate(w http.ResponseWriter, r *http.Request) {
 	// send the field, so an old Control Plane that hasn't been
 	// updated won't accidentally trigger duplicate emails.
 	if req.SendWelcomeEmail && s.emailer != nil && linkURL != "" {
-		body := buildRegistrationSubmittedEmail(req.InstitutionName, req.HeadName, username, linkURL)
-		if err := s.emailer.Send(ctx, email.Message{
-			To:      req.HeadEmail,
-			Subject: fmt.Sprintf("Welcome to the Verification Portal — %s", req.InstitutionName),
-			Body:    body,
-		}); err != nil {
-			log.Printf("internalOrgsCreate: welcome email to %s failed: %v", req.HeadEmail, err)
-		}
+		go func(to, inst, head, user, link string) {
+			bgCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+			defer cancel()
+			body := buildRegistrationSubmittedEmail(inst, head, user, link)
+			if err := s.emailer.Send(bgCtx, email.Message{
+				To:      to,
+				Subject: fmt.Sprintf("Welcome to the Verification Portal — %s", inst),
+				Body:    body,
+			}); err != nil {
+				log.Printf("internalOrgsCreate: welcome email to %s failed: %v", to, err)
+			}
+		}(req.HeadEmail, req.InstitutionName, req.HeadName, username, linkURL)
 	}
 
 	writeJSON(w, http.StatusOK, internalOrgsCreateResp{

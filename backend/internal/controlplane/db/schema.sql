@@ -128,6 +128,8 @@ CREATE TABLE IF NOT EXISTS institution_applications (
     updated_at               TIMESTAMPTZ NOT NULL DEFAULT NOW()
 );
 
+ALTER TABLE institution_applications ADD COLUMN IF NOT EXISTS target_client_id BIGINT;
+
 -- Unique-per-identity for active rows so a rejected applicant can't
 -- register again with the same head_email / head_mobile / PAN /
 -- AISHE. Same widened predicate as the Data Plane's V17.

@@ -26,12 +26,12 @@ func Migrate(d *sql.DB) error {
 	// even on a totally fresh DB. Same statement lives in schema.sql;
 	// running it here means the pre-schema branch (fresh DB) doesn't
 	// error out reading a non-existent table.
-	if _, err := d.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS schema_migrations (
+	if _, err := d.ExecContext(ctx, `CREATE TABLE IF NOT EXISTS cp_schema_migrations (
 		version    INTEGER PRIMARY KEY,
 		name       TEXT NOT NULL,
 		applied_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
 	)`); err != nil {
-		return fmt.Errorf("bootstrap schema_migrations: %w", err)
+		return fmt.Errorf("bootstrap cp_schema_migrations: %w", err)
 	}
 
 	applied, err := loadApplied(ctx, d)
@@ -42,6 +42,29 @@ func Migrate(d *sql.DB) error {
 	if !applied[1] {
 		if err := applyInitialSchema(ctx, d); err != nil {
 			return fmt.Errorf("apply initial schema: %w", err)
+		}
+	}
+
+	if !applied[2] {
+		_, err := d.ExecContext(ctx, `
+			ALTER TABLE institution_applications ADD COLUMN IF NOT EXISTS target_client_id BIGINT;
+			INSERT INTO cp_schema_migrations(version, name) VALUES(2, 'add_target_client_id_if_missing')
+			ON CONFLICT (version) DO NOTHING;
+		`)
+		if err != nil {
+			return fmt.Errorf("migration 2: %w", err)
+		}
+	}
+
+	if !applied[3] {
+		_, err := d.ExecContext(ctx, `
+			ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMPTZ;
+			ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS password_change_required SMALLINT NOT NULL DEFAULT 0;
+			INSERT INTO cp_schema_migrations(version, name) VALUES(3, 'add_platform_users_columns_if_missing')
+			ON CONFLICT (version) DO NOTHING;
+		`)
+		if err != nil {
+			return fmt.Errorf("migration 3: %w", err)
 		}
 	}
 
@@ -62,7 +85,7 @@ func applyInitialSchema(ctx context.Context, d *sql.DB) error {
 		return fmt.Errorf("exec schema.sql: %w", err)
 	}
 	if _, err := tx.ExecContext(ctx,
-		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)
+		`INSERT INTO cp_schema_migrations(version, name) VALUES($1, $2)
 		 ON CONFLICT (version) DO NOTHING`,
 		1, "initial_control_plane_schema",
 	); err != nil {
@@ -71,10 +94,10 @@ func applyInitialSchema(ctx context.Context, d *sql.DB) error {
 	return tx.Commit()
 }
 
-// loadApplied reads the schema_migrations table into a set for the
+// loadApplied reads the cp_schema_migrations table into a set for the
 // `!applied[N]` guards above. Returns an empty set on a fresh DB.
 func loadApplied(ctx context.Context, d *sql.DB) (map[int]bool, error) {
-	rows, err := d.QueryContext(ctx, `SELECT version FROM schema_migrations`)
+	rows, err := d.QueryContext(ctx, `SELECT version FROM cp_schema_migrations`)
 	if err != nil {
 		return nil, err
 	}
