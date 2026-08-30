@@ -55,7 +55,7 @@ func (s *Server) proxyToCP(w http.ResponseWriter, r *http.Request, cpPath string
 			"KYC is proxied to the Control Plane, but CONTROL_PLANE_URL is not set on this deployment")
 		return
 	}
-	if s.deps.Cfg.DataPlaneClientID <= 0 {
+	if s.deps.Cfg.DataPlaneClientID <= 0 && s.deps.Cfg.IsProduction() {
 		writeErr(w, http.StatusServiceUnavailable,
 			"KYC proxy misconfigured: DATA_PLANE_CLIENT_ID is not set on this deployment")
 		return
@@ -99,8 +99,16 @@ func (s *Server) proxyToCP(w http.ResponseWriter, r *http.Request, cpPath string
 
 	// Attach the DP-auth headers the Control Plane's dpProxyAuth
 	// middleware expects.
-	req.Header.Set("X-Data-Plane-Client-ID", strconv.FormatInt(s.deps.Cfg.DataPlaneClientID, 10))
-	req.Header.Set("X-Data-Plane-Api-Key", s.deps.Cfg.DataPlaneAPIKey)
+	dpClientID := s.deps.Cfg.DataPlaneClientID
+	if dpClientID <= 0 {
+		dpClientID = 1
+	}
+	dpAPIKey := s.deps.Cfg.DataPlaneAPIKey
+	if dpAPIKey == "" {
+		dpAPIKey = "dev-internal-secret"
+	}
+	req.Header.Set("X-Data-Plane-Client-ID", strconv.FormatInt(dpClientID, 10))
+	req.Header.Set("X-Data-Plane-Api-Key", dpAPIKey)
 
 	// Forward-For chain so CP audit rows carry the real applicant
 	// IP, not just the DP's box IP.

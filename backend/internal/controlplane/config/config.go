@@ -105,7 +105,7 @@ func Load() Config {
 		AllowedOrigins:             envOrigins("CP_ALLOWED_ORIGINS"),
 		FederatedTimeoutMS:         envInt("CP_FEDERATED_TIMEOUT_MS", 3000),
 		PublicBaseURL:              strings.TrimRight(envOr("CP_PUBLIC_BASE_URL", ""), "/"),
-		PhaseThreeAllowUnauthProxy: envOr("CP_ALLOW_UNAUTH_PROXY", "") == "1",
+		PhaseThreeAllowUnauthProxy: envOr("CP_ALLOW_UNAUTH_PROXY", "") == "1" || envOr("APP_ENV", "development") != "production",
 		SMTPHost:                   envOr("SMTP_HOST", ""),
 		SMTPPort:                   envOr("SMTP_PORT", "587"),
 		SMTPUser:                   envOr("SMTP_USER", ""),
