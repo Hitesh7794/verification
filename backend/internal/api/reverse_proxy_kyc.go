@@ -28,6 +28,8 @@ package api
 //     logs.
 
 import (
+	"bytes"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -158,9 +160,67 @@ func (s *Server) proxyToCP(w http.ResponseWriter, r *http.Request, cpPath string
 // (e.g. audit_log entries on the DP side for a decision that lands
 // on CP) without an if-tree inside the shared proxy helper.
 
-// POST /api/register/submit → CP owns institution_applications
+// POST /api/register/{id}/submit → CP owns institution_applications
 func (s *Server) proxyRegisterSubmit(w http.ResponseWriter, r *http.Request) {
+	appID, _ := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+
+	// Check if body is empty or lacks fields (the standard multi-step browser submit flow).
+	// In the multi-step flow, /init already recorded the draft application in the local DB.
+	bodyBytes, _ := io.ReadAll(r.Body)
+	var reqMap map[string]any
+	_ = json.Unmarshal(bodyBytes, &reqMap)
+
+	if len(reqMap) == 0 && appID > 0 {
+		// Read local draft from DB
+		var (
+			instName, instType, aisheCode, pan, affilBody, addr1, addr2, city, district, state, pin, headName, headDesig, headEmail, headMobile string
+			yrEst, approxStudents int
+		)
+		err := s.deps.DB.QueryRowContext(r.Context(), `
+			SELECT institution_name, institution_type, COALESCE(aishe_code, ''), COALESCE(pan, ''),
+			       COALESCE(year_established, 0), COALESCE(affiliation_body, ''),
+			       address_line1, COALESCE(address_line2, ''), city, COALESCE(district, ''),
+			       state, pin_code, COALESCE(approx_student_count, 0),
+			       head_name, head_designation, head_email, head_mobile
+			  FROM institution_applications
+			 WHERE id = $1`, appID,
+		).Scan(&instName, &instType, &aisheCode, &pan, &yrEst, &affilBody,
+			&addr1, &addr2, &city, &district, &state, &pin, &approxStudents,
+			&headName, &headDesig, &headEmail, &headMobile)
+
+		if err == nil {
+			payload := map[string]any{
+				"institution_name":     instName,
+				"institution_type":     instType,
+				"aishe_code":           aisheCode,
+				"pan":                  pan,
+				"year_established":     yrEst,
+				"affiliation_body":     affilBody,
+				"address_line1":        addr1,
+				"address_line2":        addr2,
+				"city":                 city,
+				"district":             district,
+				"state":                state,
+				"pin_code":             pin,
+				"approx_student_count": approxStudents,
+				"head_name":            headName,
+				"head_designation":     headDesig,
+				"head_email":           headEmail,
+				"head_mobile":          headMobile,
+			}
+			bodyBytes, _ = json.Marshal(payload)
+		}
+	}
+
+	r.Body = io.NopCloser(bytes.NewReader(bodyBytes))
+	r.Header.Set("Content-Type", "application/json")
 	s.proxyToCP(w, r, "/api/register/submit")
+
+	// If local application row exists, mark it submitted/pending locally too
+	if appID > 0 {
+		_, _ = s.deps.DB.ExecContext(r.Context(),
+			`UPDATE institution_applications SET status = 'pending', updated_at = NOW() WHERE id = $1 AND status = 'draft'`, appID)
+	}
 }
 
 // GET /api/register/{id} — status readback for the applicant.
