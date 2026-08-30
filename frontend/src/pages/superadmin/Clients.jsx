@@ -101,7 +101,7 @@ export default function Clients() {
   // browse a client dropdown).
   const totalClients = clients.length
   const activeClients = clients.filter(c => !c.closed).length
-  const totalExams = clients.reduce((s, c) => s + (c.exam_count || 0), 0)
+  const totalExams = clients.reduce((s, c) => s + (Number(c.active_exam_count ?? c.exam_count) || 0), 0)
 
   return (
     <SuperShell>
@@ -242,7 +242,11 @@ export default function Clients() {
                           </Link>
                           {c.notes && <div className="text-xs text-slate-500 mt-0.5">{c.notes}</div>}
                         </td>
-                        <td className="px-5 py-3.5 text-slate-700 tabular-nums">{c.exam_count}</td>
+                        <td className="px-5 py-3.5 text-slate-700 tabular-nums">
+                          {c.active_exam_count != null
+                            ? (c.active_exam_count === c.exam_count ? (c.exam_count || 0) : `${c.active_exam_count} active / ${c.exam_count} total`)
+                            : (c.exam_count ?? 0)}
+                        </td>
                         <td className="px-5 py-3.5">
                           <div className="flex gap-1.5 flex-wrap">
                             {c.closed && <Pill tone="amber" dot>Ended</Pill>}

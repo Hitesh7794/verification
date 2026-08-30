@@ -69,12 +69,12 @@ export default function ReviewerKycInbox() {
   const stats = useMemo(() => {
     return {
       total: client?.stats?.total ?? total,
-      pending: client?.stats?.pending ?? (status === 'pending' ? items.length : 0),
-      approved: client?.stats?.approved ?? (status === 'approved' ? items.length : 0),
-      rejected: client?.stats?.rejected ?? (status === 'rejected' ? items.length : 0),
-      universities: client?.stats?.universities ?? (client?.stats?.approved ?? items.length),
+      pending: client?.stats?.pending ?? (status === 'pending' ? total : 0),
+      approved: client?.stats?.approved ?? (status === 'approved' ? total : 0),
+      rejected: client?.stats?.rejected ?? (status === 'rejected' ? total : 0),
+      universities: client?.stats?.universities ?? (client?.stats?.approved ?? total),
     }
-  }, [client, total, status, items.length])
+  }, [client, total, status])
 
   const isPendingTab = status === 'pending'
   const selectionCount = selectedIds.size
