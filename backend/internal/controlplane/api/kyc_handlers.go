@@ -713,3 +713,282 @@ func nullTimeToString(t sql.NullTime) string {
 	}
 	return t.Time.UTC().Format(time.RFC3339)
 }
+
+// ── GET /api/superadmin/applications ──────────────────────────────
+func (s *Server) superadminListApplications(w http.ResponseWriter, r *http.Request) {
+	q := r.URL.Query()
+	limit, _ := strconv.Atoi(q.Get("limit"))
+	if limit <= 0 || limit > 200 {
+		limit = 50
+	}
+	offset, _ := strconv.Atoi(q.Get("offset"))
+	if offset < 0 {
+		offset = 0
+	}
+	status := strings.TrimSpace(q.Get("status"))
+
+	where := []string{"1=1"}
+	args := []any{}
+	if status != "" && status != "all" {
+		args = append(args, status)
+		where = append(where, fmt.Sprintf("status = $%d", len(args)))
+	}
+	search := strings.TrimSpace(q.Get("q"))
+	if search != "" {
+		p := "%" + search + "%"
+		args = append(args, p, p, p, p)
+		where = append(where, fmt.Sprintf("(institution_name ILIKE $%d OR aishe_code ILIKE $%d OR pan ILIKE $%d OR head_email ILIKE $%d)",
+			len(args)-3, len(args)-2, len(args)-1, len(args)))
+	}
+	whereSQL := strings.Join(where, " AND ")
+
+	var total int
+	_ = s.deps.DB.QueryRowContext(r.Context(),
+		"SELECT COUNT(*) FROM institution_applications WHERE "+whereSQL, args...,
+	).Scan(&total)
+
+	listArgs := append([]any{}, args...)
+	listArgs = append(listArgs, limit, offset)
+	limitPos := len(listArgs) - 1
+	offsetPos := len(listArgs)
+
+	rows, err := s.deps.DB.QueryContext(r.Context(),
+		fmt.Sprintf(`SELECT id, status, institution_name, institution_type,
+		       COALESCE(aishe_code, ''), state, city,
+		       head_name, head_email, created_at
+		  FROM institution_applications
+		 WHERE %s
+		 ORDER BY created_at DESC
+		 LIMIT $%d OFFSET $%d`, whereSQL, limitPos, offsetPos),
+		listArgs...,
+	)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db list: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	out := []map[string]any{}
+	for rows.Next() {
+		var (
+			id int64
+			status, name, instType, aishe, state, city, headName, headEmail string
+			createdAt time.Time
+		)
+		if err := rows.Scan(&id, &status, &name, &instType, &aishe, &state, &city, &headName, &headEmail, &createdAt); err != nil {
+			continue
+		}
+		out = append(out, map[string]any{
+			"id":               id,
+			"status":           status,
+			"institution_name": name,
+			"institution_type": instType,
+			"aishe_code":       aishe,
+			"state":            state,
+			"city":             city,
+			"head_name":        headName,
+			"head_email":       headEmail,
+			"created_at":       createdAt.UTC().Format(time.RFC3339),
+			"doc_count":        0,
+		})
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"items":  out,
+		"total":  total,
+		"limit":  limit,
+		"offset": offset,
+	})
+}
+
+// ── GET /api/superadmin/applications/{id} ─────────────────────────
+func (s *Server) superadminGetApplication(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	var row struct {
+		ID                 int64
+		Status             string
+		TargetClientID     sql.NullInt64
+		InstitutionName    string
+		InstitutionType    string
+		AisheCode          sql.NullString
+		Pan                sql.NullString
+		YearEstablished    sql.NullInt64
+		AffiliationBody    sql.NullString
+		ApproxStudentCount sql.NullInt64
+		AddressLine1       string
+		AddressLine2       sql.NullString
+		City               string
+		District           sql.NullString
+		State              string
+		PinCode            string
+		HeadName           string
+		HeadDesignation    string
+		HeadEmail          string
+		HeadMobile         string
+		ReviewNote         sql.NullString
+		ReviewedAt         sql.NullTime
+		CreatedAt          time.Time
+	}
+	err = s.deps.DB.QueryRowContext(r.Context(), `
+		SELECT id, status, target_client_id, institution_name, institution_type,
+		       aishe_code, pan, year_established, affiliation_body,
+		       approx_student_count,
+		       address_line1, address_line2, city, district, state, pin_code,
+		       head_name, head_designation, head_email, head_mobile,
+		       review_note, reviewed_at, created_at
+		  FROM institution_applications
+		 WHERE id = $1`, id,
+	).Scan(&row.ID, &row.Status, &row.TargetClientID, &row.InstitutionName, &row.InstitutionType,
+		&row.AisheCode, &row.Pan, &row.YearEstablished, &row.AffiliationBody,
+		&row.ApproxStudentCount,
+		&row.AddressLine1, &row.AddressLine2, &row.City, &row.District, &row.State, &row.PinCode,
+		&row.HeadName, &row.HeadDesignation, &row.HeadEmail, &row.HeadMobile,
+		&row.ReviewNote, &row.ReviewedAt, &row.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeErr(w, http.StatusNotFound, "application not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"id":                   row.ID,
+		"status":               row.Status,
+		"target_client_id":     row.TargetClientID.Int64,
+		"institution_name":     row.InstitutionName,
+		"institution_type":     row.InstitutionType,
+		"aishe_code":           row.AisheCode.String,
+		"pan":                  row.Pan.String,
+		"year_established":     row.YearEstablished.Int64,
+		"affiliation_body":     row.AffiliationBody.String,
+		"approx_student_count": row.ApproxStudentCount.Int64,
+		"address_line1":        row.AddressLine1,
+		"address_line2":        row.AddressLine2.String,
+		"city":                 row.City,
+		"district":             row.District.String,
+		"state":                row.State,
+		"pin_code":             row.PinCode,
+		"head_name":            row.HeadName,
+		"head_designation":     row.HeadDesignation,
+		"head_email":           row.HeadEmail,
+		"head_mobile":          row.HeadMobile,
+		"review_note":          row.ReviewNote.String,
+		"reviewed_at":          nullTimeToString(row.ReviewedAt),
+		"created_at":           row.CreatedAt.UTC().Format(time.RFC3339),
+		"documents":            []any{},
+	})
+}
+
+// ── POST /api/superadmin/applications/{id}/approve ────────────────
+func (s *Server) superadminApproveApplication(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	var req reviewerDecisionReq
+	_ = json.NewDecoder(r.Body).Decode(&req)
+
+	tx, err := s.deps.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db begin: "+err.Error())
+		return
+	}
+	defer tx.Rollback()
+
+	var (
+		status, instName, headName, headDesignation, headEmail string
+		targetClientID                                          sql.NullInt64
+		aishe                                                   sql.NullString
+	)
+	err = tx.QueryRowContext(r.Context(), `
+		SELECT status, target_client_id, institution_name, head_name, head_designation,
+		       head_email, aishe_code
+		  FROM institution_applications
+		 WHERE id = $1
+		 FOR UPDATE`, id,
+	).Scan(&status, &targetClientID, &instName, &headName, &headDesignation, &headEmail, &aishe)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeErr(w, http.StatusNotFound, "application not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
+		return
+	}
+	if status != "pending" {
+		writeErr(w, http.StatusConflict, "application is "+status+", cannot approve")
+		return
+	}
+
+	note := strings.TrimSpace(req.Note)
+	if _, err := tx.ExecContext(r.Context(), `
+		UPDATE institution_applications
+		   SET status = 'approved',
+		       reviewed_at = NOW(),
+		       review_note = $2,
+		       updated_at  = NOW()
+		 WHERE id = $1`, id, nullableStr(note),
+	); err != nil {
+		writeErr(w, http.StatusInternalServerError, "update: "+err.Error())
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		writeErr(w, http.StatusInternalServerError, "commit: "+err.Error())
+		return
+	}
+
+	resp := approveResp{ApplicationID: id, Status: "approved"}
+	if targetClientID.Valid && targetClientID.Int64 > 0 {
+		provResp, provErr := s.fireInternalOrgsCreate(r.Context(), targetClientID.Int64, internalOrgsCreatePayload{
+			ExternalApplicationID: id,
+			InstitutionName:       instName,
+			HeadName:              headName,
+			HeadDesignation:       headDesignation,
+			HeadEmail:             headEmail,
+			AisheCode:             aishe.String,
+			SendWelcomeEmail:      true,
+		})
+		if provErr != nil {
+			resp.ProvisioningError = provErr.Error()
+		} else if provResp != nil {
+			resp.OrgID = provResp.OrgID
+			resp.AdminUsername = provResp.AdminUsername
+			resp.MagicLinkURL = provResp.MagicLinkURL
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// ── POST /api/superadmin/applications/{id}/reject ─────────────────
+func (s *Server) superadminRejectApplication(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	var req reviewerDecisionReq
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	note := strings.TrimSpace(req.Note)
+
+	_, err = s.deps.DB.ExecContext(r.Context(), `
+		UPDATE institution_applications
+		   SET status = 'rejected',
+		       review_note = $2,
+		       reviewed_at = NOW(),
+		       updated_at  = NOW()
+		 WHERE id = $1`, id, nullableStr(note),
+	)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "update: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"application_id": id,
+		"status":         "rejected",
+	})
+}

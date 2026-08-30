@@ -78,6 +78,12 @@ func (s *Server) Router() http.Handler {
 
 		r.Get("/api/me", s.me)
 
+		// Platform Dashboard stats & overview
+		r.Get("/api/super/stats", s.superStats)
+		r.Get("/api/superadmin/stats", s.superStats)
+		r.Get("/api/super/organizations", s.superOrganizations)
+		r.Get("/api/superadmin/organizations", s.superOrganizations)
+
 		// Clients registry CRUD (Phase 2D).
 		r.Get("/api/superadmin/clients", s.listClients)
 		r.Post("/api/superadmin/clients", s.createClient)
@@ -87,6 +93,13 @@ func (s *Server) Router() http.Handler {
 
 		// Federated dashboard (Phase 2E).
 		r.Get("/api/superadmin/dashboard", s.federatedDashboard)
+		r.Get("/api/super/dashboard", s.federatedDashboard)
+
+		// Central KYC application review queue (Phase 3)
+		r.Get("/api/superadmin/applications", s.superadminListApplications)
+		r.Get("/api/superadmin/applications/{id}", s.superadminGetApplication)
+		r.Post("/api/superadmin/applications/{id}/approve", s.superadminApproveApplication)
+		r.Post("/api/superadmin/applications/{id}/reject", s.superadminRejectApplication)
 	})
 
 	// Data-Plane-proxied surface (Phase 3). Every endpoint below is

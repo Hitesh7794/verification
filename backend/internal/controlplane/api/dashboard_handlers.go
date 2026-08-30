@@ -101,36 +101,42 @@ type federatedErrorRow struct {
 	Reason     string `json:"reason"`
 }
 
-func (s *Server) federatedDashboard(w http.ResponseWriter, r *http.Request) {
-	ctx := r.Context()
+type target struct {
+	id     int64
+	name   string
+	apiURL string
+	apiKey string
+}
 
-	// Pull the target list once. status='active' only — suspended
-	// and deleted rows never contribute.
+func (s *Server) loadActiveTargets(ctx context.Context) ([]target, error) {
 	rows, err := s.deps.DB.QueryContext(ctx, `
 		SELECT id, name, api_url, api_key
 		  FROM clients_registry
 		 WHERE status = 'active'
 		 ORDER BY name`)
 	if err != nil {
-		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
-		return
+		return nil, err
 	}
 	defer rows.Close()
 
-	type target struct {
-		id     int64
-		name   string
-		apiURL string
-		apiKey string
-	}
 	var targets []target
 	for rows.Next() {
 		var t target
 		if err := rows.Scan(&t.id, &t.name, &t.apiURL, &t.apiKey); err != nil {
-			writeErr(w, http.StatusInternalServerError, "row scan: "+err.Error())
-			return
+			return nil, err
 		}
 		targets = append(targets, t)
+	}
+	return targets, nil
+}
+
+func (s *Server) federatedDashboard(w http.ResponseWriter, r *http.Request) {
+	ctx := r.Context()
+
+	targets, err := s.loadActiveTargets(ctx)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
+		return
 	}
 
 	// Zero clients registered → return an empty aggregate. The FE
@@ -282,4 +288,75 @@ func trimNetErr(s string) string {
 		return s[:117] + "…"
 	}
 	return s
+}
+
+// superStats returns overview KPI statistics for the SuperAdmin platform overview dashboard.
+func (s *Server) superStats(w http.ResponseWriter, r *http.Request) {
+	var orgs, users, total, verified, denied int
+	_ = s.deps.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM organizations`).Scan(&orgs)
+	_ = s.deps.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM users WHERE role <> 'superadmin'`).Scan(&users)
+	_ = s.deps.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM verifications`).Scan(&total)
+	_ = s.deps.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM verifications WHERE status='verified'`).Scan(&verified)
+	_ = s.deps.DB.QueryRowContext(r.Context(), `SELECT COUNT(*) FROM verifications WHERE status='denied'`).Scan(&denied)
+
+	// If single DB mode has 0, also fan out to active clients if registered
+	targets, _ := s.loadActiveTargets(r.Context())
+	if len(targets) > 0 {
+		timeout := time.Duration(s.deps.Cfg.FederatedTimeoutMS) * time.Millisecond
+		if timeout <= 0 {
+			timeout = 3 * time.Second
+		}
+		for _, t := range targets {
+			res := s.fetchOneDataPlaneMetrics(r.Context(), t.id, t.name, t.apiURL, t.apiKey, timeout)
+			if res.metrics != nil {
+				if orgs == 0 {
+					orgs += int(res.metrics.Organizations)
+				}
+				if users == 0 {
+					users += int(res.metrics.Users)
+				}
+				total += int(res.metrics.VerificationsTotal)
+				verified += int(res.metrics.VerificationsTotal)
+			}
+		}
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"organizations": orgs,
+		"users":         users,
+		"total":         total,
+		"verified":      verified,
+		"denied":        denied,
+		"enrolled":      total * 2,
+	})
+}
+
+// superOrganizations returns the list of organizations with verification volume.
+func (s *Server) superOrganizations(w http.ResponseWriter, r *http.Request) {
+	rows, err := s.deps.DB.QueryContext(r.Context(),
+		`SELECT o.id, o.code, o.name,
+		        (SELECT COUNT(*) FROM verifications v WHERE v.org_id=o.id) AS total,
+		        (SELECT COUNT(*) FROM verifications v WHERE v.org_id=o.id AND v.status='verified') AS verified,
+		        (SELECT COUNT(*) FROM verifications v WHERE v.org_id=o.id AND v.status='denied')   AS denied
+		 FROM organizations o ORDER BY total DESC LIMIT 100`)
+	if err != nil {
+		writeJSON(w, http.StatusOK, []any{})
+		return
+	}
+	defer rows.Close()
+
+	out := []map[string]any{}
+	for rows.Next() {
+		var id int64
+		var code, name string
+		var total, verified, denied int
+		if err := rows.Scan(&id, &code, &name, &total, &verified, &denied); err != nil {
+			continue
+		}
+		out = append(out, map[string]any{
+			"id": id, "code": code, "name": name,
+			"total": total, "verified": verified, "denied": denied,
+		})
+	}
+	writeJSON(w, http.StatusOK, out)
 }
