@@ -90,6 +90,9 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/superadmin/clients/{id}", s.getClient)
 		r.Patch("/api/superadmin/clients/{id}", s.patchClient)
 		r.Delete("/api/superadmin/clients/{id}", s.deleteClient)
+		r.Post("/api/superadmin/clients/{id}/close", s.closeClient)
+		r.Post("/api/superadmin/clients/{id}/reopen", s.reopenClient)
+		r.Post("/api/superadmin/clients/{id}/visibility", s.toggleClientVisibility)
 
 		// Federated dashboard (Phase 2E).
 		r.Get("/api/superadmin/dashboard", s.federatedDashboard)

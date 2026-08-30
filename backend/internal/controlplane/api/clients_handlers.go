@@ -31,21 +31,24 @@ import (
 // clientRow is the JSON shape returned by GET endpoints. api_key
 // stays out on purpose — see the file-level comment above.
 type clientRow struct {
-	ID              int64     `json:"id"`
-	Name            string    `json:"name"`
-	KYCReviewMode   string    `json:"kyc_review_mode"`
-	Status          string    `json:"status"`
-	APIURL          string    `json:"api_url"`
-	Notes           string    `json:"notes,omitempty"`
-	CreatedAt       time.Time `json:"created_at"`
-	UpdatedAt       time.Time `json:"updated_at"`
+	ID            int64     `json:"id"`
+	Name          string    `json:"name"`
+	Code          string    `json:"code,omitempty"`
+	KYCReviewMode string    `json:"kyc_review_mode"`
+	Status        string    `json:"status"`
+	Closed        int       `json:"closed"`
+	ExamCount     int       `json:"exam_count"`
+	APIURL        string    `json:"api_url"`
+	Notes         string    `json:"notes,omitempty"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
 }
 
 // ── GET /api/superadmin/clients ──────────────────────────────────
 
 func (s *Server) listClients(w http.ResponseWriter, r *http.Request) {
 	rows, err := s.deps.DB.QueryContext(r.Context(), `
-		SELECT id, name, kyc_review_mode, status, api_url, COALESCE(notes,''),
+		SELECT id, name, COALESCE(code,''), kyc_review_mode, status, api_url, COALESCE(notes,''),
 		       created_at, updated_at
 		  FROM clients_registry
 		 WHERE status <> 'deleted'
@@ -59,11 +62,18 @@ func (s *Server) listClients(w http.ResponseWriter, r *http.Request) {
 	out := []clientRow{}
 	for rows.Next() {
 		var c clientRow
-		if err := rows.Scan(&c.ID, &c.Name, &c.KYCReviewMode, &c.Status,
+		if err := rows.Scan(&c.ID, &c.Name, &c.Code, &c.KYCReviewMode, &c.Status,
 			&c.APIURL, &c.Notes, &c.CreatedAt, &c.UpdatedAt); err != nil {
 			writeErr(w, http.StatusInternalServerError, "row scan: "+err.Error())
 			return
 		}
+		if c.Status == "suspended" {
+			c.Closed = 1
+		}
+		var examCount int
+		_ = s.deps.DB.QueryRowContext(r.Context(),
+			`SELECT COUNT(*) FROM exams WHERE client_id = $1`, c.ID).Scan(&examCount)
+		c.ExamCount = examCount
 		out = append(out, c)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"clients": out})
@@ -137,8 +147,7 @@ func (s *Server) createClient(w http.ResponseWriter, r *http.Request) {
 	// a double slash that some middleware normalises weirdly.
 	apiURL := strings.TrimRight(strings.TrimSpace(req.APIURL), "/")
 	if apiURL == "" {
-		writeErr(w, http.StatusBadRequest, "api_url required")
-		return
+		apiURL = "http://localhost:8080"
 	}
 	if !strings.HasPrefix(apiURL, "http://") && !strings.HasPrefix(apiURL, "https://") {
 		writeErr(w, http.StatusBadRequest, "api_url must start with http:// or https://")
@@ -319,6 +328,59 @@ func (s *Server) deleteClient(w http.ResponseWriter, r *http.Request) {
 	}
 	if n, _ := res.RowsAffected(); n == 0 {
 		writeErr(w, http.StatusNotFound, "client not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+// ── Client Lifecycle Actions ─────────────────────────────────────
+
+func (s *Server) closeClient(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	_, err = s.deps.DB.ExecContext(r.Context(),
+		`UPDATE clients_registry SET status = 'suspended', updated_at = NOW() WHERE id = $1`, id,
+	)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "close: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) reopenClient(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	_, err = s.deps.DB.ExecContext(r.Context(),
+		`UPDATE clients_registry SET status = 'active', updated_at = NOW() WHERE id = $1`, id,
+	)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "reopen: "+err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
+}
+
+func (s *Server) toggleClientVisibility(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	_, err = s.deps.DB.ExecContext(r.Context(),
+		`UPDATE clients_registry
+		    SET status = CASE WHEN status = 'active' THEN 'suspended' ELSE 'active' END,
+		        updated_at = NOW()
+		  WHERE id = $1`, id,
+	)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "toggle: "+err.Error())
 		return
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})

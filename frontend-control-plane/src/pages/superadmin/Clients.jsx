@@ -30,6 +30,7 @@ export default function Clients() {
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
   const [newNotes, setNewNotes] = useState('')
+  const [newApiUrl, setNewApiUrl] = useState('http://localhost:8080')
   const [newKycMode, setNewKycMode] = useState('admin') // 'admin' | 'client' | 'both'
   const [saving, setSaving] = useState(false)
   // id of the row with a request in flight — disables that row's buttons
@@ -58,9 +59,15 @@ export default function Clients() {
     setSaving(true)
     setErr('')
     try {
-      await createClient({ name: newName.trim(), notes: newNotes.trim(), kyc_review_mode: newKycMode })
+      await createClient({
+        name: newName.trim(),
+        notes: newNotes.trim(),
+        api_url: newApiUrl.trim() || 'http://localhost:8080',
+        kyc_review_mode: newKycMode,
+      })
       setNewName('')
       setNewNotes('')
+      setNewApiUrl('http://localhost:8080')
       setNewKycMode('admin')
       setCreating(false)
       await refresh({ quiet: true })
@@ -161,7 +168,7 @@ export default function Clients() {
                     </div>
                   </div>
                   <form onSubmit={onCreate} className="space-y-4">
-                    <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+                    <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
                       <div>
                         <Label>Name <span className="text-rose-500">*</span></Label>
                         <Input
@@ -174,6 +181,17 @@ export default function Clients() {
                         />
                         <p className="text-[11px] text-slate-500 mt-1">
                           Shown to college admins in the exam catalog.
+                        </p>
+                      </div>
+                      <div>
+                        <Label>Data Plane API URL <span className="text-slate-400 font-normal">(optional)</span></Label>
+                        <Input
+                          value={newApiUrl}
+                          onChange={(e) => setNewApiUrl(e.target.value)}
+                          placeholder="http://localhost:8080"
+                        />
+                        <p className="text-[11px] text-slate-500 mt-1">
+                          Target data plane endpoint (default: http://localhost:8080).
                         </p>
                       </div>
                       <div>
