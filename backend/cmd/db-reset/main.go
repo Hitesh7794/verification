@@ -64,6 +64,14 @@ func main() {
 		log.Fatalf("failed to truncate tables: %v", err)
 	}
 
+	_, _ = d.ExecContext(ctx, `
+		TRUNCATE TABLE 
+			clients_registry,
+			platform_audit_log,
+			platform_users
+		RESTART IDENTITY CASCADE;
+	`)
+
 	log.Println("Creating default Superadmin user (username: super, password: super123)...")
 	superHash, err := bcrypt.GenerateFromPassword([]byte("super123"), bcrypt.DefaultCost)
 	if err != nil {
@@ -76,6 +84,12 @@ func main() {
 	`, string(superHash)); err != nil {
 		log.Fatalf("failed to create superadmin: %v", err)
 	}
+
+	_, _ = d.ExecContext(ctx, `
+		INSERT INTO platform_users(username, password_hash, role, display_name, name)
+		VALUES('super', $1, 'superadmin', 'Platform Superadmin', 'Platform Superadmin')
+		ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash;
+	`, string(superHash))
 
 	// Clean up local uploaded files if data dir exists
 	dataDir := cfg.DataDir

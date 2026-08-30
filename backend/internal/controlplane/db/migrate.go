@@ -101,29 +101,16 @@ func Migrate(d *sql.DB) error {
 	}
 
 	if !applied[5] {
-		_, _ = d.ExecContext(ctx, `
+		_, err := d.ExecContext(ctx, `
 			ALTER TABLE clients_registry ADD COLUMN IF NOT EXISTS code TEXT;
 			ALTER TABLE clients_registry ALTER COLUMN code DROP NOT NULL;
 			ALTER TABLE clients_registry ADD COLUMN IF NOT EXISTS domain TEXT;
 			CREATE UNIQUE INDEX IF NOT EXISTS idx_clients_registry_name_uq ON clients_registry(name);
-		`)
-		_, err := d.ExecContext(ctx, `
-			INSERT INTO clients_registry(name, code, kyc_review_mode, status, api_url, api_key, notes)
-			VALUES
-				('National Testing Agency (NTA)', 'NTA', 'both', 'active', 'http://localhost:8080', 'dev-internal-secret', 'Premier testing organization for higher educational institutions'),
-				('All India Institute of Medical Sciences (AIIMS)', 'AIIMS', 'both', 'active', 'http://localhost:8080', 'dev-internal-secret', 'Autonomous institutes of national importance for medical education'),
-				('Union Public Service Commission (UPSC)', 'UPSC', 'admin', 'active', 'http://localhost:8080', 'dev-internal-secret', 'Central recruiting agency for civil services and defence forces'),
-				('Central Board of Secondary Education (CBSE)', 'CBSE', 'client', 'active', 'http://localhost:8080', 'dev-internal-secret', 'National board of education for public and private schools')
-			ON CONFLICT (name) DO UPDATE SET
-				code = EXCLUDED.code,
-				api_url = EXCLUDED.api_url,
-				api_key = EXCLUDED.api_key,
-				status = 'active';
-			INSERT INTO cp_schema_migrations(version, name) VALUES(5, 'seed_default_clients_registry')
+			INSERT INTO cp_schema_migrations(version, name) VALUES(5, 'add_clients_registry_schema_columns')
 			ON CONFLICT (version) DO NOTHING;
 		`)
 		if err != nil {
-			return fmt.Errorf("migration 5 (seed clients_registry): %w", err)
+			return fmt.Errorf("migration 5 (clients_registry schema): %w", err)
 		}
 	}
 
