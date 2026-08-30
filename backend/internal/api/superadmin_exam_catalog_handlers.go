@@ -66,17 +66,18 @@ const (
 // ── DTOs ──────────────────────────────────────────────────────────────
 
 type clientRow struct {
-	ID             int64      `json:"id"`
-	Name           string     `json:"name"`
-	Notes          string     `json:"notes,omitempty"`
-	Visible        bool       `json:"visible"`
-	Closed         bool       `json:"closed"`
-	PortalEnabled  bool       `json:"portal_enabled"`
-	KYCReviewMode  string     `json:"kyc_review_mode"` // 'admin' | 'client' | 'both'
-	ClosedAt       *time.Time `json:"closed_at,omitempty"`
-	ExamCount      int64      `json:"exam_count"`
-	CreatedAt      time.Time  `json:"created_at"`
-	UpdatedAt      time.Time  `json:"updated_at"`
+	ID              int64      `json:"id"`
+	Name            string     `json:"name"`
+	Notes           string     `json:"notes,omitempty"`
+	Visible         bool       `json:"visible"`
+	Closed          bool       `json:"closed"`
+	PortalEnabled   bool       `json:"portal_enabled"`
+	KYCReviewMode   string     `json:"kyc_review_mode"` // 'admin' | 'client' | 'both'
+	ClosedAt        *time.Time `json:"closed_at,omitempty"`
+	ExamCount       int64      `json:"exam_count"`
+	ActiveExamCount int64      `json:"active_exam_count"`
+	CreatedAt       time.Time  `json:"created_at"`
+	UpdatedAt       time.Time  `json:"updated_at"`
 }
 
 // normalizeKYCReviewMode returns the string unchanged if it's one of the
@@ -162,13 +163,14 @@ func (s *Server) superadminCreateClient(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) superadminListClients(w http.ResponseWriter, r *http.Request) {
-	rows, err := s.deps.DB.QueryContext(r.Context(), `
+	rows, err := s.deps.DB.QueryContext(r.Context(), db.Q(`
 		SELECT c.id, c.name, COALESCE(c.notes,''),
-		       c.visible, c.closed, c.kyc_review_mode,
+		       c.visible, c.closed, c.portal_enabled, c.kyc_review_mode,
 		       c.closed_at, c.created_at, c.updated_at,
-		       (SELECT COUNT(*) FROM exams e WHERE e.client_id = c.id) AS exam_count
+		       (SELECT COUNT(*) FROM exams e WHERE e.client_id = c.id) AS exam_count,
+		       (SELECT COUNT(*) FROM exams e WHERE e.client_id = c.id AND e.closed = 0) AS active_exam_count
 		FROM clients c
-		ORDER BY c.created_at DESC`)
+		ORDER BY c.created_at DESC`))
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
 		return
@@ -179,9 +181,9 @@ func (s *Server) superadminListClients(w http.ResponseWriter, r *http.Request) {
 		var c clientRow
 		var visible, closed int
 		var closedAt sql.NullTime
-		if err := rows.Scan(&c.ID, &c.Name, &c.Notes, &visible, &closed,
+		if err := rows.Scan(&c.ID, &c.Name, &c.Notes, &visible, &closed, &c.PortalEnabled,
 			&c.KYCReviewMode,
-			&closedAt, &c.CreatedAt, &c.UpdatedAt, &c.ExamCount); err != nil {
+			&closedAt, &c.CreatedAt, &c.UpdatedAt, &c.ExamCount, &c.ActiveExamCount); err != nil {
 			writeErr(w, http.StatusInternalServerError, "row scan: "+err.Error())
 			return
 		}
@@ -1341,10 +1343,11 @@ func (s *Server) loadClient(ctx context.Context, id int64) (*clientRow, error) {
 		SELECT c.id, c.name, COALESCE(c.notes,''),
 		       c.visible, c.closed, c.portal_enabled, c.kyc_review_mode,
 		       c.closed_at, c.created_at, c.updated_at,
-		       (SELECT COUNT(*) FROM exams e WHERE e.client_id = c.id) AS exam_count
+		       (SELECT COUNT(*) FROM exams e WHERE e.client_id = c.id) AS exam_count,
+		       (SELECT COUNT(*) FROM exams e WHERE e.client_id = c.id AND e.closed = 0) AS active_exam_count
 		FROM clients c WHERE c.id = $1`), id).Scan(
 		&c.ID, &c.Name, &c.Notes, &visible, &closed, &c.PortalEnabled, &c.KYCReviewMode,
-		&closedAt, &c.CreatedAt, &c.UpdatedAt, &c.ExamCount)
+		&closedAt, &c.CreatedAt, &c.UpdatedAt, &c.ExamCount, &c.ActiveExamCount)
 	if err != nil {
 		return nil, err
 	}

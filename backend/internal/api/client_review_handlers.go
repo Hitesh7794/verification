@@ -103,26 +103,26 @@ func (s *Server) clientListApplications(w http.ResponseWriter, r *http.Request) 
 	var args []any
 	switch status {
 	case "approved":
-		whereSQL = `a.status != 'draft' AND EXISTS (
+		whereSQL = `(a.status = 'approved' OR EXISTS (
 			SELECT 1 FROM client_organization_approvals coa 
 			JOIN organizations o ON o.id = coa.org_id 
 			WHERE coa.client_id = ? AND o.application_id = a.id AND coa.status = 'approved'
-		)`
-		args = []any{clientID}
+		)) AND (a.client_id = ? OR a.client_id IS NULL)`
+		args = []any{clientID, clientID}
 	case "rejected":
-		whereSQL = `a.status = 'rejected' OR EXISTS (
+		whereSQL = `(a.status = 'rejected' OR EXISTS (
 			SELECT 1 FROM client_organization_approvals coa 
 			JOIN organizations o ON o.id = coa.org_id 
 			WHERE coa.client_id = ? AND o.application_id = a.id AND coa.status = 'rejected'
-		)`
-		args = []any{clientID}
+		)) AND (a.client_id = ? OR a.client_id IS NULL)`
+		args = []any{clientID, clientID}
 	default: // "pending"
-		whereSQL = `a.status != 'draft' AND a.status != 'rejected' 
+		whereSQL = `a.status = 'pending' 
 			AND (a.client_id = ? OR a.client_id IS NULL)
 			AND NOT EXISTS (
 				SELECT 1 FROM client_organization_approvals coa 
 				JOIN organizations o ON o.id = coa.org_id 
-				WHERE coa.client_id = ? AND o.application_id = a.id
+				WHERE coa.client_id = ? AND o.application_id = a.id AND coa.status IN ('approved', 'rejected')
 			)`
 		args = []any{clientID, clientID}
 	}
@@ -669,32 +669,37 @@ func (s *Server) clientReviewerMe(w http.ResponseWriter, r *http.Request) {
 		univCount     int
 	)
 	_ = s.deps.DB.QueryRowContext(r.Context(), db.Q(`
-		SELECT COUNT(*) 
+		SELECT COUNT(DISTINCT a.id) 
 		  FROM institution_applications a 
-		 WHERE a.status != 'draft' AND a.status != 'rejected'
+		 WHERE a.status = 'pending'
 		   AND (a.client_id = ? OR a.client_id IS NULL)
 		   AND NOT EXISTS (
 		       SELECT 1 FROM client_organization_approvals coa 
 		       JOIN organizations o ON o.id = coa.org_id 
-		       WHERE coa.client_id = ? AND o.application_id = a.id
+		       WHERE coa.client_id = ? AND o.application_id = a.id AND coa.status IN ('approved', 'rejected')
 		   )`), clientID, clientID,
 	).Scan(&pendingCount)
 
 	_ = s.deps.DB.QueryRowContext(r.Context(), db.Q(`
-		SELECT COUNT(*) 
-		  FROM client_organization_approvals coa 
-		 WHERE coa.client_id = ? AND coa.status = 'approved'`), clientID,
+		SELECT COUNT(DISTINCT a.id) 
+		  FROM institution_applications a 
+		 WHERE (a.client_id = ? OR a.client_id IS NULL)
+		   AND (a.status = 'approved' OR EXISTS (
+		       SELECT 1 FROM client_organization_approvals coa 
+		       JOIN organizations o ON o.id = coa.org_id 
+		       WHERE coa.client_id = ? AND o.application_id = a.id AND coa.status = 'approved'
+		   ))`), clientID, clientID,
 	).Scan(&approvedCount)
 
 	_ = s.deps.DB.QueryRowContext(r.Context(), db.Q(`
-		SELECT COUNT(*) 
+		SELECT COUNT(DISTINCT a.id) 
 		  FROM institution_applications a 
-		 WHERE (a.status = 'rejected' AND (a.client_id = ? OR a.client_id IS NULL))
-		    OR EXISTS (
-		        SELECT 1 FROM client_organization_approvals coa 
-		        JOIN organizations o ON o.id = coa.org_id 
-		        WHERE coa.client_id = ? AND o.application_id = a.id AND coa.status = 'rejected'
-		    )`), clientID, clientID,
+		 WHERE (a.client_id = ? OR a.client_id IS NULL)
+		   AND (a.status = 'rejected' OR EXISTS (
+		       SELECT 1 FROM client_organization_approvals coa 
+		       JOIN organizations o ON o.id = coa.org_id 
+		       WHERE coa.client_id = ? AND o.application_id = a.id AND coa.status = 'rejected'
+		   ))`), clientID, clientID,
 	).Scan(&rejectedCount)
 
 	univCount = approvedCount
