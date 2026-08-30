@@ -61,6 +61,13 @@ func main() {
 		log.Fatalf("seed superadmin: %v", err)
 	}
 
+	_, _ = tx.ExecContext(ctx, `
+		INSERT INTO platform_users(username, password_hash, role, display_name)
+		VALUES('super', $1, 'superadmin', 'System Superadmin')
+		ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash`,
+		string(superHash),
+	)
+
 	// ─────────────────────────────────────────────────────────────────────────
 	// 1. SEED CLIENTS (EXAM BOARDS) & REVIEWER LOGINS
 	// ─────────────────────────────────────────────────────────────────────────

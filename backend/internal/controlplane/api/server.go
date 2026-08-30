@@ -70,6 +70,7 @@ func (s *Server) Router() http.Handler {
 	// Public: liveness probes + platform login.
 	r.Get("/api/health", s.health)
 	r.Post("/api/superadmin/login", s.login)
+	r.Post("/api/auth/login", s.login)
 
 	// Authenticated superadmin surface.
 	r.Group(func(r chi.Router) {

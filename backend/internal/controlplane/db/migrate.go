@@ -10,6 +10,8 @@ import (
 	"database/sql"
 	_ "embed"
 	"fmt"
+
+	"golang.org/x/crypto/bcrypt"
 )
 
 //go:embed schema.sql
@@ -58,6 +60,8 @@ func Migrate(d *sql.DB) error {
 
 	if !applied[3] {
 		_, err := d.ExecContext(ctx, `
+			ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS display_name TEXT NOT NULL DEFAULT 'Super Admin';
+			ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS email TEXT;
 			ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMPTZ;
 			ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS password_change_required SMALLINT NOT NULL DEFAULT 0;
 			INSERT INTO cp_schema_migrations(version, name) VALUES(3, 'add_platform_users_columns_if_missing')
@@ -65,6 +69,34 @@ func Migrate(d *sql.DB) error {
 		`)
 		if err != nil {
 			return fmt.Errorf("migration 3: %w", err)
+		}
+	}
+
+	if !applied[4] {
+		_, _ = d.ExecContext(ctx, `
+			ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS display_name TEXT DEFAULT 'Super Admin';
+			ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS name TEXT;
+			ALTER TABLE platform_users ALTER COLUMN name DROP NOT NULL;
+			ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS email TEXT;
+			ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS disabled_at TIMESTAMPTZ;
+			ALTER TABLE platform_users ADD COLUMN IF NOT EXISTS password_change_required SMALLINT NOT NULL DEFAULT 0;
+		`)
+		superHash, _ := bcrypt.GenerateFromPassword([]byte("super123"), bcrypt.DefaultCost)
+		_, err := d.ExecContext(ctx, `
+			INSERT INTO platform_users(username, password_hash, role, display_name, name)
+			VALUES('super', $1, 'superadmin', 'Platform Superadmin', 'Platform Superadmin')
+			ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash`,
+			string(superHash),
+		)
+		if err != nil {
+			return fmt.Errorf("migration 4 (seed superadmin): %w", err)
+		}
+		_, err = d.ExecContext(ctx, `
+			INSERT INTO cp_schema_migrations(version, name) VALUES(4, 'seed_platform_superadmin')
+			ON CONFLICT (version) DO NOTHING`,
+		)
+		if err != nil {
+			return fmt.Errorf("migration 4 (record version): %w", err)
 		}
 	}
 
