@@ -740,15 +740,15 @@ func (s *Server) cpReviewerApprove(w http.ResponseWriter, r *http.Request) {
 	var (
 		status, instName, headName, headDesignation, headEmail string
 		aishe                                                   sql.NullString
-		dpClientID                                              sql.NullInt64
+		dpClientID, externalAppID                               sql.NullInt64
 	)
 	err = tx.QueryRowContext(r.Context(), `
 		SELECT status, institution_name, head_name, head_designation,
-		       head_email, aishe_code, dp_client_id
+		       head_email, aishe_code, dp_client_id, external_application_id
 		  FROM institution_applications
 		 WHERE id = $1 AND target_client_id = $2
 		 FOR UPDATE`, id, clientID,
-	).Scan(&status, &instName, &headName, &headDesignation, &headEmail, &aishe, &dpClientID)
+	).Scan(&status, &instName, &headName, &headDesignation, &headEmail, &aishe, &dpClientID, &externalAppID)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeErr(w, http.StatusNotFound, "application not found")
 		return
@@ -768,9 +768,14 @@ func (s *Server) cpReviewerApprove(w http.ResponseWriter, r *http.Request) {
 	// id to stamp — leave reviewed_by_user_id NULL and record a
 	// generic "reviewed via DP proxy" note if none supplied.
 	note := strings.TrimSpace(req.Note)
+	// Terminal approve — clear pending_reviewer so the row no longer
+	// shows in any queue's active-work view. Approved rows are already
+	// filtered out of pending queries but the field stays around for
+	// display; leaving 'client' set makes the row look mis-routed.
 	if _, err := tx.ExecContext(r.Context(), `
 		UPDATE institution_applications
 		   SET status = 'approved',
+		       pending_reviewer = NULL,
 		       reviewed_at = NOW(),
 		       review_note = $2,
 		       updated_at  = NOW()
@@ -805,6 +810,7 @@ func (s *Server) cpReviewerApprove(w http.ResponseWriter, r *http.Request) {
 
 	provResp, provErr := s.fireInternalOrgsCreate(r.Context(), clientID, internalOrgsCreatePayload{
 		ExternalApplicationID: id,
+		DpApplicationID:       externalAppID.Int64,
 		InstitutionName:       instName,
 		HeadName:              headName,
 		HeadDesignation:       headDesignation,
@@ -848,10 +854,11 @@ func (s *Server) cpReviewerReject(w http.ResponseWriter, r *http.Request) {
 
 	res, err := s.deps.DB.ExecContext(r.Context(), `
 		UPDATE institution_applications
-		   SET status      = 'rejected',
-		       review_note = $3,
-		       reviewed_at = NOW(),
-		       updated_at  = NOW()
+		   SET status           = 'rejected',
+		       pending_reviewer = NULL,
+		       review_note      = $3,
+		       reviewed_at      = NOW(),
+		       updated_at       = NOW()
 		 WHERE id = $1 AND target_client_id = $2 AND status = 'pending'`,
 		id, clientID, note,
 	)
@@ -873,6 +880,13 @@ func (s *Server) cpReviewerReject(w http.ResponseWriter, r *http.Request) {
 
 type internalOrgsCreatePayload struct {
 	ExternalApplicationID int64  `json:"external_application_id"`
+	// DpApplicationID is the target DP's own institution_applications.id
+	// (stored on CP as external_application_id when the DP forwarded
+	// the submit). We send it separately so the DP can flip its stale
+	// 'pending' row to 'approved' after our terminal decision. Optional:
+	// zero skips the back-write (used when the submit came in
+	// single-shot without a DP-side draft).
+	DpApplicationID       int64  `json:"dp_application_id,omitempty"`
 	InstitutionName       string `json:"institution_name"`
 	HeadName              string `json:"head_name"`
 	HeadDesignation       string `json:"head_designation"`

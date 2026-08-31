@@ -358,16 +358,17 @@ func (s *Server) superadminApplicationApprove(w http.ResponseWriter, r *http.Req
 	var (
 		status, instName, headName, headDesignation, headEmail string
 		aishe                                                   sql.NullString
-		targetClientID, dpClientID                              sql.NullInt64
+		targetClientID, dpClientID, externalAppID               sql.NullInt64
 		pendingReviewer                                         sql.NullString
 	)
 	err = tx.QueryRowContext(r.Context(), `
 		SELECT status, institution_name, head_name, head_designation,
-		       head_email, aishe_code, target_client_id, dp_client_id, pending_reviewer
+		       head_email, aishe_code, target_client_id, dp_client_id,
+		       pending_reviewer, external_application_id
 		  FROM institution_applications
 		 WHERE id = $1
 		 FOR UPDATE`, id,
-	).Scan(&status, &instName, &headName, &headDesignation, &headEmail, &aishe, &targetClientID, &dpClientID, &pendingReviewer)
+	).Scan(&status, &instName, &headName, &headDesignation, &headEmail, &aishe, &targetClientID, &dpClientID, &pendingReviewer, &externalAppID)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeErr(w, http.StatusNotFound, "application not found")
 		return
@@ -429,11 +430,12 @@ func (s *Server) superadminApplicationApprove(w http.ResponseWriter, r *http.Req
 		return
 	}
 
-	// Terminal approve (mode='admin' or unknown). Flip status +
-	// provision.
+	// Terminal approve (mode='admin' or unknown). Flip status + clear
+	// pending_reviewer + provision.
 	if _, err := tx.ExecContext(r.Context(), `
 		UPDATE institution_applications
 		   SET status = 'approved',
+		       pending_reviewer = NULL,
 		       reviewed_at = NOW(),
 		       review_note = $2,
 		       updated_at  = NOW()
@@ -454,6 +456,7 @@ func (s *Server) superadminApplicationApprove(w http.ResponseWriter, r *http.Req
 	}
 	provResp, provErr := s.fireInternalOrgsCreate(r.Context(), targetClientID.Int64, internalOrgsCreatePayload{
 		ExternalApplicationID: id,
+		DpApplicationID:       externalAppID.Int64,
 		InstitutionName:       instName,
 		HeadName:              headName,
 		HeadDesignation:       headDesignation,
@@ -498,10 +501,11 @@ func (s *Server) superadminApplicationReject(w http.ResponseWriter, r *http.Requ
 
 	res, err := s.deps.DB.ExecContext(r.Context(), `
 		UPDATE institution_applications
-		   SET status      = 'rejected',
-		       review_note = $2,
-		       reviewed_at = NOW(),
-		       updated_at  = NOW()
+		   SET status           = 'rejected',
+		       pending_reviewer = NULL,
+		       review_note      = $2,
+		       reviewed_at      = NOW(),
+		       updated_at       = NOW()
 		 WHERE id = $1 AND status = 'pending'`,
 		id, note,
 	)

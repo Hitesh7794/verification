@@ -26,6 +26,7 @@ import (
 	"net/http"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -42,8 +43,32 @@ type clientRow struct {
 	Domain          string    `json:"domain,omitempty"`
 	Notes           string    `json:"notes,omitempty"`
 	PortalEnabled   bool      `json:"portal_enabled"`
+	// Visible + Closed are derived from Status for FE compat.
+	// Rahul's Clients.jsx / ClientDetail.jsx read `client.visible` and
+	// `client.closed` to render the Visible/Hidden and Ended pills. On
+	// CP we track lifecycle via `status` (infra_pending | ready |
+	// active | suspended | deleted) so we synthesise these two bools
+	// after the DB scan:
+	//   visible = status IN ('infra_pending','ready','active')
+	//   closed  = status = 'suspended'
+	// Deleted rows are filtered out of list/get entirely.
+	Visible         bool      `json:"visible"`
+	Closed          bool      `json:"closed"`
+	// ExamCount is populated by listClients via a fan-out to each
+	// client's DP /api/internal/exams?client_id=X. -1 marks a DP that
+	// couldn't be reached (infra_pending, offline, timeout); the FE
+	// falls back to 0 for display but this lets callers distinguish
+	// "zero exams" from "we don't know".
+	ExamCount       int       `json:"exam_count"`
 	CreatedAt       time.Time `json:"created_at"`
 	UpdatedAt       time.Time `json:"updated_at"`
+}
+
+// deriveVisibleClosed populates Visible + Closed from Status. Call
+// after every Scan into a clientRow so the FE sees a consistent shape.
+func deriveVisibleClosed(c *clientRow) {
+	c.Visible = c.Status != "suspended" && c.Status != "deleted"
+	c.Closed = c.Status == "suspended"
 }
 
 // ── GET /api/superadmin/clients ──────────────────────────────────
@@ -69,9 +94,52 @@ func (s *Server) listClients(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusInternalServerError, "row scan: "+err.Error())
 			return
 		}
+		deriveVisibleClosed(&c)
 		out = append(out, c)
 	}
+
+	// Fan out to each client's DP to populate ExamCount. Parallel
+	// per-client so total latency is max(one DP round-trip), not the
+	// sum. Any DP that fails / times out yields -1 so the row still
+	// renders — the FE treats that as 0 with an optional tooltip.
+	populateExamCounts(r.Context(), out, s.fetchExamsFromDP)
+
 	writeJSON(w, http.StatusOK, map[string]any{"clients": out})
+}
+
+// populateExamCounts fires one goroutine per row to count that
+// client's exams on its DP. Only clients whose status makes exam-fetch
+// meaningful (active | ready) are contacted; infra_pending clients
+// have no DP yet, so their count is 0 rather than -1.
+func populateExamCounts(
+	ctx context.Context,
+	rows []clientRow,
+	fetch func(context.Context, string, string, int64) []any,
+) {
+	if len(rows) == 0 {
+		return
+	}
+	var wg sync.WaitGroup
+	for i := range rows {
+		i := i
+		if rows[i].Status != "active" && rows[i].Status != "ready" {
+			rows[i].ExamCount = 0
+			continue
+		}
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			cctx, cancel := context.WithTimeout(ctx, 3*time.Second)
+			defer cancel()
+			exams := fetch(cctx, rows[i].APIURL, rows[i].Status, rows[i].ID)
+			if exams == nil {
+				rows[i].ExamCount = -1
+				return
+			}
+			rows[i].ExamCount = len(exams)
+		}()
+	}
+	wg.Wait()
 }
 
 // ── GET /api/superadmin/clients/{id} ─────────────────────────────
@@ -98,6 +166,7 @@ func (s *Server) getClient(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
 		return
 	}
+	deriveVisibleClosed(&c)
 	// Envelope shape: Rahul's ClientDetail.jsx destructures
 	// `{ client, exams }`. Fan out to the target DP to fetch exams for
 	// this client. If the DP is unreachable or unhealthy, return the

@@ -163,7 +163,15 @@ export default function ClientDetail() {
                 <div className="min-w-0">
                   <h1 className="text-2xl font-semibold tracking-tight text-slate-900">{client.name}</h1>
                   <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                    {client.visible ? <Pill tone="emerald" dot>Visible</Pill> : <Pill tone="slate" dot>Hidden</Pill>}
+                    {client.status === 'infra_pending' ? (
+                      <Pill tone="amber" dot>Infra pending — Data Plane not reachable yet</Pill>
+                    ) : client.status === 'ready' ? (
+                      <Pill tone="sky" dot>Ready — DP up, promote to Active to start routing</Pill>
+                    ) : client.visible ? (
+                      <Pill tone="emerald" dot>Active</Pill>
+                    ) : (
+                      <Pill tone="slate" dot>Hidden</Pill>
+                    )}
                     {Boolean(client.closed) && <Pill tone="amber" dot>Closed</Pill>}
                     {client.notes && (
                       <>

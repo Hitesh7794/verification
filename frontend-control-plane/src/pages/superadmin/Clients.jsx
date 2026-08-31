@@ -38,6 +38,21 @@ export default function Clients() {
   const [busyId, setBusyId] = useState(null)
   // id of the row currently showing its inline "Close?" confirmation.
   const [confirmingId, setConfirmingId] = useState(null)
+  // Post-create modal that surfaces the api_key ONCE — the backend
+  // won't return it on any subsequent read, so if the operator dismisses
+  // without copying they have to rotate.
+  const [newCredsModal, setNewCredsModal] = useState(null)
+  const [copiedField, setCopiedField] = useState('')
+
+  async function copyToClipboard(text, label) {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopiedField(label)
+      setTimeout(() => setCopiedField(''), 1800)
+    } catch {
+      // clipboard blocked (insecure origin / permissions) — no-op
+    }
+  }
 
   const refresh = useCallback(async ({ quiet = false } = {}) => {
     if (!quiet) setLoading(true)
@@ -59,7 +74,7 @@ export default function Clients() {
     setSaving(true)
     setErr('')
     try {
-      await createClient({
+      const created = await createClient({
         name: newName.trim(),
         notes: newNotes.trim(),
         api_url: newApiUrl.trim() || 'http://localhost:8080',
@@ -71,6 +86,17 @@ export default function Clients() {
       setNewKycMode('admin')
       setCreating(false)
       await refresh({ quiet: true })
+      // Surface the fresh api_key ONCE — the backend won't return it
+      // again. Ops has to paste this into the target DP's
+      // INTERNAL_API_KEY + DATA_PLANE_API_KEY env vars.
+      if (created && created.api_key) {
+        setNewCredsModal({
+          id: created.id,
+          name: created.name,
+          api_url: created.api_url,
+          api_key: created.api_key,
+        })
+      }
     } catch (e) {
       setErr(errText(e, 'Could not create the client.'))
     } finally {
@@ -263,7 +289,11 @@ export default function Clients() {
                         <td className="px-5 py-3.5 text-slate-700 tabular-nums">{c.exam_count}</td>
                         <td className="px-5 py-3.5">
                           <div className="flex gap-1.5 flex-wrap items-center">
-                            {Boolean(c.closed) ? (
+                            {c.status === 'infra_pending' ? (
+                              <Pill tone="amber" dot>Infra pending</Pill>
+                            ) : c.status === 'ready' ? (
+                              <Pill tone="sky" dot>Ready</Pill>
+                            ) : Boolean(c.closed) ? (
                               <Pill tone="amber" dot>Ended</Pill>
                             ) : (
                               <Pill tone="emerald" dot>Active</Pill>
@@ -343,6 +373,111 @@ export default function Clients() {
           </CardBody>
         </Card>
       </FadeIn>
+
+      {/* Post-create modal — one-time reveal of the api_key. Backend
+          never returns it again, so we hold the user here until they
+          copy it. Also shows the client id, needed for the target
+          DP's DATA_PLANE_CLIENT_ID env var. */}
+      <AnimatePresence>
+        {newCredsModal && (
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 flex items-center justify-center bg-slate-950/70 p-4"
+          >
+            <motion.div
+              initial={{ opacity: 0, scale: 0.96, y: 8 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.96, y: 8 }}
+              className="w-full max-w-lg rounded-2xl bg-white p-6 shadow-2xl"
+            >
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-full bg-emerald-100 text-emerald-600">
+                  ✓
+                </div>
+                <div className="flex-1">
+                  <h3 className="text-lg font-bold text-slate-900">
+                    Client &quot;{newCredsModal.name}&quot; created
+                  </h3>
+                  <p className="mt-1 text-sm text-slate-600">
+                    Copy the API Key now. It is shown <b>only once</b> — the
+                    Control Plane never re-reads it. Paste it into the target
+                    Data Plane&rsquo;s <code>INTERNAL_API_KEY</code> +{' '}
+                    <code>DATA_PLANE_API_KEY</code> env vars.
+                  </p>
+                </div>
+              </div>
+
+              <div className="mt-5 space-y-3">
+                <div>
+                  <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                    Client ID (goes into DP env DATA_PLANE_CLIENT_ID)
+                  </div>
+                  <div className="flex items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2">
+                    <code className="flex-1 font-mono text-sm text-slate-900">
+                      {newCredsModal.id}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(String(newCredsModal.id), 'id')}
+                      className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                    >
+                      {copiedField === 'id' ? 'Copied' : 'Copy'}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-slate-500">
+                    API URL
+                  </div>
+                  <div className="flex items-center gap-2 rounded-lg border border-slate-300 bg-slate-50 px-3 py-2">
+                    <code className="flex-1 break-all font-mono text-xs text-slate-900">
+                      {newCredsModal.api_url}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(newCredsModal.api_url, 'url')}
+                      className="rounded-md border border-slate-300 bg-white px-2 py-1 text-xs font-medium text-slate-700 hover:bg-slate-100"
+                    >
+                      {copiedField === 'url' ? 'Copied' : 'Copy'}
+                    </button>
+                  </div>
+                </div>
+
+                <div>
+                  <div className="mb-1 text-xs font-semibold uppercase tracking-wider text-rose-600">
+                    API Key (shown once — cannot be retrieved later)
+                  </div>
+                  <div className="flex items-center gap-2 rounded-lg border-2 border-rose-300 bg-rose-50 px-3 py-2">
+                    <code className="flex-1 break-all font-mono text-xs text-slate-900">
+                      {newCredsModal.api_key}
+                    </code>
+                    <button
+                      type="button"
+                      onClick={() => copyToClipboard(newCredsModal.api_key, 'key')}
+                      className="rounded-md border border-rose-400 bg-white px-3 py-1 text-xs font-semibold text-rose-700 hover:bg-rose-100"
+                    >
+                      {copiedField === 'key' ? 'Copied' : 'Copy'}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-6 flex items-center justify-end gap-2">
+                <button
+                  type="button"
+                  onClick={() => setNewCredsModal(null)}
+                  className="rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800"
+                >
+                  I&rsquo;ve saved it — close
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </SuperShell>
   )
 }

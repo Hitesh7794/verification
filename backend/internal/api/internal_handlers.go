@@ -32,6 +32,7 @@ package api
 // via DATABASE_URL and these queries will scope themselves naturally.
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -124,7 +125,12 @@ func (s *Server) internalMetrics(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	scan(`SELECT COUNT(*) FROM users`, &out.Users)
+	// "users" count on the federated dashboard maps to reviewers +
+	// agents (operators) + institute admins — the people who actually
+	// work the system. Exclude platform superadmins (role='superadmin')
+	// so the FE tile 'Reviewers & agents' shows a meaningful number,
+	// not just "somebody with a login".
+	scan(`SELECT COUNT(*) FROM users WHERE role <> 'superadmin' AND disabled_at IS NULL`, &out.Users)
 	scan(`SELECT COUNT(*) FROM organizations`, &out.Organizations)
 	scan(`SELECT COUNT(*) FROM exams`, &out.Exams)
 	scan(`SELECT COUNT(*) FROM exam_candidates`, &out.Candidates)
@@ -157,6 +163,12 @@ func (s *Server) internalMetrics(w http.ResponseWriter, r *http.Request) {
 // layer, not just in a best-effort application check.
 type internalOrgsCreateReq struct {
 	ExternalApplicationID int64  `json:"external_application_id"`
+	// DpApplicationID is this DP's own institution_applications.id
+	// (i.e. what CP stores as external_application_id on its row).
+	// Populated by CP so the DP can flip its stale 'pending' row to
+	// 'approved' after CP's terminal decision. Optional — old CPs
+	// that don't send this field just skip the back-write.
+	DpApplicationID int64  `json:"dp_application_id,omitempty"`
 	InstitutionName       string `json:"institution_name"`
 	HeadName              string `json:"head_name"`
 	HeadDesignation       string `json:"head_designation"`
@@ -246,6 +258,13 @@ func (s *Server) internalOrgsCreate(w http.ResponseWriter, r *http.Request) {
 		 LIMIT 1`), orgCode,
 	).Scan(&existingOrgID, &existingUserID, &existingUsername)
 	if err == nil {
+		// Idempotent retry: keep the org untouched, but still
+		// backfill the DP institution_applications row if it's
+		// stale. Approvals from before we started sending
+		// DpApplicationID left DP rows stuck at 'pending' — a
+		// retry click surfaces them here so operators can heal
+		// without a DB touch.
+		backfillDPApplication(ctx, s.deps.DB, req.DpApplicationID)
 		writeJSON(w, http.StatusOK, internalOrgsCreateResp{
 			OrgID:         existingOrgID,
 			AdminUserID:   existingUserID,
@@ -396,6 +415,12 @@ func (s *Server) internalOrgsCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "commit: "+err.Error())
 		return
 	}
+
+	// Back-update the DP's own institution_applications row so its
+	// status matches CP after approval. Keeping DP's row in sync
+	// stops the client-reviewer inbox showing a phantom "pending"
+	// count from an application that CP already terminally decided.
+	backfillDPApplication(ctx, s.deps.DB, req.DpApplicationID)
 
 	// Post-commit: magic link + email. Failures logged, not fatal —
 	// the applicant can request a fresh link from their locked
@@ -1166,4 +1191,24 @@ func (s *Server) internalExamsList(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// backfillDPApplication flips this DP's institution_applications row
+// to 'approved' after CP has terminally decided. Called from both the
+// fresh-provision and idempotent-retry paths of internalOrgsCreate so a
+// re-approve heals stale rows without a manual DB touch. Best-effort:
+// any failure just logs — provisioning succeeds regardless.
+func backfillDPApplication(ctx context.Context, dbConn *sql.DB, dpAppID int64) {
+	if dpAppID <= 0 {
+		return
+	}
+	if _, err := dbConn.ExecContext(ctx, `
+		UPDATE institution_applications
+		   SET status = 'approved',
+		       updated_at = NOW()
+		 WHERE id = $1 AND status IN ('draft','pending')`,
+		dpAppID,
+	); err != nil {
+		log.Printf("backfillDPApplication: DP row %d update failed: %v", dpAppID, err)
+	}
 }
