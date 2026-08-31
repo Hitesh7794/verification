@@ -182,19 +182,12 @@ type Config struct {
 	//                            Plane; also stored on the CP so it
 	//                            can constant-time compare).
 	//
-	// ServeKYCLocally is the feature flag: when true the DP keeps
-	// its own local register/reviewer handlers running (single-DB
-	// legacy mode). When false the same URLs get replaced by the
-	// reverse-proxy handlers. Default true during rollout so an
-	// unconfigured deployment doesn't silently break.
-	//
-	// All four values empty on dev machines that don't yet talk to
-	// a Control Plane — proxy attempts then log + 503 rather than
-	// hang or masquerade as success.
+	// All three values empty on dev machines that don't yet talk to
+	// a Control Plane — the reverse-proxy handlers then log + 503
+	// rather than hang or masquerade as success.
 	ControlPlaneURL   string
 	DataPlaneClientID int64
 	DataPlaneAPIKey   string
-	ServeKYCLocally   bool
 }
 
 func loadDotEnv() {
@@ -269,15 +262,13 @@ func Load() Config {
 		ControlPlaneAllowedIPs: envOrigins("CONTROL_PLANE_ALLOWED_IPS"),
 
 		// Multi-tenant Phase 3 — DP reverse-proxy to Control Plane.
-		// Empty defaults keep pre-migration deployments running the
-		// local register/reviewer handlers. ServeKYCLocally defaults
-		// TRUE — the flag has to be explicitly flipped to hand KYC
-		// off to the Control Plane. That's the intentional rollout
-		// order: build CP, verify, then flip flag per-client.
+		// KYC register/submit/reviewer endpoints always proxy up to
+		// CP; these values wire that up. Empty defaults leave dev
+		// boxes running with a 503 on the proxy paths until the
+		// operator points them at a CP.
 		ControlPlaneURL:   strings.TrimRight(envOr("CONTROL_PLANE_URL", ""), "/"),
 		DataPlaneClientID: int64(envInt("DATA_PLANE_CLIENT_ID", 0)),
 		DataPlaneAPIKey:   envOr("DATA_PLANE_API_KEY", ""),
-		ServeKYCLocally:   envOr("SERVE_KYC_LOCALLY", "true") != "false",
 	}
 }
 

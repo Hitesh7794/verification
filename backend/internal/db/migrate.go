@@ -378,9 +378,8 @@ func applyV24DropOneReviewerPerClient(ctx context.Context, d *sql.DB) error {
 // created for it in Phase 3. Populated by proxyRegisterSubmit AFTER a
 // successful CP round-trip so subsequent status polls
 // (proxyRegisterStatus) can look up the CP row without a translation
-// table. NULL means the draft never reached the CP (either because
-// SERVE_KYC_LOCALLY=true or because a CP submit failed) — in that case
-// the DP falls back to its own local status.
+// table. NULL means the draft never reached the CP (a CP submit
+// failed) — in that case the DP falls back to its own local status.
 //
 // Version 23 (not 21) skips the numbers a co-developer's branch reserves
 // on their local fork; on merge the ordering is stable either way

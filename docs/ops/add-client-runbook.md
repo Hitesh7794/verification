@@ -111,7 +111,6 @@ INTERNAL_API_KEY=<PASTE api_key FROM STEP 1>
 CONTROL_PLANE_URL=http://127.0.0.1:8091
 DATA_PLANE_CLIENT_ID=<CP_ROW_ID from step 1>
 DATA_PLANE_API_KEY=<SAME as INTERNAL_API_KEY>
-SERVE_KYC_LOCALLY=false
 
 # Local storage
 DATA_DIR=/opt/verificationportal-nta/data

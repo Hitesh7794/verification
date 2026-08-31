@@ -2,10 +2,10 @@ package api
 
 // Reverse-proxy shims — Phase 3 of the multi-tenant migration.
 //
-// When this Data Plane is configured to hand KYC off to the Control
-// Plane (ServeKYCLocally=false in config), these handlers stand in
-// for the legacy /api/register/* and /api/client/* handlers. Each
-// one:
+// These handlers own /api/register/{submit,{id}} and the client-reviewer
+// /api/client/applications/* endpoints. Every DP proxies these paths up
+// to the Control Plane; CP owns the institution_applications table for
+// every client. Each handler:
 //
 //   1. Adds two headers identifying this Data Plane to the Control
 //      Plane (X-Data-Plane-Client-ID + X-Data-Plane-Api-Key).
