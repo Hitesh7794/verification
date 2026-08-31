@@ -14,7 +14,6 @@ import {
   reviewerMe,
 } from '../../lib/reviewer/api.js'
 import {
-  toggleExamVisibility,
   closeExam,
   reopenExam,
   deleteExam,
@@ -469,10 +468,7 @@ export default function ReviewerExams() {
 
   useEffect(() => { refresh() }, [refresh])
 
-  async function onToggleVisibility(examId) {
-    await toggleExamVisibility(examId)
-    await refresh()
-  }
+
 
   function askClose(examId, examName) {
     setDlg({
@@ -730,29 +726,17 @@ export default function ReviewerExams() {
                                 <>
                                   {e.closed && <Pill tone="amber" dot>Ended</Pill>}
                                   {isExpired && !e.closed && <Pill tone="amber" dot>Window Expired</Pill>}
-                                  {e.visible ? <Pill tone="slate" dot>Listed</Pill> : <Pill tone="slate" dot>Unlisted</Pill>}
                                 </>
                               ) : (
                                 <>
                                   {ongoing && <Pill tone="emerald" dot>Live</Pill>}
                                   {!ongoing && !e.closed && <Pill tone="blue" dot>Upcoming</Pill>}
-                                  {e.visible ? <Pill tone="emerald" dot>Listed</Pill> : <Pill tone="slate" dot>Unlisted</Pill>}
                                 </>
                               )}
                             </div>
                           </td>
                           <td className="px-5 py-3.5">
                             <div className="flex justify-end gap-1.5">
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                onClick={() => onToggleVisibility(e.id)}
-                                title={e.visible
-                                  ? 'Remove from the catalog admins subscribe from (reversible)'
-                                  : 'Add back to the catalog admins subscribe from'}
-                              >
-                                {e.visible ? 'Unlist' : 'List'}
-                              </Button>
                               {e.closed ? (
                                 <Button
                                   variant="secondary"

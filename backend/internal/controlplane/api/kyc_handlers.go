@@ -18,11 +18,9 @@ package api
 //                                client was added. Constant-time
 //                                compared against the DB row. Fails
 //                                closed if the header is missing or
-//                                mismatched.
-//
-//   Dev-only escape hatch: setting CP_ALLOW_UNAUTH_PROXY=1 bypasses
-//   the API-key check so a fresh local box with no clients_registry
-//   rows can smoke the endpoints. Never enable in prod.
+//                                mismatched. No dev-only bypass — a
+//                                genuine api_key is required in every
+//                                environment.
 //
 // On CP-side approval (POST .../approve), we look up the target
 // client's api_url in clients_registry, then fire POST
@@ -98,13 +96,11 @@ func (s *Server) dpProxyAuth(next http.Handler) http.Handler {
 			return
 		}
 
-		// Dev bypass — see file-level comment.
-		if !s.deps.Cfg.PhaseThreeAllowUnauthProxy {
-			if apiKey == "" || apiKey != storedKey {
-				log.Printf("cp dpProxyAuth: bad api key from client %d (%s)", clientID, clientName)
-				writeErr(w, http.StatusUnauthorized, "bad api key")
-				return
-			}
+		// Always require a matching api_key — no environment bypass.
+		if apiKey == "" || apiKey != storedKey {
+			log.Printf("cp dpProxyAuth: bad api key from client %d (%s)", clientID, clientName)
+			writeErr(w, http.StatusUnauthorized, "bad api key")
+			return
 		}
 
 		ctx := context.WithValue(r.Context(), dpClientIDKey, clientID)

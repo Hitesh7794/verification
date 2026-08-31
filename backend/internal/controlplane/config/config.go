@@ -57,14 +57,6 @@ type Config struct {
 	// prod should pin this explicitly.
 	PublicBaseURL string
 
-	// PhaseThreeAllowUnauthProxy — when true, the CP accepts DP
-	// reverse-proxy calls without an X-Data-Plane-Api-Key. Used only
-	// for local dev before real client rows exist in
-	// clients_registry. Never leave true in prod — every genuine
-	// call must present a per-client api_key that matches
-	// clients_registry.api_key.
-	PhaseThreeAllowUnauthProxy bool
-
 	// ─── Outbound email (registration + reviewer decision mails)
 	// mirrors the Data Plane's SMTP config so a single .env can hold
 	// both. Empty SMTPHost falls back to the console sender.
@@ -105,7 +97,6 @@ func Load() Config {
 		AllowedOrigins:             envOrigins("CP_ALLOWED_ORIGINS"),
 		FederatedTimeoutMS:         envInt("CP_FEDERATED_TIMEOUT_MS", 3000),
 		PublicBaseURL:              strings.TrimRight(envOr("CP_PUBLIC_BASE_URL", ""), "/"),
-		PhaseThreeAllowUnauthProxy: envOr("CP_ALLOW_UNAUTH_PROXY", "") == "1",
 		SMTPHost:                   envOr("SMTP_HOST", ""),
 		SMTPPort:                   envOr("SMTP_PORT", "587"),
 		SMTPUser:                   envOr("SMTP_USER", ""),

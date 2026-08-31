@@ -16,7 +16,6 @@ import { FadeIn } from '../../components/ui/motion.jsx'
 import {
   getExam,
   patchExam,
-  toggleExamVisibility,
   closeExam,
   reopenExam,
   deleteExam,
@@ -139,10 +138,7 @@ export default function ExamDetail() {
     }
   }
 
-  async function onToggleVisibility() {
-    await toggleExamVisibility(id)
-    await refreshExam()
-  }
+
   function askClose() {
     setDlg({
       title:        `End "${exam.name}"?`,
@@ -207,7 +203,6 @@ export default function ExamDetail() {
               {isExpired && !exam.closed && <Pill tone="amber" dot>Archived (Window Expired)</Pill>}
               {isOngoing && <Pill tone="emerald" dot>Live</Pill>}
               {!isOngoing && !isExpired && !exam.closed && <Pill tone="blue" dot>Upcoming</Pill>}
-              {exam.visible ? <Pill tone="emerald" dot>Listed</Pill> : <Pill tone="slate" dot>Unlisted</Pill>}
               <span className="text-slate-400">·</span>
               <span className="text-xs text-slate-600">
                 Requires: {[
@@ -222,15 +217,6 @@ export default function ExamDetail() {
             <div className="flex gap-2">
               <Button variant="secondary" onClick={() => setEditing(v => !v)}>
                 {editing ? 'Cancel' : 'Edit'}
-              </Button>
-              <Button
-                variant="secondary"
-                onClick={onToggleVisibility}
-                title={exam.visible
-                  ? 'Remove from the catalog admins subscribe from (reversible)'
-                  : 'Add back to the catalog admins subscribe from'}
-              >
-                {exam.visible ? 'Unlist' : 'List'}
               </Button>
               {exam.closed
                 ? <Button
