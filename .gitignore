@@ -137,3 +137,6 @@ backend/.pgsql_data/
 backend/.pgsql_tmp/
 backend/*.log
 *.log
+
+# SOP documents — kept locally, never pushed
+docs/sop/
