@@ -568,6 +568,20 @@ func (s *Server) proxyReviewerReject(w http.ResponseWriter, r *http.Request) {
 	s.proxyToCP(w, r, fmt.Sprintf("/api/reviewer/applications/%s/reject", url.PathEscape(id)))
 }
 
+// Bulk approve/reject — forwarded straight through to CP. The CP
+// endpoint iterates and returns a per-row summary; we just relay.
+// The old DP-local bulk handlers looked up applications in DP's
+// institution_applications table, but reviewer rows now live on CP —
+// hitting the DP handler with CP row ids always resulted in "0 approved,
+// N skipped" errors.
+func (s *Server) proxyReviewerBulkApprove(w http.ResponseWriter, r *http.Request) {
+	s.proxyToCP(w, r, "/api/reviewer/applications/bulk-approve")
+}
+
+func (s *Server) proxyReviewerBulkReject(w http.ResponseWriter, r *http.Request) {
+	s.proxyToCP(w, r, "/api/reviewer/applications/bulk-reject")
+}
+
 // GET /api/client/applications/{id}/docs/{doc_id} — DP → CP proxy for
 // reviewer doc downloads. CP handles the S3 fetch (via DP's internal
 // /documents/download endpoint) and streams bytes back through here.

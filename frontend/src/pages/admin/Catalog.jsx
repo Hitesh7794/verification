@@ -125,7 +125,14 @@ export default function Catalog() {
                       </thead>
                       <tbody>
                         {c.exams.map((e) => {
-                          const isSubscribed = e.subscription_status === 'approved' || e.subscribed
+                          // "Subscribed" means an actual sub row exists —
+                          // NOT the blanket-coa flag from the client. If
+                          // the admin unsubscribed from a blanket-approved
+                          // exam, the row is gone and the button should
+                          // read "Subscribe" so they can re-opt-in. Using
+                          // the blanket flag here made a stale Unsubscribe
+                          // button 404 the DELETE.
+                          const isSubscribed = e.subscription_status === 'approved'
                           const isPending    = e.subscription_status === 'pending'
                           const rowBusy      = busyExamId === e.id
                           return (

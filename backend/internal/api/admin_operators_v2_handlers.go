@@ -322,6 +322,14 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "a verification agent must be assigned to at least one exam")
 		return
 	}
+	// One agent = one exam. Multi-assignment was briefly enabled by V18
+	// (2026-08-26) and reverted by V27 (this fix) because it made
+	// per-exam wallet accounting + audit scoping fragile.
+	if len(req.ExamIDs) > 1 {
+		writeErr(w, http.StatusBadRequest,
+			"a verification agent can only be assigned to ONE exam — pick a single exam per agent")
+		return
+	}
 	for _, eid := range req.ExamIDs {
 		var eFrom, eTo sql.NullString
 		if err := s.deps.DB.QueryRowContext(r.Context(), db.Q(`
@@ -974,6 +982,14 @@ func (s *Server) adminBulkCreateOperatorsCSV(w http.ResponseWriter, r *http.Requ
 			targetExamIDs = []int64{allSubExamIDs[0]}
 		}
 
+		// V27 restore: one agent = one exam. If a CSV row lists two or
+		// more codes, keep just the first (matches the DB constraint,
+		// gives the operator a predictable subset instead of failing
+		// the whole row).
+		if len(targetExamIDs) > 1 {
+			targetExamIDs = targetExamIDs[:1]
+		}
+
 		if err := s.setOperatorExams(tx, orgID, uid, targetExamIDs); err != nil {
 			writeErr(w, http.StatusInternalServerError, fmt.Sprintf("db link exams line %d: %v", p.Line, err))
 			return
@@ -1246,6 +1262,11 @@ func (s *Server) adminPatchOperator(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if req.ExamIDs != nil {
+		if len(*req.ExamIDs) > 1 {
+			writeErr(w, http.StatusBadRequest,
+				"a verification agent can only be assigned to ONE exam — pick a single exam per agent")
+			return
+		}
 		if err := s.setOperatorExams(tx, orgID, id, *req.ExamIDs); err != nil {
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return

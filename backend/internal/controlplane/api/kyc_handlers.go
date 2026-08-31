@@ -876,6 +876,208 @@ func (s *Server) cpReviewerReject(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ── POST /api/reviewer/applications/bulk-approve, bulk-reject ────
+//
+// Mass action for the client-reviewer inbox. Takes {application_ids,
+// note} and applies the same per-item logic as the single-item
+// approve/reject to each id, one at a time. Failures are captured
+// per-row so the reviewer sees an "N approved, M skipped" summary
+// instead of aborting on the first bad row.
+//
+// Response shape matches what Rahul's FE already expects from the
+// DP-side bulk endpoint (bulkKycActionResp shape from
+// client_review_handlers.go).
+//
+// Hard cap of 200 applications per call — same as the DP-side handler,
+// keeps a runaway UI or curl from pinning a CP worker for minutes.
+
+type cpBulkActionReq struct {
+	ApplicationIDs []int64 `json:"application_ids"`
+	Note           string  `json:"note"`
+}
+
+type cpBulkActionResult struct {
+	ApplicationID int64  `json:"application_id"`
+	OK            bool   `json:"ok"`
+	Error         string `json:"error,omitempty"`
+	OrgID         int64  `json:"org_id,omitempty"`
+}
+
+type cpBulkActionResp struct {
+	Requested int                  `json:"requested"`
+	Succeeded int                  `json:"succeeded"`
+	Failed    int                  `json:"failed"`
+	Results   []cpBulkActionResult `json:"results"`
+}
+
+const cpMaxBulkKycAppsPerCall = 200
+
+func (s *Server) cpReviewerBulkApprove(w http.ResponseWriter, r *http.Request) {
+	s.cpReviewerBulkAction(w, r, false /* isReject */)
+}
+
+func (s *Server) cpReviewerBulkReject(w http.ResponseWriter, r *http.Request) {
+	s.cpReviewerBulkAction(w, r, true /* isReject */)
+}
+
+func (s *Server) cpReviewerBulkAction(w http.ResponseWriter, r *http.Request, isReject bool) {
+	clientID := dpClientID(r)
+	r.Body = http.MaxBytesReader(w, r.Body, 16<<10)
+	var req cpBulkActionReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if len(req.ApplicationIDs) == 0 {
+		writeErr(w, http.StatusBadRequest, "application_ids required")
+		return
+	}
+	if len(req.ApplicationIDs) > cpMaxBulkKycAppsPerCall {
+		writeErr(w, http.StatusBadRequest,
+			fmt.Sprintf("too many application_ids — cap is %d per call", cpMaxBulkKycAppsPerCall))
+		return
+	}
+	note := strings.TrimSpace(req.Note)
+	if isReject && note == "" {
+		writeErr(w, http.StatusBadRequest, "a rejection note is required — it goes to the applicant")
+		return
+	}
+
+	out := cpBulkActionResp{
+		Requested: len(req.ApplicationIDs),
+		Results:   make([]cpBulkActionResult, 0, len(req.ApplicationIDs)),
+	}
+
+	for _, id := range req.ApplicationIDs {
+		res := cpBulkActionResult{ApplicationID: id}
+		if id <= 0 {
+			res.Error = "invalid application id"
+		} else if isReject {
+			res.Error = s.rejectOneApplication(r.Context(), id, clientID, note)
+			res.OK = res.Error == ""
+		} else {
+			orgID, provErr, errMsg := s.approveOneApplication(r.Context(), id, clientID, note)
+			if errMsg != "" {
+				res.Error = errMsg
+			} else {
+				res.OK = true
+				res.OrgID = orgID
+				if provErr != "" {
+					// Partial success — the CP row is approved but the DP
+					// provisioning fan-out failed. Report as OK with the
+					// provisioning error appended so the reviewer knows
+					// there's follow-up work.
+					res.Error = "approved but provisioning failed: " + provErr
+				}
+			}
+		}
+		if res.OK {
+			out.Succeeded++
+		} else {
+			out.Failed++
+		}
+		out.Results = append(out.Results, res)
+	}
+	writeJSON(w, http.StatusOK, out)
+}
+
+// rejectOneApplication applies the same UPDATE that cpReviewerReject
+// runs, scoped to the caller's client. Returns "" on success or a
+// human-readable error message (empty string means OK).
+func (s *Server) rejectOneApplication(ctx context.Context, id, clientID int64, note string) string {
+	res, err := s.deps.DB.ExecContext(ctx, `
+		UPDATE institution_applications
+		   SET status           = 'rejected',
+		       pending_reviewer = NULL,
+		       review_note      = $3,
+		       reviewed_at      = NOW(),
+		       updated_at       = NOW()
+		 WHERE id = $1 AND target_client_id = $2 AND status = 'pending'`,
+		id, clientID, note,
+	)
+	if err != nil {
+		return "db update failed: " + err.Error()
+	}
+	if n, _ := res.RowsAffected(); n == 0 {
+		return "not found or not pending"
+	}
+	return ""
+}
+
+// approveOneApplication applies the same tx + provisioning as
+// cpReviewerApprove. Returns (orgID, provisioningError, fatalError).
+// A fatal error means the row itself couldn't be flipped; a
+// provisioning error means the CP row is approved but the DP fan-out
+// failed (retry via re-approve or manual heal).
+func (s *Server) approveOneApplication(parent context.Context, id, clientID int64, note string) (int64, string, string) {
+	tx, err := s.deps.DB.BeginTx(parent, nil)
+	if err != nil {
+		return 0, "", "db begin failed: " + err.Error()
+	}
+	defer tx.Rollback()
+
+	var (
+		status, instName, headName, headDesignation, headEmail string
+		aishe                                                   sql.NullString
+		dpClientIDCol, externalAppID                            sql.NullInt64
+	)
+	err = tx.QueryRowContext(parent, `
+		SELECT status, institution_name, head_name, head_designation,
+		       head_email, aishe_code, dp_client_id, external_application_id
+		  FROM institution_applications
+		 WHERE id = $1 AND target_client_id = $2
+		 FOR UPDATE`, id, clientID,
+	).Scan(&status, &instName, &headName, &headDesignation, &headEmail, &aishe, &dpClientIDCol, &externalAppID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return 0, "", "not found"
+	}
+	if err != nil {
+		return 0, "", "db read failed: " + err.Error()
+	}
+	if status != "pending" {
+		return 0, "", "not pending (is " + status + ")"
+	}
+	if _, err := tx.ExecContext(parent, `
+		UPDATE institution_applications
+		   SET status = 'approved',
+		       pending_reviewer = NULL,
+		       reviewed_at = NOW(),
+		       review_note = $2,
+		       updated_at  = NOW()
+		 WHERE id = $1`, id, nullableStr(note),
+	); err != nil {
+		return 0, "", "db update failed: " + err.Error()
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, "", "commit failed: " + err.Error()
+	}
+
+	fanoutClient := int64(0)
+	if dpClientIDCol.Valid {
+		fanoutClient = dpClientIDCol.Int64
+	}
+	provResp, provErr := s.fireInternalOrgsCreate(parent, clientID, internalOrgsCreatePayload{
+		ExternalApplicationID: id,
+		DpApplicationID:       externalAppID.Int64,
+		InstitutionName:       instName,
+		HeadName:              headName,
+		HeadDesignation:       headDesignation,
+		HeadEmail:             headEmail,
+		AisheCode:             aishe.String,
+		SendWelcomeEmail:      true,
+		ClientID:              fanoutClient,
+	})
+	if provErr != nil {
+		log.Printf("bulk-approve app=%d: provisioning fan-out failed: %v", id, provErr)
+		return 0, provErr.Error(), ""
+	}
+	orgID := int64(0)
+	if provResp != nil {
+		orgID = provResp.OrgID
+	}
+	return orgID, "", ""
+}
+
 // ── /internal/orgs/create fan-out ────────────────────────────────
 
 type internalOrgsCreatePayload struct {

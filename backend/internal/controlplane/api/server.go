@@ -161,6 +161,11 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/reviewer/applications/{id}", s.cpReviewerGet)
 		r.Post("/api/reviewer/applications/{id}/approve", s.cpReviewerApprove)
 		r.Post("/api/reviewer/applications/{id}/reject", s.cpReviewerReject)
+		// Bulk equivalents — same auth model, iterate per id with
+		// per-row error capture (returns {requested, succeeded, failed,
+		// results[]}). Rahul's inbox POSTs {application_ids, note} here.
+		r.Post("/api/reviewer/applications/bulk-approve", s.cpReviewerBulkApprove)
+		r.Post("/api/reviewer/applications/bulk-reject", s.cpReviewerBulkReject)
 		r.Get("/api/reviewer/applications/{id}/docs/{doc_id}/download", s.proxyDocDownloadReviewer)
 	})
 

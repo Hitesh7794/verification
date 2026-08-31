@@ -433,8 +433,11 @@ func (s *Server) Router() http.Handler {
 		r.Post("/api/client/applications/{id}/approve",      s.requireRole("client_reviewer")(s.proxyReviewerApprove))
 		r.Post("/api/client/applications/{id}/reject",       s.requireRole("client_reviewer")(s.proxyReviewerReject))
 		r.Get("/api/client/applications/{id}/docs/{doc_id}", s.requireRole("client_reviewer")(s.proxyReviewerDocDownload))
-		r.Post("/api/client/applications/bulk-approve",      s.requireRole("client_reviewer")(s.clientBulkApproveApplications))
-		r.Post("/api/client/applications/bulk-reject",       s.requireRole("client_reviewer")(s.clientBulkRejectApplications))
+		// Bulk approve/reject reverse-proxy to CP (same as the
+		// single-item variants above). CP owns institution_applications
+		// so the DP-local bulk handlers were querying the wrong table.
+		r.Post("/api/client/applications/bulk-approve",      s.requireRole("client_reviewer")(s.proxyReviewerBulkApprove))
+		r.Post("/api/client/applications/bulk-reject",       s.requireRole("client_reviewer")(s.proxyReviewerBulkReject))
 
 		// Client-reviewer subscription request management
 		r.Get("/api/client/subscription-requests",                                 s.requireRole("client_reviewer")(s.clientListSubscriptionRequests))

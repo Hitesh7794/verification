@@ -181,7 +181,64 @@ func Migrate(d *sql.DB) error {
 		}
 	}
 
+	if !applied[27] {
+		if err := applyV27RestoreOneExamPerOperator(ctx, d); err != nil {
+			return fmt.Errorf("apply v27 restore_one_exam_per_operator: %w", err)
+		}
+	}
+
 	return nil
+}
+
+// applyV27RestoreOneExamPerOperator restores the "one operator can only
+// be assigned to one exam" rule that V18 removed. Re-adds the UNIQUE
+// index on operator_exams.user_id so INSERTing a second exam for the
+// same operator fails with a duplicate-key error.
+//
+// Before running the ADD INDEX we reduce any operator with 2+ exams
+// down to their EARLIEST assignment — matches the "keep the first
+// assignment they got" policy the pre-V18 constraint enforced by
+// simply refusing later assignments.
+//
+// Handler layer still needs to catch the constraint violation and
+// return a friendly 409 instead of a raw pg error — see
+// createOperator / patchOperator for that catch.
+func applyV27RestoreOneExamPerOperator(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	// Reduce every operator to a single assignment. Table has no
+	// assigned_at column, so we keep the row with the smallest exam_id
+	// (proxy for oldest — auto-increment). Safe because downstream data
+	// isolation is exam-scoped: a dropped assignment just removes access,
+	// doesn't corrupt existing verifications.
+	if _, err := tx.ExecContext(ctx, `
+		DELETE FROM operator_exams a
+		 USING operator_exams b
+		 WHERE a.user_id = b.user_id
+		   AND a.exam_id > b.exam_id
+	`); err != nil {
+		return fmt.Errorf("v27 collapse duplicates: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`CREATE UNIQUE INDEX IF NOT EXISTS ux_operator_exams_user
+		    ON operator_exams(user_id)`,
+	); err != nil {
+		return fmt.Errorf("v27 add unique index: %w", err)
+	}
+
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)
+		 ON CONFLICT (version) DO NOTHING`,
+		27, "restore_one_exam_per_operator",
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // applyV26ClientDomain adds clients.domain — the public hostname

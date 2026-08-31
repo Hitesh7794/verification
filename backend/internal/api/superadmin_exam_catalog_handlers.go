@@ -43,6 +43,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -508,9 +509,29 @@ func (s *Server) superadminCreateExam(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "db insert: "+err.Error())
 		return
 	}
-	// Fan-out at exam create was removed 2026-08-25 — admins subscribe
-	// on demand from the exam catalog instead. Access at KYC-approve
-	// time still fires for exams that existed pre-approval.
+	// Fan out to every blanket-approved org under this client. Without
+	// this, an org KYC-approved BEFORE the exam existed sees the exam
+	// as "Subscribed" (via blanket coa) in the catalog but has no
+	// organization_exam_subscriptions row — so clicking Unsubscribe
+	// returns 404, and My Exams stays empty. Restoring the fan-out
+	// keeps the "blanket = auto-subscribe" mental model consistent.
+	// Idempotent via ON CONFLICT.
+	if _, err := s.deps.DB.ExecContext(r.Context(), `
+		INSERT INTO organization_exam_subscriptions(
+			org_id, exam_id, status, approval_type,
+			subscribed_by, requested_at,
+			reviewed_at, reviewed_by, review_note
+		)
+		SELECT coa.org_id, $1, 'approved', 'blanket_client',
+		       NULL, NOW(),
+		       NOW(), NULL, 'Auto-subscribed on exam create (blanket)'
+		  FROM client_organization_approvals coa
+		 WHERE coa.client_id = $2 AND coa.status = 'approved'
+		ON CONFLICT (org_id, exam_id) DO NOTHING`,
+		id, clientID,
+	); err != nil {
+		log.Printf("superadminCreateExam: blanket fan-out failed for exam %d: %v", id, err)
+	}
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id": id, "name": name, "exam_code": code,
 	})

@@ -1118,6 +1118,29 @@ func (s *Server) internalExamsCreate(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "insert: "+err.Error())
 		return
 	}
+	// Fan out to every blanket-approved org under this client — otherwise
+	// orgs that got their KYC approved BEFORE this exam existed would
+	// never see it in their catalog (their internalOrgsCreate fan-out
+	// ran when this exam didn't exist yet). Idempotent via ON CONFLICT.
+	if _, err := s.deps.DB.ExecContext(ctx, `
+		INSERT INTO organization_exam_subscriptions(
+			org_id, exam_id, status, approval_type,
+			subscribed_by, requested_at,
+			reviewed_at, reviewed_by, review_note
+		)
+		SELECT coa.org_id, $1, 'approved', 'blanket_client',
+		       NULL, NOW(),
+		       NOW(), NULL, 'Auto-subscribed on exam create (blanket)'
+		  FROM client_organization_approvals coa
+		 WHERE coa.client_id = $2 AND coa.status = 'approved'
+		ON CONFLICT (org_id, exam_id) DO NOTHING`,
+		id, req.ClientID,
+	); err != nil {
+		// Best-effort: log + continue. The exam is created; ops can
+		// re-run the backfill if needed.
+		log.Printf("internalExamsCreate: blanket fan-out failed for exam %d: %v", id, err)
+	}
+
 	log.Printf("internalExamsCreate: created exam id=%d code=%s client_id=%d", id, code, req.ClientID)
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"id":                id,

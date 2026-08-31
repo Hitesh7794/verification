@@ -192,9 +192,19 @@ export default function ApplicationDetail() {
   const isPending = app.status === 'pending'
   const isRouted = !!app.client_id
   const isClientOnly = isRouted && app.client_kyc_review_mode === 'client'
-  const superadminOwnsDecision = isPending
+  // Superadmin can only decide when the row is in THEIR queue. For a
+  // mode='both' client this is true initially (pending_reviewer='admin')
+  // and false after superadmin's first approve hands it off
+  // (pending_reviewer='client'). Backend also enforces this on POST, but
+  // the FE needs to hide the buttons so the operator isn't invited to
+  // click them and see a "no decision authority" error.
+  // Fallback (missing field) → allow, so a missing backend field doesn't
+  // silently lock everyone out.
+  const routedAwayFromAdmin =
+    isPending && app.pending_reviewer && app.pending_reviewer !== 'admin'
+  const superadminOwnsDecision = isPending && !routedAwayFromAdmin
   const bothModeIntermediate =
-    isPending && (app.client_kyc_review_mode === 'both' || app.client_kyc_review_mode === 'client' || !isRouted)
+    superadminOwnsDecision && (app.client_kyc_review_mode === 'both' || app.client_kyc_review_mode === 'client' || !isRouted)
   const showDocs = true
   const activeDoc = app.docs?.find((d) => d.doc_id === activeDocId) || (app.docs?.length > 0 ? app.docs[0] : null)
 
@@ -272,7 +282,11 @@ export default function ApplicationDetail() {
           </div>
         </div>
       )}
-      {approvalResult && !approvalResult.admin_username && approvalResult.pending_reviewer === 'client' && (
+      {/* "Handed off to client" banner — shown any time the row is
+          pending with pending_reviewer='client', so a page reload after
+          the hand-off still tells the superadmin what's going on
+          instead of leaving them staring at a bare pending row. */}
+      {isPending && app.pending_reviewer === 'client' && (
         <div className="mb-6 rounded-xl bg-indigo-50 border border-indigo-200 p-4 flex items-start gap-3">
           <span className="h-9 w-9 rounded-lg bg-indigo-100 text-indigo-700 flex items-center justify-center shrink-0">
             <Icon.ShieldCheck className="h-5 w-5" />
@@ -280,7 +294,7 @@ export default function ApplicationDetail() {
           <div className="min-w-0 flex-1">
             <p className="text-sm font-semibold text-indigo-900">Sent to client reviewer for final approval</p>
             <p className="mt-1 text-xs text-indigo-800">
-              Your approval was recorded (step 1 of 2). No admin account has been created yet — the client reviewer will do the final approve, which creates the admin + activation link.
+              Superadmin&rsquo;s approval was recorded (step 1 of 2). No admin account has been created yet — the client reviewer will do the final approve, which creates the admin + activation link.
             </p>
           </div>
         </div>
