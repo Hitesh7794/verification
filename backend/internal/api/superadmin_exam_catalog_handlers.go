@@ -1388,8 +1388,8 @@ func (s *Server) loadExam(ctx context.Context, id int64) (*examRow, error) {
 	var reqFace, reqFP, reqIris int
 	err := s.deps.DB.QueryRowContext(ctx, db.Q(`
 		SELECT e.id, e.client_id, c.name, e.name, e.exam_code, e.trustview_ref,
-		       COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD"T"HH24:MI'), ''),
-		       COALESCE(TO_CHAR(e.verification_to,   'YYYY-MM-DD"T"HH24:MI'), ''),
+		       COALESCE(TO_CHAR(e.verification_from AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI'), ''),
+		       COALESCE(TO_CHAR(e.verification_to AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI'), ''),
 		       e.visible, e.closed,
 		       e.closed_at, e.created_at, e.updated_at,
 		       e.requires_face, e.requires_fp, e.requires_iris,
@@ -1421,8 +1421,8 @@ func (s *Server) loadExam(ctx context.Context, id int64) (*examRow, error) {
 func (s *Server) listExamsForClient(ctx context.Context, clientID int64) ([]examRow, error) {
 	rows, err := s.deps.DB.QueryContext(ctx, db.Q(`
 		SELECT e.id, e.client_id, e.name, e.exam_code, e.trustview_ref,
-		       COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD"T"HH24:MI'), ''),
-		       COALESCE(TO_CHAR(e.verification_to,   'YYYY-MM-DD"T"HH24:MI'), ''),
+		       COALESCE(TO_CHAR(e.verification_from AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI'), ''),
+		       COALESCE(TO_CHAR(e.verification_to AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI'), ''),
 		       e.visible, e.closed,
 		       e.closed_at, e.created_at, e.updated_at,
 		       e.requires_face, e.requires_fp, e.requires_iris,

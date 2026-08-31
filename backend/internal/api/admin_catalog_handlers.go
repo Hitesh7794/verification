@@ -72,8 +72,8 @@ func (s *Server) adminCatalog(w http.ResponseWriter, r *http.Request) {
 			c.id, c.name, COALESCE(c.notes,''),
 			CASE WHEN (coa.client_id IS NOT NULL AND coa.status = 'approved') THEN 1 ELSE 0 END AS client_blanket_approved,
 			e.id, e.name, e.exam_code,
-			COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD"T"HH24:MI'), ''),
-			COALESCE(TO_CHAR(e.verification_to,   'YYYY-MM-DD"T"HH24:MI'), ''),
+			COALESCE(TO_CHAR(e.verification_from AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI'), ''),
+			COALESCE(TO_CHAR(e.verification_to AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI'), ''),
 			(SELECT COUNT(*) FROM exam_candidates ec WHERE ec.exam_id = e.id),
 			COALESCE(s.status, ''),
 			COALESCE(s.review_note, ''),
@@ -186,8 +186,8 @@ func (s *Server) adminListSubscriptions(w http.ResponseWriter, r *http.Request) 
 
 	rows, err := s.deps.DB.QueryContext(r.Context(), `
 		SELECT e.id, e.name, e.exam_code, e.client_id, c.name,
-		       COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD"T"HH24:MI'), ''),
-		       COALESCE(TO_CHAR(e.verification_to,   'YYYY-MM-DD"T"HH24:MI'), ''),
+		       COALESCE(TO_CHAR(e.verification_from AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI'), ''),
+		       COALESCE(TO_CHAR(e.verification_to AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI'), ''),
 		       e.closed,
 		       (SELECT COUNT(*) FROM exam_candidates ec WHERE ec.exam_id = e.id),
 		       (SELECT COUNT(DISTINCT oe.user_id)

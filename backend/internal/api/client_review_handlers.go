@@ -526,8 +526,8 @@ func (s *Server) clientListSubscriptionRequests(w http.ResponseWriter, r *http.R
 			s.requested_at, s.reviewed_at, COALESCE(s.review_note, ''),
 			o.name AS org_name, COALESCE(o.code, '') AS org_slug,
 			e.name AS exam_name, e.exam_code,
-			COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD"T"HH24:MI'), ''),
-			COALESCE(TO_CHAR(e.verification_to,   'YYYY-MM-DD"T"HH24:MI'), ''),
+			COALESCE(TO_CHAR(e.verification_from AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI'), ''),
+			COALESCE(TO_CHAR(e.verification_to AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI'), ''),
 			(SELECT COUNT(*) FROM exam_candidates ec WHERE ec.exam_id = e.id) AS candidate_count,
 			CASE WHEN coa.client_id IS NOT NULL THEN 1 ELSE 0 END AS client_blanket_approved,
 			COALESCE(app.institution_type, ''),
@@ -639,8 +639,8 @@ func (s *Server) clientListSubscriptionRequests(w http.ResponseWriter, r *http.R
 	examRows, err := s.deps.DB.QueryContext(r.Context(), `
 		SELECT
 			e.id, e.exam_code, e.name,
-			COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD"T"HH24:MI'), ''),
-			COALESCE(TO_CHAR(e.verification_to,   'YYYY-MM-DD"T"HH24:MI'), ''),
+			COALESCE(TO_CHAR(e.verification_from AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI'), ''),
+			COALESCE(TO_CHAR(e.verification_to AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI'), ''),
 			(SELECT COUNT(*) FROM exam_candidates ec WHERE ec.exam_id = e.id),
 			COALESCE((SELECT COUNT(*) FROM organization_exam_subscriptions s WHERE s.exam_id = e.id AND s.status = 'pending'), 0),
 			COALESCE((SELECT COUNT(*) FROM organization_exam_subscriptions s WHERE s.exam_id = e.id AND s.status = 'approved'), 0),
@@ -953,8 +953,8 @@ func (s *Server) clientExportApprovedSubscriptionsCSV(w http.ResponseWriter, r *
 			COALESCE(app.head_mobile, ''),
 			e.exam_code,
 			e.name,
-			COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD"T"HH24:MI'), ''),
-			COALESCE(TO_CHAR(e.verification_to,   'YYYY-MM-DD"T"HH24:MI'), ''),
+			COALESCE(TO_CHAR(e.verification_from AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI'), ''),
+			COALESCE(TO_CHAR(e.verification_to AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI'), ''),
 			COALESCE(s.approval_type, ''),
 			COALESCE(TO_CHAR(s.reviewed_at  AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI'), ''),
 			COALESCE(TO_CHAR(s.requested_at AT TIME ZONE 'UTC', 'YYYY-MM-DD HH24:MI'), '')

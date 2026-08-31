@@ -122,7 +122,7 @@ export default function Operators() {
                 }}
               >
                 <Icon.Plus className="h-4 w-4 mr-1.5" />
-                {creating && createMode === 'single' ? 'Cancel' : '+ New verification agent'}
+                {creating && createMode === 'single' ? 'Cancel' : 'New verification agent'}
               </Button>
             </div>
           }
@@ -739,7 +739,14 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
             value={validFrom}
             onChange={(e) => setValidFrom(e.target.value)}
             required
-            max={validTo || undefined}
+            // No max={validTo} coupling here — Chrome / WebKit have a
+            // known bug where the max constraint compares the picker's
+            // spin against the max's TIME-OF-DAY (not the full
+            // date+time), which silently reverts a PM edit back to AM
+            // whenever validTo's time-of-day is earlier than the PM
+            // time the operator is trying to pick. `fromAfterTo`
+            // validation below catches the truly bad case (from>to)
+            // in software instead.
           />
           {fromInPast && (
             <p className="text-[11px] text-rose-600 mt-1">Valid from cannot be in the past.</p>
@@ -757,7 +764,10 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
             value={validTo}
             onChange={(e) => setValidTo(e.target.value)}
             required
-            min={validFrom || undefined}
+            // No min={validFrom} coupling here — same Chrome / WebKit
+            // AM/PM spinner-revert bug as above (see Valid from). The
+            // `fromAfterTo` check below handles the ordering rule in
+            // software instead.
           />
           {(toInPast || fromAfterTo) && (
             <p className="text-[11px] text-rose-600 mt-1">

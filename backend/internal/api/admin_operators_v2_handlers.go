@@ -102,14 +102,22 @@ func (s *Server) adminListOperators(w http.ResponseWriter, r *http.Request) {
 		if vFrom.Valid {
 			d := vFrom.String
 			if t, err := parseDateTimeWindow(d, false); err == nil {
-				d = t.Format("2006-01-02T15:04")
+				// Format in IST so the FE datetime-local input shows the
+			// same wall-clock time the operator entered. Without the
+			// tz conversion the value serialises as UTC and the input
+			// shows a 5:30-hour shift.
+			d = t.In(indiaTZ).Format("2006-01-02T15:04")
 			}
 			o.ValidFrom = &d
 		}
 		if vTo.Valid {
 			d := vTo.String
 			if t, err := parseDateTimeWindow(d, true); err == nil {
-				d = t.Format("2006-01-02T15:04")
+				// Format in IST so the FE datetime-local input shows the
+			// same wall-clock time the operator entered. Without the
+			// tz conversion the value serialises as UTC and the input
+			// shows a 5:30-hour shift.
+			d = t.In(indiaTZ).Format("2006-01-02T15:04")
 			}
 			o.ValidTo = &d
 		}
@@ -198,14 +206,22 @@ func (s *Server) loadOperatorForOrg(r *http.Request, orgID, id int64) (*operator
 	if vFrom.Valid {
 		d := vFrom.String
 		if t, err := parseDateTimeWindow(d, false); err == nil {
-			d = t.Format("2006-01-02T15:04")
+			// Format in IST so the FE datetime-local input shows the
+			// same wall-clock time the operator entered. Without the
+			// tz conversion the value serialises as UTC and the input
+			// shows a 5:30-hour shift.
+			d = t.In(indiaTZ).Format("2006-01-02T15:04")
 		}
 		o.ValidFrom = &d
 	}
 	if vTo.Valid {
 		d := vTo.String
 		if t, err := parseDateTimeWindow(d, true); err == nil {
-			d = t.Format("2006-01-02T15:04")
+			// Format in IST so the FE datetime-local input shows the
+			// same wall-clock time the operator entered. Without the
+			// tz conversion the value serialises as UTC and the input
+			// shows a 5:30-hour shift.
+			d = t.In(indiaTZ).Format("2006-01-02T15:04")
 		}
 		o.ValidTo = &d
 	}

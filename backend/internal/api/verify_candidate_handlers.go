@@ -87,8 +87,8 @@ func (s *Server) getCandidate(w http.ResponseWriter, r *http.Request) {
 		if claims.UserID != 0 {
 			var uFrom, uTo sql.NullString
 			_ = s.deps.DB.QueryRowContext(r.Context(), db.Q(`
-				SELECT COALESCE(TO_CHAR(valid_from, 'YYYY-MM-DD"T"HH24:MI'), ''),
-				       COALESCE(TO_CHAR(valid_to,   'YYYY-MM-DD"T"HH24:MI'), '')
+				SELECT COALESCE(TO_CHAR(valid_from AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI'), ''),
+				       COALESCE(TO_CHAR(valid_to AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI'), '')
 				  FROM users WHERE id = ?`), claims.UserID).Scan(&uFrom, &uTo)
 
 			if uFrom.Valid && strings.TrimSpace(uFrom.String) != "" {
@@ -959,8 +959,8 @@ func (s *Server) lookupExamCandidate(r *http.Request, claims *authClaims, roll s
 		       COALESCE(ec.dob::text, ''),       COALESCE(ec.gender, ''),
 		       COALESCE(ec.shift_name, ''),      COALESCE(ec.centre_code, ''),
 		       e.requires_face, e.requires_fp, e.requires_iris,
-		       COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD"T"HH24:MI'), ''),
-		       COALESCE(TO_CHAR(e.verification_to,   'YYYY-MM-DD"T"HH24:MI'), '')
+		       COALESCE(TO_CHAR(e.verification_from AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI'), ''),
+		       COALESCE(TO_CHAR(e.verification_to AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI'), '')
 		  FROM exam_candidates ec
 		  JOIN exams   e ON e.id = ec.exam_id
 		  JOIN clients c ON c.id = e.client_id

@@ -184,8 +184,8 @@ func (s *Server) walletSummary(w http.ResponseWriter, r *http.Request) {
 	if claims != nil && claims.UserID != 0 {
 		if err := s.deps.DB.QueryRowContext(r.Context(), db.Q(
 			`SELECT spending_cap_paise, COALESCE(spent_paise, 0),
-			        COALESCE(TO_CHAR(valid_from, 'YYYY-MM-DD"T"HH24:MI'), ''),
-			        COALESCE(TO_CHAR(valid_to,   'YYYY-MM-DD"T"HH24:MI'), '')
+			        COALESCE(TO_CHAR(valid_from AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI'), ''),
+			        COALESCE(TO_CHAR(valid_to AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI'), '')
 			   FROM users WHERE id = ?`),
 			claims.UserID,
 		).Scan(&cap, &spent, &userVFrom, &userVTo); err != nil && !errors.Is(err, sql.ErrNoRows) {
@@ -233,8 +233,8 @@ func (s *Server) walletSummary(w http.ResponseWriter, r *http.Request) {
 			)
 			_ = s.deps.DB.QueryRowContext(r.Context(), db.Q(`
 				SELECT e.exam_code, e.name,
-				       COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD"T"HH24:MI'), ''),
-				       COALESCE(TO_CHAR(e.verification_to,   'YYYY-MM-DD"T"HH24:MI'), '')
+				       COALESCE(TO_CHAR(e.verification_from AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI'), ''),
+				       COALESCE(TO_CHAR(e.verification_to AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI'), '')
 				  FROM exams e
 				 WHERE e.id = ?
 			`), examID).Scan(&code, &name, &vFrom, &vTo)

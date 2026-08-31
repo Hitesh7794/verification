@@ -65,7 +65,12 @@ export default function AdminTabs({ walletRefreshKey, onWalletBalanceChange }) {
 
         {/* Primary tabs */}
         <nav className="flex-1 min-w-0">
-          <ul className="flex gap-1 overflow-x-auto">
+          {/* overflow-x-auto keeps the tabs scrollable when the viewport
+              is narrower than the row, but the scrollbar itself is
+              hidden so users on macOS "always show scrollbars" don't
+              see a stray track between the tabs and the wallet widget.
+              The arbitrary selectors cover both WebKit and Firefox. */}
+          <ul className="flex gap-1 overflow-x-auto [scrollbar-width:none] [-ms-overflow-style:none] [&::-webkit-scrollbar]:hidden">
             {tabs.map((t) => (
               <li key={t.to} className="shrink-0">
                 <NavLink to={t.to} end={t.end}>

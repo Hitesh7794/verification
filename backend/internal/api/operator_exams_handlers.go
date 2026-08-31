@@ -40,8 +40,8 @@ func (s *Server) listOperatorExams(w http.ResponseWriter, r *http.Request) {
 	}
 	rows, err := s.deps.DB.QueryContext(r.Context(), db.Q(`
 		SELECT e.id, e.exam_code, e.name, cl.name,
-		       COALESCE(TO_CHAR(e.verification_from, 'YYYY-MM-DD"T"HH24:MI'), ''),
-		       COALESCE(TO_CHAR(e.verification_to,   'YYYY-MM-DD"T"HH24:MI'), ''),
+		       COALESCE(TO_CHAR(e.verification_from AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI'), ''),
+		       COALESCE(TO_CHAR(e.verification_to AT TIME ZONE 'Asia/Kolkata', 'YYYY-MM-DD"T"HH24:MI'), ''),
 		       e.closed,
 		       (SELECT COUNT(*) FROM exam_candidates ec WHERE ec.exam_id = e.id)
 		  FROM operator_exams oe
