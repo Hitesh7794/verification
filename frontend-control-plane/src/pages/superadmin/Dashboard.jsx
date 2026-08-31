@@ -98,7 +98,7 @@ export default function SuperDashboard() {
             delay={0.05}
           />
           <BigStat
-            label="Organizations"
+            label="Approved organizations"
             value={orgCount}
             loaded={loaded}
             delay={0.10}
@@ -123,7 +123,7 @@ export default function SuperDashboard() {
       </div>
 
       <div id="orgs-section" style={{ scrollMarginTop: '5rem' }}>
-        <SectionHead title="Organizations" count={orgs.length} />
+        <SectionHead title="Approved organizations" count={orgs.length} />
         <OrgsTable orgs={rankedOrgs} loaded={loaded} colourFor={colourFor} />
       </div>
     </SuperShell>

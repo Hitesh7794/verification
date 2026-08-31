@@ -27,7 +27,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"log"
 	"net/http"
 	"strings"
 	"sync"
@@ -204,6 +203,12 @@ func (s *Server) federatedDashboard(w http.ResponseWriter, r *http.Request) {
 		agg.ActiveOrgs24h += res.metrics.ActiveOrgs24h
 	}
 
+	var cpApprovedOrgs int64
+	_ = s.deps.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM institution_applications WHERE status = 'approved'`).Scan(&cpApprovedOrgs)
+	if cpApprovedOrgs > 0 || agg.Organizations == 0 {
+		agg.Organizations = cpApprovedOrgs
+	}
+
 	writeJSON(w, http.StatusOK, federatedDashboardResp{
 		Aggregate: agg,
 		PerClient: perClient,
@@ -218,80 +223,80 @@ func (s *Server) federatedDashboard(w http.ResponseWriter, r *http.Request) {
 // decide contribution.
 func (s *Server) fetchOneDataPlaneMetrics(
 	parent context.Context,
-	clientID int64, clientName, apiURL, apiKey string,
+	clientID int64,
+	clientName, apiURL, apiKey string,
 	timeout time.Duration,
 ) perClientResult {
+	start := time.Now()
 	res := perClientResult{
 		clientID:   clientID,
 		clientName: clientName,
 		apiURL:     apiURL,
 	}
-	start := time.Now()
-	defer func() {
-		res.latencyMs = time.Since(start).Milliseconds()
-	}()
 
+	u := strings.TrimRight(apiURL, "/") + "/api/internal/metrics"
 	ctx, cancel := context.WithTimeout(parent, timeout)
 	defer cancel()
 
-	// api_url is stored WITHOUT a trailing slash (create/patch
-	// enforce that), so a simple concat is safe.
-	url := apiURL + "/api/internal/metrics"
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
 	if err != nil {
-		res.err = "build request: " + err.Error()
+		res.err = "bad url: " + err.Error()
+		res.latencyMs = time.Since(start).Milliseconds()
 		return res
 	}
 	req.Header.Set("X-Internal-API-Key", apiKey)
-	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "verification-control-plane/1.0")
 
 	client := &http.Client{Timeout: timeout}
 	resp, err := client.Do(req)
+	res.latencyMs = time.Since(start).Milliseconds()
 	if err != nil {
-		res.err = "http: " + trimNetErr(err.Error())
+		res.err = humanizeFetchError(err, timeout)
 		return res
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
-		res.err = fmt.Sprintf("http %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
-		log.Printf("cp federated: client=%s (%d) returned %d — %s",
-			clientName, clientID, resp.StatusCode, res.err)
+		res.err = fmt.Sprintf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
 		return res
 	}
 
-	var payload dataPlaneMetrics
-	if err := json.NewDecoder(io.LimitReader(resp.Body, 32<<10)).Decode(&payload); err != nil {
-		res.err = "decode: " + err.Error()
+	var m dataPlaneMetrics
+	if err := json.NewDecoder(resp.Body).Decode(&m); err != nil {
+		res.err = "bad json: " + err.Error()
 		return res
 	}
-	res.metrics = &payload
+	res.metrics = &m
 	return res
 }
 
-// trimNetErr shortens verbose net.OpError strings to something the
-// dashboard can render in a small chip without wrapping to three
-// lines. Preserves the useful bit ("connection refused",
-// "context deadline exceeded") and drops the address noise.
-func trimNetErr(s string) string {
-	// Common patterns: "Get \"http://…/api/internal/metrics\":
-	// dial tcp 10.0.1.5:443: connect: connection refused"
-	if i := strings.LastIndex(s, ": "); i > 0 && i < len(s)-1 {
-		return strings.TrimSpace(s[i+1:])
+// humanizeFetchError translates standard Go net/http errors into
+// short, readable strings the superadmin can understand.
+func humanizeFetchError(err error, timeout time.Duration) string {
+	if strings.Contains(err.Error(), "context deadline exceeded") {
+		return fmt.Sprintf("timeout (>%v)", timeout)
 	}
-	if len(s) > 120 {
-		return s[:117] + "…"
+	if strings.Contains(err.Error(), "connection refused") {
+		return "connection refused"
 	}
-	return s
+	if strings.Contains(err.Error(), "no such host") {
+		return "dns lookup failed"
+	}
+	if strings.Contains(err.Error(), "certificate") {
+		return "tls error"
+	}
+	return err.Error()
 }
 
-// ── Compat shims for Rahul's frontend-control-plane ──────────────
+// ── Superadmin dashboard compatibility endpoints ─────────────────────
 //
-// Rahul's FE (checked out from github/rahul-FE) was authored against
-// his own CP backend which exposed /api/super/stats + /api/super/
-// organizations. Those handlers queried DP-only tables (organizations,
-// verifications) directly — which returns zero on THIS CP because
+// Rahul's Frontend (Dashboard.jsx) historically polled:
+//   - GET /api/super/stats
+//   - GET /api/super/organizations
+//
+// Under the single-tenant Data Plane, those read from local SQLite.
+// Under the multi-tenant Control Plane, those tables are gone —
 // verification_cp doesn't have those tables. So we implement the same
 // route names here but back them with the correct federated fan-out:
 // aggregate metrics across every active DP via /internal/metrics.
@@ -353,15 +358,17 @@ func (s *Server) superStatsCompat(w http.ResponseWriter, r *http.Request) {
 		out.Exams += res.metrics.Exams
 		out.Candidates += res.metrics.Candidates
 	}
+
+	var cpApprovedOrgs int64
+	_ = s.deps.DB.QueryRowContext(ctx, `SELECT COUNT(*) FROM institution_applications WHERE status = 'approved'`).Scan(&cpApprovedOrgs)
+	if cpApprovedOrgs > 0 || out.Organizations == 0 {
+		out.Organizations = cpApprovedOrgs
+	}
+
 	writeJSON(w, http.StatusOK, out)
 }
 
-// superOrganizationsCompat returns a per-DP row list — one row per
-// registered client, carrying its aggregate counts (rather than a full
-// per-org expansion which would require every DP to expose its
-// organizations list). Rahul's FE Dashboard uses this to render the
-// "connected boards fleet" table, so per-DP grain matches how it's
-// rendered.
+// superOrganizationsCompat returns approved organizations through registration.
 type superOrgRow struct {
 	ID       int64  `json:"id"`
 	Code     string `json:"code"`
@@ -370,61 +377,39 @@ type superOrgRow struct {
 	Verified int64  `json:"verified"`
 	Denied   int64  `json:"denied"`
 	// Extra fields carried through for the fleet-view UI.
-	APIURL string `json:"api_url"`
+	APIURL string `json:"api_url,omitempty"`
 	Status string `json:"status"`
 }
 
 func (s *Server) superOrganizationsCompat(w http.ResponseWriter, r *http.Request) {
 	ctx := r.Context()
-	// Full row list including non-active statuses so the FE can render
-	// "connected", "pending infra", "suspended" side by side.
 	rows, err := s.deps.DB.QueryContext(ctx, `
-		SELECT id, name, api_url, api_key, status
-		  FROM clients_registry
-		 WHERE status <> 'deleted'
-		 ORDER BY name`)
+		SELECT a.id,
+		       COALESCE(NULLIF(a.aishe_code, ''), 'APP_' || a.id::text) AS code,
+		       a.institution_name AS name,
+		       a.status
+		  FROM institution_applications a
+		 WHERE a.status = 'approved'
+		 ORDER BY a.reviewed_at DESC NULLS LAST, a.id DESC`)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
 		return
 	}
 	defer rows.Close()
 
-	type target struct {
-		id     int64
-		name   string
-		apiURL string
-		apiKey string
-		status string
-	}
-	var targets []target
+	out := []superOrgRow{}
 	for rows.Next() {
-		var t target
-		if err := rows.Scan(&t.id, &t.name, &t.apiURL, &t.apiKey, &t.status); err != nil {
+		var id int64
+		var code, name, status string
+		if err := rows.Scan(&id, &code, &name, &status); err != nil {
 			continue
 		}
-		targets = append(targets, t)
-	}
-
-	timeout := time.Duration(s.deps.Cfg.FederatedTimeoutMS) * time.Millisecond
-	if timeout <= 0 {
-		timeout = 3 * time.Second
-	}
-
-	out := []superOrgRow{}
-	for _, t := range targets {
-		row := superOrgRow{
-			ID: t.id, Name: t.name, Code: t.name, APIURL: t.apiURL, Status: t.status,
-		}
-		// Only fetch metrics for statuses that indicate a reachable DP.
-		if t.status == "active" || t.status == "ready" {
-			res := s.fetchOneDataPlaneMetrics(ctx, t.id, t.name, t.apiURL, t.apiKey, timeout)
-			if res.metrics != nil {
-				row.Total = res.metrics.VerificationsTotal
-				row.Verified = res.metrics.VerificationsToday
-				// No denied counter in /internal/metrics today — leave 0.
-			}
-		}
-		out = append(out, row)
+		out = append(out, superOrgRow{
+			ID:     id,
+			Code:   code,
+			Name:   name,
+			Status: status,
+		})
 	}
 	writeJSON(w, http.StatusOK, out)
 }

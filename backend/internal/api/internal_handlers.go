@@ -131,7 +131,7 @@ func (s *Server) internalMetrics(w http.ResponseWriter, r *http.Request) {
 	// so the FE tile 'Reviewers & agents' shows a meaningful number,
 	// not just "somebody with a login".
 	scan(`SELECT COUNT(*) FROM users WHERE role <> 'superadmin' AND disabled_at IS NULL`, &out.Users)
-	scan(`SELECT COUNT(*) FROM organizations`, &out.Organizations)
+	scan(`SELECT COUNT(*) FROM institution_applications WHERE status = 'approved'`, &out.Organizations)
 	scan(`SELECT COUNT(*) FROM exams`, &out.Exams)
 	scan(`SELECT COUNT(*) FROM exam_candidates`, &out.Candidates)
 	scan(`SELECT COUNT(*) FROM verifications`, &out.VerificationsTotal)
