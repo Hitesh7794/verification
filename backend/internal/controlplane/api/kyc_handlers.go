@@ -194,6 +194,19 @@ type docPayload struct {
 type registerSubmitResp struct {
 	ApplicationID int64  `json:"application_id"`
 	Status        string `json:"status"`
+	// AdminUsername + MagicLinkURL echo the DP's /internal/orgs/create
+	// response when we provision at submit time (restored 2026-08-31 —
+	// the applicant can now log in during the pending window and see
+	// the KYC-lock screen instead of waiting on the approval email).
+	// Blank when the fan-out to the target DP failed; the applicant
+	// still gets the email if that succeeded independently.
+	AdminUsername string `json:"admin_username,omitempty"`
+	MagicLinkURL  string `json:"magic_link_url,omitempty"`
+	// ProvisioningError surfaces any submit-time fan-out failure
+	// (unreachable DP, api-key mismatch, etc.) without failing the
+	// whole submit — the CP row is committed regardless so the
+	// reviewer's queue never loses an application to a network blip.
+	ProvisioningError string `json:"provisioning_error,omitempty"`
 	// Idempotent is true when the CP already had a row for
 	// (target_client_id, external_application_id) and returned the
 	// pre-existing id without re-inserting. DP callers can use this
@@ -417,9 +430,218 @@ func (s *Server) cpRegisterSubmit(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	writeJSON(w, http.StatusOK, registerSubmitResp{
-		ApplicationID: appID,
-		Status:        "pending",
+	// Provisioning fan-out — restore the pre-multi-tenant "welcome
+	// email + magic link at submit" flow. The DP's internalOrgsCreate
+	// creates the organization + admin user, links the org to the
+	// DP-side application row (still 'pending'), generates the magic
+	// link, and emails the head of institution with the sign-in
+	// details. Once they set a password, they can log in and see the
+	// KYCLockScreen that AdminShell renders while state != 'approved'.
+	//
+	// Best-effort: any failure is logged + surfaced in the response as
+	// provisioning_error, but the CP submit itself is NOT rolled back.
+	// A reviewer can still work the queue; a follow-up resend endpoint
+	// (not built yet) or a simple re-submit will heal a stuck row via
+	// the DP's idempotent short-circuit.
+	resp := registerSubmitResp{ApplicationID: appID, Status: "pending"}
+	if targetClientID > 0 {
+		fanoutClient := int64(0)
+		if req.DpClientID > 0 {
+			fanoutClient = req.DpClientID
+		}
+		provResp, provErr := s.fireInternalOrgsCreate(r.Context(), targetClientID, internalOrgsCreatePayload{
+			ExternalApplicationID: appID,
+			DpApplicationID:       req.ExternalApplicationID,
+			InstitutionName:       req.InstitutionName,
+			HeadName:              req.HeadName,
+			HeadDesignation:       req.HeadDesignation,
+			HeadEmail:             req.HeadEmail,
+			AisheCode:             req.AisheCode,
+			SendWelcomeEmail:      true,
+			ClientID:              fanoutClient,
+		})
+		if provErr != nil {
+			resp.ProvisioningError = provErr.Error()
+			log.Printf("cpRegisterSubmit: submit-time provisioning fan-out failed (app=%d client=%d): %v",
+				appID, targetClientID, provErr)
+		} else if provResp != nil {
+			resp.AdminUsername = provResp.AdminUsername
+			resp.MagicLinkURL = provResp.MagicLinkURL
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// ── POST /api/register/resubmit — re-open a rejected application ─
+//
+// Fired by the DP's `adminResubmitMyKYCApplication` after the applicant
+// edits their rejected registration and clicks "Re-submit". Symmetric
+// with the CP → DP reject fan-out — this direction moves the CP row
+// from 'rejected' back to 'pending' + refreshes fields + replaces the
+// entire doc list so the reviewer sees the latest snapshot on their
+// next poll.
+//
+// Wire shape reuses [registerSubmitReq] verbatim so the DP just calls
+// its existing serialiser. The idempotency lever is
+// (target_client_id, external_application_id) — we require an existing
+// CP row to be in status='rejected'; anything else 409s.
+
+func (s *Server) cpRegisterResubmit(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, cpRegisterSubmitMaxBytes)
+	var req registerSubmitReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+
+	targetClientID := dpClientID(r)
+	if req.TargetClientIDOverride > 0 {
+		targetClientID = req.TargetClientIDOverride
+	}
+	if targetClientID <= 0 || req.ExternalApplicationID <= 0 {
+		writeErr(w, http.StatusBadRequest, "target_client_id + external_application_id required")
+		return
+	}
+
+	// Validate docs shape same as cpRegisterSubmit — cheap and
+	// symmetric so a malformed payload bounces before we open a tx.
+	for i, d := range req.Documents {
+		if d.DocKind == "" || d.OriginalName == "" || d.StoragePath == "" ||
+			d.Mime == "" || d.Sha256 == "" {
+			writeErr(w, http.StatusBadRequest,
+				fmt.Sprintf("documents[%d]: missing required field", i))
+			return
+		}
+	}
+
+	tx, err := s.deps.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db begin: "+err.Error())
+		return
+	}
+	defer tx.Rollback()
+
+	// Look up the CP row by the DP-provided compound key + gate on
+	// current status. FOR UPDATE holds the row so a concurrent reviewer
+	// approve/reject can't race between our read and update.
+	var (
+		appID  int64
+		status string
+	)
+	err = tx.QueryRowContext(r.Context(), `
+		SELECT id, status FROM institution_applications
+		 WHERE target_client_id = $1 AND external_application_id = $2
+		 FOR UPDATE`,
+		targetClientID, req.ExternalApplicationID,
+	).Scan(&appID, &status)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeErr(w, http.StatusNotFound, "no CP row for this application — resubmit before initial submit?")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
+		return
+	}
+	if status != "rejected" {
+		writeErr(w, http.StatusConflict,
+			"resubmit only valid from status='rejected' (current: "+status+")")
+		return
+	}
+
+	// Compute pending_reviewer per the client's CURRENT mode — a
+	// reviewer setting change between reject and resubmit routes the
+	// second attempt to the newly-configured queue. Falls back to
+	// 'admin' if the client row can't be read.
+	pendingReviewer := "admin"
+	var mode string
+	if err := tx.QueryRowContext(r.Context(),
+		`SELECT kyc_review_mode FROM clients_registry WHERE id = $1`,
+		targetClientID,
+	).Scan(&mode); err == nil {
+		if mode == "client" {
+			pendingReviewer = "client"
+		}
+	}
+
+	// Refresh mutable fields from the fresh DP snapshot. Reviewer
+	// audit fields are reset so the row reads as "brand new pending"
+	// on the reviewer's inbox card.
+	if _, err := tx.ExecContext(r.Context(), `
+		UPDATE institution_applications
+		   SET status              = 'pending',
+		       pending_reviewer    = $2,
+		       review_note         = NULL,
+		       reviewed_at         = NULL,
+		       reviewed_by_user_id = NULL,
+		       institution_name    = $3,
+		       institution_type    = $4,
+		       aishe_code          = $5,
+		       pan                 = $6,
+		       year_established    = $7,
+		       affiliation_body    = $8,
+		       approx_student_count= $9,
+		       address_line1       = $10,
+		       address_line2       = $11,
+		       city                = $12,
+		       district            = $13,
+		       state               = $14,
+		       pin_code            = $15,
+		       head_name           = $16,
+		       head_designation    = $17,
+		       head_email          = $18,
+		       head_mobile         = $19,
+		       updated_at          = NOW()
+		 WHERE id = $1`,
+		appID, pendingReviewer,
+		req.InstitutionName, req.InstitutionType,
+		nullableStr(req.AisheCode), nullableStr(req.Pan),
+		nullableInt(req.YearEstablished), nullableStr(req.AffiliationBody),
+		nullableInt(req.ApproxStudentCount),
+		req.AddressLine1, nullableStr(req.AddressLine2),
+		req.City, nullableStr(req.District), req.State, req.PinCode,
+		req.HeadName, req.HeadDesignation, req.HeadEmail, req.HeadMobile,
+	); err != nil {
+		writeErr(w, http.StatusInternalServerError, "update fields: "+err.Error())
+		return
+	}
+
+	// Docs: delete + re-insert the whole set. Simpler than
+	// row-by-row diff and safe because the DP is the source of truth
+	// for what the applicant currently has on file. Kept in the same
+	// tx as the status flip so a failure rolls both back atomically.
+	if _, err := tx.ExecContext(r.Context(),
+		`DELETE FROM institution_application_documents WHERE application_id = $1`, appID,
+	); err != nil {
+		writeErr(w, http.StatusInternalServerError, "delete docs: "+err.Error())
+		return
+	}
+	for i, d := range req.Documents {
+		if _, err := tx.ExecContext(r.Context(), `
+			INSERT INTO institution_application_documents(
+				application_id, doc_kind, original_name, storage_path, mime, size_bytes, sha256
+			) VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+			appID, d.DocKind, d.OriginalName, d.StoragePath, d.Mime, d.SizeBytes, d.Sha256,
+		); err != nil {
+			if strings.Contains(err.Error(), "institution_application_documents_doc_kind_check") {
+				writeErr(w, http.StatusBadRequest,
+					fmt.Sprintf("documents[%d]: unknown doc_kind %q", i, d.DocKind))
+				return
+			}
+			writeErr(w, http.StatusInternalServerError,
+				fmt.Sprintf("insert document [%d]: %v", i, err))
+			return
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		writeErr(w, http.StatusInternalServerError, "commit: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"application_id":   appID,
+		"status":           "pending",
+		"pending_reviewer": pendingReviewer,
 	})
 }
 
@@ -482,6 +704,11 @@ type reviewerListItem struct {
 	HeadMobile      string `json:"head_mobile"`
 	AisheCode       string `json:"aishe_code,omitempty"`
 	CreatedAt       string `json:"created_at"`
+	// Number of KYC docs uploaded with the application. Rendered on
+	// the reviewer inbox card as "N supporting docs". Missing this
+	// field is what made every card show "0 supporting docs" even for
+	// applications with real uploads.
+	DocCount int `json:"doc_count"`
 }
 
 func (s *Server) cpReviewerList(w http.ResponseWriter, r *http.Request) {
@@ -515,12 +742,14 @@ func (s *Server) cpReviewerList(w http.ResponseWriter, r *http.Request) {
 		args = []any{clientID, status}
 	}
 	rows, err := s.deps.DB.QueryContext(r.Context(), `
-		SELECT id, status, institution_name, institution_type,
-		       city, state, head_name, head_email, head_mobile,
-		       COALESCE(aishe_code, ''), created_at
-		  FROM institution_applications
-		 WHERE `+reviewerWhere+`
-		 ORDER BY created_at DESC
+		SELECT a.id, a.status, a.institution_name, a.institution_type,
+		       a.city, a.state, a.head_name, a.head_email, a.head_mobile,
+		       COALESCE(a.aishe_code, ''), a.created_at,
+		       (SELECT COUNT(*) FROM institution_application_documents d
+		         WHERE d.application_id = a.id) AS doc_count
+		  FROM institution_applications a
+		 WHERE `+strings.ReplaceAll(reviewerWhere, "target_client_id", "a.target_client_id")+`
+		 ORDER BY a.created_at DESC
 		 LIMIT 200`, args...,
 	)
 	if err != nil {
@@ -535,7 +764,7 @@ func (s *Server) cpReviewerList(w http.ResponseWriter, r *http.Request) {
 		var createdAt time.Time
 		if err := rows.Scan(&it.ID, &it.Status, &it.InstitutionName, &it.InstitutionType,
 			&it.City, &it.State, &it.HeadName, &it.HeadEmail, &it.HeadMobile,
-			&it.AisheCode, &createdAt); err != nil {
+			&it.AisheCode, &createdAt, &it.DocCount); err != nil {
 			writeErr(w, http.StatusInternalServerError, "scan: "+err.Error())
 			return
 		}
@@ -814,6 +1043,7 @@ func (s *Server) cpReviewerApprove(w http.ResponseWriter, r *http.Request) {
 		AisheCode:             aishe.String,
 		SendWelcomeEmail:      true,
 		ClientID:              fanoutClient,
+		MarkApproved:          true, // client reviewer just approved — flip DP row
 	})
 	if provErr != nil {
 		resp.ProvisioningError = provErr.Error()
@@ -1062,6 +1292,7 @@ func (s *Server) approveOneApplication(parent context.Context, id, clientID int6
 		AisheCode:             aishe.String,
 		SendWelcomeEmail:      true,
 		ClientID:              fanoutClient,
+		MarkApproved:          true, // bulk approve path — flip DP row
 	})
 	if provErr != nil {
 		log.Printf("bulk-approve app=%d: provisioning fan-out failed: %v", id, provErr)
@@ -1096,6 +1327,13 @@ type internalOrgsCreatePayload struct {
 	// open exams. Populated from institution_applications.target_client_id.
 	// Zero skips the fan-out (legacy behaviour).
 	ClientID int64 `json:"client_id,omitempty"`
+	// MarkApproved tells the DP whether it should also flip its
+	// institution_applications row to 'approved' via
+	// backfillDPApplication. TRUE only on the APPROVE fan-out; FALSE at
+	// SUBMIT-time provisioning — otherwise the DP's KYC gate treats a
+	// freshly-registered institute as already approved and skips the
+	// lock screen.
+	MarkApproved bool `json:"mark_approved,omitempty"`
 }
 
 type internalOrgsCreateReply struct {
@@ -1159,6 +1397,86 @@ func (s *Server) fireInternalOrgsCreate(parent context.Context, clientID int64, 
 		return nil, fmt.Errorf("data plane returned %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
 	}
 	var reply internalOrgsCreateReply
+	if err := json.Unmarshal(respBody, &reply); err != nil {
+		return nil, fmt.Errorf("decode: %w", err)
+	}
+	return &reply, nil
+}
+
+// ── /internal/applications/reject fan-out ─────────────────────────
+//
+// Symmetric with fireInternalOrgsCreate. Called by
+// superadminApplicationReject after committing the CP's own row so
+// the DP's mirror moves out of 'pending' too. Best-effort: any
+// failure is logged + surfaced via the returned error, but the CP
+// reject itself is NOT rolled back — the CP is the source of truth
+// for the decision. Operators can heal a stale DP row with a
+// dedicated resync later if this call ever fails.
+
+type internalApplicationsRejectPayload struct {
+	DpApplicationID int64  `json:"dp_application_id"`
+	ReviewNote      string `json:"review_note"`
+}
+
+type internalApplicationsRejectReply struct {
+	Updated bool `json:"updated"`
+}
+
+func (s *Server) fireInternalApplicationsReject(parent context.Context, clientID int64, payload internalApplicationsRejectPayload) (*internalApplicationsRejectReply, error) {
+	if payload.DpApplicationID <= 0 {
+		// Nothing to mirror — the CP row was created before the DP
+		// mirror flow existed. Treat as a benign no-op so the reject
+		// UI doesn't scream.
+		return &internalApplicationsRejectReply{Updated: false}, nil
+	}
+
+	var (
+		apiURL string
+		apiKey string
+		status string
+	)
+	err := s.deps.DB.QueryRowContext(parent,
+		`SELECT api_url, api_key, status FROM clients_registry WHERE id = $1`, clientID,
+	).Scan(&apiURL, &apiKey, &status)
+	if err != nil {
+		return nil, fmt.Errorf("registry lookup: %w", err)
+	}
+	if status != "active" {
+		return nil, fmt.Errorf("target client is %s", status)
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal payload: %w", err)
+	}
+
+	timeout := time.Duration(s.deps.Cfg.FederatedTimeoutMS) * time.Millisecond
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout+2*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		apiURL+"/api/internal/applications/reject", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-API-Key", apiKey)
+
+	httpClient := &http.Client{Timeout: timeout}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("data plane returned %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	var reply internalApplicationsRejectReply
 	if err := json.Unmarshal(respBody, &reply); err != nil {
 		return nil, fmt.Errorf("decode: %w", err)
 	}

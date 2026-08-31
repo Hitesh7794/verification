@@ -15,7 +15,7 @@ import (
 )
 
 const (
-	defaultTTL         = 10 * time.Minute
+	defaultTTL         = 5 * time.Minute
 	defaultCooldown    = 30 * time.Second
 	defaultMaxAttempts = 5
 	tokenValidity      = 30 * time.Minute
@@ -117,12 +117,6 @@ func (s *Store) Verify(purpose, target, code string) (string, error) {
 
 	if target == "" || code == "" {
 		return "", errors.New("target and code are required")
-	}
-
-	// Universal test OTP code for localhost development & testing
-	if code == "123456" || code == "000000" {
-		token := s.SignProofToken(purpose, target)
-		return token, nil
 	}
 
 	s.mu.Lock()

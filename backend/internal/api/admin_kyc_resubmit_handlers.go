@@ -26,6 +26,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -498,10 +500,44 @@ func (s *Server) adminResubmitMyKYCApplication(w http.ResponseWriter, r *http.Re
 	s.auditFromRequest(r, "application.resubmit", "application", appID, map[string]any{
 		"pending_reviewer": pendingReviewer,
 	})
-	writeJSON(w, http.StatusOK, map[string]any{
+
+	// Mirror the resubmit up to the Control Plane. Without this the CP
+	// row stays 'rejected', the reviewer's inbox never sees the
+	// resubmission, and the applicant sits on a "pending" lock screen
+	// forever while nothing moves upstream. Symmetric with the
+	// registerSubmit fan-out but targeted at /api/register/resubmit —
+	// the CP flips its own row back to 'pending' + replaces the field
+	// snapshot + swaps in the fresh doc list. Best-effort: any failure
+	// is logged and surfaced on the response so the admin can retry
+	// (a retry hits the same path — the DP flip has already committed
+	// so we don't touch it again, we just re-fire the CP call).
+	cpResp := map[string]any{
 		"ok":               true,
 		"application_id":   appID,
 		"status":           "pending",
 		"pending_reviewer": pendingReviewer,
-	})
+	}
+	if s.deps.Cfg.ControlPlaneURL != "" {
+		body, herr := s.hydrateDraftPayload(r.Context(), appID)
+		if herr != nil {
+			cpResp["cp_sync_error"] = "build payload: " + herr.Error()
+			log.Printf("resubmit fan-out: hydrate payload app=%d: %v", appID, herr)
+		} else {
+			resp, cerr := s.callCPResubmit(r, body)
+			if cerr != nil {
+				cpResp["cp_sync_error"] = "call CP: " + cerr.Error()
+				log.Printf("resubmit fan-out: CP call app=%d: %v", appID, cerr)
+			} else {
+				defer resp.Body.Close()
+				if resp.StatusCode != http.StatusOK {
+					snippet, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+					cpResp["cp_sync_error"] = fmt.Sprintf("CP returned %d: %s",
+						resp.StatusCode, strings.TrimSpace(string(snippet)))
+					log.Printf("resubmit fan-out: CP app=%d status=%d body=%s",
+						appID, resp.StatusCode, strings.TrimSpace(string(snippet)))
+				}
+			}
+		}
+	}
+	writeJSON(w, http.StatusOK, cpResp)
 }

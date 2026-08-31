@@ -464,6 +464,7 @@ func (s *Server) superadminApplicationApprove(w http.ResponseWriter, r *http.Req
 		AisheCode:             aishe.String,
 		SendWelcomeEmail:      true,
 		ClientID:              fanoutClient,
+		MarkApproved:          true, // superadmin just approved — flip DP row
 	})
 	if provErr != nil {
 		resp.ProvisioningError = provErr.Error()
@@ -499,26 +500,53 @@ func (s *Server) superadminApplicationReject(w http.ResponseWriter, r *http.Requ
 		return
 	}
 
-	res, err := s.deps.DB.ExecContext(r.Context(), `
+	// Read routing hints in the same statement that flips the row so
+	// we can fire the /internal/applications/reject mirror on the
+	// target Data Plane after commit. UPDATE … RETURNING gives us the
+	// pre-flip target_client_id + external_application_id (the DP-side
+	// row id) atomically; if the row wasn't in a rejectable state, we
+	// get zero rows and 409 like before.
+	var (
+		targetClientID  sql.NullInt64
+		externalAppID   sql.NullInt64
+	)
+	err = s.deps.DB.QueryRowContext(r.Context(), `
 		UPDATE institution_applications
 		   SET status           = 'rejected',
 		       pending_reviewer = NULL,
 		       review_note      = $2,
 		       reviewed_at      = NOW(),
 		       updated_at       = NOW()
-		 WHERE id = $1 AND status = 'pending'`,
+		 WHERE id = $1 AND status = 'pending'
+		 RETURNING target_client_id, external_application_id`,
 		id, note,
-	)
+	).Scan(&targetClientID, &externalAppID)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeErr(w, http.StatusConflict, "application not found or not pending")
+		return
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "update: "+err.Error())
 		return
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		writeErr(w, http.StatusConflict, "application not found or not pending")
-		return
-	}
-	writeJSON(w, http.StatusOK, map[string]any{
+
+	// Mirror the reject to the target DP so its
+	// institution_applications row moves out of 'pending' and the
+	// client reviewer's inbox tiles count correctly. Best-effort:
+	// log on failure, but the CP decision itself is not rolled back.
+	// Skip cleanly if the row was never assigned to a DP.
+	resp := map[string]any{
 		"application_id": id,
 		"status":         "rejected",
-	})
+	}
+	if targetClientID.Valid && externalAppID.Valid && externalAppID.Int64 > 0 {
+		if _, ferr := s.fireInternalApplicationsReject(r.Context(), targetClientID.Int64, internalApplicationsRejectPayload{
+			DpApplicationID: externalAppID.Int64,
+			ReviewNote:      note,
+		}); ferr != nil {
+			log.Printf("cp superadmin reject app=%d: DP mirror failed: %v", id, ferr)
+			resp["mirror_error"] = ferr.Error()
+		}
+	}
+	writeJSON(w, http.StatusOK, resp)
 }

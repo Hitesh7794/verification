@@ -182,6 +182,14 @@ type internalOrgsCreateReq struct {
 	// "you're onboarded" mail. Default true; set false when the
 	// Control Plane wants to email the applicant itself.
 	SendWelcomeEmail bool `json:"send_welcome_email"`
+	// MarkApproved determines whether the DP's institution_applications
+	// row should be flipped to 'approved' by backfillDPApplication.
+	// Set true only when the CP is calling this from an APPROVE flow —
+	// setting it true from the submit-time provisioning would leak
+	// "approved" into the DP's KYC gate and bypass the lock screen.
+	// Nil / false (Go zero value) leaves the DP row's status alone,
+	// which is what we want at submit time (row stays 'pending').
+	MarkApproved bool `json:"mark_approved"`
 	// ClientID, when set, attaches the newly-provisioned org to a
 	// specific client (exam board) and fans out subscriptions for
 	// that client's currently open exams. Mirrors what Rahul's
@@ -264,7 +272,9 @@ func (s *Server) internalOrgsCreate(w http.ResponseWriter, r *http.Request) {
 		// DpApplicationID left DP rows stuck at 'pending' — a
 		// retry click surfaces them here so operators can heal
 		// without a DB touch.
+		if req.MarkApproved {
 		backfillDPApplication(ctx, s.deps.DB, req.DpApplicationID)
+	}
 		writeJSON(w, http.StatusOK, internalOrgsCreateResp{
 			OrgID:         existingOrgID,
 			AdminUserID:   existingUserID,
@@ -297,16 +307,30 @@ func (s *Server) internalOrgsCreate(w http.ResponseWriter, r *http.Request) {
 	defer tx.Rollback()
 
 	var orgID int64
-	// application_id column stays NULL for internally-provisioned
-	// orgs — the "application" lives on the Control Plane, not
-	// here. The KYC gate middleware treats NULL as "approved" for
-	// legacy compatibility, which is exactly the semantic we want
-	// (Control Plane already gated approval).
+	// Link the org back to the DP-side institution_applications row so
+	// the KYC gate middleware can look up its status without a
+	// name-match join. When called at SUBMIT time (2026-08-31 flow
+	// restore), that row is still 'pending' — the gate will 403 the
+	// admin's data-plane requests until the CP superadmin approves,
+	// which flips the DP row via backfillDPApplication. When called at
+	// APPROVE time (legacy path, and idempotent retries), the DP row is
+	// already 'approved' by the time this runs, so the gate is a no-op.
+	//
+	// DpApplicationID == 0 falls back to NULL — matches the pre-V17
+	// semantics where a NULL application_id is treated as "approved"
+	// (Control Plane already gated). Keeps the door open for callers
+	// that don't know / don't care about the DP row id.
+	appLinkArg := interface{}(nil)
+	if req.DpApplicationID > 0 {
+		appLinkArg = req.DpApplicationID
+	}
 	if _, err := tx.ExecContext(ctx, `
 		INSERT INTO organizations(code, name, application_id)
-		VALUES ($1, $2, NULL)
-		ON CONFLICT (code) DO UPDATE SET name = EXCLUDED.name`,
-		orgCode, req.InstitutionName,
+		VALUES ($1, $2, $3)
+		ON CONFLICT (code) DO UPDATE
+		   SET name = EXCLUDED.name,
+		       application_id = COALESCE(organizations.application_id, EXCLUDED.application_id)`,
+		orgCode, req.InstitutionName, appLinkArg,
 	); err != nil {
 		writeErr(w, http.StatusInternalServerError, "org insert: "+err.Error())
 		return
@@ -420,7 +444,9 @@ func (s *Server) internalOrgsCreate(w http.ResponseWriter, r *http.Request) {
 	// status matches CP after approval. Keeping DP's row in sync
 	// stops the client-reviewer inbox showing a phantom "pending"
 	// count from an application that CP already terminally decided.
-	backfillDPApplication(ctx, s.deps.DB, req.DpApplicationID)
+	if req.MarkApproved {
+		backfillDPApplication(ctx, s.deps.DB, req.DpApplicationID)
+	}
 
 	// Post-commit: magic link + email. Failures logged, not fatal —
 	// the applicant can request a fresh link from their locked
@@ -1234,4 +1260,58 @@ func backfillDPApplication(ctx context.Context, dbConn *sql.DB, dpAppID int64) {
 	); err != nil {
 		log.Printf("backfillDPApplication: DP row %d update failed: %v", dpAppID, err)
 	}
+}
+
+// ── POST /internal/applications/reject ────────────────────────────
+//
+// Mirror endpoint for CP → DP reject fan-out. Symmetric with the
+// approve path (which flows through /internal/orgs/create +
+// backfillDPApplication). Without this, a CP superadmin reject only
+// updates the CP's institution_applications row; the DP's mirror stays
+// stuck at 'pending', which mis-counts the client reviewer's inbox
+// tiles ("Pending 1, Rejected 0" for a row that IS rejected upstream).
+//
+// The DP owns the row's lifecycle here, so this handler DOES NOT do a
+// status transition check — the CP already gated on status='pending'.
+// If the DP row is already 'rejected' this is a benign idempotent
+// retry.
+
+type internalApplicationsRejectReq struct {
+	DpApplicationID int64  `json:"dp_application_id"`
+	ReviewNote      string `json:"review_note"`
+}
+
+type internalApplicationsRejectResp struct {
+	Updated bool `json:"updated"`
+}
+
+func (s *Server) internalApplicationsReject(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
+	var req internalApplicationsRejectReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if req.DpApplicationID <= 0 {
+		writeErr(w, http.StatusBadRequest, "dp_application_id required")
+		return
+	}
+	note := strings.TrimSpace(req.ReviewNote)
+
+	res, err := s.deps.DB.ExecContext(r.Context(), `
+		UPDATE institution_applications
+		   SET status           = 'rejected',
+		       pending_reviewer = NULL,
+		       review_note      = COALESCE(NULLIF($2, ''), review_note),
+		       reviewed_at      = COALESCE(reviewed_at, NOW()),
+		       updated_at       = NOW()
+		 WHERE id = $1 AND status IN ('draft','pending')`,
+		req.DpApplicationID, note,
+	)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "update: "+err.Error())
+		return
+	}
+	n, _ := res.RowsAffected()
+	writeJSON(w, http.StatusOK, internalApplicationsRejectResp{Updated: n > 0})
 }

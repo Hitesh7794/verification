@@ -18,7 +18,7 @@ export async function listClients() {
 // detail page to correct it — reads as "my choice reverted to
 // Innovatiview". Pass name + notes + kyc_review_mode through explicitly.
 export async function createClient({ name, notes = '', kyc_review_mode, api_url }) {
-  const body = { name, notes, api_url: api_url || 'http://localhost:8080' }
+  const body = { name, notes, api_url: api_url || '' }
   if (kyc_review_mode) body.kyc_review_mode = kyc_review_mode
   return api('/superadmin/clients', { method: 'POST', body })
 }

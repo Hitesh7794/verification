@@ -105,7 +105,7 @@ func (s *Server) sendEmailOTP(w http.ResponseWriter, r *http.Request) {
 
 	// Send email via configured sender
 	subject := fmt.Sprintf("Your Verification Code: %s", code)
-	body := fmt.Sprintf("Hello,\n\nYour verification code is: %s\n\nThis code will expire in 10 minutes. If you did not request this code, please ignore this email.\n\n— Verification Portal", code)
+	body := fmt.Sprintf("Hello,\n\nYour verification code is: %s\n\nThis code will expire in 5 minutes. If you did not request this code, please ignore this email.\n\n— Verification Portal", code)
 
 	if err := s.emailer.Send(r.Context(), email.Message{
 		To:      target,

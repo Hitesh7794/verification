@@ -36,7 +36,7 @@ func (c *ConsoleSender) Send(_ context.Context, mobile, otp string) error {
 	b.WriteString(fmt.Sprintf("Mobile:  +91 %s\n", mobile))
 	b.WriteString(fmt.Sprintf("OTP:     %s\n", otp))
 	b.WriteString("---------------------------------------------------------------------\n")
-	b.WriteString(fmt.Sprintf("Your verification code is %s. Valid for 10 minutes.\n", otp))
+	b.WriteString(fmt.Sprintf("Your verification code is %s. Valid for 5 minutes.\n", otp))
 	b.WriteString("=====================================================================\n")
 	log.Print(b.String())
 	return nil

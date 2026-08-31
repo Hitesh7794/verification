@@ -152,6 +152,12 @@ func (s *Server) Router() http.Handler {
 		// Registration surface — the DP forwards the applicant's
 		// finished KYC to us at submit time.
 		r.Post("/api/register/submit", s.cpRegisterSubmit)
+		// DP calls this after an admin edits their rejected app and hits
+		// "Re-submit" so the CP row moves rejected → pending + refreshes
+		// fields + replaces the doc list. Without this the reviewer's
+		// inbox never sees the resubmit and the app stays on the
+		// Rejected tab forever.
+		r.Post("/api/register/resubmit", s.cpRegisterResubmit)
 		r.Get("/api/register/{id}", s.cpRegisterStatus)
 
 		// Reviewer surface — the DP forwards its already-authed

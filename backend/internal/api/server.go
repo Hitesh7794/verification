@@ -233,6 +233,10 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/internal/health", s.internalHealth)
 		r.Get("/api/internal/metrics", s.internalMetrics)
 		r.Post("/api/internal/orgs/create", s.internalOrgsCreate)
+		// Mirror CP superadmin rejects so the DP's institution_applications
+		// row moves out of 'pending' — otherwise the reviewer inbox tiles
+		// count rejected apps as pending. Symmetric with orgs/create.
+		r.Post("/api/internal/applications/reject", s.internalApplicationsReject)
 		// Track 2 (per-client DP model): Control Plane calls this to
 		// provision reviewer / admin users on this Data Plane. User rows
 		// live on the DP only — the CP DB never stores credentials.

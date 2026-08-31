@@ -30,7 +30,7 @@ export default function Clients() {
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
   const [newNotes, setNewNotes] = useState('')
-  const [newApiUrl, setNewApiUrl] = useState('http://localhost:8080')
+  const [newApiUrl, setNewApiUrl] = useState('')
   const [newKycMode, setNewKycMode] = useState('admin') // 'admin' | 'client' | 'both'
   const [saving, setSaving] = useState(false)
   // id of the row with a request in flight — disables that row's buttons
@@ -77,12 +77,12 @@ export default function Clients() {
       const created = await createClient({
         name: newName.trim(),
         notes: newNotes.trim(),
-        api_url: newApiUrl.trim() || 'http://localhost:8080',
+        api_url: newApiUrl.trim(),
         kyc_review_mode: newKycMode,
       })
       setNewName('')
       setNewNotes('')
-      setNewApiUrl('http://localhost:8080')
+      setNewApiUrl('')
       setNewKycMode('admin')
       setCreating(false)
       await refresh({ quiet: true })
@@ -214,10 +214,10 @@ export default function Clients() {
                         <Input
                           value={newApiUrl}
                           onChange={(e) => setNewApiUrl(e.target.value)}
-                          placeholder="http://localhost:8080"
+                          placeholder="https://client.example.com"
                         />
                         <p className="text-[11px] text-slate-500 mt-1">
-                          Target data plane endpoint (default: http://localhost:8080).
+                          Base URL of this client's Data Plane, e.g. https://ssc.verifyportal.example.com
                         </p>
                       </div>
                       <div>

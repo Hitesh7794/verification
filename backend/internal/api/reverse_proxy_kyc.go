@@ -484,6 +484,36 @@ func (s *Server) callCPRegisterSubmit(r *http.Request, body []byte) (*http.Respo
 	return client.Do(req)
 }
 
+// callCPResubmit is the sibling of [callCPRegisterSubmit] targeting
+// the CP's /api/register/resubmit endpoint. Same payload shape and
+// auth headers — the only differences are the URL path and that the CP
+// requires an EXISTING row (status='rejected') instead of inserting a
+// new one. Called from [adminResubmitMyKYCApplication] after the DP
+// row has already been flipped back to 'pending'.
+func (s *Server) callCPResubmit(r *http.Request, body []byte) (*http.Response, error) {
+	cpBase := s.deps.Cfg.ControlPlaneURL
+	if cpBase == "" {
+		return nil, errors.New("CONTROL_PLANE_URL not set")
+	}
+	if s.deps.Cfg.DataPlaneClientID <= 0 {
+		return nil, errors.New("DATA_PLANE_CLIENT_ID not set")
+	}
+	out := cpBase + "/api/register/resubmit"
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodPost, out, bytes.NewReader(body))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("X-Data-Plane-Client-ID", strconv.FormatInt(s.deps.Cfg.DataPlaneClientID, 10))
+	req.Header.Set("X-Data-Plane-Api-Key", s.deps.Cfg.DataPlaneAPIKey)
+	if callerIP := clientIP(r); callerIP != "" {
+		req.Header.Set("X-Forwarded-For", callerIP)
+	}
+	client := &http.Client{Timeout: 30 * time.Second}
+	return client.Do(req)
+}
+
 // GET /api/register/{id} — status readback for the applicant.
 //
 // The URL id is DP-local. We translate to the CP-side id via the
