@@ -140,3 +140,6 @@ backend/*.log
 
 # SOP documents — kept locally, never pushed
 docs/sop/
+
+# Ops docs — kept locally, never pushed
+docs/ops/
