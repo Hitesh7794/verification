@@ -374,6 +374,7 @@ func (s *Server) Router() http.Handler {
 		r.Patch("/api/admin/operators/{id}",           s.requireRole("admin")(s.adminPatchOperator))
 		r.Post("/api/admin/operators/{id}/disable",    s.requireRole("admin")(s.adminDisableOperator))
 		r.Post("/api/admin/operators/{id}/enable",     s.requireRole("admin")(s.adminEnableOperator))
+		r.Delete("/api/admin/operators/{id}",          s.requireRole("admin")(s.adminDeleteOperator))
 
 		// Downloads — serves the operator-laptop install bundle. Open
 		// to admin (so an admin can grab + redistribute), to client

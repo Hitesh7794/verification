@@ -17,6 +17,7 @@ import {
   patchOperator,
   disableOperator,
   enableOperator,
+  deleteOperator,
   getSubscriptions,
 } from '../../lib/admin/examSubscriptions.js'
 import { getWallet, formatRupees } from '../../lib/wallet/wallet.js'
@@ -68,6 +69,21 @@ export default function Operators() {
       await refresh()
     } catch (e) {
       setErr(e.message)
+    }
+  }
+
+  async function onDelete(id, username) {
+    if (!window.confirm(
+      `Delete verification agent "${username}"?\n\n` +
+      `This is permanent — the account is removed and the exam ` +
+      `assignment is cleared. Past wallet charges attributed to this ` +
+      `agent stay on the org ledger for audit.`
+    )) return
+    try {
+      await deleteOperator(id)
+      await refresh()
+    } catch (e) {
+      setErr(e?.body?.error || e?.message || 'Could not delete this agent')
     }
   }
 
@@ -267,6 +283,14 @@ export default function Operators() {
                               >
                                 {o.status === 'disabled' ? 'Enable' : 'Disable'}
                               </Button>
+                              <Button
+                                variant="secondary"
+                                size="sm"
+                                onClick={() => onDelete(o.id, o.username)}
+                                className="!text-rose-700 !border-rose-200 hover:!bg-rose-50 hover:!border-rose-300"
+                              >
+                                Delete
+                              </Button>
                             </div>
                           </td>
                         </tr>
@@ -431,10 +455,15 @@ function ExamMultiSelect({ subs, value, onChange, single = false }) {
                     }`}
                   >
                     <input
-                      type="checkbox"
+                      type={single ? 'radio' : 'checkbox'}
+                      name={single ? 'exam-single-select' : undefined}
                       checked={checked}
                       onChange={() => toggle(s.exam_id)}
-                      className="rounded border-slate-300 text-emerald-700 focus:ring-emerald-500"
+                      className={
+                        single
+                          ? 'border-slate-300 text-emerald-700 focus:ring-emerald-500'
+                          : 'rounded border-slate-300 text-emerald-700 focus:ring-emerald-500'
+                      }
                     />
                     <span className="min-w-0">
                       <span className="block font-mono text-xs text-slate-700">{s.exam_code}</span>
@@ -743,9 +772,11 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
         </div>
       </div>
       <div>
-        <Label>Assigned exams</Label>
+        <Label>Assigned exam</Label>
         <p className="text-xs text-slate-500 mb-2">
-          Pick one or more from your college's subscribed exams. This operator will be able to verify against any of them and will pick which one they're working on from a switcher on their dashboard.
+          Pick one exam from your college's subscribed exams. One
+          verification agent can only be assigned to a single exam —
+          create separate agents if you need coverage across exams.
         </p>
         {subs.length === 0 ? (
           <p className="text-xs text-amber-800 bg-amber-50 border border-amber-200 rounded p-2">
@@ -753,10 +784,10 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
           </p>
         ) : (
           <>
-            <ExamMultiSelect subs={subs} value={examIds} onChange={setExamIds} />
+            <ExamMultiSelect subs={subs} value={examIds} onChange={setExamIds} single />
             {examIds.length === 0 && (
               <p className="mt-1 text-xs text-rose-600">
-                Pick at least one exam.
+                Pick an exam.
               </p>
             )}
             {/* Rahul's per-exam window banner — one line per selected

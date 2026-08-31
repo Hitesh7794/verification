@@ -1329,6 +1329,99 @@ func (s *Server) setOperatorDisabled(w http.ResponseWriter, r *http.Request, dis
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true})
 }
 
+// adminDeleteOperator hard-deletes a verification agent (role='client')
+// belonging to the caller's org. Nulls out every NO-ACTION FK ref
+// before the DELETE so we don't hit a constraint violation:
+// audit_log actor stays as NULL (history preserved but no FK),
+// wallet_transactions actor NULLs (charges still appear on the org
+// ledger), operator_exams cascades, magic_links cascades.
+//
+// Refuses to delete anything other than an operator in your org —
+// admins, superadmins, and cross-org operators all 404 rather than
+// leaking existence.
+func (s *Server) adminDeleteOperator(w http.ResponseWriter, r *http.Request) {
+	claims := claimsFrom(r)
+	if claims == nil || claims.OrgID == nil {
+		writeErr(w, http.StatusForbidden, "admin org context required")
+		return
+	}
+	orgID := *claims.OrgID
+	id, err := parseInt64(chi.URLParam(r, "id"))
+	if err != nil {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+
+	// Refuse to delete self — an admin shouldn't be able to remove their
+	// own admin account via this endpoint (also the role check below
+	// would already filter it out, but explicit is clearer).
+	if id == claims.UserID {
+		writeErr(w, http.StatusBadRequest, "cannot delete your own account")
+		return
+	}
+
+	// Scoped lookup: this endpoint is ONLY for operators in the caller's
+	// org. Anything else 404s.
+	var username string
+	err = s.deps.DB.QueryRowContext(r.Context(),
+		`SELECT username FROM users
+		  WHERE id = $1 AND org_id = $2 AND role = 'client'`,
+		id, orgID,
+	).Scan(&username)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeErr(w, http.StatusNotFound, "verification agent not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "lookup: "+err.Error())
+		return
+	}
+
+	tx, err := s.deps.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db begin: "+err.Error())
+		return
+	}
+	defer tx.Rollback()
+
+	// NULL every NO-ACTION FK pointing at this user.id so the DELETE
+	// clears cleanly. audit_log + operator_exams + magic_links are
+	// already handled by SET NULL / CASCADE at schema level.
+	nullifies := []string{
+		`UPDATE wallet_transactions SET actor_user_id = NULL WHERE actor_user_id = $1`,
+		`UPDATE razorpay_orders SET actor_user_id = NULL WHERE actor_user_id = $1`,
+	}
+	for _, q := range nullifies {
+		if _, err := tx.ExecContext(r.Context(), q, id); err != nil {
+			// Missing-table (e.g. razorpay disabled deployment) is not fatal.
+			if strings.Contains(err.Error(), "does not exist") {
+				log.Printf("adminDeleteOperator: skipping cleanup on missing table: %v", err)
+				continue
+			}
+			writeErr(w, http.StatusInternalServerError, "fk cleanup: "+err.Error())
+			return
+		}
+	}
+
+	if _, err := tx.ExecContext(r.Context(),
+		`DELETE FROM users WHERE id = $1 AND org_id = $2 AND role = 'client'`,
+		id, orgID,
+	); err != nil {
+		writeErr(w, http.StatusInternalServerError, "delete: "+err.Error())
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		writeErr(w, http.StatusInternalServerError, "commit: "+err.Error())
+		return
+	}
+
+	log.Printf("adminDeleteOperator: hard-deleted user id=%d username=%s org_id=%d", id, username, orgID)
+	s.auditFromRequest(r, "operator.delete", "user", id, map[string]any{
+		"username": username,
+	})
+	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "deleted_id": id})
+}
+
 // ── helpers ───────────────────────────────────────────────────────────
 
 func parseDateWindow(fromStr, toStr string) (any, any, error) {

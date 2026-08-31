@@ -122,3 +122,9 @@ export async function enableOperator(id) {
   return api(`/admin/operators/${id}/enable`, { method: 'POST' })
 }
 
+// Hard-delete the agent. NULLs out audit / wallet-txn actor refs
+// server-side so the constraint clears. Confirmation is UI's job.
+export async function deleteOperator(id) {
+  return api(`/admin/operators/${id}`, { method: 'DELETE' })
+}
+
