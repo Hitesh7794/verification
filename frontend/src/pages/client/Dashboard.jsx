@@ -940,11 +940,6 @@ export default function ClientDashboard() {
             <CardTitle>Step 2 — Liveness &amp; face match</CardTitle>
           </CardHeader>
           <CardBody className="py-4">
-            <p className="text-xs text-slate-600 mb-2">
-              Prove you're a real person in front of the camera. Wallet
-              charges on pass (retries within 5 minutes are free); face
-              match runs automatically on the captured frame.
-            </p>
             <LivenessPanel
               rollNo={candidate.roll_no}
               sessionId={idempotencyKey}

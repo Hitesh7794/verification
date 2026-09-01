@@ -187,7 +187,45 @@ func Migrate(d *sql.DB) error {
 		}
 	}
 
+	if !applied[28] {
+		if err := applyV28AllowDupEmailPerOrg(ctx, d); err != nil {
+			return fmt.Errorf("apply v28 allow_dup_email_per_org: %w", err)
+		}
+	}
+
 	return nil
+}
+
+// applyV28AllowDupEmailPerOrg drops the (org_id, email) uniqueness
+// index V6 added. Business flow: one physical operator (same email +
+// phone) can now hold MULTIPLE user accounts under the same org, each
+// tied via operator_exams to ONE exam (V27 stays intact — the
+// user_id → exam_id UNIQUE constraint still enforces "one account =
+// one exam"). Together this lets an admin issue e.g.
+// `sms_agent_jee` + `sms_agent_neet` accounts for the same real
+// person, one per exam.
+//
+// Username stays globally unique (that's the login key). Phone was
+// never DB-constrained. Only V6's email index is being relaxed.
+func applyV28AllowDupEmailPerOrg(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx,
+		`DROP INDEX IF EXISTS ux_users_org_email_ci`,
+	); err != nil {
+		return fmt.Errorf("drop ux_users_org_email_ci: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)`,
+		28, "allow_dup_email_per_org",
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // applyV27RestoreOneExamPerOperator restores the "one operator can only

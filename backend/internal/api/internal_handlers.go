@@ -1202,8 +1202,10 @@ func (s *Server) internalExamsList(w http.ResponseWriter, r *http.Request) {
 		SELECT id, name, exam_code, COALESCE(trustview_ref,''),
 		       verification_from, verification_to,
 		       visible, closed, requires_face, requires_fp, requires_iris,
-		       created_at
-		  FROM exams WHERE client_id = $1
+		       created_at,
+		       (SELECT COUNT(*) FROM exam_candidates ec WHERE ec.exam_id = e.id)
+		         AS candidate_count
+		  FROM exams e WHERE client_id = $1
 		 ORDER BY created_at DESC`, clientID)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "list: "+err.Error())
@@ -1218,9 +1220,11 @@ func (s *Server) internalExamsList(w http.ResponseWriter, r *http.Request) {
 			name, code, tvRef                        string
 			verFrom, verTo, createdAt                time.Time
 			visible, closed, rFace, rFP, rIris       int
+			candidateCount                           int64
 		)
 		if err := rows.Scan(&id, &name, &code, &tvRef,
-			&verFrom, &verTo, &visible, &closed, &rFace, &rFP, &rIris, &createdAt); err != nil {
+			&verFrom, &verTo, &visible, &closed, &rFace, &rFP, &rIris, &createdAt,
+			&candidateCount); err != nil {
 			continue
 		}
 		out = append(out, map[string]any{
@@ -1237,6 +1241,11 @@ func (s *Server) internalExamsList(w http.ResponseWriter, r *http.Request) {
 			"requires_fp":       rFP == 1,
 			"requires_iris":     rIris == 1,
 			"created_at":        createdAt.UTC().Format(time.RFC3339),
+			// candidate_count drives the "CANDIDATES" tile on the CP
+			// client-detail page + the per-exam column in the table
+			// below it. Without this field the FE reads undefined →
+			// treats as 0 → tile shows 0 even after seeding rolls.
+			"candidate_count":   candidateCount,
 		})
 	}
 	writeJSON(w, http.StatusOK, out)

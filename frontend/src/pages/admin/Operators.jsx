@@ -516,18 +516,26 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
   const initialPhone = (operator?.phone || '').trim()
   const [phone, setPhone] = useState(initialPhone)
   const [capRupees, setCapRupees] = useState(operator?.spending_cap_paise ? String(operator.spending_cap_paise / 100) : '')
-  const [validFrom, setValidFrom] = useState(toDatetimeLocal(operator?.valid_from, '00:00'))
-  const [validTo, setValidTo] = useState(toDatetimeLocal(operator?.valid_to, '23:59'))
+  // Capture the initial datetime strings so edit-mode can tell whether
+  // the operator actually changed them. Without this, a valid-from
+  // that was in the past when the agent was originally created
+  // (perfectly legal for an ongoing window) re-triggers "cannot be in
+  // the past" every time the admin opens the edit form to change an
+  // unrelated field like phone.
+  const initialValidFrom = toDatetimeLocal(operator?.valid_from, '00:00')
+  const initialValidTo   = toDatetimeLocal(operator?.valid_to,   '23:59')
+  const [validFrom, setValidFrom] = useState(initialValidFrom)
+  const [validTo, setValidTo] = useState(initialValidTo)
   const [examIds, setExamIds] = useState(operator?.assigned_exam_ids || [])
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
-  // Indian mobile only — 10 digits starting 6/7/8/9, with optional
-  // +91 or 91 prefix. Mirrors backend isPlausiblePhone; the FE check
-  // just keeps the Save button honest and gives a live inline hint.
-  const phoneClean = phone.replace(/[^\d+]/g, '').replace(/(?!^)\+/g, '')
-  const phoneCore  = phoneClean.replace(/^\+?91/, '').replace(/^\+/, '')
-  const isPhoneValid = /^[6-9]\d{9}$/.test(phoneCore)
+  // Indian mobile — exactly 10 digits starting 6/7/8/9. The input
+  // strips non-digits and caps at 10 chars on every keystroke, so
+  // the stored value is always in that shape and this regex is a
+  // direct test (no cleanup needed). The +91 prefix is no longer
+  // accepted at input time — keeps the field unambiguous.
+  const isPhoneValid = /^[6-9]\d{9}$/.test(phone)
 
   // Date validation — mirrors backend parseDateWindow. valid_from must
   // not be in the past; valid_to must be strictly after valid_from AND
@@ -536,8 +544,16 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
   const now = new Date()
   const fromDate = validFrom ? new Date(validFrom) : null
   const toDate   = validTo   ? new Date(validTo)   : null
-  const fromInPast  = fromDate && !isNaN(fromDate) && (fromDate.getTime() + 2 * 60_000) < now.getTime()
-  const toInPast    = toDate   && !isNaN(toDate)   &&  toDate.getTime() < now.getTime()
+  const fromInPastRaw = fromDate && !isNaN(fromDate) && (fromDate.getTime() + 2 * 60_000) < now.getTime()
+  const toInPastRaw   = toDate   && !isNaN(toDate)   &&  toDate.getTime() < now.getTime()
+  // On edit, only enforce the "cannot be in the past" gate when the
+  // admin actually changed the value. An in-the-past valid_from on an
+  // ongoing window is perfectly legal — the agent was created earlier
+  // and the window straddles now. Re-flagging it every time the admin
+  // opens the edit form to tweak an unrelated field is the bug the
+  // screenshot showed.
+  const fromInPast = fromInPastRaw && (!isEdit || validFrom !== initialValidFrom)
+  const toInPast   = toInPastRaw   && (!isEdit || validTo   !== initialValidTo)
   const fromAfterTo = fromDate && toDate && !isNaN(fromDate) && !isNaN(toDate) && fromDate >= toDate
   const dateInvalid = fromInPast || toInPast || fromAfterTo
   const dateErrMsg = fromInPast ? 'Valid from cannot be in the past.'
@@ -670,15 +686,22 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
           <Input
             type="tel"
             value={phone}
-            onChange={(e) => setPhone(e.target.value)}
-            placeholder="+91 98765 43210"
+            // Strip everything except digits and cap at 10 chars on
+            // every keystroke — the field can only ever hold a 10-digit
+            // Indian mobile. Prevents pasting +91/91 prefixes, spaces,
+            // hyphens, or letters. Backend still re-validates, but this
+            // keeps the input unambiguous and the Save button honest.
+            onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+            placeholder="9876543210"
             required
             autoComplete="tel"
-            inputMode="tel"
+            inputMode="numeric"
+            pattern="[6-9][0-9]{9}"
+            maxLength={10}
           />
-          {phone.trim() && !isPhoneValid && (
+          {phone.length > 0 && !isPhoneValid && (
             <p className="text-[11px] text-rose-600 mt-1">
-              Enter a valid 10-digit Indian mobile (starting <b>6/7/8/9</b>). <code>+91</code> or <code>91</code> prefix is optional.
+              Enter a 10-digit Indian mobile starting with <b>6, 7, 8, or 9</b>.
             </p>
           )}
         </div>

@@ -363,24 +363,14 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	// Pre-check uniqueness (case-insensitive) to give a clean 409
-	// instead of a raw "UNIQUE constraint failed" error. Scoped to
-	// this admin's org so the same person can be provisioned as an
-	// operator under multiple orgs (migration V6). The DB index
-	// enforces the same (org_id, LOWER(email)) tuple at commit time.
-	var dupID int64
-	if err := s.deps.DB.QueryRowContext(r.Context(), db.Q(
-		`SELECT id FROM users
-		 WHERE org_id = ? AND email IS NOT NULL AND LOWER(email) = LOWER(?)
-		 LIMIT 1`),
-		orgID, req.Email,
-	).Scan(&dupID); err == nil {
-		writeErr(w, http.StatusConflict, "a user with this email already exists in this organisation")
-		return
-	} else if !errors.Is(err, sql.ErrNoRows) {
-		writeErr(w, http.StatusInternalServerError, "email check: "+err.Error())
-		return
-	}
+	// V28 (2026-09-01) removed the (org_id, email) uniqueness index —
+	// the admin can now issue MULTIPLE user accounts to the same real
+	// person (same email + phone, different usernames), each assigned
+	// via operator_exams to a DIFFERENT exam. Username uniqueness (the
+	// login key) still enforced globally by ux_users_username_ci; the
+	// per-exam constraint is still V27's UNIQUE(operator_exams.user_id).
+	// So no email pre-check here — the same email can legitimately
+	// belong to multiple accounts within one org.
 
 	if strings.TrimSpace(req.ValidFrom) == "" || strings.TrimSpace(req.ValidTo) == "" {
 		writeErr(w, http.StatusBadRequest, "valid_from and valid_to are required (YYYY-MM-DD or YYYY-MM-DDTHH:MM)")
@@ -641,17 +631,14 @@ func parseBulkOperatorsCSV(buf []byte) ([]parsedBulkOperator, []csvValidationErr
 		}
 		seenUsers[uLower] = line
 
-		if prev, dup := seenEmails[email]; dup {
-			verrs = append(verrs, csvValidationErr{Line: line, Msg: fmt.Sprintf("duplicate email %q in CSV (first on line %d)", email, prev)})
-			continue
-		}
-		seenEmails[email] = line
-
-		if prev, dup := seenPhones[phone]; dup {
-			verrs = append(verrs, csvValidationErr{Line: line, Msg: fmt.Sprintf("duplicate phone %q in CSV (first on line %d)", phone, prev)})
-			continue
-		}
-		seenPhones[phone] = line
+		// V28 (2026-09-01): duplicate email + phone checks removed
+		// from CSV bulk import. Duplicate USERNAMES within the CSV
+		// still error out because username is the login key. But the
+		// same real person (same email/phone) legitimately appears on
+		// multiple rows now — one per exam, each with a distinct
+		// username — because V27 still enforces one exam per user.
+		_ = seenEmails
+		_ = seenPhones
 
 		// Spending cap parsing
 		var spendingCapPaise *int64
@@ -1125,26 +1112,12 @@ func (s *Server) adminPatchOperator(w http.ResponseWriter, r *http.Request) {
 			writeErr(w, http.StatusBadRequest, "email is not a valid address")
 			return
 		}
-		// Reject if any OTHER user in THIS org has the same email.
-		// Scoped to org_id since V6 — a person can legitimately be an
-		// operator under a different org with the same email; only
-		// collisions inside the caller's own org are the problem.
-		var dupID int64
-		err := tx.QueryRow(
-			db.Q(`SELECT id FROM users
-			      WHERE org_id = ? AND email IS NOT NULL
-			        AND LOWER(email) = LOWER(?) AND id != ?
-			      LIMIT 1`),
-			orgID, e, id,
-		).Scan(&dupID)
-		if err == nil {
-			writeErr(w, http.StatusConflict, "a user with this email already exists in this organisation")
-			return
-		} else if !errors.Is(err, sql.ErrNoRows) {
-			writeErr(w, http.StatusInternalServerError, "email check: "+err.Error())
-			return
-		}
-
+		// V28 (2026-09-01): dropped the per-org email uniqueness
+		// pre-check so the admin can PATCH an operator to an email
+		// that other operators in the same org also use. See the
+		// matching removal on createOperator + the V28 migration
+		// comment for the rationale (one physical person, multiple
+		// accounts, one per exam).
 		sets = append(sets, "email = ?")
 		args = append(args, e)
 	}
