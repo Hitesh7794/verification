@@ -8,6 +8,7 @@ import {
   listReviewerApplications,
   bulkApproveReviewerApplications,
   bulkRejectReviewerApplications,
+  revokeReviewerApplication,
   reviewerMe,
 } from '../../lib/reviewer/api.js'
 
@@ -27,6 +28,7 @@ export default function ReviewerKycInbox() {
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [search, setSearch] = useState('')
+  const [revokingId, setRevokingId] = useState(null)
 
   // Stats are derived below from `client?.stats` (populated by
   // reviewerMe) with a fallback to the currently-loaded list, so there
@@ -138,6 +140,19 @@ export default function ReviewerKycInbox() {
       setActionErr(e?.body?.error || e?.message || 'Action failed')
     } finally {
       setActionBusy(false)
+    }
+  }
+
+  async function handleRevoke(id) {
+    if (!confirm('Revoke this rejected application back to Pending review?')) return
+    setRevokingId(id)
+    try {
+      await revokeReviewerApplication(id)
+      await load()
+    } catch (e) {
+      setErr(e?.body?.error || e?.message || 'Could not revoke application')
+    } finally {
+      setRevokingId(null)
     }
   }
 
@@ -346,6 +361,8 @@ export default function ReviewerKycInbox() {
                       selectable={isPendingTab}
                       selected={selectedIds.has(it.id)}
                       onToggle={() => toggleOne(it.id)}
+                      onRevoke={() => handleRevoke(it.id)}
+                      revoking={revokingId === it.id}
                     />
                   ))}
                 </ul>
@@ -401,7 +418,7 @@ function EmptyState({ status }) {
   )
 }
 
-function Row({ it, selectable, selected, onToggle }) {
+function Row({ it, selectable, selected, onToggle, onRevoke, revoking }) {
   return (
     <li className="flex items-start gap-3 p-4 sm:p-5 hover:bg-stone-50/70 transition-colors">
       {selectable && (
@@ -449,6 +466,18 @@ function Row({ it, selectable, selected, onToggle }) {
       </div>
 
       <div className="shrink-0 flex items-center gap-2 pt-0.5">
+        {it.status === 'rejected' && (
+          <Button
+            variant="secondary"
+            size="sm"
+            onClick={onRevoke}
+            disabled={revoking}
+            className="!text-amber-700 !border-amber-300 hover:!bg-amber-50 hover:!border-amber-400 !text-xs font-semibold"
+          >
+            <Icon.RefreshCw className={`h-3 w-3 mr-1 ${revoking ? 'animate-spin' : ''}`} />
+            {revoking ? 'Revoking…' : 'Revoke'}
+          </Button>
+        )}
         <Link
           to={`/reviewer/applications/${it.id}`}
           className="inline-flex items-center px-3 py-1.5 text-xs font-semibold rounded-lg bg-stone-900 text-white hover:bg-stone-800 transition-colors"
@@ -459,6 +488,7 @@ function Row({ it, selectable, selected, onToggle }) {
     </li>
   )
 }
+
 
 function MassActionModal({ kind, count, note, onNoteChange, busy, err, onConfirm, onCancel }) {
   const isApprove = kind === 'approve'

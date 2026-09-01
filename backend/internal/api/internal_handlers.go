@@ -1315,3 +1315,50 @@ func (s *Server) internalApplicationsReject(w http.ResponseWriter, r *http.Reque
 	n, _ := res.RowsAffected()
 	writeJSON(w, http.StatusOK, internalApplicationsRejectResp{Updated: n > 0})
 }
+
+// ── POST /internal/applications/revoke ────────────────────────────
+//
+// Mirror endpoint for CP → DP revoke fan-out.
+// When CP superadmin or reviewer revokes a rejected application,
+// this endpoint resets the DP's institution_applications mirror row back to 'pending'.
+
+type internalApplicationsRevokeReq struct {
+	DpApplicationID int64  `json:"dp_application_id"`
+	ReviewNote      string `json:"review_note,omitempty"`
+}
+
+type internalApplicationsRevokeResp struct {
+	Updated bool `json:"updated"`
+}
+
+func (s *Server) internalApplicationsRevoke(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
+	var req internalApplicationsRevokeReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body")
+		return
+	}
+	if req.DpApplicationID <= 0 {
+		writeErr(w, http.StatusBadRequest, "dp_application_id required")
+		return
+	}
+	note := strings.TrimSpace(req.ReviewNote)
+
+	res, err := s.deps.DB.ExecContext(r.Context(), `
+		UPDATE institution_applications
+		   SET status           = 'pending',
+		       pending_reviewer = 'client',
+		       review_note      = $2,
+		       reviewed_at      = NULL,
+		       updated_at       = NOW()
+		 WHERE id = $1 AND status = 'rejected'`,
+		req.DpApplicationID, nullable(note),
+	)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "update: "+err.Error())
+		return
+	}
+	n, _ := res.RowsAffected()
+	writeJSON(w, http.StatusOK, internalApplicationsRevokeResp{Updated: n > 0})
+}
+

@@ -1483,6 +1483,134 @@ func (s *Server) fireInternalApplicationsReject(parent context.Context, clientID
 	return &reply, nil
 }
 
+// ── POST /api/reviewer/applications/{id}/revoke ──────────────────
+//
+// Revokes a previously-rejected application back to 'pending'. Gated
+// strictly on status='rejected'. Reviewer scope (target_client_id = $2).
+// Sets pending_reviewer = 'client', clears reviewed_at, and mirrors
+// the change to the Data Plane so both planes count pending/rejected correctly.
+
+func (s *Server) cpReviewerRevoke(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	clientID := dpClientID(r)
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
+	var req reviewerDecisionReq
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	note := strings.TrimSpace(req.Note)
+
+	var externalAppID sql.NullInt64
+	err = s.deps.DB.QueryRowContext(r.Context(), `
+		UPDATE institution_applications
+		   SET status           = 'pending',
+		       pending_reviewer = 'client',
+		       review_note      = $3,
+		       reviewed_at      = NULL,
+		       updated_at       = NOW()
+		 WHERE id = $1 AND target_client_id = $2 AND status = 'rejected'
+		 RETURNING external_application_id`,
+		id, clientID, nullableStr(note),
+	).Scan(&externalAppID)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeErr(w, http.StatusConflict, "application not found or not in rejected status")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "update: "+err.Error())
+		return
+	}
+
+	resp := map[string]any{
+		"application_id":   id,
+		"status":           "pending",
+		"pending_reviewer": "client",
+	}
+
+	if externalAppID.Valid && externalAppID.Int64 > 0 {
+		if _, ferr := s.fireInternalApplicationsRevoke(r.Context(), clientID, internalApplicationsRevokePayload{
+			DpApplicationID: externalAppID.Int64,
+			ReviewNote:      note,
+		}); ferr != nil {
+			log.Printf("cp reviewer revoke app=%d: DP mirror failed: %v", id, ferr)
+			resp["mirror_error"] = ferr.Error()
+		}
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+
+// ── /internal/applications/revoke fan-out ─────────────────────────
+
+type internalApplicationsRevokePayload struct {
+	DpApplicationID int64  `json:"dp_application_id"`
+	ReviewNote      string `json:"review_note,omitempty"`
+}
+
+type internalApplicationsRevokeReply struct {
+	Updated bool `json:"updated"`
+}
+
+func (s *Server) fireInternalApplicationsRevoke(parent context.Context, clientID int64, payload internalApplicationsRevokePayload) (*internalApplicationsRevokeReply, error) {
+	if payload.DpApplicationID <= 0 {
+		return &internalApplicationsRevokeReply{Updated: false}, nil
+	}
+
+	var (
+		apiURL string
+		apiKey string
+		status string
+	)
+	err := s.deps.DB.QueryRowContext(parent,
+		`SELECT api_url, api_key, status FROM clients_registry WHERE id = $1`, clientID,
+	).Scan(&apiURL, &apiKey, &status)
+	if err != nil {
+		return nil, fmt.Errorf("registry lookup: %w", err)
+	}
+	if status != "active" {
+		return nil, fmt.Errorf("target client is %s", status)
+	}
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return nil, fmt.Errorf("marshal payload: %w", err)
+	}
+
+	timeout := time.Duration(s.deps.Cfg.FederatedTimeoutMS) * time.Millisecond
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout+2*time.Second)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		apiURL+"/api/internal/applications/revoke", bytes.NewReader(body))
+	if err != nil {
+		return nil, fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-API-Key", apiKey)
+
+	httpClient := &http.Client{Timeout: timeout}
+	resp, err := httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("http: %w", err)
+	}
+	defer resp.Body.Close()
+
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("data plane returned %d: %s", resp.StatusCode, strings.TrimSpace(string(respBody)))
+	}
+	var reply internalApplicationsRevokeReply
+	if err := json.Unmarshal(respBody, &reply); err != nil {
+		return nil, fmt.Errorf("decode: %w", err)
+	}
+	return &reply, nil
+}
+
 // ── null helpers ─────────────────────────────────────────────────
 
 func nullableStr(s string) sql.NullString {
@@ -1513,3 +1641,4 @@ func nullTimeToString(t sql.NullTime) string {
 	}
 	return t.Time.UTC().Format(time.RFC3339)
 }
+
