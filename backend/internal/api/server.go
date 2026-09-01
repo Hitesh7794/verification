@@ -464,6 +464,7 @@ func (s *Server) Router() http.Handler {
 		// approved under the reviewer's exam board). Wallet history is
 		// deliberately NOT exposed here — reviewers don't handle billing.
 		r.Get("/api/client/verifications",                                         s.requireRole("client_reviewer")(s.clientReviewerVerifications))
+		r.Get("/api/client/institutes",                                            s.requireRole("client_reviewer")(s.clientReviewerInstitutes))
 		r.Post("/api/client/exams",                                                s.requireRole("client_reviewer")(s.superadminCreateExam))
 		r.Post("/api/client/exams/csv",                                            s.requireRole("client_reviewer")(s.superadminBulkCreateExamsCSV))
 

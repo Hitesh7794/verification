@@ -212,6 +212,8 @@ export default function ClientDetail() {
           </div>
         )}
 
+        <ClientDetailsPanel client={client} onChanged={refresh} />
+
         <KYCReviewModePanel client={client} onChanged={refresh} />
 
         <ReviewPortalPanel client={client} onChanged={refresh} />
@@ -414,6 +416,128 @@ export default function ClientDetail() {
         tone={dlg?.tone}
       />
     </SuperShell>
+  )
+}
+
+// ── Client details editor ───────────────────────────────────────────
+//
+// Inline edit for the fields that identify + configure the client:
+// name, api_url, notes. Status transitions live under close/reopen/
+// portal buttons and kyc_review_mode has its own panel above — so
+// this panel only owns the pure "identity + connection" fields.
+
+function ClientDetailsPanel({ client, onChanged }) {
+  const [editing, setEditing] = useState(false)
+  const [name,    setName]    = useState(client.name || '')
+  const [apiUrl,  setApiUrl]  = useState(client.api_url || '')
+  const [notes,   setNotes]   = useState(client.notes || '')
+  const [saving,  setSaving]  = useState(false)
+  const [err,     setErr]     = useState('')
+
+  useEffect(() => {
+    if (editing) return
+    setName(client.name || '')
+    setApiUrl(client.api_url || '')
+    setNotes(client.notes || '')
+  }, [editing, client.name, client.api_url, client.notes])
+
+  function reset() {
+    setName(client.name || '')
+    setApiUrl(client.api_url || '')
+    setNotes(client.notes || '')
+    setErr('')
+  }
+
+  function diff() {
+    const patch = {}
+    if (name.trim()   !== (client.name    || '').trim())   patch.name    = name.trim()
+    if (apiUrl.trim() !== (client.api_url || '').trim())   patch.api_url = apiUrl.trim()
+    if (notes         !== (client.notes   || ''))          patch.notes   = notes
+    return patch
+  }
+
+  async function onSave() {
+    const patch = diff()
+    if (Object.keys(patch).length === 0) { setEditing(false); return }
+    setSaving(true)
+    setErr('')
+    try {
+      await patchClient(client.id, patch)
+      await onChanged?.()
+      setEditing(false)
+    } catch (e) {
+      setErr(e?.body?.error || e?.message || 'Could not save')
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  const dirty = Object.keys(diff()).length > 0
+
+  return (
+    <div className="mb-6 rounded-xl bg-warm-surface ring-1 ring-warm overflow-hidden">
+      <div className="p-5 sm:p-6">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold text-slate-900">Client details</h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Identity + connection settings for this client. Status is managed by the End / Reopen buttons above.
+            </p>
+          </div>
+          {!editing && (
+            <Button variant="secondary" size="sm" onClick={() => setEditing(true)}>Edit</Button>
+          )}
+        </div>
+
+        {!editing ? (
+          <dl className="mt-4 grid grid-cols-1 sm:grid-cols-2 gap-x-6 gap-y-3 text-sm">
+            <ReadOnlyField label="Name"     value={client.name} />
+            <ReadOnlyField label="API URL"  value={client.api_url} mono />
+            <ReadOnlyField label="Notes"    value={client.notes || <span className="text-slate-400">(none)</span>} />
+          </dl>
+        ) : (
+          <div className="mt-4 space-y-4">
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+              <div>
+                <Label>Name <span className="text-rose-500">*</span></Label>
+                <Input value={name} onChange={(e) => setName(e.target.value)} maxLength={200} required />
+              </div>
+              <div>
+                <Label>API URL <span className="text-rose-500">*</span></Label>
+                <Input
+                  value={apiUrl}
+                  onChange={(e) => setApiUrl(e.target.value)}
+                  placeholder="https://dp.example.com"
+                  className="font-mono text-xs"
+                  required
+                />
+                <p className="text-[11px] text-slate-500 mt-1">Where the Data Plane for this client lives. Must start with http:// or https://.</p>
+              </div>
+              <div className="sm:col-span-2">
+                <Label>Notes</Label>
+                <Input value={notes} onChange={(e) => setNotes(e.target.value)} placeholder="Internal note visible to superadmins" />
+              </div>
+            </div>
+            {err && <p className="text-xs text-rose-600">{err}</p>}
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => { reset(); setEditing(false) }} disabled={saving}>Cancel</Button>
+              <Button size="sm" onClick={onSave} disabled={saving || !dirty}>
+                {saving ? 'Saving…' : 'Save changes'}
+              </Button>
+            </div>
+          </div>
+        )}
+      </div>
+    </div>
+  )
+}
+
+function ReadOnlyField({ label, value, mono }) {
+  return (
+    <div>
+      <dt className="text-[11px] font-medium uppercase tracking-wider text-slate-500">{label}</dt>
+      <dd className={`mt-0.5 text-slate-800 ${mono ? 'font-mono text-xs break-all' : 'text-sm'}`}>{value || <span className="text-slate-400">—</span>}</dd>
+    </div>
   )
 }
 

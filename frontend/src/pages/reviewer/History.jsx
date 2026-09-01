@@ -42,6 +42,7 @@ export default function ReviewerHistory() {
   const [filters, setFilters] = useState({
     roll: '',
     status: '',
+    org: '',
     from: '',
     to: '',
   })
@@ -50,6 +51,15 @@ export default function ReviewerHistory() {
   const [nextCursor, setNextCursor] = useState(0)
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState('')
+  const [institutes, setInstitutes] = useState([])
+
+  useEffect(() => {
+    let alive = true
+    api('/client/institutes')
+      .then((res) => { if (alive) setInstitutes(res.institutes || []) })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [])
 
   function buildQuery(extra = {}) {
     const p = new URLSearchParams()
@@ -85,13 +95,14 @@ export default function ReviewerHistory() {
     setAppliedFilters({
       roll: filters.roll.trim(),
       status: filters.status,
+      org: filters.org.trim(),
       from: filters.from,
       to: filters.to,
     })
   }
 
   function clearFilters() {
-    setFilters({ roll: '', status: '', from: '', to: '' })
+    setFilters({ roll: '', status: '', org: '', from: '', to: '' })
     setAppliedFilters({})
   }
 
@@ -103,6 +114,7 @@ export default function ReviewerHistory() {
     const next = {
       roll: filters.roll,
       status: filters.status,
+      org: filters.org,
       from: daysAgoISO(days - 1),
       to: todayISO(),
     }
@@ -119,7 +131,7 @@ export default function ReviewerHistory() {
       />
       <Card className="mb-6">
         <CardBody>
-          <form onSubmit={applyFilters} className="grid gap-3 sm:grid-cols-4">
+          <form onSubmit={applyFilters} className="grid gap-3 sm:grid-cols-5">
             <div>
               <Label>Roll number</Label>
               <Input
@@ -127,6 +139,19 @@ export default function ReviewerHistory() {
                 onChange={(e) => setFilters({ ...filters, roll: e.target.value })}
                 placeholder="e.g. 10001"
               />
+            </div>
+            <div>
+              <Label>Institute</Label>
+              <select
+                value={filters.org}
+                onChange={(e) => setFilters({ ...filters, org: e.target.value })}
+                className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option value="">All institutes</option>
+                {institutes.map((i) => (
+                  <option key={i.id} value={i.name}>{i.name}</option>
+                ))}
+              </select>
             </div>
             <div>
               <Label>Status</Label>
@@ -156,7 +181,7 @@ export default function ReviewerHistory() {
                 onChange={(e) => setFilters({ ...filters, to: e.target.value })}
               />
             </div>
-            <div className="sm:col-span-4 flex flex-wrap items-center gap-2 pt-1">
+            <div className="sm:col-span-5 flex flex-wrap items-center gap-2 pt-1">
               <Button type="submit">Apply</Button>
               <Button type="button" variant="secondary" onClick={clearFilters}>Clear</Button>
               <span className="ml-2 text-xs text-slate-500">Quick:</span>

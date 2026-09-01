@@ -449,6 +449,47 @@ func (s *Server) clientReviewerStats(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ---------- GET /api/client/institutes ----------
+//
+// Flat list of institutes approved under this reviewer's client — used
+// to populate the Institute dropdown on /reviewer/history. Sorted
+// alphabetically. Empty list is a valid response.
+func (s *Server) clientReviewerInstitutes(w http.ResponseWriter, r *http.Request) {
+	clientID, ok := s.clientReviewerScope(r)
+	if !ok {
+		writeErr(w, http.StatusForbidden, "client reviewer context required")
+		return
+	}
+	rows, err := s.deps.DB.QueryContext(r.Context(),
+		`SELECT o.id, o.name
+		   FROM organizations o
+		   JOIN client_organization_approvals coa ON coa.org_id = o.id
+		  WHERE coa.client_id = $1 AND coa.status = 'approved'
+		  ORDER BY lower(o.name)`,
+		clientID,
+	)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	type inst struct {
+		ID   int64  `json:"id"`
+		Name string `json:"name"`
+	}
+	out := make([]inst, 0, 16)
+	for rows.Next() {
+		var i inst
+		if err := rows.Scan(&i.ID, &i.Name); err != nil {
+			writeErr(w, http.StatusInternalServerError, "scan: "+err.Error())
+			return
+		}
+		out = append(out, i)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"institutes": out})
+}
+
 // ---------- GET /api/client/verifications ----------
 //
 // Reviewer-scoped verification history. Same shape as
@@ -488,6 +529,11 @@ func (s *Server) clientReviewerVerifications(w http.ResponseWriter, r *http.Requ
 	if status := q.Get("status"); status == "verified" || status == "denied" {
 		where += fmt.Sprintf(" AND v.status = $%d", nextParam)
 		args = append(args, status)
+		nextParam++
+	}
+	if org := strings.TrimSpace(q.Get("org")); org != "" {
+		where += fmt.Sprintf(" AND lower(o.name) LIKE '%%' || lower($%d) || '%%'", nextParam)
+		args = append(args, org)
 		nextParam++
 	}
 	if from := q.Get("from"); from != "" {
