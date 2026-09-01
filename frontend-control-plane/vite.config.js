@@ -7,9 +7,9 @@ export default defineConfig({
   server: {
     port: 5174,
     proxy: {
-      // CP local dev port is 8091 (matches config.go default and the
-      // prod cp.env). 8081 was a stale value in an earlier commit.
-      '/api': 'http://localhost:8091',
+      // CP local dev port is 8090 — matches config.go default (CP_HTTP_ADDR
+      // defaults to :8090) and backend/.env. 8091 was a stale value.
+      '/api': 'http://localhost:8090',
     },
   },
 })

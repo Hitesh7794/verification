@@ -24,16 +24,16 @@ export default function ReviewerKycInbox() {
   const [status, setStatus] = useState('pending') // 'pending' | 'approved' | 'rejected'
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
+  const [counts, setCounts] = useState(null)
   const [client, setClient] = useState(null)
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [search, setSearch] = useState('')
   const [revokingId, setRevokingId] = useState(null)
 
-  // Stats are derived below from `client?.stats` (populated by
-  // reviewerMe) with a fallback to the currently-loaded list, so there
-  // is no separate reviewerStats fetch here. See the useMemo(...)
-  // block a few lines down for the shape.
+  // Tab counts ride along with the list response (`counts`), so there
+  // is no separate stats fetch here. See the useMemo(...) block a few
+  // lines down.
 
   // Selection state — only meaningful on the 'pending' tab. Cleared on
   // tab switch + on refresh so the count in the mass-action bar never
@@ -57,6 +57,7 @@ export default function ReviewerKycInbox() {
       ])
       setItems(appRes.items || [])
       setTotal(appRes.total || 0)
+      setCounts(appRes.counts || null)
       setClient(meRes)
     } catch (e) {
       setErr(e?.body?.error || e?.message || 'Could not load applications')
@@ -68,15 +69,29 @@ export default function ReviewerKycInbox() {
   useEffect(() => { load() }, [load])
   useEffect(() => { setSelectedIds(new Set()); setLastResult(null) }, [status])
 
+  // Tab badges come from the SAME response as the list (counts are
+  // computed on the CP over the rows this reviewer can actually see).
+  // They previously read client.stats, which the DP derives from its
+  // own institution_applications table -- a different table from the
+  // one the list reads, so the badges disagreed with the rows on
+  // screen and never moved after an approve/reject/revoke. The old
+  // `??` fallbacks could not save it either: the DP returns a real 0
+  // rather than undefined, so `??` kept the 0.
+  //
+  // load() re-runs after every action and on tab switch, so these
+  // refresh with the list.
   const stats = useMemo(() => {
+    const pending = counts?.pending ?? (status === 'pending' ? total : 0)
+    const approved = counts?.approved ?? (status === 'approved' ? total : 0)
+    const rejected = counts?.rejected ?? (status === 'rejected' ? total : 0)
     return {
-      total: client?.stats?.total ?? total,
-      pending: client?.stats?.pending ?? (status === 'pending' ? total : 0),
-      approved: client?.stats?.approved ?? (status === 'approved' ? total : 0),
-      rejected: client?.stats?.rejected ?? (status === 'rejected' ? total : 0),
-      universities: client?.stats?.universities ?? (client?.stats?.approved ?? total),
+      total: counts ? pending + approved + rejected : total,
+      pending,
+      approved,
+      rejected,
+      universities: approved,
     }
-  }, [client, total, status])
+  }, [counts, total, status])
 
   const isPendingTab = status === 'pending'
   const selectionCount = selectedIds.size

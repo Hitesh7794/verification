@@ -14,6 +14,7 @@ package main
 import (
 	"context"
 	"database/sql"
+	"flag"
 	"fmt"
 	"log"
 	"time"
@@ -25,7 +26,32 @@ import (
 	"github.com/veni/neet-verification/internal/db"
 )
 
+// execWarn runs a best-effort seed statement. These used to discard the
+// error entirely, which meant a constraint violation aborted the whole
+// transaction and only surfaced later as an opaque 25P02 on an unrelated
+// insert. Logging keeps them non-fatal but no longer invisible.
+func execWarn(ctx context.Context, tx *sql.Tx, tag, q string, args ...any) {
+	if _, err := tx.ExecContext(ctx, q, args...); err != nil {
+		log.Printf("WARN seed %s: %v", tag, err)
+	}
+}
+
+// primaryBoard is the single exam board seeded by default.
+//
+// A Data Plane identifies itself to the Control Plane with one scalar
+// DATA_PLANE_CLIENT_ID, so a DP deployment maps to exactly one
+// clients_registry row. Seeding four boards into one DP produced a
+// shape the CP cannot represent -- three of them had no CP identity and
+// were invisible from the superadmin portal. Default to one board so
+// local data matches the model; -all-boards restores the old fixtures
+// for anyone exercising multi-board DP-internal behaviour.
+const primaryBoard = "National Testing Agency (NTA)"
+
 func main() {
+	allBoards := flag.Bool("all-boards", false,
+		"seed all four exam boards instead of just "+primaryBoard)
+	flag.Parse()
+
 	cfg := config.Load()
 	dsn := cfg.DatabaseURL
 	if dsn == "" {
@@ -52,12 +78,18 @@ func main() {
 
 	log.Println("Seeding core superadmin...")
 	superHash, _ := bcrypt.GenerateFromPassword([]byte("super123"), bcrypt.DefaultCost)
-	if _, err := tx.ExecContext(ctx, `
+	// RETURNING id rather than assuming the superadmin lands on id 1 --
+	// the whole seed runs in one transaction, so a failed earlier run
+	// rolls the row back while leaving the users sequence advanced, and
+	// every hardcoded actor id below would then dangle on its FK.
+	var superID int64
+	if err := tx.QueryRowContext(ctx, `
 		INSERT INTO users(username, password_hash, role, display_name, activated_at)
 		VALUES('super', $1, 'superadmin', 'System Superadmin', NOW())
-		ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash, role = EXCLUDED.role`,
+		ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash, role = EXCLUDED.role
+		RETURNING id`,
 		string(superHash),
-	); err != nil {
+	).Scan(&superID); err != nil {
 		log.Fatalf("seed superadmin: %v", err)
 	}
 
@@ -102,6 +134,16 @@ func main() {
 			reviewerName: "CBSE Accreditation Reviewer",
 			reviewerPass: "reviewer123",
 		},
+	}
+
+	if !*allBoards {
+		kept := clients[:0]
+		for _, c := range clients {
+			if c.name == primaryBoard {
+				kept = append(kept, c)
+			}
+		}
+		clients = kept
 	}
 
 	clientIDs := map[string]int64{}
@@ -172,6 +214,16 @@ func main() {
 		{"Central Board of Secondary Education (CBSE)", "CBSE-ACAD-2026", "CBSE Senior School Certificate Practical Exams", "2026-03-01", "2026-03-25"},
 	}
 
+	if !*allBoards {
+		kept := exams[:0]
+		for _, e := range exams {
+			if e.clientName == primaryBoard {
+				kept = append(kept, e)
+			}
+		}
+		exams = kept
+	}
+
 	examIDs := map[string]int64{}
 	for _, e := range exams {
 		cid := clientIDs[e.clientName]
@@ -200,7 +252,7 @@ func main() {
 		for cIdx := 1; cIdx <= 15; cIdx++ {
 			roll := fmt.Sprintf("%s-ROLL-%04d", e.examCode, cIdx)
 			candName := fmt.Sprintf("Candidate %03d (%s)", cIdx, e.examCode)
-			_, _ = tx.ExecContext(ctx, `
+			execWarn(ctx, tx, "line203", `
 				INSERT INTO exam_candidates(exam_id, roll_no, name, registration_id, gender, father_name, created_at)
 				VALUES($1, $2, $3, $4, 'M', 'Father Name', NOW())
 				ON CONFLICT (exam_id, roll_no) DO NOTHING`,
@@ -352,7 +404,7 @@ func main() {
 		orgIDs[o.code] = oid
 
 		// Wallet for organization
-		_, _ = tx.ExecContext(ctx, `
+		execWarn(ctx, tx, "line355", `
 			INSERT INTO wallets(org_id, balance_paise, updated_at)
 			VALUES($1, 100000, NOW())
 			ON CONFLICT (org_id) DO NOTHING`,
@@ -372,7 +424,7 @@ func main() {
 		// Operator user for this university
 		opUser := o.code + "_op1"
 		opHash, _ := bcrypt.GenerateFromPassword([]byte("pass123"), bcrypt.DefaultCost)
-		_, _ = tx.ExecContext(ctx, `
+		execWarn(ctx, tx, "line375", `
 			INSERT INTO users(username, password_hash, role, org_id, display_name, email, activated_at, spending_cap_paise, spent_paise)
 			VALUES($1, $2, 'client', $3, $4, $5, NOW(), 50000, 0)
 			ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash, org_id = EXCLUDED.org_id, role = 'client'`,
@@ -383,7 +435,7 @@ func main() {
 		var appId int64
 		err = tx.QueryRowContext(ctx, `SELECT id FROM institution_applications WHERE LOWER(TRIM(institution_name)) = LOWER(TRIM($1))`, o.name).Scan(&appId)
 		if err == sql.ErrNoRows {
-			_, _ = tx.ExecContext(ctx, `
+			execWarn(ctx, tx, "line386", `
 				INSERT INTO institution_applications(
 					status, institution_name, institution_type, aishe_code, state, city,
 					head_name, head_email, head_mobile, approx_student_count, address_line1, pin_code, head_designation, created_at, reviewed_at
@@ -401,11 +453,11 @@ func main() {
 	// 4a. Manipal is blanket partner of NTA
 	ntaID := clientIDs["National Testing Agency (NTA)"]
 	manipalID := orgIDs["manipal_univ"]
-	_, _ = tx.ExecContext(ctx, `
+	execWarn(ctx, tx, "line404", `
 		INSERT INTO client_organization_approvals(client_id, org_id, approved_at, approved_by, note)
-		VALUES($1, $2, NOW() - INTERVAL '2 days', 1, 'Premier Institutional Accreditation Partner')
+		VALUES($1, $2, NOW() - INTERVAL '2 days', $3, 'Premier Institutional Accreditation Partner')
 		ON CONFLICT (client_id, org_id) DO NOTHING`,
-		ntaID, manipalID,
+		ntaID, manipalID, superID,
 	)
 
 	// Subscriptions table:
@@ -463,16 +515,24 @@ func main() {
 			reviewedAt = time.Now().Add(-24 * time.Hour)
 		}
 
+		// approval_type is CHECK-constrained to NULL / per_exam /
+		// blanket_client, so a pending row has to send a real NULL --
+		// an empty string trips the constraint.
+		var approvalType any = nil
+		if s.approvalType != "" {
+			approvalType = s.approvalType
+		}
+
 		_, err := tx.ExecContext(ctx, `
 			INSERT INTO organization_exam_subscriptions(
 				org_id, exam_id, status, approval_type, requested_at, subscribed_at, subscribed_by, reviewed_at, review_note
-			) VALUES($1, $2, $3, $4, NOW() - INTERVAL '1 day', NOW() - INTERVAL '1 day', 1, $5, $6)
+			) VALUES($1, $2, $3, $4, NOW() - INTERVAL '1 day', NOW() - INTERVAL '1 day', $7, $5, $6)
 			ON CONFLICT (org_id, exam_id) DO UPDATE SET
 				status = EXCLUDED.status,
 				approval_type = EXCLUDED.approval_type,
 				reviewed_at = EXCLUDED.reviewed_at,
 				review_note = EXCLUDED.review_note`,
-			oid, eid, s.status, s.approvalType, reviewedAt, s.note,
+			oid, eid, s.status, approvalType, reviewedAt, s.note, superID,
 		)
 		if err != nil {
 			log.Fatalf("seed subscription %s -> %s: %v", s.orgCode, s.examCode, err)
