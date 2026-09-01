@@ -210,11 +210,12 @@ export default function Clients() {
                         </p>
                       </div>
                       <div>
-                        <Label>Data Plane API URL <span className="text-slate-400 font-normal">(optional)</span></Label>
+                        <Label>Data Plane API URL <span className="text-rose-500">*</span></Label>
                         <Input
                           value={newApiUrl}
                           onChange={(e) => setNewApiUrl(e.target.value)}
                           placeholder="https://client.example.com"
+                          required
                         />
                         <p className="text-[11px] text-slate-500 mt-1">
                           Base URL of this client's Data Plane, e.g. https://ssc.verifyportal.example.com
