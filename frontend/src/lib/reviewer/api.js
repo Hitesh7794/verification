@@ -59,6 +59,16 @@ export async function rejectReviewerApplication(id, note) {
   })
 }
 
+// POST /api/client/applications/{id}/revoke
+// Body: { note }
+export async function revokeReviewerApplication(id, note = '') {
+  return api(`/client/applications/${id}/revoke`, {
+    method: 'POST',
+    body: { note: note || '' },
+  })
+}
+
+
 // POST /api/client/applications/bulk-approve
 // Body: { application_ids: number[], note?: string }
 // Returns { requested, succeeded, failed, results: [{application_id, ok, error?}] }.

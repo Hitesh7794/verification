@@ -550,3 +550,101 @@ func (s *Server) superadminApplicationReject(w http.ResponseWriter, r *http.Requ
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
+
+// ── POST /api/superadmin/applications/{id}/revoke ────────────────
+//
+// Superadmin revoke. Flips status from 'rejected' back to 'pending'.
+// Recalculates pending_reviewer based on client's kyc_review_mode
+// (if mode == 'client', pending_reviewer is 'client', else 'admin').
+// Mirrors back to target Data Plane.
+
+func (s *Server) superadminApplicationRevoke(w http.ResponseWriter, r *http.Request) {
+	id, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || id <= 0 {
+		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
+	var req reviewerDecisionReq
+	_ = json.NewDecoder(r.Body).Decode(&req)
+	note := strings.TrimSpace(req.Note)
+
+	tx, err := s.deps.DB.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db begin: "+err.Error())
+		return
+	}
+	defer tx.Rollback()
+
+	var (
+		status                                    string
+		targetClientID, dpClientID, externalAppID sql.NullInt64
+	)
+	err = tx.QueryRowContext(r.Context(), `
+		SELECT status, target_client_id, dp_client_id, external_application_id
+		  FROM institution_applications
+		 WHERE id = $1
+		 FOR UPDATE`, id,
+	).Scan(&status, &targetClientID, &dpClientID, &externalAppID)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeErr(w, http.StatusNotFound, "application not found")
+		return
+	}
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
+		return
+	}
+	if status != "rejected" {
+		writeErr(w, http.StatusConflict, "application is "+status+", can only revoke rejected applications")
+		return
+	}
+
+	pendingReviewer := "admin"
+	if targetClientID.Valid {
+		var clientMode string
+		_ = tx.QueryRowContext(r.Context(),
+			`SELECT kyc_review_mode FROM clients_registry WHERE id = $1`,
+			targetClientID.Int64,
+		).Scan(&clientMode)
+		if clientMode == "client" {
+			pendingReviewer = "client"
+		}
+	}
+
+	if _, err := tx.ExecContext(r.Context(), `
+		UPDATE institution_applications
+		   SET status           = 'pending',
+		       pending_reviewer = $2,
+		       review_note      = $3,
+		       reviewed_at      = NULL,
+		       updated_at       = NOW()
+		 WHERE id = $1`,
+		id, pendingReviewer, nullableStr(note),
+	); err != nil {
+		writeErr(w, http.StatusInternalServerError, "update: "+err.Error())
+		return
+	}
+	if err := tx.Commit(); err != nil {
+		writeErr(w, http.StatusInternalServerError, "commit: "+err.Error())
+		return
+	}
+
+	resp := map[string]any{
+		"application_id":   id,
+		"status":           "pending",
+		"pending_reviewer": pendingReviewer,
+	}
+
+	if targetClientID.Valid && externalAppID.Valid && externalAppID.Int64 > 0 {
+		if _, ferr := s.fireInternalApplicationsRevoke(r.Context(), targetClientID.Int64, internalApplicationsRevokePayload{
+			DpApplicationID: externalAppID.Int64,
+			ReviewNote:      note,
+		}); ferr != nil {
+			log.Printf("cp superadmin revoke app=%d: DP mirror failed: %v", id, ferr)
+			resp["mirror_error"] = ferr.Error()
+		}
+	}
+
+	writeJSON(w, http.StatusOK, resp)
+}
+

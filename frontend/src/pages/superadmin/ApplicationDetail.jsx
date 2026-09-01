@@ -169,6 +169,26 @@ export default function ApplicationDetail() {
     }
   }
 
+  async function revoke() {
+    if (!confirm('Revoke this rejected application back to Pending review? It will move back to the pending queue and allow re-reviewing.')) return
+    setReviewing(true)
+    setActionErr('')
+    try {
+      await api(`/superadmin/applications/${id}/revoke`, {
+        method: 'POST',
+        body: { note },
+      })
+      const d = await api(`/superadmin/applications/${id}`)
+      setApp(d)
+      setNote('')
+    } catch (e) {
+      setActionErr(e.message)
+    } finally {
+      setReviewing(false)
+    }
+  }
+
+
   if (err) {
     return (
       <SuperShell>
@@ -517,6 +537,29 @@ export default function ApplicationDetail() {
               This board is <b>client-only</b> — KYC documents and the approve/reject decision belong to them alone.
               You can still change routing above.
             </span>
+          </div>
+        </div>
+      )}
+
+      {app.status === 'rejected' && (
+        <div className="fixed bottom-0 left-0 right-0 bg-white/95 backdrop-blur border-t border-slate-200 shadow-[0_-8px_24px_rgba(15,23,42,0.06)] z-40">
+          <div className="mx-auto max-w-7xl px-6 py-4 flex flex-wrap items-center justify-between gap-4">
+            <div className="text-xs text-slate-600">
+              <span className="font-semibold text-rose-700">Application Rejected</span>
+              {app.review_note && <span className="ml-1 text-slate-500"> — Reason: {app.review_note}</span>}
+            </div>
+            <div className="flex items-center gap-2">
+              <Button
+                variant="secondary"
+                disabled={reviewing}
+                onClick={revoke}
+                size="md"
+                className="!text-amber-700 !border-amber-300 hover:!bg-amber-50 hover:!border-amber-400 font-semibold"
+              >
+                <Icon.Refresh className={`h-4 w-4 mr-1.5 ${reviewing ? 'animate-spin' : ''}`} />
+                {reviewing ? 'Revoking…' : 'Revoke to Pending'}
+              </Button>
+            </div>
           </div>
         </div>
       )}

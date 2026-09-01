@@ -237,6 +237,7 @@ func (s *Server) Router() http.Handler {
 		// row moves out of 'pending' — otherwise the reviewer inbox tiles
 		// count rejected apps as pending. Symmetric with orgs/create.
 		r.Post("/api/internal/applications/reject", s.internalApplicationsReject)
+		r.Post("/api/internal/applications/revoke", s.internalApplicationsRevoke)
 		// Track 2 (per-client DP model): Control Plane calls this to
 		// provision reviewer / admin users on this Data Plane. User rows
 		// live on the DP only — the CP DB never stores credentials.
@@ -437,6 +438,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/client/applications/{id}",               s.requireRole("client_reviewer")(s.proxyReviewerGet))
 		r.Post("/api/client/applications/{id}/approve",      s.requireRole("client_reviewer")(s.proxyReviewerApprove))
 		r.Post("/api/client/applications/{id}/reject",       s.requireRole("client_reviewer")(s.proxyReviewerReject))
+		r.Post("/api/client/applications/{id}/revoke",       s.requireRole("client_reviewer")(s.proxyReviewerRevoke))
 		r.Get("/api/client/applications/{id}/docs/{doc_id}", s.requireRole("client_reviewer")(s.proxyReviewerDocDownload))
 		// Bulk approve/reject reverse-proxy to CP (same as the
 		// single-item variants above). CP owns institution_applications

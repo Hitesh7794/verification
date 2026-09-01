@@ -39,6 +39,7 @@ export default function PendingApplications() {
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(true)
+  const [revokingId, setRevokingId] = useState(null)
 
   useEffect(() => {
     const t = setTimeout(() => setDebouncedSearch(search), 300)
@@ -77,10 +78,25 @@ export default function PendingApplications() {
     }
   }, [status, debouncedSearch, offset])
 
+  async function handleRevoke(e, id) {
+    e.stopPropagation()
+    if (!confirm('Revoke this rejected application back to Pending review?')) return
+    setRevokingId(id)
+    try {
+      await api(`/superadmin/applications/${id}/revoke`, { method: 'POST' })
+      await load()
+    } catch (err) {
+      setErr(err.message || 'Could not revoke application')
+    } finally {
+      setRevokingId(null)
+    }
+  }
+
   // Visibility-aware polling — load runs immediately, then every 8s
   // while the tab is visible; paused entirely while hidden, with an
   // immediate catch-up fire on re-show.
   usePolling(load, 8000)
+
 
   const showingFrom = items.length > 0 ? offset + 1 : 0
   const showingTo = Math.min(offset + PAGE_SIZE, total)
@@ -288,14 +304,27 @@ export default function PendingApplications() {
                         <Pill tone={tone} dot>{cap(it.status)}</Pill>
                       </td>
                       <td className="px-6 py-4 text-right">
-                        <Link
-                          to={`/superadmin/applications/${it.id}`}
-                          onClick={(e) => e.stopPropagation()}
-                          className="inline-flex items-center gap-1 text-sm font-medium text-indigo-600 hover:text-indigo-700"
-                        >
-                          Review
-                          <Icon.ChevronRight className="h-4 w-4" />
-                        </Link>
+                        <div className="flex items-center justify-end gap-2">
+                          {it.status === 'rejected' && (
+                            <button
+                              type="button"
+                              onClick={(e) => handleRevoke(e, it.id)}
+                              disabled={revokingId === it.id}
+                              className="inline-flex items-center gap-1 rounded-md border border-amber-300 bg-amber-50 px-2.5 py-1 text-xs font-semibold text-amber-700 hover:bg-amber-100 transition-colors disabled:opacity-50"
+                            >
+                              <Icon.Refresh className={`h-3 w-3 ${revokingId === it.id ? 'animate-spin' : ''}`} />
+                              {revokingId === it.id ? 'Revoking…' : 'Revoke'}
+                            </button>
+                          )}
+                          <Link
+                            to={`/superadmin/applications/${it.id}`}
+                            onClick={(e) => e.stopPropagation()}
+                            className="inline-flex items-center gap-1 text-sm font-medium text-indigo-600 hover:text-indigo-700"
+                          >
+                            Review
+                            <Icon.ChevronRight className="h-4 w-4" />
+                          </Link>
+                        </div>
                       </td>
                     </motion.tr>
                   )

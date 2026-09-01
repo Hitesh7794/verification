@@ -128,6 +128,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/superadmin/applications/{id}", s.superadminApplicationGet)
 		r.Post("/api/superadmin/applications/{id}/approve", s.superadminApplicationApprove)
 		r.Post("/api/superadmin/applications/{id}/reject", s.superadminApplicationReject)
+		r.Post("/api/superadmin/applications/{id}/revoke", s.superadminApplicationRevoke)
 		// Doc download — streams from S3 via DP internal (superadmin path).
 		r.Get("/api/superadmin/applications/{id}/docs/{doc_id}/download", s.proxyDocDownloadSuperadmin)
 		// Track 3: compat aliases for Rahul's CP frontend, which was
@@ -167,6 +168,7 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/reviewer/applications/{id}", s.cpReviewerGet)
 		r.Post("/api/reviewer/applications/{id}/approve", s.cpReviewerApprove)
 		r.Post("/api/reviewer/applications/{id}/reject", s.cpReviewerReject)
+		r.Post("/api/reviewer/applications/{id}/revoke", s.cpReviewerRevoke)
 		// Bulk equivalents — same auth model, iterate per id with
 		// per-row error capture (returns {requested, succeeded, failed,
 		// results[]}). Rahul's inbox POSTs {application_ids, note} here.

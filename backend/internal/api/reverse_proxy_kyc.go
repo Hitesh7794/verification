@@ -598,6 +598,16 @@ func (s *Server) proxyReviewerReject(w http.ResponseWriter, r *http.Request) {
 	s.proxyToCP(w, r, fmt.Sprintf("/api/reviewer/applications/%s/reject", url.PathEscape(id)))
 }
 
+func (s *Server) proxyReviewerRevoke(w http.ResponseWriter, r *http.Request) {
+	id := chi.URLParam(r, "id")
+	if id == "" {
+		writeErr(w, http.StatusBadRequest, "missing id")
+		return
+	}
+	s.proxyToCP(w, r, fmt.Sprintf("/api/reviewer/applications/%s/revoke", url.PathEscape(id)))
+}
+
+
 // Bulk approve/reject — forwarded straight through to CP. The CP
 // endpoint iterates and returns a per-row summary; we just relay.
 // The old DP-local bulk handlers looked up applications in DP's
