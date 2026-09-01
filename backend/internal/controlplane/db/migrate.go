@@ -87,6 +87,12 @@ func Migrate(d *sql.DB) error {
 		}
 	}
 
+	if !applied[9] {
+		if err := applyV9DecidedByDesk(ctx, d); err != nil {
+			return fmt.Errorf("apply v9 decided_by_desk: %w", err)
+		}
+	}
+
 	return nil
 }
 
@@ -115,6 +121,66 @@ func applyV8ClientDomain(ctx context.Context, d *sql.DB) error {
 		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)
 		 ON CONFLICT (version) DO NOTHING`,
 		8, "client_domain",
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// applyV9DecidedByDesk records WHICH desk decided an application.
+//
+// pending_reviewer answers "whose queue is this in right now", and is
+// cleared to NULL the moment a decision lands -- so once an app was
+// approved or rejected, nothing in the row said who did it. The
+// reviewer's approved/rejected tabs therefore showed every decided
+// row for the client, including ones the superadmin rejected before
+// the reviewer ever saw them.
+//
+// decided_by_desk is set at decision time and cleared on revoke (the
+// row is undecided again). NULL means "decided before this column
+// existed" -- provenance genuinely unknown.
+//
+// Backfill: an approved row under a 'both'/'client' mode client was
+// necessarily finalised at the client desk (superadmin approve is
+// only a handoff in those modes), so those are safely 'client';
+// 'admin'-mode clients have no client desk at all, so 'admin'.
+// Rejected rows are left NULL -- either desk could have rejected
+// them and there is no evidence either way.
+func applyV9DecidedByDesk(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	stmts := []string{
+		`ALTER TABLE institution_applications
+		    ADD COLUMN IF NOT EXISTS decided_by_desk TEXT`,
+		`ALTER TABLE institution_applications
+		    DROP CONSTRAINT IF EXISTS institution_applications_decided_by_desk_check`,
+		`ALTER TABLE institution_applications
+		    ADD CONSTRAINT institution_applications_decided_by_desk_check
+		    CHECK (decided_by_desk IS NULL OR decided_by_desk IN ('admin','client'))`,
+		`UPDATE institution_applications a
+		    SET decided_by_desk = CASE WHEN c.kyc_review_mode = 'admin'
+		                               THEN 'admin' ELSE 'client' END
+		   FROM clients_registry c
+		  WHERE a.target_client_id = c.id
+		    AND a.status = 'approved'
+		    AND a.decided_by_desk IS NULL`,
+		`CREATE INDEX IF NOT EXISTS idx_cp_inst_apps_decided_by_desk
+		    ON institution_applications(target_client_id, status, decided_by_desk)
+		    WHERE status IN ('approved','rejected')`,
+	}
+	for _, st := range stmts {
+		if _, err := tx.ExecContext(ctx, st); err != nil {
+			return fmt.Errorf("v9 stmt: %w", err)
+		}
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)
+		 ON CONFLICT (version) DO NOTHING`,
+		9, "decided_by_desk",
 	); err != nil {
 		return err
 	}

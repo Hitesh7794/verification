@@ -573,6 +573,7 @@ func (s *Server) cpRegisterResubmit(w http.ResponseWriter, r *http.Request) {
 		       review_note         = NULL,
 		       reviewed_at         = NULL,
 		       reviewed_by_user_id = NULL,
+		       decided_by_desk     = NULL,
 		       institution_name    = $3,
 		       institution_type    = $4,
 		       aishe_code          = $5,
@@ -725,22 +726,35 @@ func (s *Server) cpReviewerList(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Reviewer's queue: pending rows require pending_reviewer='client'
-	// so superadmin-first ('both' mode pre-handoff) apps don't leak
-	// into the client's inbox. Approved + rejected rows are visible
-	// regardless — reviewer needs to see the history of their client's
-	// decisions.
+	// Reviewer's queue, scoped to their own desk on every tab.
+	//
+	//   pending  — pending_reviewer='client', so superadmin-first
+	//              ('both' mode, pre-handoff) apps don't leak in.
+	//   approved
+	//   rejected — decided_by_desk='client'. These used to be shown
+	//              regardless of desk, on the reasoning that a
+	//              reviewer wants their client's decision history.
+	//              But that also surfaced applications the SUPERADMIN
+	//              rejected before the reviewer ever saw them, which
+	//              reads as "I rejected this" when they did not.
+	//              History now means "decisions taken at this desk".
+	//
+	// decided_by_desk IS NULL means the decision predates the column,
+	// so provenance is unknown; those are excluded rather than
+	// attributed to a desk that may not have made them.
 	var (
 		reviewerWhere string
 		args          []any
 	)
-	if status == "pending" {
+	switch status {
+	case "pending":
 		reviewerWhere = `target_client_id = $1 AND status = $2 AND pending_reviewer = 'client'`
-		args = []any{clientID, status}
-	} else {
+	case "approved", "rejected":
+		reviewerWhere = `target_client_id = $1 AND status = $2 AND decided_by_desk = 'client'`
+	default:
 		reviewerWhere = `target_client_id = $1 AND status = $2`
-		args = []any{clientID, status}
 	}
+	args = []any{clientID, status}
 	rows, err := s.deps.DB.QueryContext(r.Context(), `
 		SELECT a.id, a.status, a.institution_name, a.institution_type,
 		       a.city, a.state, a.head_name, a.head_email, a.head_mobile,
@@ -771,9 +785,55 @@ func (s *Server) cpReviewerList(w http.ResponseWriter, r *http.Request) {
 		it.CreatedAt = createdAt.UTC().Format(time.RFC3339)
 		out = append(out, it)
 	}
+	// Tab counts. The inbox used to source these from the DP's own
+	// institution_applications table (via /api/client/me), which is a
+	// different table from the one this list reads -- so the tiles sat
+	// at whatever the DP happened to hold and never moved when an
+	// approve/reject/revoke landed here on the CP. Computing them from
+	// the same rows as `items` keeps tiles and list in lockstep.
+	//
+	// The desk rule mirrors the list query exactly: pending belongs to
+	// this reviewer only when pending_reviewer='client', and decided
+	// rows only when decided_by_desk='client'.
+	counts := map[string]int{"pending": 0, "approved": 0, "rejected": 0, "draft": 0}
+	countRows, cerr := s.deps.DB.QueryContext(r.Context(), `
+		SELECT status, COUNT(*)
+		  FROM institution_applications
+		 WHERE target_client_id = $1
+		   AND CASE status
+		         WHEN 'pending'  THEN pending_reviewer = 'client'
+		         WHEN 'approved' THEN decided_by_desk  = 'client'
+		         WHEN 'rejected' THEN decided_by_desk  = 'client'
+		         ELSE TRUE
+		       END
+		 GROUP BY status`, clientID,
+	)
+	if cerr != nil {
+		writeErr(w, http.StatusInternalServerError, "db count: "+cerr.Error())
+		return
+	}
+	defer countRows.Close()
+	for countRows.Next() {
+		var st string
+		var n int
+		if err := countRows.Scan(&st, &n); err != nil {
+			writeErr(w, http.StatusInternalServerError, "count scan: "+err.Error())
+			return
+		}
+		counts[st] = n
+	}
+	if err := countRows.Err(); err != nil {
+		writeErr(w, http.StatusInternalServerError, "count rows: "+err.Error())
+		return
+	}
+
+	// `total` is the true number of rows on the active tab, not the
+	// size of this page -- the list is capped at LIMIT 200, so len(out)
+	// understated any tab past that cap.
 	writeJSON(w, http.StatusOK, map[string]any{
-		"items": out,
-		"total": len(out),
+		"items":  out,
+		"total":  counts[status],
+		"counts": counts,
 	})
 }
 
@@ -1001,6 +1061,7 @@ func (s *Server) cpReviewerApprove(w http.ResponseWriter, r *http.Request) {
 		UPDATE institution_applications
 		   SET status = 'approved',
 		       pending_reviewer = NULL,
+		       decided_by_desk = 'client',
 		       reviewed_at = NOW(),
 		       review_note = $2,
 		       updated_at  = NOW()
@@ -1082,6 +1143,7 @@ func (s *Server) cpReviewerReject(w http.ResponseWriter, r *http.Request) {
 		UPDATE institution_applications
 		   SET status           = 'rejected',
 		       pending_reviewer = NULL,
+		       decided_by_desk  = 'client',
 		       review_note      = $3,
 		       reviewed_at      = NOW(),
 		       updated_at       = NOW()
@@ -1215,6 +1277,7 @@ func (s *Server) rejectOneApplication(ctx context.Context, id, clientID int64, n
 		UPDATE institution_applications
 		   SET status           = 'rejected',
 		       pending_reviewer = NULL,
+		       decided_by_desk  = 'client',
 		       review_note      = $3,
 		       reviewed_at      = NOW(),
 		       updated_at       = NOW()
@@ -1267,6 +1330,7 @@ func (s *Server) approveOneApplication(parent context.Context, id, clientID int6
 		UPDATE institution_applications
 		   SET status = 'approved',
 		       pending_reviewer = NULL,
+		       decided_by_desk = 'client',
 		       reviewed_at = NOW(),
 		       review_note = $2,
 		       updated_at  = NOW()
@@ -1507,6 +1571,7 @@ func (s *Server) cpReviewerRevoke(w http.ResponseWriter, r *http.Request) {
 		UPDATE institution_applications
 		   SET status           = 'pending',
 		       pending_reviewer = 'client',
+		       decided_by_desk  = NULL,
 		       review_note      = $3,
 		       reviewed_at      = NULL,
 		       updated_at       = NOW()

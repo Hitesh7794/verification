@@ -436,6 +436,7 @@ func (s *Server) superadminApplicationApprove(w http.ResponseWriter, r *http.Req
 		UPDATE institution_applications
 		   SET status = 'approved',
 		       pending_reviewer = NULL,
+		       decided_by_desk = 'admin',
 		       reviewed_at = NOW(),
 		       review_note = $2,
 		       updated_at  = NOW()
@@ -514,6 +515,7 @@ func (s *Server) superadminApplicationReject(w http.ResponseWriter, r *http.Requ
 		UPDATE institution_applications
 		   SET status           = 'rejected',
 		       pending_reviewer = NULL,
+		       decided_by_desk  = 'admin',
 		       review_note      = $2,
 		       reviewed_at      = NOW(),
 		       updated_at       = NOW()
@@ -615,6 +617,7 @@ func (s *Server) superadminApplicationRevoke(w http.ResponseWriter, r *http.Requ
 		UPDATE institution_applications
 		   SET status           = 'pending',
 		       pending_reviewer = $2,
+		       decided_by_desk  = NULL,
 		       review_note      = $3,
 		       reviewed_at      = NULL,
 		       updated_at       = NOW()

@@ -278,63 +278,26 @@ func (s *Server) clientReviewerMe(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "db read")
 		return
 	}
-	var (
-		totalCount    int
-		pendingCount  int
-		approvedCount int
-		rejectedCount int
-		univCount     int
-	)
-	_ = s.deps.DB.QueryRowContext(r.Context(), db.Q(`
-		SELECT COUNT(DISTINCT a.id) 
-		  FROM institution_applications a 
-		 WHERE a.status = 'pending'
-		   AND (a.client_id = ? OR a.client_id IS NULL)
-		   AND NOT EXISTS (
-		       SELECT 1 FROM client_organization_approvals coa 
-		       JOIN organizations o ON o.id = coa.org_id 
-		       WHERE coa.client_id = ? AND o.application_id = a.id AND coa.status IN ('approved', 'rejected')
-		   )`), clientID, clientID,
-	).Scan(&pendingCount)
-
-	_ = s.deps.DB.QueryRowContext(r.Context(), db.Q(`
-		SELECT COUNT(DISTINCT a.id) 
-		  FROM institution_applications a 
-		 WHERE (a.client_id = ? OR a.client_id IS NULL)
-		   AND (a.status = 'approved' OR EXISTS (
-		       SELECT 1 FROM client_organization_approvals coa 
-		       JOIN organizations o ON o.id = coa.org_id 
-		       WHERE coa.client_id = ? AND o.application_id = a.id AND coa.status = 'approved'
-		   ))`), clientID, clientID,
-	).Scan(&approvedCount)
-
-	_ = s.deps.DB.QueryRowContext(r.Context(), db.Q(`
-		SELECT COUNT(DISTINCT a.id) 
-		  FROM institution_applications a 
-		 WHERE (a.client_id = ? OR a.client_id IS NULL)
-		   AND (a.status = 'rejected' OR EXISTS (
-		       SELECT 1 FROM client_organization_approvals coa 
-		       JOIN organizations o ON o.id = coa.org_id 
-		       WHERE coa.client_id = ? AND o.application_id = a.id AND coa.status = 'rejected'
-		   ))`), clientID, clientID,
-	).Scan(&rejectedCount)
-
-	univCount = approvedCount
-	totalCount = pendingCount + approvedCount + rejectedCount
-
+	// No "stats" block here on purpose.
+	//
+	// This used to return pending/approved/rejected counts read from
+	// the Data Plane's own institution_applications table. KYC rows
+	// live on the Control Plane, so those numbers were a stale copy:
+	// an approve/reject/revoke wrote to the CP and these never moved.
+	// The reviewer inbox badges consumed them and sat frozen,
+	// disagreeing with the very rows listed beneath them.
+	//
+	// Tab counts now come from the CP alongside the list itself --
+	// GET /api/reviewer/applications returns a `counts` object built
+	// from the same rows as `items` (see cpReviewerList). If you need
+	// counts somewhere new, take them from there; do NOT recompute
+	// them from this Data Plane's tables.
 	writeJSON(w, http.StatusOK, map[string]any{
 		"client_id":      clientID,
 		"name":           name,
 		"visible":        visible == 1,
 		"closed":         closed == 1,
 		"portal_enabled": portalEnabled,
-		"stats": map[string]any{
-			"total":        totalCount,
-			"pending":      pendingCount,
-			"approved":     approvedCount,
-			"rejected":     rejectedCount,
-			"universities": univCount,
-		},
 	})
 }
 
