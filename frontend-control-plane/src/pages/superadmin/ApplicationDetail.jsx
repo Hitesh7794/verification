@@ -47,10 +47,32 @@ const STATUS_LABELS = {
 
 const DOC_META = {
   recognition_letter:   { label: 'Recognition letter',   icon: Icon.ShieldCheck },
-  pan_card:             { label: 'PAN card',             icon: Icon.File },
+  pan_card:             { label: 'PAN / TAN card',       icon: Icon.File },
   authorization_letter: { label: 'Authorization letter', icon: Icon.FileText },
-  naac_certificate:     { label: 'NAAC certificate',     icon: Icon.Sparkles },
+  naac_certificate:     { label: 'NAAC / NBA certificate', icon: Icon.Sparkles },
   other:                { label: 'Other',                icon: Icon.File },
+}
+
+// A govt commission / recruitment body files different paperwork under
+// the same doc_kind values, so the review screen has to label them the
+// way the applicant saw them on the registration form
+// (REQUIRED_DOCS_RECRUITMENT in pages/register/Register.jsx).
+const DOC_META_RECRUITMENT = {
+  recognition_letter:   { label: 'Gazette / Establishment / Mandate proof', icon: Icon.ShieldCheck },
+  pan_card:             { label: 'Organization PAN / TAN',                  icon: Icon.File },
+  authorization_letter: { label: 'Nodal officer authorization letter',      icon: Icon.FileText },
+}
+
+// Register.jsx offers three types — college, university, and "Govt
+// Commission / Recruitment Body" (value 'other'). On submit it REPLACES
+// 'other' with the free-text body name, so the stored institution_type
+// reads e.g. "Staff Selection Commission" and testing for === 'other'
+// would miss almost every real one. Anything that is not a college or a
+// university is therefore a recruitment body.
+const ACADEMIC_TYPES = ['college', 'university']
+
+function isRecruiterType(t) {
+  return !ACADEMIC_TYPES.includes(String(t || '').trim().toLowerCase())
 }
 
 export default function ApplicationDetail() {
@@ -211,6 +233,10 @@ export default function ApplicationDetail() {
   const meta = STATUS_LABELS[app.status] || STATUS_LABELS.draft
   const isPending = app.status === 'pending'
   const isRouted = !!app.client_id
+  // Drives the field labels below. A recruitment body files a gazette /
+  // CIN reference where a college files an AISHE code, so showing the
+  // academic labels for one misnames its paperwork on the review screen.
+  const isRecruiter = isRecruiterType(app.institution_type)
   const isClientOnly = isRouted && app.client_kyc_review_mode === 'client'
   // Superadmin can only decide when the row is in THEIR queue. For a
   // mode='both' client this is true initially (pending_reviewer='admin')
@@ -263,7 +289,7 @@ export default function ApplicationDetail() {
               </div>
               <p className="mt-1 text-sm text-slate-600">
                 {cap(app.institution_type)}
-                {app.aishe_code && ` · AISHE ${app.aishe_code}`}
+                {app.aishe_code && ` · ${isRecruiter ? 'Govt / CIN Ref' : 'AISHE'} ${app.aishe_code}`}
               </p>
               <p className="mt-0.5 text-xs text-slate-500">
                 Submitted {formatRelative(app.created_at)}
@@ -330,23 +356,28 @@ export default function ApplicationDetail() {
         {/* LEFT: applicant data — takes 2/5 of width on lg+ */}
         <div className="lg:col-span-2 space-y-5">
           <div>
-            <SectionTitle icon={Icon.Building}>Institution</SectionTitle>
+            <SectionTitle icon={Icon.Building}>{isRecruiter ? 'Organization' : 'Institution'}</SectionTitle>
             <Card>
               <CardBody>
                 <DefList rows={[
                   ['Type', cap(app.institution_type)],
-                  ['AISHE code', app.aishe_code || '—'],
-                  ['PAN', app.pan || '—'],
+                  [isRecruiter ? 'Govt / CIN Ref' : 'AISHE code', app.aishe_code || '—'],
+                  [isRecruiter ? 'Organization PAN / TAN' : 'PAN / TAN', app.pan || '—'],
                   ['Year established', app.year_established || '—'],
-                  ['Affiliation', app.affiliation_body || '—'],
-                  ['Approx. students', app.approx_student_count ? app.approx_student_count.toLocaleString() : '—'],
-                ]} />
+                  [isRecruiter ? 'Sector / Category' : 'Affiliation', app.affiliation_body || '—'],
+                  // Student headcount is an academic-only field; the
+                  // registration form never asks a recruitment body for it,
+                  // so showing it here only ever rendered a dash.
+                  !isRecruiter
+                    ? ['Approx. students', app.approx_student_count ? app.approx_student_count.toLocaleString() : '—']
+                    : null,
+                ].filter(Boolean)} />
               </CardBody>
             </Card>
           </div>
 
           <div>
-            <SectionTitle icon={Icon.MapPin}>Address</SectionTitle>
+            <SectionTitle icon={Icon.MapPin}>{isRecruiter ? 'Registered office' : 'Address'}</SectionTitle>
             <Card>
               <CardBody>
                 <p className="text-sm text-slate-900 leading-relaxed">
@@ -361,7 +392,7 @@ export default function ApplicationDetail() {
           </div>
 
           <div>
-            <SectionTitle icon={Icon.Mail}>Head of institution</SectionTitle>
+            <SectionTitle icon={Icon.Mail}>{isRecruiter ? 'Nodal verification officer' : 'Head of institution'}</SectionTitle>
             <Card>
               <CardBody>
                 <DefList rows={[
@@ -429,7 +460,8 @@ export default function ApplicationDetail() {
               <div className="flex items-center gap-1 px-2 bg-slate-50/50 border-b border-slate-200 overflow-x-auto">
                 {app.docs.map((d) => {
                   const active = d.doc_id === activeDocId
-                  const docMeta = DOC_META[d.doc_kind] || DOC_META.other
+                  const docMeta = (isRecruiter && DOC_META_RECRUITMENT[d.doc_kind])
+                    || DOC_META[d.doc_kind] || DOC_META.other
                   const DocIcon = docMeta.icon
                   return (
                     <button
