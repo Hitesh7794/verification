@@ -637,6 +637,131 @@ func (s *Server) clientReviewerVerifications(w http.ResponseWriter, r *http.Requ
 	})
 }
 
+// ---------- GET /api/client/verifications.csv ----------
+//
+// Same scope + filters as /api/client/verifications, but streams a CSV
+// download instead of paginated JSON. No cursor pagination — exports
+// up to 100k rows in one shot. Past that the reviewer should narrow
+// the date range.
+//
+// Filters (all optional, combinable):
+//   ?from=YYYY-MM-DD
+//   ?to=YYYY-MM-DD
+//   ?status=verified|denied
+//   ?org=<substring>       — institute name substring, case-insensitive
+//   ?roll=<exact roll>
+//
+// Passing no filters exports every verification the reviewer is scoped
+// to — that's the "Download all" affordance on the FE.
+func (s *Server) clientReviewerVerificationsCSV(w http.ResponseWriter, r *http.Request) {
+	clientID, ok := s.clientReviewerScope(r)
+	if !ok {
+		writeErr(w, http.StatusForbidden, "client reviewer context required")
+		return
+	}
+
+	where := " WHERE a.client_id = $1"
+	args := []any{clientID}
+	nextParam := 2
+
+	q := r.URL.Query()
+	if roll := strings.TrimSpace(q.Get("roll")); roll != "" {
+		where += fmt.Sprintf(" AND v.roll_no = $%d", nextParam)
+		args = append(args, roll)
+		nextParam++
+	}
+	if status := q.Get("status"); status == "verified" || status == "denied" {
+		where += fmt.Sprintf(" AND v.status = $%d", nextParam)
+		args = append(args, status)
+		nextParam++
+	}
+	if org := strings.TrimSpace(q.Get("org")); org != "" {
+		where += fmt.Sprintf(" AND lower(o.name) LIKE '%%' || lower($%d) || '%%'", nextParam)
+		args = append(args, org)
+		nextParam++
+	}
+	if from := q.Get("from"); from != "" {
+		if t, err := time.Parse("2006-01-02", from); err == nil {
+			where += fmt.Sprintf(" AND v.created_at >= $%d", nextParam)
+			args = append(args, t)
+			nextParam++
+		}
+	}
+	if to := q.Get("to"); to != "" {
+		if t, err := time.Parse("2006-01-02", to); err == nil {
+			where += fmt.Sprintf(" AND v.created_at < $%d", nextParam)
+			args = append(args, t.Add(24*time.Hour))
+			nextParam++
+		}
+	}
+	args = append(args, 100_000)
+
+	rows, err := s.deps.DB.QueryContext(r.Context(),
+		`SELECT v.id, v.roll_no, v.status, v.face_match, v.fp_match,
+		        COALESCE(v.via, ''),
+		        COALESCE(e.name || ' (' || e.exam_code || ')', ''),
+		        o.name AS org_name,
+		        u.display_name,
+		        v.created_at,
+		        COALESCE(v.fp_vendor, ''), v.fp_match_score, v.face_match_score
+		   FROM verifications v
+		   JOIN organizations o             ON o.id = v.org_id
+		   JOIN institution_applications a  ON a.id = o.application_id
+		   LEFT JOIN exam_candidates ec     ON ec.roll_no = v.roll_no
+		   LEFT JOIN exams e                ON e.id = ec.exam_id
+		   JOIN users u                     ON u.id = v.operator_id`+
+			where+fmt.Sprintf(" ORDER BY v.id DESC LIMIT $%d", nextParam),
+		args...,
+	)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	stamp := time.Now().Format("2006-01-02")
+	w.Header().Set("Content-Type", "text/csv; charset=utf-8")
+	w.Header().Set("Content-Disposition",
+		fmt.Sprintf(`attachment; filename="reviewer_verifications_%s.csv"`, stamp))
+	cw := csv.NewWriter(w)
+	defer cw.Flush()
+
+	_ = cw.Write([]string{
+		"id", "roll_no", "status", "via",
+		"face_match", "fp_match",
+		"fp_match_score", "face_match_score", "fp_vendor",
+		"exam", "institute", "verification_agent", "created_at",
+	})
+
+	for rows.Next() {
+		var (
+			id                                             int64
+			roll, status, via, exam, orgName, operatorName string
+			fpVendor                                       string
+			faceMatch, fpMatch                             bool
+			fpScore                                        *int
+			faceScore                                      *float64
+			createdAt                                      time.Time
+		)
+		if err := rows.Scan(&id, &roll, &status, &faceMatch, &fpMatch,
+			&via, &exam, &orgName, &operatorName, &createdAt,
+			&fpVendor, &fpScore, &faceScore,
+		); err != nil {
+			// Mid-stream errors: stop cleanly. The browser sees a
+			// truncated CSV — least-bad outcome for a streaming response.
+			return
+		}
+		_ = cw.Write([]string{
+			fmt.Sprint(id), roll, status, via,
+			fmt.Sprint(faceMatch), fmt.Sprint(fpMatch),
+			intPtrToString(fpScore), floatPtrToString(faceScore),
+			fpVendor,
+			exam, orgName, operatorName,
+			createdAt.UTC().Format(time.RFC3339),
+		})
+	}
+}
+
 // ── Exam Subscription Requests Reviewer Endpoints ──────────────────────
 
 type subscriptionRequestItem struct {

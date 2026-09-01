@@ -1,0 +1,153 @@
+:root{
+  /* colour — four inks and two papers, nothing else */
+  --navy:#173A70; --navy-2:#244B7A;
+  --ink:#222222;  --muted:#5F6368;
+  --pass:#187A45; --fail:#B52A2A;
+  --paper:#FCFAF9; --white:#FFFFFF; --line:#D5D8DC;
+
+  /* type */
+  --font:"Noto Sans","Noto Sans Devanagari",Arial,Helvetica,sans-serif;
+  --t-title:23px; --t-h2:16px; --t-h3:15px;
+  --t-body:13.5px; --t-label:11.5px; --t-meta:11.5px; --t-value:26px;
+
+  /* space — one 4px step, used everywhere */
+  --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:20px; --s6:28px;
+
+  /* rules */
+  --r-hair:1px solid var(--line);
+  --r-ink:1px solid var(--navy);
+  --r-heavy:2px solid var(--navy);
+}
+
+*{margin:0;padding:0;box-sizing:border-box}
+html{background:#E7E9EC}
+body{font-family:var(--font);font-size:var(--t-body);line-height:1.5;
+  color:var(--ink);-webkit-print-color-adjust:exact;print-color-adjust:exact;
+  font-variant-numeric:tabular-nums}
+
+/* The sheet is stock, not a surface. The mill's fibre and mottle from the house
+   textures give it tooth; over them sits a red cast of about one and a half per
+   cent — enough that a mismatched record feels a shade warmer than a cleared one
+   when the two are side by side, and not enough to notice on its own. */
+.sheet{position:relative;width:210mm;min-height:297mm;margin:0 auto;
+  background-color:var(--paper);padding:12mm 18mm 8mm;
+  display:flex;flex-direction:column}
+.sheet::before{content:"";position:absolute;inset:0;z-index:0;
+  pointer-events:none;opacity:.5;mix-blend-mode:multiply;
+  background-image:url("assets/paper-fibre.png"),
+                   url("assets/paper-mottle.png");
+  background-size:34mm 34mm,100% 100%;background-repeat:repeat,no-repeat}
+.sheet::after{content:"";position:absolute;inset:0;z-index:0;
+  pointer-events:none;background:rgba(181,42,42,.015)}
+
+/* The authority's mark in the stock, the way a watermark sits in paper rather
+   than on it: large, centred low, and faint enough that it is only there when
+   the sheet is tilted to the light. */
+.wmark{position:absolute;left:50%;top:56%;transform:translate(-50%,-50%);
+  width:118mm;z-index:0;pointer-events:none;opacity:.11}
+.wmark img{width:100%;height:auto;display:block}
+.sheet > *:not(.wmark){position:relative;z-index:1}
+
+/* ── 1. masthead ────────────────────────────────────────────────────────
+   Institutional, not navigational: the arms, the authority, the system it
+   belongs to, and the four facts that file the document. */
+.masthead{display:flex;justify-content:space-between;align-items:flex-start;
+  gap:var(--s6);padding-bottom:16px;border-bottom:var(--r-heavy)}
+.mh-mark{display:flex;align-items:center;gap:var(--s4)}
+.emblem{width:19mm;flex:none}
+.emblem svg{width:100%;height:auto;display:block}
+.ntamark{width:62mm;height:auto;display:block}
+.mh-sys{font-size:var(--t-label);color:var(--muted);margin-top:var(--s2)}
+
+.mh-meta{border-collapse:collapse;font-size:var(--t-meta)}
+.mh-meta th{text-align:left;font-weight:400;color:var(--muted);
+  padding:2px var(--s4) 2px 0;white-space:nowrap}
+.mh-meta td{text-align:right;font-weight:600;color:var(--ink);white-space:nowrap}
+
+/* ── document title ─────────────────────────────────────────────────── */
+.doctitle{padding:16px 0 13px;border-bottom:var(--r-ink);text-align:center}
+h1{font-size:var(--t-title);font-weight:700;color:var(--navy);
+  letter-spacing:.01em}
+.dt-exam{font-size:var(--t-body);color:var(--muted);margin-top:var(--s1)}
+
+/* ── numbered sections ──────────────────────────────────────────────── */
+.block{margin-top:22px}
+h2{font-size:var(--t-h2);font-weight:700;color:var(--navy);
+  padding-bottom:5px;margin-bottom:9px;border-bottom:var(--r-hair)}
+
+/* ── 2. candidate ───────────────────────────────────────────────────── */
+.cand{display:flex;gap:var(--s6);align-items:flex-start}
+.cand-l{flex:1;min-width:0}
+.cand-name{font-size:18px;font-weight:700;color:var(--navy);
+  padding-bottom:6px;margin-bottom:9px;border-bottom:var(--r-hair)}
+
+.fields{width:100%;border-collapse:collapse}
+.fields th{width:40mm;text-align:left;font-weight:400;color:var(--muted);
+  padding:7px var(--s3) 7px 0;vertical-align:top}
+.fields td{font-weight:600;color:var(--ink);padding:7px 0;vertical-align:top}
+/* Where and when, in two columns: four stacked rows cost a third of the
+   remaining sheet for facts that each fit on one line. */
+.pcols{display:flex;gap:var(--s6);margin-top:10px;padding-top:9px;
+  border-top:var(--r-hair)}
+.pcols > .fields{flex:1;min-width:0}
+.pcols .fields th{width:33mm}
+
+.photos{border-collapse:collapse;flex:none}
+.photos th{width:30mm;font-size:var(--t-label);font-weight:600;
+  text-transform:uppercase;letter-spacing:.04em;color:var(--muted);
+  padding-top:var(--s2);text-align:center;vertical-align:top}
+.photos td{width:30mm;height:34mm;border:var(--r-hair);padding:0;
+  background:var(--white)}
+.photos td + td{border-left:0}
+.photos img{width:100%;height:34mm;object-fit:cover;display:block}
+
+/* ── modalities ─────────────────────────────────────────────────────────
+   Three readings, ruled apart the way they were drawn: a hairline between the
+   modalities, and a second between each score and the threshold it is judged
+   against. Green and red on the name are the whole verdict — no marks, no
+   devices, no result row. */
+.mods{display:flex;padding:6px 0 10px}
+/* Every column carries the same padding — including the outer two, which used
+   to run flush to the margin. With the mark centred and sized off the column,
+   an unequal column would draw an unequal icon. */
+.mod{flex:1;min-width:0;padding:0 var(--s5);
+  display:flex;flex-direction:column;align-items:center;gap:var(--s3);
+  text-align:center}
+.mod + .mod{border-left:var(--r-hair)}
+.mi{width:64px;height:64px;display:block}
+.mod-n{font-size:var(--t-h3);font-weight:700;letter-spacing:.01em}
+.mod.p{color:var(--pass)} .mod.f{color:var(--fail)}
+
+/* ── 4. result ──────────────────────────────────────────────────────────
+   A finding on a record: ruled top and bottom in the fail colour, unfilled. */
+.result{border-top:2px solid var(--fail);border-bottom:1px solid var(--fail);
+  padding:9px 0}
+.res-head{display:flex;align-items:center;gap:var(--s3)}
+.wm{width:20px;height:20px;flex:none;display:block;color:var(--fail)}
+/* Only the verdict is red. The sentence around it is the record's own voice. */
+h3{font-size:var(--t-h3);font-weight:700;color:var(--navy)}
+h3 span{color:var(--fail)}
+
+/* ── 5. attestation ─────────────────────────────────────────────────── */
+.sigs{width:100%;border-collapse:collapse;table-layout:fixed}
+.sigs td{width:33.33%;padding:0 var(--s4);vertical-align:top}
+.sigs td:first-child{padding-left:0} .sigs td:last-child{padding-right:0}
+.sg-t{font-size:var(--t-label);font-weight:600;text-transform:uppercase;
+  letter-spacing:.04em;color:var(--muted);min-height:2.4em;line-height:1.25}
+.sg-box{height:20mm;border-bottom:1px solid var(--ink);
+  display:flex;align-items:flex-end;padding-bottom:var(--s1)}
+.sg-box span{font-size:var(--t-body)}
+.sg-c{font-size:var(--t-label);color:var(--muted);padding-top:var(--s2)}
+
+/* ── footer ─────────────────────────────────────────────────────────── */
+.docfoot{margin-top:auto;padding-top:8px;border-top:var(--r-hair);
+  font-size:var(--t-meta);color:var(--muted);text-align:center}
+.sg-c{padding-top:var(--s3)}
+
+@media print{
+  html{background:#fff}
+  .sheet{width:auto!important;min-height:0!important;height:auto!important;
+    margin:0!important;padding:0!important;background:#fff;display:block}
+  .block,.result,.sigs,.mods{break-inside:avoid}
+}
+@page{size:A4;margin:10mm 15mm 8mm}

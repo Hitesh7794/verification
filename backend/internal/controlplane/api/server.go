@@ -81,6 +81,10 @@ func (s *Server) Router() http.Handler {
 
 		r.Get("/api/me", s.me)
 
+		// Federated verifications report — walks every active client's
+		// DP and stitches into one CSV with a client_name column.
+		r.Get("/api/superadmin/verifications.csv", s.superadminVerificationsExportCSV)
+
 		// Clients registry CRUD (Phase 2D).
 		r.Get("/api/superadmin/clients", s.listClients)
 		r.Post("/api/superadmin/clients", s.createClient)

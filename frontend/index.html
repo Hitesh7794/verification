@@ -12,6 +12,11 @@
   </head>
   <body class="bg-slate-50 text-slate-900 antialiased">
     <div id="root"></div>
+    <!-- MediaPipe FaceLandmarker + blink guide. Self-hosted so the
+         liveness step keeps working when CDN routes (jsdelivr /
+         googleapis) are slow or blocked on the operator's network.
+         Exposes window.seqrFaceGuide.{preload, start, stop}. -->
+    <script defer src="/face_guide.js"></script>
     <script type="module" src="/src/main.jsx"></script>
   </body>
 </html>

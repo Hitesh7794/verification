@@ -47,6 +47,40 @@ export async function deleteClient(id) {
   return api(`/superadmin/clients/${id}`, { method: 'DELETE' })
 }
 
+// Federated verifications report — CSV, streamed by CP after fanning
+// out to every active client's DP. Filters are optional; passing an
+// empty object exports every row across every client.
+export async function downloadSuperadminVerificationsCSV(filters = {}) {
+  const qs = new URLSearchParams()
+  for (const [k, v] of Object.entries(filters)) {
+    if (v !== undefined && v !== null && String(v).trim() !== '') {
+      qs.append(k, String(v).trim())
+    }
+  }
+  const url = `/api/superadmin/verifications.csv${qs.toString() ? '?' + qs.toString() : ''}`
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${getStoredToken('superadmin')}` },
+  })
+  if (!res.ok) {
+    let raw = `CSV download failed (HTTP ${res.status})`
+    try { const body = await res.json(); if (body?.error) raw = body.error } catch (_) {}
+    const err = new Error(raw)
+    err.status = res.status
+    err.rawMessage = raw
+    throw err
+  }
+  const blob = await res.blob()
+  const objUrl = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = objUrl
+  const stamp = new Date().toISOString().slice(0, 10)
+  a.download = `verifications_${stamp}.csv`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  setTimeout(() => URL.revokeObjectURL(objUrl), 1000)
+}
+
 // ── Per-client review portal (portal_enabled + reviewer users) ───────
 //
 // Flip portal_enabled to surface the client in /api/clients/public,

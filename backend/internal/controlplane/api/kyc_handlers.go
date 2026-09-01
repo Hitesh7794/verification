@@ -1707,3 +1707,59 @@ func nullTimeToString(t sql.NullTime) string {
 	return t.Time.UTC().Format(time.RFC3339)
 }
 
+
+// fireInternalReviewersNotify — CP-side helper that calls the DP's
+// /api/internal/reviewers/notify endpoint. Used by
+// superadminApplicationApprove when the client's kyc_review_mode is
+// 'both' and the row has just been handed off to the client reviewer's
+// desk — that's the moment the reviewer's inbox has grown by one and
+// they need an email nudge.
+//
+// Best-effort: caller should fire in a goroutine and log-on-error, not
+// fail the approve response.
+func (s *Server) fireInternalReviewersNotify(parent context.Context, clientID int64, institutionName, headName string) error {
+	var (
+		apiURL string
+		apiKey string
+		status string
+	)
+	err := s.deps.DB.QueryRowContext(parent,
+		`SELECT api_url, api_key, status FROM clients_registry WHERE id = $1`, clientID,
+	).Scan(&apiURL, &apiKey, &status)
+	if err != nil {
+		return fmt.Errorf("registry lookup: %w", err)
+	}
+	if status != "active" && status != "ready" {
+		return fmt.Errorf("target client is %s", status)
+	}
+	body, _ := json.Marshal(map[string]any{
+		"client_id":        clientID,
+		"institution_name": institutionName,
+		"head_name":        headName,
+	})
+	timeout := time.Duration(s.deps.Cfg.FederatedTimeoutMS) * time.Millisecond
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout+2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		strings.TrimRight(apiURL, "/")+"/api/internal/reviewers/notify",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-API-Key", apiKey)
+	resp, err := (&http.Client{Timeout: timeout}).Do(req)
+	if err != nil {
+		return fmt.Errorf("http: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		bodyStr, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return fmt.Errorf("dp returned %d: %s", resp.StatusCode, strings.TrimSpace(string(bodyStr)))
+	}
+	return nil
+}

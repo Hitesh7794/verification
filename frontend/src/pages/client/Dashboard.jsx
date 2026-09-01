@@ -16,7 +16,7 @@ import FingerprintCapture from '../../components/verify/FingerprintCapture.jsx'
 import IrisCapture from '../../components/verify/IrisCapture.jsx'
 import LivenessPanel from '../../components/verify/LivenessPanel.jsx'
 import ExamWindowReminderModal from '../../components/verify/ExamWindowReminderModal.jsx'
-import { api, fetchFPTemplate, fetchPhotoBlob, isWalletEmptyError, getCandidateAttempts, downloadVerificationPDF, postFaceMatch, getCurrentExamId, setCurrentExamId } from '../../lib/api.js'
+import { api, fetchFPTemplate, fetchPhotoBlob, isWalletEmptyError, getCandidateAttempts, downloadVerificationPDF, previewVerificationPDF, printVerificationPDF, postFaceMatch, getCurrentExamId, setCurrentExamId } from '../../lib/api.js'
 import { getWalletSummary, formatRupees } from '../../lib/wallet/wallet.js'
 import { formatDateTime } from '../../lib/dates.js'
 
@@ -1146,12 +1146,26 @@ export default function ClientDashboard() {
                       <div className="mt-3 flex flex-wrap items-center gap-2">
                         <Button onClick={reset}>Start next verification</Button>
                         {verificationId && (
-                          <Button
-                            variant="secondary"
-                            onClick={() => downloadVerificationPDF(verificationId)}
-                          >
-                            Download PDF
-                          </Button>
+                          <>
+                            <Button
+                              variant="secondary"
+                              onClick={() => previewVerificationPDF(verificationId)}
+                            >
+                              Preview PDF
+                            </Button>
+                            <Button
+                              variant="secondary"
+                              onClick={() => printVerificationPDF(verificationId)}
+                            >
+                              Print PDF
+                            </Button>
+                            <Button
+                              variant="secondary"
+                              onClick={() => downloadVerificationPDF(verificationId)}
+                            >
+                              Download PDF
+                            </Button>
+                          </>
                         )}
                       </div>
                     </div>

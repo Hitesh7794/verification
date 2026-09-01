@@ -201,6 +201,18 @@ export async function postLivenessCheck(roll, frames, sessionId, challenges) {
   })
 }
 
+// postLivenessClientVerified — MediaPipe-decided liveness path. Client
+// ran blink detection locally; server just records the gate row. No
+// frames are uploaded; the wallet charge still fires (billing model is
+// engine-agnostic — the payable event is "gate passed"). Same response
+// shape as postLivenessCheck.
+export async function postLivenessClientVerified(roll, sessionId) {
+  return api(`/candidates/${encodeURIComponent(roll)}/liveness-client-verified`, {
+    method: 'POST',
+    body: { session_id: sessionId },
+  })
+}
+
 export async function postFaceMatch(roll, dataURLOrBase64, idempotencyKey) {
   // URL-scoped: the wallet middleware extracts {roll} from the path for
   // its same-roll cache. Also this is now the wallet-chargeable event
@@ -256,6 +268,42 @@ export async function postIrisMatch(roll, probeBase64, deviceMeta) {
   })
 }
 
+// Reviewer verification report — CSV. `filters` is any subset of
+// { from, to, org, status, roll }; pass {} for the full unscoped
+// export (bounded by the backend's 100k-row cap). Auth token is
+// attached to the fetch, so we build a Blob URL and click a hidden
+// anchor rather than handing a naked <a> to the user.
+export async function downloadReviewerVerificationsCSV(filters = {}) {
+  const qs = new URLSearchParams()
+  for (const [k, v] of Object.entries(filters)) {
+    if (v !== undefined && v !== null && String(v).trim() !== '') {
+      qs.append(k, String(v).trim())
+    }
+  }
+  const url = `${BASE}/client/verifications.csv${qs.toString() ? '?' + qs.toString() : ''}`
+  const res = await fetch(url, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  })
+  if (!res.ok) {
+    let raw = `CSV download failed (HTTP ${res.status})`
+    try { const body = await res.json(); if (body?.error) raw = body.error } catch (_) {}
+    const err = new Error(raw)
+    err.status = res.status
+    err.rawMessage = raw
+    throw err
+  }
+  const blob = await res.blob()
+  const objUrl = URL.createObjectURL(blob)
+  const a = document.createElement('a')
+  a.href = objUrl
+  const stamp = new Date().toISOString().slice(0, 10)
+  a.download = `reviewer_verifications_${stamp}.csv`
+  document.body.appendChild(a)
+  a.click()
+  document.body.removeChild(a)
+  setTimeout(() => URL.revokeObjectURL(objUrl), 1000)
+}
+
 // Phase 3c — attempt counter for the "Nth attempt on this roll" chip.
 // Backend counts verifications for the caller's org over the past 30
 // days. Returns { roll_no, count, since, last_at? }. Non-fatal on
@@ -263,6 +311,63 @@ export async function postIrisMatch(roll, probeBase64, deviceMeta) {
 // Fetches the verification receipt PDF and triggers a download in the
 // browser. Auth token is attached to the fetch (not just the URL),
 // which is why we can't hand a naked <a href> to the user.
+// previewVerificationPDF fetches the PDF and opens it in a new tab so
+// the operator can inspect it before printing / handing to the
+// candidate. Uses a blob URL because the fetch carries the auth token
+// (a naked <a href> can't).
+export async function previewVerificationPDF(id) {
+  if (!id) return
+  const res = await fetch(`${BASE}/verifications/${id}/pdf`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  })
+  if (!res.ok) {
+    let raw = `PDF preview failed (HTTP ${res.status})`
+    try { const body = await res.json(); if (body?.error) raw = body.error } catch (_) {}
+    const err = new Error(raw); err.status = res.status; err.rawMessage = raw
+    err.message = toFriendlyError(err)
+    throw err
+  }
+  const blob = await res.blob()
+  const objUrl = URL.createObjectURL(blob)
+  const w = window.open(objUrl, '_blank', 'noopener')
+  if (!w) {
+    // Pop-up blocker — fall back to same-tab navigation so the operator
+    // still sees the PDF (they can Back to return).
+    window.location.href = objUrl
+  }
+  // Don't revoke — the new tab needs the URL alive. Browser cleans up
+  // when the page unloads.
+}
+
+// printVerificationPDF opens the PDF in a new window and asks the
+// browser to print it. Works reliably in Chromium browsers; Firefox
+// opens the print dialog after the PDF viewer loads.
+export async function printVerificationPDF(id) {
+  if (!id) return
+  const res = await fetch(`${BASE}/verifications/${id}/pdf`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  })
+  if (!res.ok) {
+    let raw = `PDF print failed (HTTP ${res.status})`
+    try { const body = await res.json(); if (body?.error) raw = body.error } catch (_) {}
+    const err = new Error(raw); err.status = res.status; err.rawMessage = raw
+    err.message = toFriendlyError(err)
+    throw err
+  }
+  const blob = await res.blob()
+  const objUrl = URL.createObjectURL(blob)
+  const w = window.open(objUrl, '_blank', 'noopener')
+  if (!w) {
+    // Pop-up blocker — degrade to preview, operator hits Cmd/Ctrl+P.
+    window.location.href = objUrl
+    return
+  }
+  // Give the PDF viewer time to render before invoking print. Chrome
+  // renders inline PDFs in ~600 ms on a warm cache; use 1.5 s so
+  // cold-cache renders complete before the dialog pops.
+  setTimeout(() => { try { w.focus(); w.print() } catch (_) {} }, 1500)
+}
+
 export async function downloadVerificationPDF(id) {
   if (!id) return
   const res = await fetch(`${BASE}/verifications/${id}/pdf`, {

@@ -193,6 +193,101 @@ func (s *Server) livenessCheck(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, resp)
 }
 
+// livenessClientVerifiedReq is the payload posted by a MediaPipe-based
+// client after it has run its own blink challenge locally. No frames —
+// the client already scored the sequence in the browser or on-device
+// and just needs the server to record the gate pass.
+type livenessClientVerifiedReq struct {
+	SessionID string `json:"session_id"`
+}
+
+// livenessClientVerified POST /api/candidates/{roll}/liveness-client-verified
+//
+// Client-decided liveness gate. Skips Luxand entirely: the operator's
+// browser (or mobile app) ran MediaPipe FaceLandmarker + blink-detection
+// locally and is telling the server "I saw a valid blink, record the
+// gate row". Wallet middleware still charges on this endpoint — the
+// gate pass is the payable event regardless of which engine decided it.
+//
+// Rationale: MediaPipe on-device eliminates the 30-frame upload +
+// Luxand round-trip that dominates operator-perceived latency on the
+// liveness step. Same downstream: the row keyed by (org, roll,
+// session_id) unlocks the next /face-match POST exactly as before.
+//
+// The endpoint is a thin write path — no scoring, no frame decode. If
+// you want server-side second-check for anti-spoof, use /liveness-check
+// (the Luxand path); this one is opt-in per client build.
+func (s *Server) livenessClientVerified(w http.ResponseWriter, r *http.Request) {
+	roll := strings.TrimSpace(chi.URLParam(r, "roll"))
+	if roll == "" {
+		writeErr(w, http.StatusBadRequest, "roll required")
+		return
+	}
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	var req livenessClientVerifiedReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	req.SessionID = strings.TrimSpace(req.SessionID)
+	if req.SessionID == "" {
+		writeErr(w, http.StatusBadRequest, "session_id required")
+		return
+	}
+	if len(req.SessionID) > 128 {
+		writeErr(w, http.StatusBadRequest, "session_id too long")
+		return
+	}
+
+	claims := claimsFrom(r)
+	if claims == nil || claims.OrgID == nil {
+		writeErr(w, http.StatusUnauthorized, "org context required")
+		return
+	}
+	orgID := *claims.OrgID
+
+	// Same UPSERT the Luxand path uses. challenges_passed always
+	// contains ["blink"] since MediaPipe only runs the blink challenge
+	// today; adding new challenges is a co-ordinated change with the
+	// client detector. passive_mean is left at 0 — no passive score is
+	// computed client-side (Luxand-only signal).
+	challengesJSON := `["blink"]`
+	maxAge := s.deps.Cfg.LivenessMaxAgeSeconds
+	if maxAge <= 0 {
+		maxAge = 90
+	}
+	if _, err := s.deps.DB.ExecContext(r.Context(),
+		`INSERT INTO liveness_checks(
+		     org_id, roll_no, session_id, passive_mean,
+		     challenges_passed, expires_at)
+		 VALUES ($1, $2, $3, 0, $4::jsonb, NOW() + ($5 || ' seconds')::interval)
+		 ON CONFLICT (session_id) DO UPDATE
+		     SET passive_mean      = EXCLUDED.passive_mean,
+		         challenges_passed = EXCLUDED.challenges_passed,
+		         expires_at        = EXCLUDED.expires_at`,
+		orgID, roll, req.SessionID, challengesJSON,
+		fmt.Sprintf("%d", maxAge),
+	); err != nil {
+		writeErr(w, http.StatusInternalServerError,
+			"could not record liveness pass: "+err.Error())
+		return
+	}
+	s.audit(r.Context(), claims, "candidate.liveness.pass",
+		"candidate", 0, clientIP(r), map[string]any{
+			"roll_no":    roll,
+			"session_id": req.SessionID,
+			"engine":     "mediapipe-client",
+		})
+
+	writeJSON(w, http.StatusOK, livenessCheckResp{
+		SessionID:        req.SessionID,
+		Pass:             true,
+		ChallengesPassed: []string{"blink"},
+		FacesFound:       1,
+		ExpiresIn:        maxAge,
+	})
+}
+
 // livenessGatePassed returns true when a passing liveness_checks row
 // exists for the given (org, roll, session_id) tuple and hasn't
 // expired. Used by /face-match as a defense-in-depth check so a

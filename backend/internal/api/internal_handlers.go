@@ -476,6 +476,26 @@ func (s *Server) internalOrgsCreate(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
+	// Reviewer notification. Only fire when:
+	//   1. This is a FRESH submit (mark_approved=false — the approve-
+	//      flow's second call has mark_approved=true).
+	//   2. The client's kyc_review_mode is 'client' — meaning the row
+	//      lands DIRECTLY in the client reviewer's queue and nobody
+	//      else touches it. For 'admin' mode the row never reaches
+	//      the reviewer. For 'both' mode the row goes to superadmin
+	//      first; the reviewer only sees it after superadmin hands
+	//      off, and that email is fired from a separate CP-side hook
+	//      (superadminApplicationApprove → /internal/reviewers/notify).
+	if !req.MarkApproved && s.emailer != nil && req.ClientID > 0 {
+		var mode string
+		if err := s.deps.DB.QueryRowContext(r.Context(),
+			`SELECT COALESCE(kyc_review_mode, 'admin') FROM clients WHERE id = $1`,
+			req.ClientID,
+		).Scan(&mode); err == nil && mode == "client" {
+			s.notifyClientReviewersOfNewApp(r, req.ClientID, req.InstitutionName, req.HeadName)
+		}
+	}
+
 	writeJSON(w, http.StatusOK, internalOrgsCreateResp{
 		OrgID:         orgID,
 		AdminUserID:   userID,
@@ -1391,3 +1411,147 @@ func (s *Server) internalApplicationsRevoke(w http.ResponseWriter, r *http.Reque
 	writeJSON(w, http.StatusOK, internalApplicationsRevokeResp{Updated: n > 0})
 }
 
+
+// notifyClientReviewersOfNewApp emails every active reviewer scoped to
+// clientID that a new institution application has landed in their
+// queue. Fire-and-forget from a goroutine so a slow SMTP send never
+// blocks the CP→DP provisioning path. Best-effort: individual send
+// failures are logged and swallowed.
+//
+// The email carries a login link to the reviewer portal on this DP so
+// the reviewer can click through, sign in, and act. The base URL is
+// resolved the same way buildMagicLinkURL does — PublicBaseURL wins,
+// then X-Forwarded-Host, then r.Host — so the URL matches whatever
+// front door the request actually came in on.
+func (s *Server) notifyClientReviewersOfNewApp(r *http.Request, clientID int64, institutionName, headName string) {
+	loginURL := s.buildReviewerLoginURL(r)
+	// Grab the request Host now — the goroutine may outlive the request
+	// so anything read off *http.Request must be copied out first.
+	loginURLCopy := loginURL
+	instCopy := strings.TrimSpace(institutionName)
+	headCopy := strings.TrimSpace(headName)
+	clientIDCopy := clientID
+
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+
+		rows, err := s.deps.DB.QueryContext(ctx,
+			`SELECT COALESCE(email,''), COALESCE(display_name,'')
+			   FROM users
+			  WHERE role = 'client_reviewer'
+			    AND client_id = $1
+			    AND disabled_at IS NULL
+			    AND email IS NOT NULL AND email <> ''`,
+			clientIDCopy,
+		)
+		if err != nil {
+			log.Printf("notifyClientReviewersOfNewApp: db lookup failed (client=%d): %v", clientIDCopy, err)
+			return
+		}
+		defer rows.Close()
+
+		type reviewer struct{ email, name string }
+		var reviewers []reviewer
+		for rows.Next() {
+			var r reviewer
+			if err := rows.Scan(&r.email, &r.name); err != nil {
+				log.Printf("notifyClientReviewersOfNewApp: scan failed: %v", err)
+				return
+			}
+			reviewers = append(reviewers, r)
+		}
+		if len(reviewers) == 0 {
+			return // no reviewers with email — nothing to send
+		}
+
+		subject := fmt.Sprintf("New institution registration — %s", instCopy)
+		for _, rv := range reviewers {
+			body := buildReviewerNotificationEmail(rv.name, instCopy, headCopy, loginURLCopy)
+			if err := s.emailer.Send(ctx, email.Message{
+				To:      rv.email,
+				Subject: subject,
+				Body:    body,
+			}); err != nil {
+				log.Printf("notifyClientReviewersOfNewApp: email to %s failed: %v", rv.email, err)
+			}
+		}
+	}()
+}
+
+// buildReviewerLoginURL returns the URL a reviewer clicks in the
+// notification email to open the login screen. Same base-URL logic as
+// buildMagicLinkURL — PublicBaseURL, X-Forwarded-Host, then request
+// Host. Trailing "/reviewer/login" is where the reviewer signs in.
+func (s *Server) buildReviewerLoginURL(r *http.Request) string {
+	const path = "/reviewer/login"
+	if base := s.deps.Cfg.PublicBaseURL; base != "" {
+		return strings.TrimRight(base, "/") + path
+	}
+	if fwdHost := r.Header.Get("X-Forwarded-Host"); fwdHost != "" {
+		scheme := r.Header.Get("X-Forwarded-Proto")
+		if scheme == "" {
+			scheme = "https"
+		}
+		return scheme + "://" + fwdHost + path
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host + path
+}
+
+func buildReviewerNotificationEmail(reviewerName, institutionName, headName, loginURL string) string {
+	greeting := "Hello"
+	if reviewerName != "" {
+		greeting = "Hello " + reviewerName
+	}
+	return greeting + ",\n\n" +
+		"A new institution has just registered under your review queue on the Verification Portal.\n\n" +
+		"  Institution : " + institutionName + "\n" +
+		"  Head of inst.: " + headName + "\n\n" +
+		"You can log in with your reviewer credentials at:\n" +
+		"  " + loginURL + "\n\n" +
+		"— Verification Portal\n" +
+		"(This is an automated notification. Reply-to is not monitored.)"
+}
+
+// internalReviewersNotifyReq is the payload for a hand-off notification
+// fired by the Control Plane after superadmin's approve moves a 'both'-
+// mode application into the client reviewer's queue.
+type internalReviewersNotifyReq struct {
+	ClientID        int64  `json:"client_id"`
+	InstitutionName string `json:"institution_name"`
+	HeadName        string `json:"head_name"`
+}
+
+// internalReviewersNotify — server-to-server hook the CP calls when a
+// 'both'-mode application is handed off from superadmin to the client
+// reviewer. Same email body as the fresh-submit notification (the
+// reviewer's queue has grown by one either way), but the trigger point
+// is different — see internalOrgsCreate for the fresh-submit path.
+//
+// This endpoint does NOT check kyc_review_mode; the CP already gated
+// the call on mode == 'both'. It DOES require ClientID and at least
+// one email-carrying reviewer under that client — otherwise it returns
+// 200 with a "no reviewers" note so the CP handler doesn't fail its
+// approve just because the reviewer list is empty.
+func (s *Server) internalReviewersNotify(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	var req internalReviewersNotifyReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	if req.ClientID <= 0 {
+		writeErr(w, http.StatusBadRequest, "client_id required")
+		return
+	}
+	if s.emailer == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"sent": 0, "reason": "email disabled"})
+		return
+	}
+	s.notifyClientReviewersOfNewApp(r, req.ClientID, req.InstitutionName, req.HeadName)
+	writeJSON(w, http.StatusOK, map[string]any{"queued": true})
+}

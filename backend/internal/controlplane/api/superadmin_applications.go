@@ -20,6 +20,7 @@ package api
 // context) is required.
 
 import (
+	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -421,6 +422,17 @@ func (s *Server) superadminApplicationApprove(w http.ResponseWriter, r *http.Req
 			writeErr(w, http.StatusInternalServerError, "commit: "+err.Error())
 			return
 		}
+		// Fire the reviewer notification AFTER the commit succeeds so
+		// a rolled-back handoff never triggers a spurious email. The
+		// call is best-effort — failure is logged but does not fail the
+		// approve response (the row IS in the reviewer's queue either
+		// way; the email is a convenience). Runs in a background
+		// goroutine so a slow DP round-trip doesn't hold the operator.
+		go func(clientID int64, name, head string) {
+			if err := s.fireInternalReviewersNotify(context.Background(), clientID, name, head); err != nil {
+				log.Printf("superadminApplicationApprove: reviewer notify (client=%d) failed: %v", clientID, err)
+			}
+		}(targetClientID.Int64, instName, headName)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"application_id":    id,
 			"status":            "pending",

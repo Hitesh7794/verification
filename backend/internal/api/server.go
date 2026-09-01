@@ -253,6 +253,14 @@ func (s *Server) Router() http.Handler {
 		r.Post("/api/internal/clients/{id}/domain", s.internalClientDomain)
 		// Stream KYC docs from S3 on behalf of CP (superadmin + reviewer).
 		r.Get("/api/internal/documents/download", s.internalDocumentsDownload)
+		// Federated superadmin report — CP calls this per active client
+		// (one call per DP) and stitches the results in-memory.
+		r.Get("/api/internal/verifications/export.csv", s.internalVerificationsExportCSV)
+		// Reviewer hand-off notification — CP fires this after
+		// superadmin approves a 'both'-mode application, so the
+		// reviewer's inbox growth is announced by email even when
+		// the CP itself has no SMTP wired.
+		r.Post("/api/internal/reviewers/notify", s.internalReviewersNotify)
 	})
 
 	r.Group(func(r chi.Router) {
@@ -308,6 +316,11 @@ func (s *Server) Router() http.Handler {
 		// gate. Same-roll 5-min cache continues to apply.
 		r.Post("/api/candidates/{roll}/liveness-check",
 			s.requireRole("client")(s.walletCharge(s.livenessCheck)))
+		// Client-decided liveness gate — MediaPipe on the browser/app
+		// already scored the blink challenge, we just record the pass.
+		// Same wallet-charge wrap so billing is engine-agnostic.
+		r.Post("/api/candidates/{roll}/liveness-client-verified",
+			s.requireRole("client")(s.walletCharge(s.livenessClientVerified)))
 		r.Post("/api/candidates/{roll}/face-match", s.requireRole("client")(s.faceMatch))
 		r.Post("/api/candidates/{roll}/fp-match",   s.requireRole("client")(s.fpMatch))
 		// Iris moved server-side with the TrustView migration — used to
@@ -464,6 +477,7 @@ func (s *Server) Router() http.Handler {
 		// approved under the reviewer's exam board). Wallet history is
 		// deliberately NOT exposed here — reviewers don't handle billing.
 		r.Get("/api/client/verifications",                                         s.requireRole("client_reviewer")(s.clientReviewerVerifications))
+		r.Get("/api/client/verifications.csv",                                     s.requireRole("client_reviewer")(s.clientReviewerVerificationsCSV))
 		r.Get("/api/client/institutes",                                            s.requireRole("client_reviewer")(s.clientReviewerInstitutes))
 		r.Post("/api/client/exams",                                                s.requireRole("client_reviewer")(s.superadminCreateExam))
 		r.Post("/api/client/exams/csv",                                            s.requireRole("client_reviewer")(s.superadminBulkCreateExamsCSV))

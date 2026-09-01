@@ -16,6 +16,7 @@ import {
   createClient,
   closeClient,
   reopenClient,
+  downloadSuperadminVerificationsCSV,
 } from '../../lib/superadmin/examCatalog.js'
 
 // Superadmin > Clients — the top-level exam-body catalog.
@@ -160,6 +161,8 @@ export default function Clients() {
             <StatChip label="Exams under them" value={totalExams} tone="indigo" />
           </div>
         )}
+
+        <VerificationsReportPanel clients={clients} />
 
         {err && (
           <div role="alert" className="mb-4 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">
@@ -625,6 +628,115 @@ function EmptyClients({ onCreate }) {
         <Icon.Plus className="h-4 w-4 mr-1.5" />
         Add your first client
       </Button>
+    </div>
+  )
+}
+
+
+// ── Verifications report panel ──────────────────────────────────────
+//
+// Compact 4-column filter card that federates a CSV export across
+// every active client's Data Plane. Two actions: "Download report"
+// (respects the filter selection) and "Download all" (ignores every
+// filter — pulls every verification across every client).
+function VerificationsReportPanel({ clients }) {
+  const [from, setFrom]     = useState('')
+  const [to,   setTo]       = useState('')
+  const [clientId, setClientId] = useState('')
+  const [status, setStatus] = useState('')
+  const [busy,   setBusy]   = useState('') // '' | 'filtered' | 'all'
+  const [err,    setErr]    = useState('')
+
+  const activeClients = (clients || []).filter(
+    (c) => c.status !== 'deleted' && c.status !== 'suspended'
+  )
+
+  async function run(scope /* 'filtered' | 'all' */) {
+    setBusy(scope)
+    setErr('')
+    try {
+      const filters = scope === 'all' ? {} : {
+        from,
+        to,
+        client_id: clientId,
+        status,
+      }
+      await downloadSuperadminVerificationsCSV(filters)
+    } catch (e) {
+      setErr(e?.rawMessage || e?.message || 'CSV download failed')
+    } finally {
+      setBusy('')
+    }
+  }
+
+  return (
+    <div className="mb-6 rounded-xl bg-warm-surface ring-1 ring-warm overflow-hidden">
+      <div className="p-5 sm:p-6">
+        <div className="flex items-start justify-between gap-3 mb-4">
+          <div className="min-w-0">
+            <h3 className="text-sm font-semibold text-slate-900">Verifications report</h3>
+            <p className="text-xs text-slate-500 mt-0.5">
+              Federated CSV across every active client's Data Plane. Filter by client and date range, or grab everything.
+            </p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 sm:grid-cols-4 gap-3">
+          <div>
+            <Label>Client</Label>
+            <select
+              value={clientId}
+              onChange={(e) => setClientId(e.target.value)}
+              className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+            >
+              <option value="">All clients</option>
+              {activeClients.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+          <div>
+            <Label>Status</Label>
+            <select
+              value={status}
+              onChange={(e) => setStatus(e.target.value)}
+              className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+            >
+              <option value="">Any</option>
+              <option value="verified">Verified</option>
+              <option value="denied">Denied</option>
+            </select>
+          </div>
+          <div>
+            <Label>From</Label>
+            <Input type="date" value={from} onChange={(e) => setFrom(e.target.value)} />
+          </div>
+          <div>
+            <Label>To</Label>
+            <Input type="date" value={to} onChange={(e) => setTo(e.target.value)} />
+          </div>
+        </div>
+
+        <div className="mt-4 flex flex-wrap items-center gap-2">
+          <Button
+            type="button"
+            variant="secondary"
+            onClick={() => run('filtered')}
+            disabled={busy !== ''}
+          >
+            {busy === 'filtered' ? 'Preparing…' : 'Download report'}
+          </Button>
+          <Button
+            type="button"
+            onClick={() => run('all')}
+            disabled={busy !== ''}
+            title="Ignore all filters and download every verification across every client"
+          >
+            {busy === 'all' ? 'Preparing…' : 'Download all'}
+          </Button>
+          {err && <span className="text-xs text-rose-700 ml-2">{err}</span>}
+        </div>
+      </div>
     </div>
   )
 }

@@ -11,7 +11,7 @@ import {
   Input,
   Label,
 } from '../../components/ui/ui.jsx'
-import { api } from '../../lib/api.js'
+import { api, downloadReviewerVerificationsCSV } from '../../lib/api.js'
 
 // /reviewer/history — verification audit for every org approved under
 // this reviewer's exam board. Direct parallel to the institute admin's
@@ -52,6 +52,8 @@ export default function ReviewerHistory() {
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState('')
   const [institutes, setInstitutes] = useState([])
+  const [dlBusy, setDlBusy] = useState('') // '' | 'filtered' | 'all'
+  const [dlErr, setDlErr] = useState('')
 
   useEffect(() => {
     let alive = true
@@ -108,6 +110,25 @@ export default function ReviewerHistory() {
 
   function loadMore() {
     if (nextCursor) load({ before: nextCursor }, true)
+  }
+
+  async function downloadCsv(scope /* 'filtered' | 'all' */) {
+    setDlBusy(scope)
+    setDlErr('')
+    try {
+      const payload = scope === 'all' ? {} : {
+        roll: filters.roll.trim(),
+        status: filters.status,
+        org: filters.org.trim(),
+        from: filters.from,
+        to: filters.to,
+      }
+      await downloadReviewerVerificationsCSV(payload)
+    } catch (e) {
+      setDlErr(e?.rawMessage || e?.message || 'CSV download failed')
+    } finally {
+      setDlBusy('')
+    }
   }
 
   function applyPreset(days) {
@@ -188,7 +209,29 @@ export default function ReviewerHistory() {
               <button type="button" onClick={() => applyPreset(1)}  className="text-xs underline text-slate-600 hover:text-slate-900">Today</button>
               <button type="button" onClick={() => applyPreset(7)}  className="text-xs underline text-slate-600 hover:text-slate-900">Last 7 days</button>
               <button type="button" onClick={() => applyPreset(30)} className="text-xs underline text-slate-600 hover:text-slate-900">Last 30 days</button>
+              <div className="ml-auto flex items-center gap-2">
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => downloadCsv('filtered')}
+                  disabled={dlBusy !== ''}
+                  title="Download the current filtered view as CSV"
+                >
+                  {dlBusy === 'filtered' ? 'Preparing…' : 'Download filtered CSV'}
+                </Button>
+                <Button
+                  type="button"
+                  onClick={() => downloadCsv('all')}
+                  disabled={dlBusy !== ''}
+                  title="Download every verification under your review scope"
+                >
+                  {dlBusy === 'all' ? 'Preparing…' : 'Download all'}
+                </Button>
+              </div>
             </div>
+            {dlErr && (
+              <div className="sm:col-span-5 text-xs text-rose-700">{dlErr}</div>
+            )}
           </form>
         </CardBody>
       </Card>
