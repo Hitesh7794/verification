@@ -427,14 +427,18 @@ func (s *Server) adminCreateOperator(w http.ResponseWriter, r *http.Request) {
 		req.Username, string(hash), orgID, req.DisplayName,
 		nullable(req.Email), nullable(req.Phone), req.Password,
 		nullableInt64(req.SpendingCapPaise), vFrom, vTo).Scan(&uid); err != nil {
-		if isUniqueViolation(err) && strings.Contains(strings.ToLower(err.Error()), "username") {
-			writeErr(w, http.StatusConflict, "username already taken")
+		if friendlyPgError(w, err, "createOperator user insert") {
 			return
 		}
-		writeErr(w, http.StatusInternalServerError, "db insert: "+err.Error())
+		log.Printf("createOperator user insert failed (unclassified): %v", err)
+		writeErr(w, http.StatusInternalServerError,
+			"Could not create the agent — a database error occurred. Please try again; if it persists, contact support.")
 		return
 	}
 	if err := s.setOperatorExams(tx, orgID, uid, req.ExamIDs); err != nil {
+		if friendlyPgError(w, err, "createOperator setOperatorExams") {
+			return
+		}
 		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
@@ -967,7 +971,12 @@ func (s *Server) adminBulkCreateOperatorsCSV(w http.ResponseWriter, r *http.Requ
 			nullable(p.Email), nullable(p.Phone), p.Password,
 			nullableInt64(p.SpendingCapPaise), vFrom, vTo).Scan(&uid)
 		if err != nil {
-			writeErr(w, http.StatusInternalServerError, fmt.Sprintf("db insert line %d: %v", p.Line, err))
+			if friendlyPgError(w, err, fmt.Sprintf("bulk import line %d user insert", p.Line)) {
+				return
+			}
+			log.Printf("bulk import line %d insert failed (unclassified): %v", p.Line, err)
+			writeErr(w, http.StatusInternalServerError,
+				fmt.Sprintf("Line %d could not be created — a database error occurred. Fix that row and re-upload just the failing rows.", p.Line))
 			return
 		}
 
@@ -994,7 +1003,12 @@ func (s *Server) adminBulkCreateOperatorsCSV(w http.ResponseWriter, r *http.Requ
 		}
 
 		if err := s.setOperatorExams(tx, orgID, uid, targetExamIDs); err != nil {
-			writeErr(w, http.StatusInternalServerError, fmt.Sprintf("db link exams line %d: %v", p.Line, err))
+			if friendlyPgError(w, err, fmt.Sprintf("bulk import line %d link exams", p.Line)) {
+				return
+			}
+			log.Printf("bulk import line %d link exams failed (unclassified): %v", p.Line, err)
+			writeErr(w, http.StatusInternalServerError,
+				fmt.Sprintf("Line %d could not be linked to its exam. Check the exam_code and try again.", p.Line))
 			return
 		}
 
@@ -1245,7 +1259,12 @@ func (s *Server) adminPatchOperator(w http.ResponseWriter, r *http.Request) {
 		if _, err := tx.ExecContext(r.Context(),
 			db.Q("UPDATE users SET "+strings.Join(sets, ", ")+
 				" WHERE id = ? AND org_id = ?"), args...); err != nil {
-			writeErr(w, http.StatusInternalServerError, "db update: "+err.Error())
+			if friendlyPgError(w, err, "patchOperator user update") {
+				return
+			}
+			log.Printf("patchOperator user update failed (unclassified): %v", err)
+			writeErr(w, http.StatusInternalServerError,
+				"Could not save the changes — a database error occurred. Reload and try again.")
 			return
 		}
 	}
@@ -1253,10 +1272,13 @@ func (s *Server) adminPatchOperator(w http.ResponseWriter, r *http.Request) {
 	if req.ExamIDs != nil {
 		if len(*req.ExamIDs) > 1 {
 			writeErr(w, http.StatusBadRequest,
-				"a verification agent can only be assigned to ONE exam — pick a single exam per agent")
+				"A verification agent can only be assigned to ONE exam. Pick a single exam from the list, or create a separate account for a second exam.")
 			return
 		}
 		if err := s.setOperatorExams(tx, orgID, id, *req.ExamIDs); err != nil {
+			if friendlyPgError(w, err, "patchOperator setOperatorExams") {
+				return
+			}
 			writeErr(w, http.StatusBadRequest, err.Error())
 			return
 		}

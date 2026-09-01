@@ -102,24 +102,70 @@ func stripRetakeSuffix(key string) string {
 	return retakeSuffixRe.ReplaceAllString(key, "")
 }
 
-// writeErr sends {"error": msg} at the given status code. For any 5xx
-// status it forces a friendly generic string on the wire and pushes
-// the caller's technical detail into the server log, so a stray
-// `writeErr(w, 500, "db error: " + err.Error())` can no longer leak
-// pg constraint names / driver strings to a non-technical user.
+// writeErr sends {"error": msg} at the given status code.
 //
-// 4xx messages pass through unchanged — those are deliberately
+// For 4xx the message passes through unchanged — those are deliberately
 // user-facing copy per handler (uniqueness collisions, validation
 // hints, "please verify OTP first" etc.).
+//
+// For 5xx the message passes through IF it's already operator-facing
+// copy (starts with an uppercase letter, has no obvious tech tokens
+// like `pq:`, `sqlstate`, `constraint`, `panic`, `nil pointer`). This
+// lets service-down handlers surface actionable text like
+// "biometric compare token has expired" or "control plane unreachable"
+// while still preventing a stray `writeErr(w, 500, "db error: " +
+// err.Error())` from leaking a driver stack trace to a non-technical
+// user. The technical detail — whether kept or dropped from the wire
+// — always goes to the server log for support to grep.
 func writeErr(w http.ResponseWriter, status int, msg string) {
 	if status >= 500 {
 		if msg != "" && msg != friendlyServerError {
 			log.Printf("[5xx %d] %s", status, msg)
 		}
-		writeJSON(w, status, map[string]string{"error": friendlyServerError})
+		safe := msg
+		if !isOperatorFacingMessage(msg) {
+			safe = friendlyServerError
+		}
+		writeJSON(w, status, map[string]string{"error": safe})
 		return
 	}
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+// isOperatorFacingMessage returns true when `msg` reads like a
+// deliberately-crafted operator-facing sentence (starts with an
+// uppercase letter, contains no obvious tech token). Kept intentionally
+// conservative: unknown-shape messages default to false so a raw
+// driver bounce still gets swapped for the generic.
+func isOperatorFacingMessage(msg string) bool {
+	if msg == "" {
+		return false
+	}
+	// Must start with an uppercase letter — every hand-crafted
+	// operator-facing string in this codebase starts with a capital
+	// (see writeErr call sites). Raw driver messages tend to start
+	// lowercase ("pq: duplicate key", "context canceled", etc.).
+	first := msg[0]
+	if !(first >= 'A' && first <= 'Z') {
+		return false
+	}
+	low := strings.ToLower(msg)
+	techTokens := []string{
+		"pq:", "pgx", "sqlstate", "constraint",
+		"violates", "unique index", "foreign key",
+		"null value in column",
+		"db error", "db begin", "db commit", "db rollback",
+		"db lookup", "db update", "db insert", "db read", "db list", "db tx",
+		"row scan", "scan:", "exec ",
+		"panic", "nil pointer", "runtime error",
+		"http 5", "internal server error",
+	}
+	for _, t := range techTokens {
+		if strings.Contains(low, t) {
+			return false
+		}
+	}
+	return true
 }
 
 func (s *Server) authMiddleware(next http.Handler) http.Handler {

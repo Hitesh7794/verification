@@ -188,8 +188,64 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 	_ = json.NewEncoder(w).Encode(v)
 }
 
+// friendlyServerError is the generic 5xx copy shown when a handler
+// tried to hand us a raw driver / stack string. Matches the DP's
+// wording so both planes read the same in the operator's UI.
+const friendlyServerError = "Something went wrong on our end. Please try again in a moment."
+
+// writeErr sends {"error": msg} at the given status code.
+//
+// For 4xx: message passes through unchanged (hand-crafted per handler).
+//
+// For 5xx: passes through when the message is already operator-facing
+// (starts uppercase, no tech tokens like `pq:`, `sqlstate`,
+// `constraint`, `panic`, `nil pointer`) — otherwise it's swapped for
+// the generic and the technical detail is logged. Same rule as the DP
+// side's writeErr; kept as an independent copy because the two api
+// packages don't share code.
 func writeErr(w http.ResponseWriter, status int, msg string) {
+	if status >= 500 {
+		if msg != "" && msg != friendlyServerError {
+			log.Printf("[cp 5xx %d] %s", status, msg)
+		}
+		safe := msg
+		if !isOperatorFacingMessage(msg) {
+			safe = friendlyServerError
+		}
+		writeJSON(w, status, map[string]string{"error": safe})
+		return
+	}
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+// isOperatorFacingMessage — see backend/internal/api/helpers.go for
+// the rationale. Kept as a lowercase-first table since CP is a
+// separate package. Same tech-token list.
+func isOperatorFacingMessage(msg string) bool {
+	if msg == "" {
+		return false
+	}
+	first := msg[0]
+	if !(first >= 'A' && first <= 'Z') {
+		return false
+	}
+	low := strings.ToLower(msg)
+	techTokens := []string{
+		"pq:", "pgx", "sqlstate", "constraint",
+		"violates", "unique index", "foreign key",
+		"null value in column",
+		"db error", "db begin", "db commit", "db rollback",
+		"db lookup", "db update", "db insert", "db read", "db list", "db tx",
+		"row scan", "scan:", "exec ",
+		"panic", "nil pointer", "runtime error",
+		"http 5", "internal server error",
+	}
+	for _, t := range techTokens {
+		if strings.Contains(low, t) {
+			return false
+		}
+	}
+	return true
 }
 
 // ── auth ────────────────────────────────────────────────────────
