@@ -433,6 +433,16 @@ function EmptyState({ status }) {
   )
 }
 
+// Register.jsx replaces institution_type 'other' with the free-text body
+// name on submit, so a govt commission arrives as e.g. "Staff Selection
+// Commission". Anything that is not a college or university is one, and
+// its identifier is a gazette / CIN reference rather than an AISHE code.
+const ACADEMIC_TYPES = ['college', 'university']
+
+function isRecruiterType(t) {
+  return !ACADEMIC_TYPES.includes(String(t || '').trim().toLowerCase())
+}
+
 function Row({ it, selectable, selected, onToggle, onRevoke, revoking }) {
   return (
     <li className="flex items-start gap-3 p-4 sm:p-5 hover:bg-stone-50/70 transition-colors">
@@ -470,7 +480,7 @@ function Row({ it, selectable, selected, onToggle, onRevoke, revoking }) {
           <span className="font-medium text-stone-800">{it.head_name}</span>
           {it.head_email && <span className="text-stone-400 font-mono text-[11px]"> · {it.head_email}</span>}
           {it.city && it.state && <span className="text-stone-500"> · {it.city}, {it.state}</span>}
-          {it.aishe_code && <span className="text-stone-400 font-mono text-[11px]"> · AISHE: {it.aishe_code}</span>}
+          {it.aishe_code && <span className="text-stone-400 font-mono text-[11px]"> · {isRecruiterType(it.institution_type) ? 'Govt / CIN Ref' : 'AISHE'}: {it.aishe_code}</span>}
         </p>
 
         <div className="mt-2 flex items-center gap-3 text-[11px] text-stone-400">
