@@ -292,12 +292,34 @@ func (s *Server) clientReviewerMe(w http.ResponseWriter, r *http.Request) {
 	// from the same rows as `items` (see cpReviewerList). If you need
 	// counts somewhere new, take them from there; do NOT recompute
 	// them from this Data Plane's tables.
+	// Verification-history tile counts. All-time (not weekly) —
+	// intended as a "have they been busy?" glance on the header,
+	// paired with the drill-in on /reviewer/history for filters.
+	// Silently zero if the query fails; a broken header shouldn't
+	// break the reviewer inbox rendering.
+	var verifTotal, verifiedTotal, deniedTotal int64
+	_ = s.deps.DB.QueryRowContext(r.Context(), `
+		SELECT
+		  COUNT(*),
+		  COUNT(*) FILTER (WHERE v.status = 'verified'),
+		  COUNT(*) FILTER (WHERE v.status = 'denied')
+		 FROM verifications v
+		 JOIN organizations o     ON o.id = v.org_id
+		 JOIN institution_applications a ON a.id = o.application_id
+		WHERE a.client_id = $1`, clientID,
+	).Scan(&verifTotal, &verifiedTotal, &deniedTotal)
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"client_id":      clientID,
 		"name":           name,
 		"visible":        visible == 1,
 		"closed":         closed == 1,
 		"portal_enabled": portalEnabled,
+		"stats": map[string]any{
+			"verifications_total": verifTotal,
+			"verified_total":      verifiedTotal,
+			"denied_total":        deniedTotal,
+		},
 	})
 }
 
@@ -341,7 +363,8 @@ func (s *Server) clientReviewerStats(w http.ResponseWriter, r *http.Request) {
 
 	var (
 		active, pending, approvedWeek, rejectedWeek int64
-		verificationsWeek                           int64
+		verificationsWeek, verificationsTotal       int64
+		verifiedTotal, deniedTotal                  int64
 		oldestPendingDays                           sql.NullFloat64
 		myApprovedWeek, myRejectedWeek              int64
 		myAvgReviewHours                            sql.NullFloat64
@@ -356,12 +379,15 @@ func (s *Server) clientReviewerStats(w http.ResponseWriter, r *http.Request) {
 		   WHERE client_id = $1
 		),
 		verif AS (
-		  SELECT COUNT(*) AS n
+		  SELECT
+		    COUNT(*)                                              AS total,
+		    COUNT(*) FILTER (WHERE v.status = 'verified')         AS verified_total,
+		    COUNT(*) FILTER (WHERE v.status = 'denied')           AS denied_total,
+		    COUNT(*) FILTER (WHERE v.created_at >= NOW() - INTERVAL '7 days') AS week
 		    FROM verifications v
 		    JOIN organizations o     ON o.id = v.org_id
 		    JOIN institution_applications a ON a.id = o.application_id
 		   WHERE a.client_id = $1
-		     AND v.created_at >= NOW() - INTERVAL '7 days'
 		)
 		SELECT
 		  COUNT(*) FILTER (WHERE status = 'approved')                                                                AS active,
@@ -369,7 +395,10 @@ func (s *Server) clientReviewerStats(w http.ResponseWriter, r *http.Request) {
 		  EXTRACT(EPOCH FROM (NOW() - MIN(created_at) FILTER (WHERE status = 'pending' AND pending_reviewer = 'client'))) / 86400 AS oldest_pending_days,
 		  COUNT(*) FILTER (WHERE status = 'approved' AND reviewed_at >= NOW() - INTERVAL '7 days')                   AS approved_week,
 		  COUNT(*) FILTER (WHERE status = 'rejected' AND reviewed_at >= NOW() - INTERVAL '7 days')                   AS rejected_week,
-		  (SELECT n FROM verif)                                                                                      AS verifications_week,
+		  (SELECT week           FROM verif)                                                                          AS verifications_week,
+		  (SELECT total          FROM verif)                                                                          AS verifications_total,
+		  (SELECT verified_total FROM verif)                                                                          AS verified_total,
+		  (SELECT denied_total   FROM verif)                                                                          AS denied_total,
 		  COUNT(*) FILTER (WHERE status = 'approved' AND reviewed_at >= NOW() - INTERVAL '7 days'  AND reviewed_by_user_id = $2) AS my_approved_week,
 		  COUNT(*) FILTER (WHERE status = 'rejected' AND reviewed_at >= NOW() - INTERVAL '7 days'  AND reviewed_by_user_id = $2) AS my_rejected_week,
 		  AVG(EXTRACT(EPOCH FROM (reviewed_at - created_at)) / 3600.0)
@@ -378,7 +407,8 @@ func (s *Server) clientReviewerStats(w http.ResponseWriter, r *http.Request) {
 		clientID, reviewerID,
 	).Scan(
 		&active, &pending, &oldestPendingDays,
-		&approvedWeek, &rejectedWeek, &verificationsWeek,
+		&approvedWeek, &rejectedWeek,
+		&verificationsWeek, &verificationsTotal, &verifiedTotal, &deniedTotal,
 		&myApprovedWeek, &myRejectedWeek, &myAvgReviewHours,
 	)
 	if err != nil {
@@ -404,11 +434,160 @@ func (s *Server) clientReviewerStats(w http.ResponseWriter, r *http.Request) {
 		"approved_this_week":      approvedWeek,
 		"rejected_this_week":      rejectedWeek,
 		"verifications_this_week": verificationsWeek,
+		// New — reviewer's "verification history at a glance" tiles.
+		// verifications_total is the all-time count of verification
+		// events under this client (all orgs, all exams). verified /
+		// denied split so the FE can render a pass-rate pill.
+		"verifications_total":     verificationsTotal,
+		"verified_total":          verifiedTotal,
+		"denied_total":            deniedTotal,
 		"personal": map[string]any{
 			"approved_this_week": myApprovedWeek,
 			"rejected_this_week": myRejectedWeek,
 			"avg_review_hours":   avgOut,
 		},
+	})
+}
+
+// ---------- GET /api/client/verifications ----------
+//
+// Reviewer-scoped verification history. Same shape as
+// /api/admin/verifications but the scope is client_id (all orgs
+// approved under this reviewer's exam board) instead of a single
+// org. Wallet history is INTENTIONALLY not surfaced here — reviewers
+// don't handle billing.
+//
+// Filters (all optional, combinable):
+//   ?roll=       exact roll number match
+//   ?status=     "verified" | "denied"
+//   ?from=YYYY-MM-DD
+//   ?to=YYYY-MM-DD
+//   ?before=<id> cursor pagination (last id from prior page)
+//   ?limit=      default 50, max 200
+//
+// Response: { rows: [...], next_cursor: int }
+func (s *Server) clientReviewerVerifications(w http.ResponseWriter, r *http.Request) {
+	clientID, ok := s.clientReviewerScope(r)
+	if !ok {
+		writeErr(w, http.StatusForbidden, "client reviewer context required")
+		return
+	}
+
+	// Build filters + args. Scope always includes the client_id join
+	// through organizations → institution_applications.
+	where := " WHERE a.client_id = $1"
+	args := []any{clientID}
+	nextParam := 2
+
+	q := r.URL.Query()
+	if roll := strings.TrimSpace(q.Get("roll")); roll != "" {
+		where += fmt.Sprintf(" AND v.roll_no = $%d", nextParam)
+		args = append(args, roll)
+		nextParam++
+	}
+	if status := q.Get("status"); status == "verified" || status == "denied" {
+		where += fmt.Sprintf(" AND v.status = $%d", nextParam)
+		args = append(args, status)
+		nextParam++
+	}
+	if from := q.Get("from"); from != "" {
+		if t, err := time.Parse("2006-01-02", from); err == nil {
+			where += fmt.Sprintf(" AND v.created_at >= $%d", nextParam)
+			args = append(args, t)
+			nextParam++
+		}
+	}
+	if to := q.Get("to"); to != "" {
+		if t, err := time.Parse("2006-01-02", to); err == nil {
+			where += fmt.Sprintf(" AND v.created_at < $%d", nextParam)
+			args = append(args, t.Add(24*time.Hour))
+			nextParam++
+		}
+	}
+	if before := q.Get("before"); before != "" {
+		if n, err := strconv.ParseInt(before, 10, 64); err == nil && n > 0 {
+			where += fmt.Sprintf(" AND v.id < $%d", nextParam)
+			args = append(args, n)
+			nextParam++
+		}
+	}
+
+	limit := 50
+	if v := q.Get("limit"); v != "" {
+		if n, err := strconv.Atoi(v); err == nil && n > 0 && n <= 200 {
+			limit = n
+		}
+	}
+	args = append(args, limit)
+
+	rows, err := s.deps.DB.QueryContext(r.Context(),
+		`SELECT v.id, v.roll_no, v.status, v.face_match, v.fp_match,
+		        COALESCE(v.via, ''),
+		        COALESCE(e.name || ' (' || e.exam_code || ')', '') AS center_name,
+		        o.name AS org_name,
+		        u.display_name,
+		        v.created_at,
+		        COALESCE(v.fp_vendor, ''),
+		        v.fp_match_score, v.face_match_score
+		   FROM verifications v
+		   JOIN organizations o             ON o.id = v.org_id
+		   JOIN institution_applications a  ON a.id = o.application_id
+		   LEFT JOIN exam_candidates ec     ON ec.roll_no = v.roll_no
+		   LEFT JOIN exams e                ON e.id = ec.exam_id
+		   JOIN users u                     ON u.id = v.operator_id`+
+			where+fmt.Sprintf(" ORDER BY v.id DESC LIMIT $%d", nextParam),
+		args...,
+	)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	type reviewerVerifRow struct {
+		ID           int64    `json:"id"`
+		RollNo       string   `json:"roll_no"`
+		Status       string   `json:"status"`
+		FaceMatch    bool     `json:"face_match"`
+		FpMatch      bool     `json:"fp_match"`
+		Via          string   `json:"via,omitempty"`
+		// Kept as "center_name" for FE parity with admin/history.
+		CenterName   string   `json:"center_name"`
+		OrgName      string   `json:"org_name"`
+		OperatorName string   `json:"operator_name"`
+		CreatedAt    string   `json:"created_at"`
+		FpVendor     string   `json:"fp_vendor,omitempty"`
+		FpScore      *int     `json:"fp_match_score,omitempty"`
+		FaceScore    *float64 `json:"face_match_score,omitempty"`
+	}
+
+	out := make([]reviewerVerifRow, 0, limit)
+	for rows.Next() {
+		var row reviewerVerifRow
+		var createdAt time.Time
+		var fpScore *int
+		var faceScore *float64
+		if err := rows.Scan(
+			&row.ID, &row.RollNo, &row.Status, &row.FaceMatch, &row.FpMatch,
+			&row.Via, &row.CenterName, &row.OrgName, &row.OperatorName,
+			&createdAt, &row.FpVendor, &fpScore, &faceScore,
+		); err != nil {
+			writeErr(w, http.StatusInternalServerError, "scan: "+err.Error())
+			return
+		}
+		row.CreatedAt = createdAt.UTC().Format(time.RFC3339)
+		row.FpScore = fpScore
+		row.FaceScore = faceScore
+		out = append(out, row)
+	}
+
+	var nextCursor int64
+	if len(out) == limit {
+		nextCursor = out[len(out)-1].ID
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"rows":        out,
+		"next_cursor": nextCursor,
 	})
 }
 

@@ -207,7 +207,7 @@ export default function ReviewerKycInbox() {
             </div>
 
             {/* Statistics strip */}
-            <div className="mt-5 pt-5 border-t border-slate-100 grid grid-cols-2 sm:grid-cols-4 gap-6 text-sm">
+            <div className="mt-5 pt-5 border-t border-slate-100 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-6 text-sm">
               <div>
                 <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Total Applications</p>
                 <p className="text-lg font-semibold text-slate-900 mt-0.5 tabular-nums">{stats?.total ?? 0}</p>
@@ -223,6 +223,19 @@ export default function ReviewerKycInbox() {
               <div>
                 <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Universities / Colleges</p>
                 <p className="text-lg font-semibold text-slate-900 mt-0.5 tabular-nums">{stats?.universities ?? 0}</p>
+              </div>
+              <div>
+                <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Candidates Verified</p>
+                <p className="text-lg font-semibold text-slate-900 mt-0.5 tabular-nums">
+                  {(client?.stats?.verifications_total ?? 0).toLocaleString()}
+                </p>
+                {(client?.stats?.verifications_total ?? 0) > 0 && (
+                  <p className="text-[11px] text-slate-500 mt-0.5 tabular-nums">
+                    <span className="text-emerald-700">{client?.stats?.verified_total ?? 0} passed</span>
+                    <span className="mx-1">·</span>
+                    <span className="text-rose-700">{client?.stats?.denied_total ?? 0} denied</span>
+                  </p>
+                )}
               </div>
             </div>
           </div>

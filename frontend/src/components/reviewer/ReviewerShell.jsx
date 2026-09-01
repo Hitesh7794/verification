@@ -7,6 +7,7 @@ import { reviewerMe } from '../../lib/reviewer/api.js'
 const tabs = [
   { to: '/reviewer', label: 'KYC Applications', end: true },
   { to: '/reviewer/exams', label: 'Exams', end: false },
+  { to: '/reviewer/history', label: 'Verification history', end: false },
 ]
 
 // ReviewerShell — page shell for the client-reviewer portal.

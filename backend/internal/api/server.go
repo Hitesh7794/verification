@@ -459,6 +459,11 @@ func (s *Server) Router() http.Handler {
 
 		// Client-reviewer exam management
 		r.Get("/api/client/exams",                                                 s.requireRole("client_reviewer")(s.clientReviewerListExams))
+		// Reviewer-scoped verification history (parity with the admin's
+		// /api/admin/verifications, but joined across every org
+		// approved under the reviewer's exam board). Wallet history is
+		// deliberately NOT exposed here — reviewers don't handle billing.
+		r.Get("/api/client/verifications",                                         s.requireRole("client_reviewer")(s.clientReviewerVerifications))
 		r.Post("/api/client/exams",                                                s.requireRole("client_reviewer")(s.superadminCreateExam))
 		r.Post("/api/client/exams/csv",                                            s.requireRole("client_reviewer")(s.superadminBulkCreateExamsCSV))
 
