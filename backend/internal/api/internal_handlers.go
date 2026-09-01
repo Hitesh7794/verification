@@ -952,17 +952,37 @@ func (s *Server) internalDocumentsDownload(w http.ResponseWriter, r *http.Reques
 		return
 	}
 	// Allow-list KYC-related prefixes only — never exam photos or other
-	// storage families. The CP's institution_application_documents can
-	// store paths as either bare keys ("apps/...") or full S3 URIs
-	// ("s3://bucket/_kyc/..."). Normalise by stripping any s3://<bucket>/
-	// prefix before checking + passing through to the stream helper.
-	checkPath := path
+	// storage families. storage_path arrives in three shapes and all
+	// three have to normalise to the same thing before the check:
+	//
+	//   s3://bucket/_kyc/...              S3-backed row
+	//   apps/... | _kyc/...               bare S3 key
+	//   artifacts\institution_docs\...    disk row (no S3 configured)
+	//
+	// The disk shape is what registerUploadDoc writes via docPath():
+	// filepath.Join(Cfg.ArtifactDir, "institution_docs", ...). That
+	// carries the ArtifactDir prefix the allow-list is written without,
+	// and on Windows it carries backslashes — so a plain HasPrefix
+	// against "institution_docs/" rejected every disk-stored document
+	// with "path prefix not allowed", making KYC docs unviewable from
+	// the CP on any deployment without S3.
+	checkPath := strings.ReplaceAll(path, "\\", "/")
 	if strings.HasPrefix(checkPath, "s3://") {
 		// s3://bucket/key/here → key/here
 		rest := checkPath[len("s3://"):]
 		if slash := strings.IndexByte(rest, '/'); slash > 0 {
 			checkPath = rest[slash+1:]
 		}
+	}
+	checkPath = strings.TrimPrefix(checkPath, "./")
+	if art := strings.Trim(strings.ReplaceAll(s.deps.Cfg.ArtifactDir, "\\", "/"), "/"); art != "" {
+		checkPath = strings.TrimPrefix(checkPath, art+"/")
+	}
+	// Traversal can't be allowed to climb back out of the allowed
+	// prefixes once we start trimming things off the front.
+	if strings.Contains(checkPath, "../") {
+		writeErr(w, http.StatusForbidden, "path traversal not allowed")
+		return
 	}
 	if !strings.HasPrefix(checkPath, "apps/") &&
 		!strings.HasPrefix(checkPath, "institution_docs/") &&
