@@ -256,8 +256,11 @@ function ResultSummary({ result }) {
           : 'border-rose-200 bg-rose-50 text-rose-800'
       }`}
     >
+      {/* Score / threshold removed — operators just get Match / No
+          match. Quality + NFIQ + liveness below are capture-time
+          signals, not match figures, so they stay. */}
       <p className="font-semibold">
-        {ok ? 'Match' : 'No match'} · score {fmt(score)} / threshold {fmt(threshold)}
+        {ok ? 'Match' : 'No match'}
       </p>
       <p className="text-xs mt-1 text-slate-600">
         quality {qualityDisplay} · NFIQ {nfiqDisplay} ·{' '}

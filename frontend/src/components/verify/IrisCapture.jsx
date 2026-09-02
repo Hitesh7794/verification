@@ -271,11 +271,11 @@ function ResultSummary({ r }) {
           ? 'Iris match'
           : 'Iris did not match'}
       </p>
+      {/* Score + threshold removed — operators get pass/fail from the
+          heading above; quality stays because it's a capture-time
+          signal, not a match figure. */}
       <p className="text-xs mt-1 text-slate-600">
         quality {r.leftQuality ?? '—'}
-        {r.leftScore != null && (
-          <> · score {r.leftScore.toFixed(3)} · threshold {r.threshold}</>
-        )}
       </p>
     </div>
   )

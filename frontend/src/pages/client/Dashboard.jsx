@@ -1052,9 +1052,11 @@ export default function ClientDashboard() {
               {faceResult && (
                 <div className="mt-3 text-xs text-slate-600 flex items-baseline justify-between">
                   <span className="uppercase tracking-wide text-slate-500">Face match</span>
+                  {/* Numeric score removed — operators get pass/fail;
+                      raw match figures were internal debugging visible
+                      to the field. */}
                   <span className={`font-semibold tabular-nums ${faceResult.ok ? 'text-emerald-700' : 'text-rose-700'}`}>
                     {faceResult.ok ? 'PASS' : 'FAIL'}
-                    {typeof faceResult.score === 'number' && ` · ${faceResult.score.toFixed(2)}`}
                   </span>
                 </div>
               )}
@@ -1197,7 +1199,7 @@ export default function ClientDashboard() {
                       )}
                       <div className="flex items-center gap-3 text-sm text-slate-600">
                         <span className="inline-block h-3 w-3 rounded-full bg-indigo-500 animate-pulse" />
-                        {submitting ? 'Recording verification…' : 'Deciding based on match thresholds…'}
+                        {submitting ? 'Recording verification…' : 'Finalising decision…'}
                       </div>
                     </>
                   )}
