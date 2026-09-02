@@ -145,13 +145,16 @@ export default function FingerprintCapture({
         </div>
       )}
 
-      <div className="flex gap-2 justify-center">
+      {/* Action row — full-width primary button so the fingerprint
+          and iris cards land with visually identical bottom action
+          areas regardless of button label length. */}
+      <div className="flex flex-col gap-2">
         {result ? (
-          <Button variant="secondary" onClick={() => { setResult(null); setCallError(null); }}>
+          <Button variant="secondary" className="w-full" onClick={() => { setResult(null); setCallError(null); }}>
             Recapture
           </Button>
         ) : (
-          <Button onClick={onCapture} disabled={!ready || busy}>
+          <Button className="w-full" onClick={onCapture} disabled={!ready || busy}>
             {busy ? 'Capturing…' : 'Capture & match'}
           </Button>
         )}
@@ -209,11 +212,15 @@ function bannerFor(status, device, error) {
         detail: '',
       }
     case Status.ServiceDown:
+      // Detail intentionally empty — the previous "Ask IT to install
+      // the verification client" line wrapped to two lines inside the
+      // narrower fingerprint card and broke the banner layout. Title
+      // alone is clear enough for the operator.
       return {
         tone: 'border-rose-200 bg-rose-50 text-rose-800',
         dot: 'bg-rose-500',
         title: 'Device service not running',
-        detail: 'Ask IT to install the verification client',
+        detail: '',
       }
     case Status.Error:
       return {

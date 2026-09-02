@@ -55,6 +55,17 @@ const STATE_KEY = 'nv_verify_state_v1'
 
 function loadPersistedState() {
   try {
+    // Session-alive gate: only rehydrate when the login handler set
+    // `nv_session_alive_client` in THIS sessionStorage. Refresh
+    // preserves both (state + marker) → mid-flow rehydrates. Close-
+    // tab-then-reopen (including Chrome's "continue where you left
+    // off" / "reopen closed tab" that restores sessionStorage) →
+    // the marker is missing because login never fired in the
+    // restored context → we clear the state and start clean.
+    if (!sessionStorage.getItem('nv_session_alive_client')) {
+      sessionStorage.removeItem(STATE_KEY)
+      return null
+    }
     const raw = sessionStorage.getItem(STATE_KEY)
     if (!raw) return null
     const parsed = JSON.parse(raw)
@@ -1214,7 +1225,7 @@ export default function ClientDashboard() {
                         )}
                       </div>
                       <div className="mt-3 flex flex-wrap items-center gap-2">
-                        <Button onClick={reset}>Start next verification</Button>
+                        <Button onClick={reset}>Next verification</Button>
                         {verificationId && (
                           <>
                             <Button

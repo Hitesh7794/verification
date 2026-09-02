@@ -339,33 +339,58 @@ export async function previewVerificationPDF(id) {
   // when the page unloads.
 }
 
-// printVerificationPDF opens the PDF in a new window and asks the
+// printVerificationPDF opens the PDF in a NEW tab and asks the
 // browser to print it. Works reliably in Chromium browsers; Firefox
 // opens the print dialog after the PDF viewer loads.
+//
+// The window.open call MUST happen synchronously with the user's
+// click. Browsers only count window.open as user-initiated when it
+// runs inside the click event's synchronous callback — the moment
+// we `await fetch(...)`, we've left the gesture context and pop-up
+// blockers kick in. The old version opened AFTER the await, so the
+// pop-up got blocked and the fallback `window.location.href = objUrl`
+// loaded the PDF in the SAME tab. Now we open a blank tab up-front
+// and swap its location to the PDF once the fetch resolves.
 export async function printVerificationPDF(id) {
   if (!id) return
-  const res = await fetch(`${BASE}/verifications/${id}/pdf`, {
-    headers: { Authorization: `Bearer ${getToken()}` },
-  })
-  if (!res.ok) {
-    let raw = `PDF print failed (HTTP ${res.status})`
-    try { const body = await res.json(); if (body?.error) raw = body.error } catch (_) {}
-    const err = new Error(raw); err.status = res.status; err.rawMessage = raw
-    err.message = toFriendlyError(err)
-    throw err
+  // Open the tab RIGHT NOW, while we're still in the click gesture.
+  // 'about:blank' is a placeholder; we'll swap in the object URL below.
+  const w = window.open('', '_blank')
+  try {
+    const res = await fetch(`${BASE}/verifications/${id}/pdf`, {
+      headers: { Authorization: `Bearer ${getToken()}` },
+    })
+    if (!res.ok) {
+      if (w) w.close()
+      let raw = `PDF print failed (HTTP ${res.status})`
+      try { const body = await res.json(); if (body?.error) raw = body.error } catch (_) {}
+      const err = new Error(raw); err.status = res.status; err.rawMessage = raw
+      err.message = toFriendlyError(err)
+      throw err
+    }
+    const blob = await res.blob()
+    const objUrl = URL.createObjectURL(blob)
+    if (w && !w.closed) {
+      w.location.href = objUrl
+      // Give the PDF viewer time to render before invoking print. Chrome
+      // renders inline PDFs in ~600 ms on a warm cache; use 1.5 s so
+      // cold-cache renders complete before the dialog pops.
+      setTimeout(() => { try { w.focus(); w.print() } catch (_) {} }, 1500)
+    } else {
+      // Pop-up blocker refused the up-front open call. Rather than
+      // hijack the CURRENT tab (the original bug), fall back to a
+      // download so the current tab isn't disrupted.
+      const a = document.createElement('a')
+      a.href = objUrl
+      a.download = `verification_${id}.pdf`
+      document.body.appendChild(a)
+      a.click()
+      a.remove()
+    }
+  } catch (e) {
+    if (w && !w.closed) w.close()
+    throw e
   }
-  const blob = await res.blob()
-  const objUrl = URL.createObjectURL(blob)
-  const w = window.open(objUrl, '_blank', 'noopener')
-  if (!w) {
-    // Pop-up blocker — degrade to preview, operator hits Cmd/Ctrl+P.
-    window.location.href = objUrl
-    return
-  }
-  // Give the PDF viewer time to render before invoking print. Chrome
-  // renders inline PDFs in ~600 ms on a warm cache; use 1.5 s so
-  // cold-cache renders complete before the dialog pops.
-  setTimeout(() => { try { w.focus(); w.print() } catch (_) {} }, 1500)
 }
 
 export async function downloadVerificationPDF(id) {

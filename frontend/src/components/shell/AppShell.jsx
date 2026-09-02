@@ -27,8 +27,11 @@ export default function AppShell({ children, walletRefreshKey, onWalletBalanceCh
     // the whole point of persisting it), so a mid-flow reload still
     // resumes — but sign-out now genuinely resets the operator to
     // Step 1, so the next login doesn't drop them mid-fingerprint.
-    // Key name mirrors Dashboard.jsx's STATE_KEY constant.
+    // Also drop the session-alive marker so the NEXT login sets a
+    // fresh one and the load-guard in Dashboard.loadPersistedState
+    // correctly reads it as a new session.
     try { sessionStorage.removeItem('nv_verify_state_v1') } catch (_) {}
+    try { sessionStorage.removeItem('nv_session_alive_' + (user?.role || '')) } catch (_) {}
     logout()
     nav(`/${role || ''}/login`)
   }

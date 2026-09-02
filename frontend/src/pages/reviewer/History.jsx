@@ -43,6 +43,7 @@ export default function ReviewerHistory() {
     roll: '',
     status: '',
     org: '',
+    exam_id: '',
     from: '',
     to: '',
   })
@@ -52,6 +53,9 @@ export default function ReviewerHistory() {
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState('')
   const [institutes, setInstitutes] = useState([])
+  // Flat exam list for the dropdown — every exam under this reviewer's
+  // exam board. Fetched once from /client/exams, alpha-sorted.
+  const [exams, setExams] = useState([])
   const [dlBusy, setDlBusy] = useState('') // '' | 'filtered' | 'all'
   const [dlErr, setDlErr] = useState('')
 
@@ -59,6 +63,24 @@ export default function ReviewerHistory() {
     let alive = true
     api('/client/institutes')
       .then((res) => { if (alive) setInstitutes(res.institutes || []) })
+      .catch(() => {})
+    return () => { alive = false }
+  }, [])
+
+  useEffect(() => {
+    let alive = true
+    api('/client/exams')
+      .then((res) => {
+        if (!alive) return
+        const list = (res.exams || [])
+          .filter((e) => e && e.id)
+          .map((e) => ({
+            id: e.id,
+            label: e.name ? `${e.name}${e.exam_code ? ' — ' + e.exam_code : ''}` : (e.exam_code || `Exam ${e.id}`),
+          }))
+          .sort((a, b) => a.label.localeCompare(b.label))
+        setExams(list)
+      })
       .catch(() => {})
     return () => { alive = false }
   }, [])
@@ -98,13 +120,14 @@ export default function ReviewerHistory() {
       roll: filters.roll.trim(),
       status: filters.status,
       org: filters.org.trim(),
+      exam_id: filters.exam_id,
       from: filters.from,
       to: filters.to,
     })
   }
 
   function clearFilters() {
-    setFilters({ roll: '', status: '', org: '', from: '', to: '' })
+    setFilters({ roll: '', status: '', org: '', exam_id: '', from: '', to: '' })
     setAppliedFilters({})
   }
 
@@ -120,6 +143,7 @@ export default function ReviewerHistory() {
         roll: filters.roll.trim(),
         status: filters.status,
         org: filters.org.trim(),
+        exam_id: filters.exam_id,
         from: filters.from,
         to: filters.to,
       }
@@ -136,6 +160,7 @@ export default function ReviewerHistory() {
       roll: filters.roll,
       status: filters.status,
       org: filters.org,
+      exam_id: filters.exam_id,
       from: daysAgoISO(days - 1),
       to: todayISO(),
     }
@@ -152,7 +177,7 @@ export default function ReviewerHistory() {
       />
       <Card className="mb-6">
         <CardBody>
-          <form onSubmit={applyFilters} className="grid gap-3 sm:grid-cols-5">
+          <form onSubmit={applyFilters} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-6">
             <div>
               <Label>Roll number</Label>
               <Input
@@ -171,6 +196,19 @@ export default function ReviewerHistory() {
                 <option value="">All institutes</option>
                 {institutes.map((i) => (
                   <option key={i.id} value={i.name}>{i.name}</option>
+                ))}
+              </select>
+            </div>
+            <div>
+              <Label>Exam</Label>
+              <select
+                value={filters.exam_id}
+                onChange={(e) => setFilters({ ...filters, exam_id: e.target.value })}
+                className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option value="">All exams</option>
+                {exams.map((ex) => (
+                  <option key={ex.id} value={ex.id}>{ex.label}</option>
                 ))}
               </select>
             </div>
@@ -209,7 +247,7 @@ export default function ReviewerHistory() {
                 onChange={(e) => setFilters({ ...filters, to: e.target.value })}
               />
             </div>
-            <div className="sm:col-span-5 flex flex-wrap items-center gap-2 pt-1">
+            <div className="sm:col-span-2 lg:col-span-6 flex flex-wrap items-center gap-2 pt-1">
               <Button type="submit">Apply</Button>
               <Button type="button" variant="secondary" onClick={clearFilters}>Clear</Button>
               <span className="ml-2 text-xs text-slate-500">Quick:</span>
@@ -237,7 +275,7 @@ export default function ReviewerHistory() {
               </div>
             </div>
             {dlErr && (
-              <div className="sm:col-span-5 text-xs text-rose-700">{dlErr}</div>
+              <div className="sm:col-span-2 lg:col-span-6 text-xs text-rose-700">{dlErr}</div>
             )}
           </form>
         </CardBody>

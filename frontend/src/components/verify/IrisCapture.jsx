@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import { Button } from '../ui/ui.jsx'
-import { iris, IrisError } from '../../lib/verify/iris.js'
+import { iris, IrisError, isIrisServiceReachable } from '../../lib/verify/iris.js'
 import { postIrisMatch } from '../../lib/api.js'
 
 // IrisCapture is the fallback used when fingerprint match fails.
@@ -32,7 +32,15 @@ export default function IrisCapture({
   timeoutSec = 15,          // capture timeout in seconds (Marvis SDK unit)
   onResult,                 // (result) => void
 }) {
-  const [status, setStatus] = useState('checking') // checking|service_down|ready|capturing|error
+  // Initial status is 'idle' — we deliberately do NOT probe the
+  // Marvis daemon at mount (each /info call accumulates SDK state
+  // and after ~5-10 verifications the daemon returns -2014 "Device
+  // Already Initialized"). So we can't honestly claim "ready" up
+  // front — the device presence is only proven when the operator
+  // clicks Capture (or Reset). Idle uses a neutral slate banner
+  // that doesn't lie about device state; 'ready' is only set after
+  // an actual successful capture or a manual Reset.
+  const [status, setStatus] = useState('idle') // idle|service_down|ready|capturing|error
   const [device, setDevice] = useState(null)       // { model, serial } from /info
   const [busy, setBusy] = useState(false)
   const [result, setResult] = useState(null)
@@ -46,8 +54,22 @@ export default function IrisCapture({
   // Capture (or Reset). Trade-off: we can't display device serial /
   // model until AFTER first capture (or the operator hits Reset).
   useEffect(() => {
-    setStatus('ready')
+    // Reachability probe — does the Marvis daemon respond at all on
+    // localhost:8031? This does NOT touch any SDK endpoint (info /
+    // capture / uninit) so it doesn't accumulate state; only a
+    // socket-level failure flips us to 'service_down'. The narrower
+    // "device attached / not attached" distinction still isn't
+    // probed at mount (needs /info, which is what breaks captures)
+    // — that surfaces from an actual Capture click.
+    let cancelled = false
+    isIrisServiceReachable().then((reachable) => {
+      if (cancelled) return
+      if (!reachable) setStatus('service_down')
+      // reachable → leave as 'idle' (we don't claim ready without
+      // proof from a successful capture).
+    })
     return () => {
+      cancelled = true
       // Best-effort release on unmount so a page nav doesn't leave
       // the device holding state across tabs.
       iris.uninit().catch(() => {})
@@ -67,8 +89,14 @@ export default function IrisCapture({
       })
       setStatus('ready')
     } catch (e) {
-      setStatus('error')
       setError(e)
+      // Distinguish "service unreachable" from other errors so the
+      // banner tone matches — mirrors onCapture's error handling.
+      if (e instanceof IrisError && e.kind === 'service') {
+        setStatus('service_down')
+      } else {
+        setStatus('error')
+      }
     }
   }
 
@@ -175,8 +203,12 @@ export default function IrisCapture({
               {device?.serial ? ` · ${device.serial}` : ''}
             </p>
           </>
+        ) : status === 'service_down' || status === 'error' ? (
+          <p className="text-sm text-slate-500">See message above</p>
         ) : (
-          <p className="text-sm text-slate-500">Waiting for iris device…</p>
+          // idle — no probe has run yet. Tell the operator to
+          // capture; device presence is only known after that.
+          <p className="text-sm text-slate-500">Click Capture iris to start</p>
         )}
       </div>
 
@@ -188,18 +220,32 @@ export default function IrisCapture({
         </div>
       )}
 
-      <div className="flex gap-2 justify-center">
+      {/* Action row — mirrors FingerprintCapture's structure: full-
+          width primary button on top, secondary (Reset device) full-
+          width below, so both cards align at the bottom regardless
+          of how many buttons the modality has. */}
+      <div className="flex flex-col gap-2">
         {result ? (
-          <Button variant="secondary" onClick={() => { setResult(null); setError(null) }}>
+          <Button variant="secondary" className="w-full" onClick={() => { setResult(null); setError(null) }}>
             Recapture
           </Button>
         ) : (
-          <Button onClick={onCapture} disabled={status !== 'ready' || busy}>
+          <Button
+            className="w-full"
+            onClick={onCapture}
+            // Enabled when idle too — that's the whole point of not
+            // pre-probing: readiness is proven by the capture attempt.
+            // Only block during a capture-in-flight or a known-bad
+            // state (service_down / error) that the operator hasn't
+            // dismissed via Reset device.
+            disabled={busy || status === 'service_down' || status === 'error'}
+          >
             {busy ? 'Capturing iris…' : 'Capture iris'}
           </Button>
         )}
         <Button
           variant="secondary"
+          className="w-full"
           onClick={onReset}
           disabled={busy}
           title="Force-release the iris device -- click this if you see 'Device Already Initialized' errors"
@@ -250,11 +296,15 @@ function bannerFor(status, device, error) {
         detail: '',
       }
     case 'service_down':
+      // Detail intentionally empty — matches FingerprintCapture. The
+      // longer "Ask IT to start MarvisAuthClientService…" copy wrapped
+      // to two lines in the narrower iris card and broke the banner
+      // layout. Title alone is clear enough.
       return {
         tone: 'border-rose-200 bg-rose-50 text-rose-800',
         dot: 'bg-rose-500',
         title: 'Iris service not running',
-        detail: 'Ask IT to start MarvisAuthClientService on this laptop',
+        detail: '',
       }
     case 'error':
       return {
@@ -264,10 +314,16 @@ function bannerFor(status, device, error) {
         detail: error?.description || error?.message || '',
       }
     default:
+      // 'idle' — we haven't probed the daemon (probing accumulates
+      // SDK state and breaks captures after ~10 rounds), so we can't
+      // claim ready. Honest neutral banner, single-line shape to
+      // match FingerprintCapture. Placeholder tile below carries the
+      // "Click Capture iris to start" prompt so the banner stays
+      // tight and doesn't wrap on narrow cards.
       return {
         tone: 'border-slate-200 bg-slate-50 text-slate-700',
         dot: 'bg-slate-400',
-        title: 'Checking iris device…',
+        title: 'Iris scanner',
         detail: '',
       }
   }

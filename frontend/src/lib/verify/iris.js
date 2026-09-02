@@ -85,6 +85,34 @@ async function safeCall(method, body) {
   return env
 }
 
+// Lightweight reachability probe — is the Marvis daemon listening
+// at all? Deliberately does NOT hit any SDK endpoint (info/capture/
+// uninit) because those accumulate SDK state and break captures
+// after ~5-10 verifications. We just try a plain fetch to the base
+// URL; any HTTP response (even 404 / 405) means the daemon is up.
+// Only a network-level failure (connection refused, timeout) means
+// service is down.
+//
+// Used by IrisCapture at mount so the operator sees "service not
+// running" up-front instead of the previous misleading "ready".
+export async function isIrisServiceReachable(timeoutMs = 1500) {
+  const controller = new AbortController()
+  const timer = setTimeout(() => controller.abort(), timeoutMs)
+  try {
+    await fetch(_base, {
+      method: 'GET',
+      // Avoid CORS preflight — no non-simple headers.
+      mode: 'no-cors',
+      signal: controller.signal,
+    })
+    return true
+  } catch (_) {
+    return false
+  } finally {
+    clearTimeout(timer)
+  }
+}
+
 // Public API. Deliberately narrower than the old Java-service wrapper
 // because the new SDK folds several ops together (capture+match in
 // one call) and doesn't expose device enumeration — MarvisAuth

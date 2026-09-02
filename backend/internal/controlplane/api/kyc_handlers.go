@@ -1149,10 +1149,14 @@ func (s *Server) cpReviewerReject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// UPDATE ... RETURNING pulls the applicant fields atomically so we
-	// can email them after commit without a second read. Guarded by
-	// status='pending' + target_client_id scope, same as before.
-	var headEmail, headName, instName string
+	// UPDATE ... RETURNING pulls the applicant fields + the DP row id
+	// atomically so we can email the applicant AND mirror the reject
+	// to the DP without a second read. Guarded by status='pending' +
+	// target_client_id scope, same as before.
+	var (
+		headEmail, headName, instName string
+		externalAppID                 sql.NullInt64
+	)
 	err = s.deps.DB.QueryRowContext(r.Context(), `
 		UPDATE institution_applications
 		   SET status           = 'rejected',
@@ -1162,9 +1166,9 @@ func (s *Server) cpReviewerReject(w http.ResponseWriter, r *http.Request) {
 		       reviewed_at      = NOW(),
 		       updated_at       = NOW()
 		 WHERE id = $1 AND target_client_id = $2 AND status = 'pending'
-		 RETURNING head_email, head_name, institution_name`,
+		 RETURNING head_email, head_name, institution_name, external_application_id`,
 		id, clientID, note,
-	).Scan(&headEmail, &headName, &instName)
+	).Scan(&headEmail, &headName, &instName, &externalAppID)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeErr(w, http.StatusConflict, "application not found or not pending")
 		return
@@ -1172,6 +1176,23 @@ func (s *Server) cpReviewerReject(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "update: "+err.Error())
 		return
+	}
+	// Mirror the reject to the DP so its own institution_applications
+	// row flips out of 'pending' and adminKYCStatus (which the admin
+	// dashboard's KYC lock screen polls) reports 'rejected' instead
+	// of staying stuck on 'pending'. Without this the applicant's
+	// admin dashboard shows the pending lock screen forever after a
+	// client-reviewer reject in 'both' mode. Symmetric with
+	// superadminApplicationReject's mirror. Best-effort: log on
+	// failure, don't fail the reviewer's response — the CP decision
+	// itself is already committed.
+	if externalAppID.Valid && externalAppID.Int64 > 0 {
+		if _, ferr := s.fireInternalApplicationsReject(r.Context(), clientID, internalApplicationsRejectPayload{
+			DpApplicationID: externalAppID.Int64,
+			ReviewNote:      note,
+		}); ferr != nil {
+			log.Printf("cpReviewerReject: DP mirror failed (app=%d): %v", id, ferr)
+		}
 	}
 	// Applicant-facing "your KYC was rejected" email. Terminal path.
 	if headEmail != "" {
@@ -1296,12 +1317,20 @@ func (s *Server) cpReviewerBulkAction(w http.ResponseWriter, r *http.Request, is
 // runs, scoped to the caller's client. Returns "" on success or a
 // human-readable error message (empty string means OK).
 //
-// Also fires the applicant-facing "your KYC was rejected" email in a
-// goroutine after the row flips — bulk-reject inherits this because
-// cpReviewerBulkAction loops through this helper. UPDATE ... RETURNING
-// pulls the head fields inline so we don't need a second read.
+// Also:
+//   - mirrors the reject to the DP so the admin dashboard's KYC lock
+//     screen reports 'rejected' instead of staying pending (bulk
+//     inherits the same fix cpReviewerReject got);
+//   - fires the applicant-facing "your KYC was rejected" email in a
+//     goroutine after the row flips — bulk-reject inherits this too.
+//
+// UPDATE ... RETURNING pulls head fields + DP row id inline so we
+// don't need a second read per item.
 func (s *Server) rejectOneApplication(ctx context.Context, id, clientID int64, note string) string {
-	var headEmail, headName, instName string
+	var (
+		headEmail, headName, instName string
+		externalAppID                 sql.NullInt64
+	)
 	err := s.deps.DB.QueryRowContext(ctx, `
 		UPDATE institution_applications
 		   SET status           = 'rejected',
@@ -1311,14 +1340,23 @@ func (s *Server) rejectOneApplication(ctx context.Context, id, clientID int64, n
 		       reviewed_at      = NOW(),
 		       updated_at       = NOW()
 		 WHERE id = $1 AND target_client_id = $2 AND status = 'pending'
-		 RETURNING head_email, head_name, institution_name`,
+		 RETURNING head_email, head_name, institution_name, external_application_id`,
 		id, clientID, note,
-	).Scan(&headEmail, &headName, &instName)
+	).Scan(&headEmail, &headName, &instName, &externalAppID)
 	if errors.Is(err, sql.ErrNoRows) {
 		return "not found or not pending"
 	}
 	if err != nil {
 		return "db update failed: " + err.Error()
+	}
+	// DP mirror — see cpReviewerReject for why this matters.
+	if externalAppID.Valid && externalAppID.Int64 > 0 {
+		if _, ferr := s.fireInternalApplicationsReject(ctx, clientID, internalApplicationsRejectPayload{
+			DpApplicationID: externalAppID.Int64,
+			ReviewNote:      note,
+		}); ferr != nil {
+			log.Printf("rejectOneApplication: DP mirror failed (app=%d): %v", id, ferr)
+		}
 	}
 	if headEmail != "" {
 		go func(registryID int64, hEmail, hName, iName, n string) {

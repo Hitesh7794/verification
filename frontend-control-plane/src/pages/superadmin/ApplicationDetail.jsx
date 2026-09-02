@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import SuperShell, { PageHead } from '../../components/shell/SuperShell.jsx'
 import {
   Button,
@@ -77,12 +77,30 @@ function isRecruiterType(t) {
 
 export default function ApplicationDetail() {
   const { id } = useParams()
+  const nav = useNavigate()
   const [app, setApp] = useState(null)
   const [err, setErr] = useState('')
   const [actionErr, setActionErr] = useState('')
   const [reviewing, setReviewing] = useState(false)
   const [note, setNote] = useState('')
   const [approvalResult, setApprovalResult] = useState(null)
+  // decisionResult drives a centred success overlay after approve /
+  // reject / revoke succeeds. Feedback + explicit "back to queue"
+  // button + auto-redirect (2 s) so the superadmin isn't left
+  // staring at the same page wondering if anything happened.
+  //   kind: 'approved' | 'rejected' | 'handoff' | 'revoked'
+  //   title: banner headline
+  //   body: short line under the headline (institution name etc.)
+  const [decisionResult, setDecisionResult] = useState(null)
+
+  // Auto-redirect after a decision. Superadmin can click the
+  // explicit button in the overlay for immediate return; this timer
+  // is the "walk away and it self-navigates" fallback.
+  useEffect(() => {
+    if (!decisionResult) return
+    const t = setTimeout(() => nav('/superadmin/applications'), 2000)
+    return () => clearTimeout(t)
+  }, [decisionResult, nav])
 
   // Inline preview state — which doc is showing.
   const [activeDocId, setActiveDocId] = useState(null)
@@ -160,8 +178,19 @@ export default function ApplicationDetail() {
         body: { note },
       })
       setApprovalResult(res)
-      const d = await api(`/superadmin/applications/${id}`)
-      setApp(d)
+      // Terminal 'admin'-mode approve provisions the admin account
+      // immediately; 'both'-mode approve is a hand-off with no
+      // account yet. Distinguish so the overlay copy matches what
+      // actually happened. The server response echoes admin_username
+      // only on the terminal branch.
+      const isHandoff = res && !res.admin_username
+      setDecisionResult({
+        kind: isHandoff ? 'handoff' : 'approved',
+        title: isHandoff ? 'Sent to client reviewer' : 'Application approved',
+        body: isHandoff
+          ? `${app?.institution_name || 'The application'} now sits in the reviewer's queue for the final decision.`
+          : `${app?.institution_name || 'The institution'}'s admin dashboard is now unlocked. Activation email fires now.`,
+      })
     } catch (e) {
       setActionErr(e.message)
     } finally {
@@ -182,8 +211,11 @@ export default function ApplicationDetail() {
         method: 'POST',
         body: { note: note.trim() },
       })
-      const d = await api(`/superadmin/applications/${id}`)
-      setApp(d)
+      setDecisionResult({
+        kind: 'rejected',
+        title: 'Application rejected',
+        body: `${app?.institution_name || 'The applicant'} was notified by email with your note.`,
+      })
     } catch (e) {
       setActionErr(e.message)
     } finally {
@@ -199,6 +231,11 @@ export default function ApplicationDetail() {
       await api(`/superadmin/applications/${id}/revoke`, {
         method: 'POST',
         body: { note },
+      })
+      setDecisionResult({
+        kind: 'revoked',
+        title: 'Application revoked to Pending',
+        body: `${app?.institution_name || 'The application'} is back in the pending queue.`,
       })
       const d = await api(`/superadmin/applications/${id}`)
       setApp(d)
@@ -256,6 +293,19 @@ export default function ApplicationDetail() {
 
   return (
     <SuperShell>
+      {/* Post-decision overlay. Sits above everything, auto-dismisses
+          via nav to /superadmin/applications 2 s after appearing; the
+          explicit button lets the superadmin skip the wait. Kept
+          in-page (not portal-mounted) so it inherits SuperShell's
+          layout width — a full-viewport lightbox felt too heavy for
+          "the action succeeded, going back to the list". */}
+      {decisionResult && (
+        <DecisionResultCard
+          result={decisionResult}
+          onBack={() => nav('/superadmin/applications')}
+        />
+      )}
+
       {/* HEADER: back link + status + hero card */}
       <div className="mb-4 flex items-center justify-between">
         <Link
@@ -669,4 +719,79 @@ function formatRelative(iso) {
   if (diffMin < 60) return `${Math.round(diffMin)}m ago`
   if (diffMin < 60 * 24) return `${Math.round(diffMin / 60)}h ago`
   return d.toLocaleString()
+}
+
+// Post-decision lightbox. Fixed, dimmed backdrop, centred card with
+// a big icon, the outcome headline + a one-line body, and an
+// explicit "Back to queue now" button. The parent also runs a 2 s
+// timer that navigates back automatically — this card is the
+// human-readable confirmation for that redirect.
+function DecisionResultCard({ result, onBack }) {
+  const palette = {
+    approved: {
+      bg: 'bg-emerald-50', ring: 'ring-emerald-200',
+      iconBg: 'bg-emerald-100', iconFg: 'text-emerald-700',
+      icon: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"
+             strokeLinecap="round" strokeLinejoin="round" className="h-8 w-8" aria-hidden="true">
+          <polyline points="5 12 10 17 20 7" />
+        </svg>
+      ),
+    },
+    rejected: {
+      bg: 'bg-rose-50', ring: 'ring-rose-200',
+      iconBg: 'bg-rose-100', iconFg: 'text-rose-700',
+      icon: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"
+             strokeLinecap="round" strokeLinejoin="round" className="h-8 w-8" aria-hidden="true">
+          <path d="M6 6l12 12" /><path d="M6 18L18 6" />
+        </svg>
+      ),
+    },
+    handoff: {
+      bg: 'bg-indigo-50', ring: 'ring-indigo-200',
+      iconBg: 'bg-indigo-100', iconFg: 'text-indigo-700',
+      icon: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"
+             strokeLinecap="round" strokeLinejoin="round" className="h-8 w-8" aria-hidden="true">
+          <path d="M5 12h14" /><polyline points="13 5 20 12 13 19" />
+        </svg>
+      ),
+    },
+    revoked: {
+      bg: 'bg-amber-50', ring: 'ring-amber-200',
+      iconBg: 'bg-amber-100', iconFg: 'text-amber-700',
+      icon: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"
+             strokeLinecap="round" strokeLinejoin="round" className="h-8 w-8" aria-hidden="true">
+          <path d="M3 12a9 9 0 1 0 3-6.7" /><polyline points="3 4 3 10 9 10" />
+        </svg>
+      ),
+    },
+  }[result.kind] || {
+    bg: 'bg-slate-50', ring: 'ring-slate-200',
+    iconBg: 'bg-slate-100', iconFg: 'text-slate-700',
+    icon: null,
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+      <div className={`w-full max-w-md rounded-2xl ring-1 ${palette.ring} ${palette.bg} shadow-2xl p-6 text-center`}>
+        <div className={`mx-auto h-14 w-14 rounded-full ${palette.iconBg} ${palette.iconFg} flex items-center justify-center`}>
+          {palette.icon}
+        </div>
+        <h3 className="mt-4 text-lg font-semibold text-ink-900 tracking-tight">
+          {result.title}
+        </h3>
+        <p className="mt-1 text-sm text-slate-600">{result.body}</p>
+        <p className="mt-3 text-xs text-slate-500">Returning to the applications queue…</p>
+        <button
+          type="button"
+          onClick={onBack}
+          className="mt-5 w-full rounded-lg bg-ink-900 px-4 py-2 text-sm font-semibold text-white hover:bg-ink-800 transition-colors"
+        >
+          Back to queue now
+        </button>
+      </div>
+    </div>
+  )
 }

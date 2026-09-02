@@ -536,6 +536,16 @@ func (s *Server) clientReviewerVerifications(w http.ResponseWriter, r *http.Requ
 		args = append(args, org)
 		nextParam++
 	}
+	if examID := strings.TrimSpace(q.Get("exam_id")); examID != "" {
+		// Both list + CSV queries already LEFT JOIN exam_candidates,
+		// so filtering on ec.exam_id composes trivially. Malformed
+		// values are dropped silently, same policy as from/to.
+		if n, err := strconv.ParseInt(examID, 10, 64); err == nil && n > 0 {
+			where += fmt.Sprintf(" AND ec.exam_id = $%d", nextParam)
+			args = append(args, n)
+			nextParam++
+		}
+	}
 	if from := q.Get("from"); from != "" {
 		if t, err := time.Parse("2006-01-02", from); err == nil {
 			where += fmt.Sprintf(" AND v.created_at >= $%d", nextParam)
@@ -679,6 +689,13 @@ func (s *Server) clientReviewerVerificationsCSV(w http.ResponseWriter, r *http.R
 		where += fmt.Sprintf(" AND lower(o.name) LIKE '%%' || lower($%d) || '%%'", nextParam)
 		args = append(args, org)
 		nextParam++
+	}
+	if examID := strings.TrimSpace(q.Get("exam_id")); examID != "" {
+		if n, err := strconv.ParseInt(examID, 10, 64); err == nil && n > 0 {
+			where += fmt.Sprintf(" AND ec.exam_id = $%d", nextParam)
+			args = append(args, n)
+			nextParam++
+		}
 	}
 	if from := q.Get("from"); from != "" {
 		if t, err := time.Parse("2006-01-02", from); err == nil {
