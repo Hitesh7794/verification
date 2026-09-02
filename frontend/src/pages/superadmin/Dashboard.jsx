@@ -393,8 +393,15 @@ function OrgsTable({ orgs, loaded, colourFor }) {
           </thead>
           <tbody className="divide-y divide-warm">
             {orgs.map((o) => {
-              const pct = o.total ? (o.verified / o.total) * 100 : 0
-              const pctTone = pct >= 95 ? 'text-emerald-700'
+              // A negative count means the board's Data Plane could not
+              // be reached, so the number is unknown rather than zero.
+              // Rendering 0 there would read as "nobody was verified",
+              // which is indistinguishable from a genuinely quiet
+              // institute. Same -1 sentinel the client list uses.
+              const unknown = o.total < 0
+              const pct = !unknown && o.total ? (o.verified / o.total) * 100 : 0
+              const pctTone = unknown ? 'text-stone-400'
+                           : pct >= 95 ? 'text-emerald-700'
                            : pct >= 85 ? 'text-amber-700'
                            :             'text-rose-700'
               return (
@@ -407,11 +414,13 @@ function OrgsTable({ orgs, loaded, colourFor }) {
                     </span>
                   </td>
                   <td className="px-3 py-3 font-medium text-ink-900">{o.name}</td>
-                  <td className="px-3 py-3 text-right text-stone-700 tabular-nums">{nf.format(o.total)}</td>
-                  <td className="px-3 py-3 text-right text-emerald-700 tabular-nums font-medium">{nf.format(o.verified)}</td>
-                  <td className="px-3 py-3 text-right text-rose-700 tabular-nums font-medium">{nf.format(o.denied)}</td>
+                  <td className="px-3 py-3 text-right text-stone-700 tabular-nums">{unknown ? '—' : nf.format(o.total)}</td>
+                  <td className="px-3 py-3 text-right text-emerald-700 tabular-nums font-medium">{unknown ? '—' : nf.format(o.verified)}</td>
+                  <td className="px-3 py-3 text-right text-rose-700 tabular-nums font-medium">{unknown ? '—' : nf.format(o.denied)}</td>
                   <td className="px-5 py-3 text-right tabular-nums font-semibold">
-                    <span className={pctTone}>{pct.toFixed(1)}%</span>
+                    <span className={pctTone} title={unknown ? 'Data Plane unreachable — counts unavailable' : undefined}>
+                      {unknown ? '—' : pct.toFixed(1) + '%'}
+                    </span>
                   </td>
                 </tr>
               )

@@ -232,6 +232,7 @@ func (s *Server) Router() http.Handler {
 		r.Use(s.internalAuth)
 		r.Get("/api/internal/health", s.internalHealth)
 		r.Get("/api/internal/metrics", s.internalMetrics)
+		r.Get("/api/internal/org-metrics", s.internalOrgMetrics)
 		r.Post("/api/internal/orgs/create", s.internalOrgsCreate)
 		// Mirror CP superadmin rejects so the DP's institution_applications
 		// row moves out of 'pending' — otherwise the reviewer inbox tiles

@@ -102,6 +102,11 @@ type internalMetricsResp struct {
 	Candidates         int64 `json:"candidates"`
 	VerificationsTotal int64 `json:"verifications_total"`
 	VerificationsToday int64 `json:"verifications_today"`
+	// Outcome split of VerificationsTotal. status is CHECK-constrained
+	// to exactly 'verified'|'denied', so these two always sum to
+	// VerificationsTotal and a success rate is verified/total.
+	VerificationsVerified int64 `json:"verifications_verified"`
+	VerificationsDenied   int64 `json:"verifications_denied"`
 	// Wallet flow is money-in vs money-out in paise. The Control
 	// Plane divides by 100 to display rupees, so keep the raw paise
 	// here to avoid rounding at every hop.
@@ -136,6 +141,8 @@ func (s *Server) internalMetrics(w http.ResponseWriter, r *http.Request) {
 	scan(`SELECT COUNT(*) FROM exam_candidates`, &out.Candidates)
 	scan(`SELECT COUNT(*) FROM verifications`, &out.VerificationsTotal)
 	scan(`SELECT COUNT(*) FROM verifications WHERE created_at::date = CURRENT_DATE`, &out.VerificationsToday)
+	scan(`SELECT COUNT(*) FROM verifications WHERE status = 'verified'`, &out.VerificationsVerified)
+	scan(`SELECT COUNT(*) FROM verifications WHERE status = 'denied'`, &out.VerificationsDenied)
 	scan(`SELECT COALESCE(SUM(amount_paise), 0) FROM wallet_transactions
 	       WHERE kind IN ('deposit','admin_credit') AND created_at::date = CURRENT_DATE`,
 		&out.WalletCreditPaiseToday)
@@ -955,6 +962,58 @@ func (s *Server) internalClientDomain(w http.ResponseWriter, r *http.Request) {
 	}
 	log.Printf("internalClientDomain: dp client %d domain=%q", id, domain)
 	writeJSON(w, http.StatusOK, map[string]any{"ok": true, "domain": domain})
+}
+
+// ── GET /api/internal/org-metrics ───────────────────────────────
+//
+// Per-organisation verification counts, for the Control Plane's
+// "Approved organizations" table. /internal/metrics only returns
+// deployment-wide aggregates, so the CP had no per-institute source
+// and rendered 0 for every row.
+//
+// Keyed by organizations.code rather than id: the code is derived
+// deterministically by internalOrgsCreate from CP-side data
+// ("AISHE_<aishe_code>", else "APP_EXT_<cp application id>"), so the
+// CP can compute the same key without a lookup. organizations.
+// application_id is NOT usable for this -- it is only populated when
+// the application originated on this Data Plane, so it is NULL for
+// most rows.
+
+type internalOrgMetricRow struct {
+	Code     string `json:"code"`
+	Total    int64  `json:"total"`
+	Verified int64  `json:"verified"`
+	Denied   int64  `json:"denied"`
+}
+
+func (s *Server) internalOrgMetrics(w http.ResponseWriter, r *http.Request) {
+	// COUNT(v.id), not COUNT(*): the LEFT JOIN emits one null row for an
+	// organisation with no verifications, and COUNT(*) would score that
+	// as 1. status is CHECK-constrained to verified|denied, so the two
+	// filtered counts always sum to total.
+	rows, err := s.deps.DB.QueryContext(r.Context(), `
+		SELECT o.code,
+		       COUNT(v.id)                                    AS total,
+		       COUNT(*) FILTER (WHERE v.status = 'verified')  AS verified,
+		       COUNT(*) FILTER (WHERE v.status = 'denied')    AS denied
+		  FROM organizations o
+		  LEFT JOIN verifications v ON v.org_id = o.id
+		 GROUP BY o.code`)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	out := []internalOrgMetricRow{}
+	for rows.Next() {
+		var it internalOrgMetricRow
+		if err := rows.Scan(&it.Code, &it.Total, &it.Verified, &it.Denied); err != nil {
+			continue
+		}
+		out = append(out, it)
+	}
+	writeJSON(w, http.StatusOK, out)
 }
 
 // ── GET /api/internal/documents/download?path=X ────────────────
