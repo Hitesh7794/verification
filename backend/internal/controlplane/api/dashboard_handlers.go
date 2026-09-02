@@ -27,7 +27,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -47,6 +49,8 @@ type dataPlaneMetrics struct {
 	Candidates             int64 `json:"candidates"`
 	VerificationsTotal     int64 `json:"verifications_total"`
 	VerificationsToday     int64 `json:"verifications_today"`
+	VerificationsVerified  int64 `json:"verifications_verified"`
+	VerificationsDenied    int64 `json:"verifications_denied"`
 	WalletCreditPaiseToday int64 `json:"wallet_credit_paise_today"`
 	WalletChargePaiseToday int64 `json:"wallet_charge_paise_today"`
 	ActiveOrgs24h          int64 `json:"active_orgs_24h"`
@@ -306,7 +310,14 @@ type superStatsResp struct {
 	Organizations      int64 `json:"organizations"`
 	Users              int64 `json:"users"`
 	VerificationsTotal int64 `json:"total"`
-	VerificationsToday int64 `json:"verified"`
+	// VerificationsToday used to carry the `verified` tag, so the
+	// dashboard's "Verified" figure and its success ring were really
+	// showing TODAY'S verification count against the all-time total --
+	// two different populations, which is why they never reconciled
+	// (9 verified + 0 denied against a total of 12). Denied was never
+	// assigned at all, so it read 0 permanently.
+	VerificationsToday int64 `json:"today"`
+	Verified           int64 `json:"verified"`
 	Denied             int64 `json:"denied"`
 	Exams              int64 `json:"exams"`
 	Candidates         int64 `json:"candidates"`
@@ -355,6 +366,8 @@ func (s *Server) superStatsCompat(w http.ResponseWriter, r *http.Request) {
 		out.Users += res.metrics.Users
 		out.VerificationsTotal += res.metrics.VerificationsTotal
 		out.VerificationsToday += res.metrics.VerificationsToday
+		out.Verified += res.metrics.VerificationsVerified
+		out.Denied += res.metrics.VerificationsDenied
 		out.Exams += res.metrics.Exams
 		out.Candidates += res.metrics.Candidates
 	}
@@ -387,7 +400,9 @@ func (s *Server) superOrganizationsCompat(w http.ResponseWriter, r *http.Request
 		SELECT a.id,
 		       COALESCE(NULLIF(a.aishe_code, ''), 'APP_' || a.id::text) AS code,
 		       a.institution_name AS name,
-		       a.status
+		       a.status,
+		       COALESCE(a.aishe_code, ''),
+		       COALESCE(a.target_client_id, 0)
 		  FROM institution_applications a
 		 WHERE a.status = 'approved'
 		 ORDER BY a.reviewed_at DESC NULLS LAST, a.id DESC`)
@@ -397,19 +412,155 @@ func (s *Server) superOrganizationsCompat(w http.ResponseWriter, r *http.Request
 	}
 	defer rows.Close()
 
-	out := []superOrgRow{}
+	type appRow struct {
+		row      superOrgRow
+		aishe    string
+		clientID int64
+	}
+	apps := []appRow{}
 	for rows.Next() {
-		var id int64
-		var code, name, status string
-		if err := rows.Scan(&id, &code, &name, &status); err != nil {
+		var id, clientID int64
+		var code, name, status, aishe string
+		if err := rows.Scan(&id, &code, &name, &status, &aishe, &clientID); err != nil {
 			continue
 		}
-		out = append(out, superOrgRow{
-			ID:     id,
-			Code:   code,
-			Name:   name,
-			Status: status,
+		apps = append(apps, appRow{
+			row:      superOrgRow{ID: id, Code: code, Name: name, Status: status},
+			aishe:    aishe,
+			clientID: clientID,
 		})
 	}
+
+	// Verification counts live on each board's Data Plane, never here,
+	// so fan out the same way superStatsCompat does. Without this the
+	// Total/Verified/Denied fields were never assigned and every row
+	// reported 0 regardless of activity.
+	counts, reachable := s.fetchOrgMetricsByClient(ctx)
+
+	out := make([]superOrgRow, 0, len(apps))
+	for _, a := range apps {
+		row := a.row
+		byCode, ok := counts[a.clientID]
+		if !ok || !reachable[a.clientID] {
+			// Board unreachable (or the application is not routed to
+			// one). Report -1 = unknown rather than 0, which would be
+			// indistinguishable from a real "nobody verified anyone".
+			// Same sentinel the client list uses for ExamCount.
+			row.Total, row.Verified, row.Denied = -1, -1, -1
+			out = append(out, row)
+			continue
+		}
+		if c, found := byCode[dpOrgCode(a.aishe, a.row.ID)]; found {
+			row.Total, row.Verified, row.Denied = c.Total, c.Verified, c.Denied
+		}
+		out = append(out, row)
+	}
 	writeJSON(w, http.StatusOK, out)
+}
+
+// dpOrgCode rebuilds the organizations.code a Data Plane derives when
+// it provisions an approved institute (see internalOrgsCreate on the
+// DP): "AISHE_<aishe_code>" when one was supplied, else
+// "APP_EXT_<control-plane application id>". Keeping the two in step is
+// what lets the CP join to DP counts without storing a mapping.
+func dpOrgCode(aisheCode string, appID int64) string {
+	if t := strings.TrimSpace(aisheCode); t != "" {
+		return "AISHE_" + t
+	}
+	return "APP_EXT_" + strconv.FormatInt(appID, 10)
+}
+
+// fetchOrgMetricsByClient calls /api/internal/org-metrics on every
+// active board in parallel. Returns counts keyed by client id then org
+// code, plus a per-client reachability flag so the caller can tell
+// "zero verifications" apart from "could not ask".
+func (s *Server) fetchOrgMetricsByClient(ctx context.Context) (map[int64]map[string]dataPlaneOrgMetric, map[int64]bool) {
+	counts := map[int64]map[string]dataPlaneOrgMetric{}
+	reachable := map[int64]bool{}
+
+	rows, err := s.deps.DB.QueryContext(ctx, `
+		SELECT id, api_url, api_key
+		  FROM clients_registry
+		 WHERE status IN ('active','ready')`)
+	if err != nil {
+		return counts, reachable
+	}
+	type target struct {
+		id             int64
+		apiURL, apiKey string
+	}
+	var targets []target
+	for rows.Next() {
+		var t target
+		if err := rows.Scan(&t.id, &t.apiURL, &t.apiKey); err == nil {
+			targets = append(targets, t)
+		}
+	}
+	rows.Close()
+
+	timeout := time.Duration(s.deps.Cfg.FederatedTimeoutMS) * time.Millisecond
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+
+	var (
+		mu sync.Mutex
+		wg sync.WaitGroup
+	)
+	for _, t := range targets {
+		wg.Add(1)
+		go func(t target) {
+			defer wg.Done()
+			list, err := fetchOneDataPlaneOrgMetrics(ctx, t.apiURL, t.apiKey, timeout)
+			mu.Lock()
+			defer mu.Unlock()
+			if err != nil {
+				log.Printf("superOrganizations: client %d org-metrics failed: %v", t.id, err)
+				return
+			}
+			byCode := make(map[string]dataPlaneOrgMetric, len(list))
+			for _, m := range list {
+				byCode[m.Code] = m
+			}
+			counts[t.id] = byCode
+			reachable[t.id] = true
+		}(t)
+	}
+	wg.Wait()
+	return counts, reachable
+}
+
+type dataPlaneOrgMetric struct {
+	Code     string `json:"code"`
+	Total    int64  `json:"total"`
+	Verified int64  `json:"verified"`
+	Denied   int64  `json:"denied"`
+}
+
+func fetchOneDataPlaneOrgMetrics(parent context.Context, apiURL, apiKey string, timeout time.Duration) ([]dataPlaneOrgMetric, error) {
+	ctx, cancel := context.WithTimeout(parent, timeout)
+	defer cancel()
+
+	u := strings.TrimRight(apiURL, "/") + "/api/internal/org-metrics"
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, u, nil)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("X-Internal-API-Key", apiKey)
+	req.Header.Set("User-Agent", "verification-control-plane/1.0")
+
+	resp, err := (&http.Client{Timeout: timeout}).Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("%s", humanizeFetchError(err, timeout))
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 512))
+		return nil, fmt.Errorf("HTTP %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	var out []dataPlaneOrgMetric
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, fmt.Errorf("bad json: %w", err)
+	}
+	return out, nil
 }
