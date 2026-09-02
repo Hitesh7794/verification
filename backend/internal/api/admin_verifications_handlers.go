@@ -47,6 +47,16 @@ func (s *Server) buildVerificationFilters(r *http.Request) (string, []any) {
 		where += " AND v.status = ?"
 		args = append(args, status)
 	}
+	if examID := strings.TrimSpace(q.Get("exam_id")); examID != "" {
+		if n, err := strconv.ParseInt(examID, 10, 64); err == nil && n > 0 {
+			// Filter on the JOINed exam_candidates row. Both the list
+			// and CSV queries already LEFT JOIN exam_candidates → exams,
+			// so this predicate is trivially composable. A malformed
+			// exam_id is dropped silently (same policy as `from`/`to`).
+			where += " AND ec.exam_id = ?"
+			args = append(args, n)
+		}
+	}
 	if from := q.Get("from"); from != "" {
 		// Parse as YYYY-MM-DD; reject anything else silently so a
 		// malformed query doesn't crash the page.

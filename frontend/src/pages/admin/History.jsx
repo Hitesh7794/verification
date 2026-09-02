@@ -42,9 +42,15 @@ export default function AdminHistory() {
   const [filters, setFilters] = useState({
     roll: '',
     status: '',
+    exam_id: '',
     from: '',
     to: '',
   })
+  // Flat exam list for the dropdown. Populated once from /admin/catalog
+  // (reuses the endpoint the Verify page already hits). Every exam this
+  // org has approved access to appears here, tagged with its client so
+  // an admin subscribed to multiple boards can disambiguate.
+  const [exams, setExams] = useState([])
   // appliedFilters is what the table actually shows; we keep the form
   // state separate so typing in the input doesn't refire requests on
   // every keystroke.
@@ -84,18 +90,47 @@ export default function AdminHistory() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appliedFilters])
 
+  // One-shot catalog fetch for the exam dropdown. Failures are silent —
+  // the filter just stays limited to Roll / Status / Date until the
+  // catalog call recovers on next reload. No point blocking the whole
+  // history view on it.
+  useEffect(() => {
+    (async () => {
+      try {
+        const cat = await api('/admin/catalog')
+        const flat = []
+        for (const c of (cat.clients || [])) {
+          for (const e of (c.exams || [])) {
+            if (!e || !e.id) continue
+            flat.push({
+              id: e.id,
+              label: `${e.name || e.exam_code} — ${c.name}`,
+            })
+          }
+        }
+        // Alpha sort so a long list of exams reads left to right by
+        // exam name, not creation order.
+        flat.sort((a, b) => a.label.localeCompare(b.label))
+        setExams(flat)
+      } catch {
+        // silent — dropdown just stays empty
+      }
+    })()
+  }, [])
+
   function applyFilters(e) {
     e?.preventDefault()
     setAppliedFilters({
       roll: filters.roll.trim(),
       status: filters.status,
+      exam_id: filters.exam_id,
       from: filters.from,
       to: filters.to,
     })
   }
 
   function clearFilters() {
-    setFilters({ roll: '', status: '', from: '', to: '' })
+    setFilters({ roll: '', status: '', exam_id: '', from: '', to: '' })
     setAppliedFilters({})
   }
 
@@ -108,6 +143,7 @@ export default function AdminHistory() {
     const next = {
       roll: filters.roll,
       status: filters.status,
+      exam_id: filters.exam_id,
       from: daysAgoISO(days - 1),
       to: todayISO(),
     }
@@ -156,7 +192,7 @@ export default function AdminHistory() {
       />
       <Card className="mb-6">
         <CardBody>
-          <form onSubmit={applyFilters} className="grid gap-3 sm:grid-cols-4">
+          <form onSubmit={applyFilters} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <div>
               <Label>Roll number</Label>
               <Input
@@ -178,10 +214,27 @@ export default function AdminHistory() {
               </select>
             </div>
             <div>
+              <Label>Exam</Label>
+              <select
+                value={filters.exam_id}
+                onChange={(e) => setFilters({ ...filters, exam_id: e.target.value })}
+                className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
+              >
+                <option value="">All exams</option>
+                {exams.map((ex) => (
+                  <option key={ex.id} value={ex.id}>{ex.label}</option>
+                ))}
+              </select>
+            </div>
+            <div>
               <Label>From</Label>
               <Input
                 type="date"
                 value={filters.from}
+                // Cap at To (or today if To not set) so the picker
+                // never lets From land after To. Prevents the inverted
+                // range that returns zero rows and looks like a bug.
+                max={filters.to || todayISO()}
                 onChange={(e) => setFilters({ ...filters, from: e.target.value })}
               />
             </div>
@@ -190,10 +243,14 @@ export default function AdminHistory() {
               <Input
                 type="date"
                 value={filters.to}
+                // Floor at From so To can never be earlier. Ceiling at
+                // today — future dates always return zero rows.
+                min={filters.from || undefined}
+                max={todayISO()}
                 onChange={(e) => setFilters({ ...filters, to: e.target.value })}
               />
             </div>
-            <div className="sm:col-span-4 flex flex-wrap items-center gap-2 pt-1">
+            <div className="sm:col-span-2 lg:col-span-5 flex flex-wrap items-center gap-2 pt-1">
               <Button type="submit">Apply</Button>
               <Button type="button" variant="secondary" onClick={clearFilters}>Clear</Button>
               <span className="ml-2 text-xs text-slate-500">Quick:</span>

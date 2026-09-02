@@ -16,7 +16,7 @@ import FingerprintCapture from '../../components/verify/FingerprintCapture.jsx'
 import IrisCapture from '../../components/verify/IrisCapture.jsx'
 import LivenessPanel from '../../components/verify/LivenessPanel.jsx'
 import ExamWindowReminderModal from '../../components/verify/ExamWindowReminderModal.jsx'
-import { api, fetchFPTemplate, fetchPhotoBlob, isWalletEmptyError, getCandidateAttempts, downloadVerificationPDF, previewVerificationPDF, printVerificationPDF, postFaceMatch, getCurrentExamId, setCurrentExamId } from '../../lib/api.js'
+import { api, fetchFPTemplate, fetchPhotoBlob, isWalletEmptyError, getCandidateAttempts, downloadVerificationPDF, printVerificationPDF, postFaceMatch, getCurrentExamId, setCurrentExamId } from '../../lib/api.js'
 import { getWalletSummary, formatRupees } from '../../lib/wallet/wallet.js'
 import { formatDateTime } from '../../lib/dates.js'
 
@@ -1001,9 +1001,16 @@ export default function ClientDashboard() {
                   stage jumped in early), we fall back to the single
                   enrolled tile that was here before. */}
               {snap ? (
-                <div className="grid grid-cols-2 gap-2 mb-3">
+                // Side-by-side, but with a PORTRAIT (3:4) aspect ratio
+                // per tile so the head fits without object-cover
+                // chopping the top and bottom off the enrolled photo.
+                // Passport-style enrolled photos and the liveness burst
+                // frame are both taller than wide; a landscape 4:3 tile
+                // was cropping the crown of the head and the chin.
+                // gap-1.5 (6 px) claws back a bit more per-tile width.
+                <div className="grid grid-cols-2 gap-1.5 mb-3">
                   <div>
-                    <div className="aspect-[4/3] w-full rounded-lg bg-slate-100 overflow-hidden">
+                    <div className="aspect-[3/4] w-full rounded-lg bg-slate-100 overflow-hidden">
                       {photoBlob ? (
                         <img src={photoBlob} alt="enrolled" className="w-full h-full object-cover" />
                       ) : (
@@ -1017,7 +1024,7 @@ export default function ClientDashboard() {
                     </div>
                   </div>
                   <div>
-                    <div className="aspect-[4/3] w-full rounded-lg bg-slate-100 overflow-hidden">
+                    <div className="aspect-[3/4] w-full rounded-lg bg-slate-100 overflow-hidden">
                       <img src={snap} alt="captured" className="w-full h-full object-cover" />
                     </div>
                     <div className="mt-1 text-[10px] uppercase tracking-wide text-slate-500 text-center">
@@ -1165,12 +1172,6 @@ export default function ClientDashboard() {
                         <Button onClick={reset}>Start next verification</Button>
                         {verificationId && (
                           <>
-                            <Button
-                              variant="secondary"
-                              onClick={() => previewVerificationPDF(verificationId)}
-                            >
-                              Preview PDF
-                            </Button>
                             <Button
                               variant="secondary"
                               onClick={() => printVerificationPDF(verificationId)}

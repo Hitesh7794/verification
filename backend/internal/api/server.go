@@ -261,6 +261,11 @@ func (s *Server) Router() http.Handler {
 		// reviewer's inbox growth is announced by email even when
 		// the CP itself has no SMTP wired.
 		r.Post("/api/internal/reviewers/notify", s.internalReviewersNotify)
+
+		// KYC decision notification. Fired by the CP after any TERMINAL
+		// approve/reject on institution_applications so the applicant's
+		// head_email hears back. See internalKYCNotifyDecision.
+		r.Post("/api/internal/kyc/notify-decision", s.internalKYCNotifyDecision)
 	})
 
 	r.Group(func(r chi.Router) {

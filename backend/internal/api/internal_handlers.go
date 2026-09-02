@@ -1555,3 +1555,152 @@ func (s *Server) internalReviewersNotify(w http.ResponseWriter, r *http.Request)
 	s.notifyClientReviewersOfNewApp(r, req.ClientID, req.InstitutionName, req.HeadName)
 	writeJSON(w, http.StatusOK, map[string]any{"queued": true})
 }
+
+// ── POST /api/internal/kyc/notify-decision ────────────────────────
+//
+// Server-to-server hook the Control Plane calls after any TERMINAL
+// approve/reject on an institution_applications row so the applicant
+// (head_email on the application) hears back. Kept applicant-scoped:
+// the DP looks nothing up locally beyond building a login URL — the
+// CP is authoritative on the decision + note text.
+//
+// The CP calls this in a goroutine; failures on this side are logged
+// but never fail the CP's decision. Do NOT call this from the
+// 'both'-mode hand-off (superadmin → client reviewer): that is not a
+// terminal decision, and firing it there would email the applicant
+// twice for one final answer.
+type internalKYCNotifyDecisionReq struct {
+	HeadEmail       string `json:"head_email"`
+	HeadName        string `json:"head_name"`
+	InstitutionName string `json:"institution_name"`
+	Decision        string `json:"decision"` // "approved" | "rejected"
+	Note            string `json:"note,omitempty"`
+	// LoginURL is optional; when omitted the DP builds one the same
+	// way buildReviewerLoginURL does — PublicBaseURL, X-Forwarded-Host,
+	// then r.Host.
+	LoginURL string `json:"login_url,omitempty"`
+}
+
+func (s *Server) internalKYCNotifyDecision(w http.ResponseWriter, r *http.Request) {
+	r.Body = http.MaxBytesReader(w, r.Body, 8<<10)
+	var req internalKYCNotifyDecisionReq
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
+		return
+	}
+	req.HeadEmail = strings.TrimSpace(req.HeadEmail)
+	req.Decision = strings.TrimSpace(strings.ToLower(req.Decision))
+	if req.HeadEmail == "" {
+		writeErr(w, http.StatusBadRequest, "head_email required")
+		return
+	}
+	if req.Decision != "approved" && req.Decision != "rejected" {
+		writeErr(w, http.StatusBadRequest, "decision must be 'approved' or 'rejected'")
+		return
+	}
+	if s.emailer == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"sent": 0, "reason": "email disabled"})
+		return
+	}
+	loginURL := req.LoginURL
+	if loginURL == "" {
+		loginURL = s.buildAdminLoginURL(r)
+	}
+	subject := kycDecisionSubject(req.Decision, req.InstitutionName)
+	body := buildKYCDecisionEmail(req.Decision, req.HeadName, req.InstitutionName, req.Note, loginURL)
+	// Send in a goroutine so a slow SMTP round-trip doesn't hold the
+	// CP call. Copy everything we need first — r is not safe to touch
+	// after this handler returns.
+	toCopy := req.HeadEmail
+	go func() {
+		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+		defer cancel()
+		if err := s.emailer.Send(ctx, email.Message{
+			To:      toCopy,
+			Subject: subject,
+			Body:    body,
+		}); err != nil {
+			log.Printf("internalKYCNotifyDecision: email to %s failed: %v", toCopy, err)
+		}
+	}()
+	writeJSON(w, http.StatusOK, map[string]any{"queued": true})
+}
+
+func kycDecisionSubject(decision, inst string) string {
+	inst = strings.TrimSpace(inst)
+	if inst == "" {
+		inst = "your institution"
+	}
+	if decision == "approved" {
+		return fmt.Sprintf("Your registration has been approved — %s", inst)
+	}
+	return fmt.Sprintf("Your registration was not approved — %s", inst)
+}
+
+// buildKYCDecisionEmail renders the plain-text body sent to the
+// applicant after a terminal KYC decision. The reviewer's note is
+// included verbatim on rejection (that's the whole point — the
+// applicant needs to know what to fix) and only when non-empty on
+// approval (approve notes are optional and rarely used).
+func buildKYCDecisionEmail(decision, headName, inst, note, loginURL string) string {
+	name := strings.TrimSpace(headName)
+	if name == "" {
+		name = "there"
+	}
+	inst = strings.TrimSpace(inst)
+	if inst == "" {
+		inst = "your institution"
+	}
+	note = strings.TrimSpace(note)
+	if decision == "approved" {
+		noteBlock := ""
+		if note != "" {
+			noteBlock = fmt.Sprintf("Reviewer note:\n%s\n\n", note)
+		}
+		return fmt.Sprintf(`Hi %s,
+
+Your registration for %s has been approved. Full portal access is now unlocked for your admin account.
+
+%sIf you haven't set your password yet, follow the activation link we emailed at registration time. You can sign in here:
+
+  %s
+
+— The Verification Portal team
+`, name, inst, noteBlock, loginURL)
+	}
+	// rejected
+	noteBlock := ""
+	if note != "" {
+		noteBlock = fmt.Sprintf("Reviewer note:\n%s\n\n", note)
+	}
+	return fmt.Sprintf(`Hi %s,
+
+Your registration for %s was not approved at this time.
+
+%sYou may submit a fresh application with the updated information whenever you're ready.
+
+— The Verification Portal team
+`, name, inst, noteBlock)
+}
+
+// buildAdminLoginURL — the URL an approved applicant clicks to sign
+// in as their org's admin. Same base-URL logic as
+// buildReviewerLoginURL: PublicBaseURL, X-Forwarded-Host, then Host.
+func (s *Server) buildAdminLoginURL(r *http.Request) string {
+	const path = "/admin/login"
+	if base := s.deps.Cfg.PublicBaseURL; base != "" {
+		return strings.TrimRight(base, "/") + path
+	}
+	if fwdHost := r.Header.Get("X-Forwarded-Host"); fwdHost != "" {
+		scheme := r.Header.Get("X-Forwarded-Proto")
+		if scheme == "" {
+			scheme = "https"
+		}
+		return scheme + "://" + fwdHost + path
+	}
+	scheme := "http"
+	if r.TLS != nil {
+		scheme = "https"
+	}
+	return scheme + "://" + r.Host + path
+}

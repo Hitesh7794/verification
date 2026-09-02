@@ -1115,6 +1115,16 @@ func (s *Server) cpReviewerApprove(w http.ResponseWriter, r *http.Request) {
 		resp.MagicLinkURL = provResp.MagicLinkURL
 	}
 
+	// Applicant-facing "your KYC was approved" email. Terminal path
+	// (client reviewer's approve is always the final answer on the
+	// client-side surface — both mode='client' and the post-handoff
+	// mode='both' reach this handler). Fire once, in a goroutine.
+	go func(registryID int64, hEmail, hName, iName, n string) {
+		if err := s.fireInternalKYCDecisionNotify(context.Background(), registryID, hEmail, hName, iName, "approved", n); err != nil {
+			log.Printf("cpReviewerApprove: KYC decision notify (app=%d) failed: %v", id, err)
+		}
+	}(clientID, headEmail, headName, instName, note)
+
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -1139,7 +1149,11 @@ func (s *Server) cpReviewerReject(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	res, err := s.deps.DB.ExecContext(r.Context(), `
+	// UPDATE ... RETURNING pulls the applicant fields atomically so we
+	// can email them after commit without a second read. Guarded by
+	// status='pending' + target_client_id scope, same as before.
+	var headEmail, headName, instName string
+	err = s.deps.DB.QueryRowContext(r.Context(), `
 		UPDATE institution_applications
 		   SET status           = 'rejected',
 		       pending_reviewer = NULL,
@@ -1147,16 +1161,25 @@ func (s *Server) cpReviewerReject(w http.ResponseWriter, r *http.Request) {
 		       review_note      = $3,
 		       reviewed_at      = NOW(),
 		       updated_at       = NOW()
-		 WHERE id = $1 AND target_client_id = $2 AND status = 'pending'`,
+		 WHERE id = $1 AND target_client_id = $2 AND status = 'pending'
+		 RETURNING head_email, head_name, institution_name`,
 		id, clientID, note,
-	)
+	).Scan(&headEmail, &headName, &instName)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeErr(w, http.StatusConflict, "application not found or not pending")
+		return
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "update: "+err.Error())
 		return
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		writeErr(w, http.StatusConflict, "application not found or not pending")
-		return
+	// Applicant-facing "your KYC was rejected" email. Terminal path.
+	if headEmail != "" {
+		go func(registryID int64, hEmail, hName, iName, n string) {
+			if err := s.fireInternalKYCDecisionNotify(context.Background(), registryID, hEmail, hName, iName, "rejected", n); err != nil {
+				log.Printf("cpReviewerReject: KYC decision notify (app=%d) failed: %v", id, err)
+			}
+		}(clientID, headEmail, headName, instName, note)
 	}
 	writeJSON(w, http.StatusOK, map[string]any{
 		"application_id": id,
@@ -1272,8 +1295,14 @@ func (s *Server) cpReviewerBulkAction(w http.ResponseWriter, r *http.Request, is
 // rejectOneApplication applies the same UPDATE that cpReviewerReject
 // runs, scoped to the caller's client. Returns "" on success or a
 // human-readable error message (empty string means OK).
+//
+// Also fires the applicant-facing "your KYC was rejected" email in a
+// goroutine after the row flips — bulk-reject inherits this because
+// cpReviewerBulkAction loops through this helper. UPDATE ... RETURNING
+// pulls the head fields inline so we don't need a second read.
 func (s *Server) rejectOneApplication(ctx context.Context, id, clientID int64, note string) string {
-	res, err := s.deps.DB.ExecContext(ctx, `
+	var headEmail, headName, instName string
+	err := s.deps.DB.QueryRowContext(ctx, `
 		UPDATE institution_applications
 		   SET status           = 'rejected',
 		       pending_reviewer = NULL,
@@ -1281,14 +1310,22 @@ func (s *Server) rejectOneApplication(ctx context.Context, id, clientID int64, n
 		       review_note      = $3,
 		       reviewed_at      = NOW(),
 		       updated_at       = NOW()
-		 WHERE id = $1 AND target_client_id = $2 AND status = 'pending'`,
+		 WHERE id = $1 AND target_client_id = $2 AND status = 'pending'
+		 RETURNING head_email, head_name, institution_name`,
 		id, clientID, note,
-	)
+	).Scan(&headEmail, &headName, &instName)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "not found or not pending"
+	}
 	if err != nil {
 		return "db update failed: " + err.Error()
 	}
-	if n, _ := res.RowsAffected(); n == 0 {
-		return "not found or not pending"
+	if headEmail != "" {
+		go func(registryID int64, hEmail, hName, iName, n string) {
+			if err := s.fireInternalKYCDecisionNotify(context.Background(), registryID, hEmail, hName, iName, "rejected", n); err != nil {
+				log.Printf("rejectOneApplication: KYC decision notify (app=%d) failed: %v", id, err)
+			}
+		}(clientID, headEmail, headName, instName, note)
 	}
 	return ""
 }
@@ -1365,6 +1402,17 @@ func (s *Server) approveOneApplication(parent context.Context, id, clientID int6
 	orgID := int64(0)
 	if provResp != nil {
 		orgID = provResp.OrgID
+	}
+	// Applicant-facing "your KYC was approved" email. Fires per-row
+	// out of the bulk loop the same way the single-item cpReviewerApprove
+	// path does. Best-effort goroutine — a failed notify does not
+	// change the row's approved state.
+	if headEmail != "" {
+		go func(registryID int64, hEmail, hName, iName, n string) {
+			if err := s.fireInternalKYCDecisionNotify(context.Background(), registryID, hEmail, hName, iName, "approved", n); err != nil {
+				log.Printf("approveOneApplication: KYC decision notify (app=%d) failed: %v", id, err)
+			}
+		}(clientID, headEmail, headName, instName, note)
 	}
 	return orgID, "", ""
 }
@@ -1778,6 +1826,84 @@ func (s *Server) fireInternalReviewersNotifyForClient(parent context.Context, re
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		bodyStr, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
 		return fmt.Errorf("dp returned %d: %s", resp.StatusCode, strings.TrimSpace(string(bodyStr)))
+	}
+	return nil
+}
+
+// fireInternalKYCDecisionNotify — CP-side helper that calls the DP's
+// /api/internal/kyc/notify-decision so the applicant's head_email
+// receives an approved/rejected email after every TERMINAL decision.
+//
+// Fired from every terminal decision path: superadminApplicationApprove
+// (mode='admin'), superadminApplicationReject, cpReviewerApprove,
+// cpReviewerReject, approveOneApplication (bulk), rejectOneApplication
+// (bulk). NOT fired from the 'both'-mode hand-off in
+// superadminApplicationApprove — that's an intermediate route change,
+// not the final answer, so firing it there would email the applicant
+// twice for one final decision.
+//
+// Best-effort: caller fires in a goroutine, logs on error, and does
+// NOT roll back the decision if the notify fails. The applicant can
+// always see their status from the portal.
+//
+// registryID is the CP's clients_registry.id — used only to pick the
+// DP's api_url + api_key. No dp_client_id is needed here because the
+// email is addressed to the applicant, not a DP-side user record.
+func (s *Server) fireInternalKYCDecisionNotify(parent context.Context, registryID int64, headEmail, headName, institutionName, decision, note string) error {
+	if registryID <= 0 {
+		return fmt.Errorf("registryID required")
+	}
+	headEmail = strings.TrimSpace(headEmail)
+	if headEmail == "" {
+		return fmt.Errorf("head_email required")
+	}
+	if decision != "approved" && decision != "rejected" {
+		return fmt.Errorf("bad decision %q", decision)
+	}
+	var (
+		apiURL string
+		apiKey string
+		status string
+	)
+	err := s.deps.DB.QueryRowContext(parent,
+		`SELECT api_url, api_key, status FROM clients_registry WHERE id = $1`, registryID,
+	).Scan(&apiURL, &apiKey, &status)
+	if err != nil {
+		return fmt.Errorf("registry lookup: %w", err)
+	}
+	if status != "active" && status != "ready" {
+		return fmt.Errorf("target client is %s", status)
+	}
+	body, _ := json.Marshal(map[string]any{
+		"head_email":       headEmail,
+		"head_name":        headName,
+		"institution_name": institutionName,
+		"decision":         decision,
+		"note":             note,
+	})
+	timeout := time.Duration(s.deps.Cfg.FederatedTimeoutMS) * time.Millisecond
+	if timeout <= 0 {
+		timeout = 3 * time.Second
+	}
+	ctx, cancel := context.WithTimeout(parent, timeout+2*time.Second)
+	defer cancel()
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost,
+		strings.TrimRight(apiURL, "/")+"/api/internal/kyc/notify-decision",
+		bytes.NewReader(body),
+	)
+	if err != nil {
+		return fmt.Errorf("build request: %w", err)
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("X-Internal-API-Key", apiKey)
+	resp, err := (&http.Client{Timeout: timeout}).Do(req)
+	if err != nil {
+		return fmt.Errorf("http: %w", err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		bs, _ := io.ReadAll(io.LimitReader(resp.Body, 4<<10))
+		return fmt.Errorf("dp returned %d: %s", resp.StatusCode, strings.TrimSpace(string(bs)))
 	}
 	return nil
 }

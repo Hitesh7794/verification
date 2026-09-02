@@ -191,6 +191,10 @@ export default function ReviewerHistory() {
               <Input
                 type="date"
                 value={filters.from}
+                // Cap at To (or today when To empty) so From can't
+                // land after To — blocks the inverted range that
+                // returns zero rows and reads as broken.
+                max={filters.to || todayISO()}
                 onChange={(e) => setFilters({ ...filters, from: e.target.value })}
               />
             </div>
@@ -199,6 +203,9 @@ export default function ReviewerHistory() {
               <Input
                 type="date"
                 value={filters.to}
+                // Floor at From, ceiling at today.
+                min={filters.from || undefined}
+                max={todayISO()}
                 onChange={(e) => setFilters({ ...filters, to: e.target.value })}
               />
             </div>

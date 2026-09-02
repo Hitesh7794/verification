@@ -509,6 +509,16 @@ func (s *Server) superadminApplicationApprove(w http.ResponseWriter, r *http.Req
 		resp.MagicLinkURL = provResp.MagicLinkURL
 	}
 
+	// Applicant-facing "your KYC was approved" email. Fire only on
+	// terminal decisions — this branch is mode='admin' or unknown, so
+	// this IS the final answer. The 'both'-mode branch above is a
+	// hand-off (not terminal) and deliberately doesn't call this.
+	go func(registryID int64, hEmail, hName, iName, n string) {
+		if err := s.fireInternalKYCDecisionNotify(context.Background(), registryID, hEmail, hName, iName, "approved", n); err != nil {
+			log.Printf("superadminApplicationApprove: KYC decision notify (app=%d) failed: %v", id, err)
+		}
+	}(targetClientID.Int64, headEmail, headName, instName, note)
+
 	writeJSON(w, http.StatusOK, resp)
 }
 
@@ -541,8 +551,10 @@ func (s *Server) superadminApplicationReject(w http.ResponseWriter, r *http.Requ
 	// row id) atomically; if the row wasn't in a rejectable state, we
 	// get zero rows and 409 like before.
 	var (
-		targetClientID  sql.NullInt64
-		externalAppID   sql.NullInt64
+		targetClientID        sql.NullInt64
+		externalAppID         sql.NullInt64
+		headEmail, headName   string
+		instName              string
 	)
 	err = s.deps.DB.QueryRowContext(r.Context(), `
 		UPDATE institution_applications
@@ -553,9 +565,10 @@ func (s *Server) superadminApplicationReject(w http.ResponseWriter, r *http.Requ
 		       reviewed_at      = NOW(),
 		       updated_at       = NOW()
 		 WHERE id = $1 AND status = 'pending'
-		 RETURNING target_client_id, external_application_id`,
+		 RETURNING target_client_id, external_application_id,
+		           head_email, head_name, institution_name`,
 		id, note,
-	).Scan(&targetClientID, &externalAppID)
+	).Scan(&targetClientID, &externalAppID, &headEmail, &headName, &instName)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeErr(w, http.StatusConflict, "application not found or not pending")
 		return
@@ -582,6 +595,17 @@ func (s *Server) superadminApplicationReject(w http.ResponseWriter, r *http.Requ
 			log.Printf("cp superadmin reject app=%d: DP mirror failed: %v", id, ferr)
 			resp["mirror_error"] = ferr.Error()
 		}
+	}
+	// Applicant-facing "your KYC was rejected" email. Terminal path;
+	// safe to fire unconditionally after the UPDATE succeeded. Skipped
+	// only when the row was never assigned to a DP (no registry to
+	// route the email through).
+	if targetClientID.Valid && headEmail != "" {
+		go func(registryID int64, hEmail, hName, iName, n string) {
+			if err := s.fireInternalKYCDecisionNotify(context.Background(), registryID, hEmail, hName, iName, "rejected", n); err != nil {
+				log.Printf("superadminApplicationReject: KYC decision notify (app=%d) failed: %v", id, err)
+			}
+		}(targetClientID.Int64, headEmail, headName, instName, note)
 	}
 	writeJSON(w, http.StatusOK, resp)
 }
