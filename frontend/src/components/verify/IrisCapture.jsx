@@ -148,15 +148,37 @@ export default function IrisCapture({
     <div className="space-y-3">
       <Banner status={status} device={device} error={error} />
 
-      {result?.leftBmp && (
-        <div className="rounded-lg bg-slate-100 overflow-hidden flex items-center justify-center aspect-video">
+      {/* Preview + prompt area — same shape as FingerprintCapture's
+          dashed placeholder so the two capture cards read as one visual
+          family. Gives the operator a target zone even before capture
+          starts ("look at the iris device"), morphs into a spinner
+          during capture, and lands the captured BMP inline afterwards.
+          max-w-xs mx-auto keeps the tile a comfortable size on wide
+          layouts and doesn't fight the containing card's padding. */}
+      <div className="aspect-square w-full max-w-xs mx-auto rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 flex flex-col items-center justify-center text-center p-6">
+        {result?.leftBmp ? (
           <img
             src={`data:image/bmp;base64,${result.leftBmp}`}
             alt="captured iris"
-            className="max-h-64 object-contain"
+            className="w-full h-full object-contain"
           />
-        </div>
-      )}
+        ) : busy || status === 'capturing' ? (
+          <>
+            <div className="h-12 w-12 rounded-full border-4 border-indigo-200 border-t-indigo-600 animate-spin" />
+            <p className="mt-3 text-sm text-slate-600">Look at the iris device…</p>
+          </>
+        ) : status === 'ready' ? (
+          <>
+            <p className="text-sm font-medium text-slate-700">Device ready</p>
+            <p className="text-xs text-slate-500 mt-1">
+              {device?.model || ''}
+              {device?.serial ? ` · ${device.serial}` : ''}
+            </p>
+          </>
+        ) : (
+          <p className="text-sm text-slate-500">Waiting for iris device…</p>
+        )}
+      </div>
 
       {result && <ResultSummary r={result} />}
 

@@ -1,5 +1,6 @@
 import { Navigate, Route, Routes } from 'react-router-dom'
 import { useAuth } from './lib/auth.jsx'
+import ClientBackGuard from './components/shell/ClientBackGuard.jsx'
 
 import ClientLogin from './pages/client/Login.jsx'
 import ClientDashboard from './pages/client/Dashboard.jsx'
@@ -82,6 +83,20 @@ function RequireRole({ role, children }) {
 const includes = (...modes) => modes.includes(MODE) || MODE === 'all'
 
 export default function App() {
+  return (
+    <>
+      {/* Global browser-back guard for verification-agent sessions.
+          Sits outside <Routes> so its dialog state survives every
+          Router transition — the earlier AppShell-scoped guard was
+          flaky because AppShell unmounts on route changes and the
+          dialog state died with it. */}
+      <ClientBackGuard />
+      <RoutesTree />
+    </>
+  )
+}
+
+function RoutesTree() {
   return (
     <Routes>
       {/* Root: no landing page — send visitors straight to the admin

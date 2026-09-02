@@ -186,7 +186,7 @@ export default function ExamDetail() {
     <SuperShell>
       <FadeIn>
         <div className="mb-2">
-          <Link to={`/superadmin/clients/${exam.client_id}`} className="text-xs text-slate-500 hover:text-slate-700">
+          <Link to={`/superadmin/clients/${exam.cp_client_id ?? exam.client_id}`} className="text-xs text-slate-500 hover:text-slate-700">
             ← {exam.client_name}
           </Link>
         </div>

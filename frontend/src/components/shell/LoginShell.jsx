@@ -178,6 +178,12 @@ export default function LoginShell({
                         setForgotErr('')
                         setForgotSent(false)
                       }}
+                      // Drop out of the tab sequence so Tab from
+                      // Username lands on Password, not this link.
+                      // Users still reach it by click — the intended
+                      // flow anyway; keyboard-only users get the
+                      // password field on the very next keystroke.
+                      tabIndex={-1}
                       className="text-xs font-medium text-amber-800 hover:text-amber-900 hover:underline"
                     >
                       Forgot password?

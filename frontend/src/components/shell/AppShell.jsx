@@ -22,9 +22,23 @@ export default function AppShell({ children, walletRefreshKey, onWalletBalanceCh
 
   function handleLogout() {
     const role = user?.role
+    // Wipe the in-flight verification state on explicit sign-out.
+    // Refresh + reconnect paths still rehydrate from this key (that's
+    // the whole point of persisting it), so a mid-flow reload still
+    // resumes — but sign-out now genuinely resets the operator to
+    // Step 1, so the next login doesn't drop them mid-fingerprint.
+    // Key name mirrors Dashboard.jsx's STATE_KEY constant.
+    try { sessionStorage.removeItem('nv_verify_state_v1') } catch (_) {}
     logout()
     nav(`/${role || ''}/login`)
   }
+
+  // Browser-back guard for verification-agent sessions lives in
+  // <ClientBackGuard /> at App root (see App.jsx) — that survives
+  // Router transitions, which AppShell doesn't. Do NOT reintroduce
+  // a per-AppShell popstate handler here; it stops working the
+  // instant AppShell unmounts, which is exactly what happens when
+  // Router transitions to a route below the guard entry.
 
   // Wallet widget renders for admin role only — wallets are owned by
   // the institution (org-level) and managed by its admin. Operators

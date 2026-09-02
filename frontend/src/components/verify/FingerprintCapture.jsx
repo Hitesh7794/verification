@@ -233,21 +233,10 @@ function bannerFor(status, device, error) {
 }
 
 function ResultSummary({ result }) {
-  const { ok, score, threshold, quality, nfiq, liveness } = result
-  // Render numeric score/threshold with at most 2 decimals — SourceAFIS
-  // returns a double like 215.09143581040846 which is noisy for operators.
-  // Integer scores (Mantra MorFin returns ints) render as ints unchanged.
-  const fmt = (n) => {
-    if (typeof n !== 'number' || Number.isNaN(n)) return n
-    return Number.isInteger(n) ? n.toString() : n.toFixed(2)
-  }
-  // NFIQ 0 means "not measured" per the NIST spec (1..5 are real values where 1
-  // is best). Some vendors return 0 instead of null when they don't expose
-  // the metric — render as "—" for the operator's eye.
-  const nfiqDisplay = (typeof nfiq === 'number' && nfiq > 0) ? nfiq : '—'
-  // Quality is null for Startek (ACPL doesn't expose it in the public API);
-  // a real number for Mantra MorFin. Same display rule.
-  const qualityDisplay = (typeof quality === 'number' && quality > 0) ? quality : '—'
+  // Operator-facing pass/fail only. Score/threshold/quality/NFIQ/liveness
+  // are still on `result` (backend + audit_log consume them); they're just
+  // not shown here.
+  const { ok } = result
   return (
     <div
       className={`rounded-lg border p-3 text-sm ${
@@ -256,15 +245,11 @@ function ResultSummary({ result }) {
           : 'border-rose-200 bg-rose-50 text-rose-800'
       }`}
     >
-      {/* Score / threshold removed — operators just get Match / No
-          match. Quality + NFIQ + liveness below are capture-time
-          signals, not match figures, so they stay. */}
+      {/* Operators get pass/fail only. Score/threshold + quality/NFIQ/
+          liveness detail lines both removed — they were internal
+          debugging exposed to the field. */}
       <p className="font-semibold">
         {ok ? 'Match' : 'No match'}
-      </p>
-      <p className="text-xs mt-1 text-slate-600">
-        quality {qualityDisplay} · NFIQ {nfiqDisplay} ·{' '}
-        liveness {liveness === 1 ? 'live' : liveness === 0 ? 'spoof' : '—'}
       </p>
     </div>
   )

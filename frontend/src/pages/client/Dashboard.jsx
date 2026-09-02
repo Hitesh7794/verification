@@ -941,7 +941,7 @@ export default function ClientDashboard() {
           <CardHeader>
             <CardTitle>Step 2 — Liveness &amp; face match</CardTitle>
           </CardHeader>
-          <CardBody className="py-4">
+          <CardBody className="py-3">
             <LivenessPanel
               rollNo={candidate.roll_no}
               sessionId={idempotencyKey}
@@ -987,12 +987,12 @@ export default function ClientDashboard() {
       )}
 
       {step >= S_FINGERPRINT && candidate && (
-        <div className="grid gap-4 lg:grid-cols-3">
+        <div className="grid gap-3 lg:grid-cols-3">
           <Card className="lg:col-span-1 self-start">
             <CardHeader>
               <CardTitle>Candidate on file</CardTitle>
             </CardHeader>
-            <CardBody className="py-4">
+            <CardBody className="py-3">
               {/* Once the liveness burst has produced a probe frame we
                   show enrolled + captured side by side so the operator
                   can eyeball the match without leaving this step. The
@@ -1060,10 +1060,53 @@ export default function ClientDashboard() {
                   </span>
                 </div>
               )}
+
+              {/* Compact per-modality status rows. Mirror the FACE MATCH
+                  row above so the whole card reads as one "biometric
+                  summary" — small, dense, no cartoon tiles. We tried
+                  enrolled/captured pairs for FP + Iris but there's no
+                  real image on either side (no server-side FP photo, no
+                  UI-side capture image); the pair metaphor only makes
+                  sense for face. Status pills are all the operator
+                  actually needs to see. */}
+              {candidate?.requires_fp && (
+                <ModalityStatusRow
+                  label="Fingerprint"
+                  state={
+                    fpResult
+                      ? (fpResult.ok ? 'pass' : 'fail')
+                      : (step >= S_FINGERPRINT ? 'active' : 'pending')
+                  }
+                />
+              )}
+              {candidate?.requires_iris && (
+                <ModalityStatusRow
+                  label="Iris"
+                  state={
+                    irisResult
+                      ? (irisResult.galleryMissing ? 'audit' : (irisResult.ok ? 'pass' : 'fail'))
+                      : (step >= S_FINGERPRINT ? 'active' : 'pending')
+                  }
+                />
+              )}
             </CardBody>
           </Card>
 
-          <div className="lg:col-span-2 space-y-4">
+          {/* Right column: FP + Iris side-by-side when BOTH are required
+              so the operator doesn't scroll a full screen to reach iris.
+              Falls back to single-column stack when only one modality
+              is active OR when we're on the Result card (result should
+              always be full-width for readability). */}
+          <div className={`lg:col-span-2 ${
+            step < S_RESULT && candidate?.requires_fp && candidate?.requires_iris && candidate?.has_iso_template && candidate?.has_iris_bytes
+              // items-start prevents the two capture cards from stretching
+              // to match each other's height — one card with a big dashed
+              // "waiting for device" area and the other with a compact
+              // "device ready" pill were leaving a huge empty band under
+              // the shorter one.
+              ? 'grid gap-3 lg:grid-cols-2 items-start'
+              : 'space-y-3'
+          }`}>
 
             {step >= S_FINGERPRINT && !!candidate?.requires_fp && !!candidate?.has_iso_template && (
               <Card>
@@ -1239,6 +1282,35 @@ export default function ClientDashboard() {
 //   >= 100 lookups   → slate (plenty of runway)
 //   30 - 99 lookups  → amber (heads-up)
 //   <  30 lookups    → rose (ask admin to raise the cap or top up)
+// ModalityStatusRow — compact status line for fingerprint / iris in
+// the "Candidate on file" card. Mirrors the FACE MATCH row's exact
+// visual (uppercase label left, coloured status right) so the summary
+// reads as one dense strip instead of a stack of card-shaped tiles.
+//
+// state:
+//   'pending' → slate "Waiting" (before capture starts)
+//   'active'  → indigo "Capturing…" (while operator is capturing)
+//   'pass'    → emerald "PASS"
+//   'fail'    → rose "FAIL"
+//   'audit'   → amber "AUDIT" (iris capture with no enrolled template)
+function ModalityStatusRow({ label, state }) {
+  const tone = ({
+    pending: { fg: 'text-slate-500',  text: 'Waiting',    pulse: false },
+    active:  { fg: 'text-indigo-600', text: 'Capturing…', pulse: true  },
+    pass:    { fg: 'text-emerald-700',text: 'PASS',       pulse: false },
+    fail:    { fg: 'text-rose-700',   text: 'FAIL',       pulse: false },
+    audit:   { fg: 'text-amber-800',  text: 'AUDIT',      pulse: false },
+  })[state] || { fg: 'text-slate-500', text: '—', pulse: false }
+  return (
+    <div className="mt-2 text-xs text-slate-600 flex items-baseline justify-between">
+      <span className="uppercase tracking-wide text-slate-500">{label}</span>
+      <span className={`font-semibold tabular-nums ${tone.fg} ${tone.pulse ? 'animate-pulse' : ''}`}>
+        {tone.text}
+      </span>
+    </div>
+  )
+}
+
 function WalletPill({ wallet }) {
   if (!wallet) {
     return (

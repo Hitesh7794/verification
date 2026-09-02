@@ -169,69 +169,79 @@ export default function LivenessPanel({ rollNo, sessionId, onPass }) {
     status.tone === 'error' ? 'text-rose-700'   : 'text-slate-700'
 
   return (
-    <div className="space-y-2">
+    // Cap the panel width so a 1440-px+ viewport doesn't blow the two
+    // aspect-square tiles up to 600+ px each and push the Start button
+    // below the fold. Narrow screens (<768 px) are a no-op — the
+    // container just fills its parent. Combined with putting the CTA
+    // inside the right tile (no separate button row), the whole
+    // liveness surface fits in one viewport with no scroll.
+    <div className="space-y-2 mx-auto max-w-3xl">
       <div className="grid grid-cols-2 gap-2">
         {/* Face-frame preview — circular mask + glowing coloured border
             that tracks the guide state so the operator sees at a glance
-            whether they're framed correctly. Colours mirror the seqr
-            Flutter build: blue when idle, amber during warn (move
-            closer / back / centre), green when armed for blink or
-            passed. Pulsing while not yet armed, steady when armed. */}
+            whether they're framed correctly. */}
         <FaceFrame
           phase={phase}
           hintTone={status.tone}
           videoRef={videoRef}
         />
 
-        <div className="aspect-square w-full rounded-lg bg-slate-50 border border-dashed border-slate-300 flex items-center justify-center text-center p-6">
-          {phase === 'idle' && !streaming && !webcamErr && (
-            <p className="text-xs text-slate-500">Starting camera…</p>
-          )}
-          {phase === 'idle' && streaming && (
-            <div className="text-sm text-slate-700 space-y-2">
-              <p className="font-semibold">Blink to prove you're present</p>
-              <p className="text-xs text-slate-600">
-                Look at the camera and blink once when prompted. Detection runs
-                entirely on this device.
-              </p>
-            </div>
-          )}
-          {active && (
-            <div className={`text-sm font-medium ${toneClass}`}>
-              {status.text}
-            </div>
-          )}
-          {phase === 'pass' && (
-            <div className="text-emerald-700 space-y-1">
-              <p className="font-semibold">Live person confirmed</p>
-              <p className="text-xs text-slate-600">Continuing to face capture…</p>
-            </div>
-          )}
-          {phase === 'fail' && (
-            <div className="text-rose-700 space-y-1">
-              <p className="font-semibold">Liveness check failed</p>
-              <p className="text-xs text-slate-600">{err || 'Please try again.'}</p>
-              <p className="text-[11px] text-slate-500 mt-1">Click "Retry liveness" to try again.</p>
-            </div>
-          )}
+        {/* Right tile: instructions + CTA co-located. Was previously a
+            near-empty aspect-square with the button sitting in its own
+            row below the tile grid — that layout stacked to ~750+ px
+            tall on a 1366×768 laptop and forced the operator to scroll
+            past the whole grid to see Start. Moving the button in here
+            keeps the visual weight balanced with the preview and puts
+            the CTA in the operator's line of sight the moment the
+            camera lights up. */}
+        <div className="aspect-square w-full rounded-lg bg-slate-50 border border-dashed border-slate-300 flex flex-col items-center justify-center text-center p-5 gap-4">
+          <div className="flex-1 flex items-center justify-center">
+            {phase === 'idle' && !streaming && !webcamErr && (
+              <p className="text-xs text-slate-500">Starting camera…</p>
+            )}
+            {phase === 'idle' && streaming && (
+              <div className="text-sm text-slate-700 space-y-2">
+                <p className="font-semibold">Blink to prove you're present</p>
+                <p className="text-xs text-slate-600">
+                  Look at the camera and blink once when prompted. Detection runs
+                  entirely on this device.
+                </p>
+              </div>
+            )}
+            {active && (
+              <div className={`text-sm font-medium ${toneClass}`}>
+                {status.text}
+              </div>
+            )}
+            {phase === 'pass' && (
+              <div className="text-emerald-700 space-y-1">
+                <p className="font-semibold">Live person confirmed</p>
+                <p className="text-xs text-slate-600">Continuing to face capture…</p>
+              </div>
+            )}
+            {phase === 'fail' && (
+              <div className="text-rose-700 space-y-1">
+                <p className="font-semibold">Liveness check failed</p>
+                <p className="text-xs text-slate-600">{err || 'Please try again.'}</p>
+              </div>
+            )}
+          </div>
+
+          {/* CTA sits at the bottom of the tile so it's always in the
+              same spot regardless of which phase text is rendered above. */}
+          <div className="w-full">
+            {phase === 'pass' ? null : phase === 'fail' ? (
+              <Button onClick={retry} className="w-full">Retry liveness</Button>
+            ) : (
+              <Button onClick={run} disabled={!streaming || active} className="w-full">
+                {phase === 'uploading' ? 'Confirming…' : phase === 'guiding' ? 'Running…' : 'Start liveness check'}
+              </Button>
+            )}
+          </div>
         </div>
       </div>
 
-      {webcamErr && <p className="text-xs text-rose-600">{webcamErr}</p>}
-
-      <div className="flex gap-2">
-        {phase === 'pass' ? (
-          <p className="text-sm text-emerald-700">
-            Liveness passed. Continue to face capture below.
-          </p>
-        ) : phase === 'fail' ? (
-          <Button onClick={retry}>Retry liveness</Button>
-        ) : (
-          <Button onClick={run} disabled={!streaming || active}>
-            {phase === 'uploading' ? 'Confirming…' : phase === 'guiding' ? 'Running…' : 'Start liveness check'}
-          </Button>
-        )}
-      </div>
+      {webcamErr && <p className="text-xs text-rose-600 text-center">{webcamErr}</p>}
     </div>
   )
 }
