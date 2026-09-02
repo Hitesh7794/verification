@@ -210,7 +210,7 @@ export default function ClientDashboard() {
   const [gallery, setGallery] = useState(null) // {template_b64, format}
   const [attempts, setAttempts] = useState(null) // {count, last_at?} — Phase 3c
   const [lookupErr, setLookupErr] = useState('')
-  const [snap, setSnap] = useState(null)
+  const [snap, setSnap] = useState(persisted?.snap ?? null)
   const [faceResult, setFaceResult] = useState(persisted?.faceResult ?? null)
   // Liveness gate result. Non-null with .pass === true unlocks the
   // face-capture step. Deliberately NOT persisted — a page refresh
@@ -344,8 +344,10 @@ export default function ClientDashboard() {
 
   // Persist whenever the meaningful state changes, so an unexpected
   // refresh doesn't lose the operator's in-flight verification.
-  // photoBlob/gallery/snap are deliberately excluded — they're large
-  // and re-fetchable from `roll`.
+  // photoBlob/gallery are excluded — they're large and re-fetchable
+  // from `roll`. `snap` (the captured face frame) IS persisted so the
+  // enrolled+captured side-by-side view survives a refresh; it's a
+  // single JPEG at 0.85 quality, well within sessionStorage's ~5MB cap.
   useEffect(() => {
     if (step === 0 && !roll && !candidate && !faceResult && !fpResult) {
       // Idle / cleared state — drop the persisted record entirely.
@@ -354,10 +356,10 @@ export default function ClientDashboard() {
     }
     persistState({
       step, roll, faceResult, fpResult, irisResult, showIris,
-      verificationStartedAt, idempotencyKey,
+      verificationStartedAt, idempotencyKey, snap,
     })
   }, [step, roll, faceResult, fpResult, irisResult, showIris,
-      verificationStartedAt, idempotencyKey, candidate])
+      verificationStartedAt, idempotencyKey, candidate, snap])
 
   // On mount, if we restored a flow past step 0, re-fetch the
   // candidate so photo + template are available again. The wallet
@@ -991,39 +993,55 @@ export default function ClientDashboard() {
               <CardTitle>Candidate on file</CardTitle>
             </CardHeader>
             <CardBody className="py-4">
-              <div className="aspect-[4/3] w-full rounded-lg bg-slate-100 overflow-hidden mb-3">
-                {photoBlob ? (
-                  <img src={photoBlob} alt="enrolled" className="w-full h-full object-cover" />
-                ) : (
-                  <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm">
-                    No photo on file
+              {/* Once the liveness burst has produced a probe frame we
+                  show enrolled + captured side by side so the operator
+                  can eyeball the match without leaving this step. The
+                  captured tile borrows the same aspect + rounding as the
+                  enrolled tile; when no snap exists yet (e.g. fingerprint
+                  stage jumped in early), we fall back to the single
+                  enrolled tile that was here before. */}
+              {snap ? (
+                <div className="grid grid-cols-2 gap-2 mb-3">
+                  <div>
+                    <div className="aspect-[4/3] w-full rounded-lg bg-slate-100 overflow-hidden">
+                      {photoBlob ? (
+                        <img src={photoBlob} alt="enrolled" className="w-full h-full object-cover" />
+                      ) : (
+                        <div className="w-full h-full flex items-center justify-center text-slate-400 text-[11px] text-center px-1">
+                          No photo on file
+                        </div>
+                      )}
+                    </div>
+                    <div className="mt-1 text-[10px] uppercase tracking-wide text-slate-500 text-center">
+                      Enrolled
+                    </div>
                   </div>
-                )}
-              </div>
+                  <div>
+                    <div className="aspect-[4/3] w-full rounded-lg bg-slate-100 overflow-hidden">
+                      <img src={snap} alt="captured" className="w-full h-full object-cover" />
+                    </div>
+                    <div className="mt-1 text-[10px] uppercase tracking-wide text-slate-500 text-center">
+                      Captured
+                    </div>
+                  </div>
+                </div>
+              ) : (
+                <div className="aspect-[4/3] w-full rounded-lg bg-slate-100 overflow-hidden mb-3">
+                  {photoBlob ? (
+                    <img src={photoBlob} alt="enrolled" className="w-full h-full object-cover" />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center text-slate-400 text-sm">
+                      No photo on file
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="flex items-baseline justify-between">
                 <span className="text-xs uppercase tracking-wide text-slate-500">Roll number</span>
                 <span className="text-lg font-semibold text-slate-900 tabular-nums">
                   {candidate.roll_no}
                 </span>
               </div>
-              {/* Phase 3c — attempt-counter chip. Only shown when the
-                  operator's org has previously looked up this roll
-                  (count > 0 means at least one prior verification row). */}
-              {attempts && attempts.count > 0 && (
-                <div className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-amber-50 border border-amber-200 px-2.5 py-0.5 text-[11px] font-medium text-amber-800">
-                  <span className="h-1.5 w-1.5 rounded-full bg-amber-500" />
-                  {(() => {
-                    const n = attempts.count + 1
-                    const suffix = n === 1 ? 'st' : n === 2 ? 'nd' : n === 3 ? 'rd' : 'th'
-                    return `${n}${suffix} attempt on this roll`
-                  })()}
-                  {attempts.last_at && (
-                    <span className="text-amber-700/70 font-normal">
-                      · last {relativeAgo(attempts.last_at)}
-                    </span>
-                  )}
-                </div>
-              )}
               {faceResult && (
                 <div className="mt-3 text-xs text-slate-600 flex items-baseline justify-between">
                   <span className="uppercase tracking-wide text-slate-500">Face match</span>

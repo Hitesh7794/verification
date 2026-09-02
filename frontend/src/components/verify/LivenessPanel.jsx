@@ -183,7 +183,7 @@ export default function LivenessPanel({ rollNo, sessionId, onPass }) {
           videoRef={videoRef}
         />
 
-        <div className="aspect-[16/10] w-full rounded-lg bg-slate-50 border border-dashed border-slate-300 flex items-center justify-center text-center p-3">
+        <div className="aspect-square w-full rounded-lg bg-slate-50 border border-dashed border-slate-300 flex items-center justify-center text-center p-6">
           {phase === 'idle' && !streaming && !webcamErr && (
             <p className="text-xs text-slate-500">Starting camera…</p>
           )}

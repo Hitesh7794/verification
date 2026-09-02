@@ -23,6 +23,17 @@
 
 html, body, #root { height: 100%; }
 
+/* Lock overscroll at the document level. Without this, pulling the page
+   past its top edge rubber-bands and reveals whichever surface sits
+   under the app — which is visible as an off-white flash on the
+   operator dashboard (bg-slate-50 app over bg #FBF7F0 body). This also
+   disables mobile pull-to-refresh, which is desirable here: an operator
+   swiping down mid-flow shouldn't reload the tab and lose a half-typed
+   roll number. */
+html, body {
+  overscroll-behavior: none;
+}
+
 body {
   font-family: var(--font-sans);
   background-color: #FBF7F0; /* warm parchment — the superadmin surface tone */
