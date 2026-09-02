@@ -103,10 +103,21 @@ func (s *Server) superadminApplicationsList(w http.ResponseWriter, r *http.Reque
 	// the WHERE args.
 	pageArgs := append([]any{}, args...)
 	pageArgs = append(pageArgs, limit, offset)
+	// doc_count is a correlated subquery rather than a JOIN so the row
+	// count is unaffected, and the table is named in full because
+	// whereSQL is built with unaliased column names.
+	//
+	// This list reuses reviewerListItem, whose DocCount the reviewer's
+	// own list populates -- but this query never selected it, so the
+	// field marshalled as its zero value and the superadmin table
+	// reported "0 documents" on every application regardless of how
+	// many the institute had actually uploaded.
 	pageSQL := `
 		SELECT id, status, institution_name, institution_type,
 		       city, state, head_name, head_email, head_mobile,
-		       COALESCE(aishe_code, ''), created_at
+		       COALESCE(aishe_code, ''), created_at,
+		       (SELECT COUNT(*) FROM institution_application_documents d
+		         WHERE d.application_id = institution_applications.id) AS doc_count
 		  FROM institution_applications ` + whereSQL + `
 		 ORDER BY created_at DESC
 		 LIMIT $` + strconv.Itoa(len(args)+1) + ` OFFSET $` + strconv.Itoa(len(args)+2)
@@ -124,7 +135,7 @@ func (s *Server) superadminApplicationsList(w http.ResponseWriter, r *http.Reque
 		var createdAt time.Time
 		if err := rows.Scan(&it.ID, &it.Status, &it.InstitutionName, &it.InstitutionType,
 			&it.City, &it.State, &it.HeadName, &it.HeadEmail, &it.HeadMobile,
-			&it.AisheCode, &createdAt); err != nil {
+			&it.AisheCode, &createdAt, &it.DocCount); err != nil {
 			writeErr(w, http.StatusInternalServerError, "scan: "+err.Error())
 			return
 		}
