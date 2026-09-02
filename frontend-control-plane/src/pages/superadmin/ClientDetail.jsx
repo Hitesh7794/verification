@@ -896,7 +896,13 @@ function AddReviewerForm({ clientId, onCancel, onCreated }) {
         email: email.trim(),
         password,
       })
-      onCreated(row)
+      // The CP endpoint does NOT echo the plaintext password back —
+      // it only returns {user_id, username, client_registry_id} for
+      // safety. But we already have the plaintext right here in local
+      // state (the superadmin just typed it), so pass it through to
+      // the parent's "save this now" banner instead of relying on the
+      // server response.
+      onCreated({ ...row, password })
     } catch (ex) {
       setErr(ex.message || 'Could not create reviewer')
     } finally {

@@ -428,11 +428,21 @@ func (s *Server) superadminApplicationApprove(w http.ResponseWriter, r *http.Req
 		// approve response (the row IS in the reviewer's queue either
 		// way; the email is a convenience). Runs in a background
 		// goroutine so a slow DP round-trip doesn't hold the operator.
-		go func(clientID int64, name, head string) {
-			if err := s.fireInternalReviewersNotify(context.Background(), clientID, name, head); err != nil {
-				log.Printf("superadminApplicationApprove: reviewer notify (client=%d) failed: %v", clientID, err)
+		//
+		// IMPORTANT: `fireInternalReviewersNotify`'s FIRST argument is
+		// used TWICE — once to pick the CP registry row (api_url/api_key)
+		// AND once as the `client_id` sent in the DP payload. The DP
+		// looks up reviewers by its own local `users.client_id`, which
+		// equals the DP-native id (`dp_client_id`), NOT the CP registry
+		// id. Passing the registry id here silently missed every
+		// reviewer (bug: superadmin approve fired the goroutine but
+		// zero emails were sent). We now pass dp_client_id so the DP
+		// finds the right reviewer rows — see helper for the split.
+		go func(registryID, dpClientID int64, name, head string) {
+			if err := s.fireInternalReviewersNotifyForClient(context.Background(), registryID, dpClientID, name, head); err != nil {
+				log.Printf("superadminApplicationApprove: reviewer notify (registry=%d dp=%d) failed: %v", registryID, dpClientID, err)
 			}
-		}(targetClientID.Int64, instName, headName)
+		}(targetClientID.Int64, dpClientID.Int64, instName, headName)
 		writeJSON(w, http.StatusOK, map[string]any{
 			"application_id":    id,
 			"status":            "pending",

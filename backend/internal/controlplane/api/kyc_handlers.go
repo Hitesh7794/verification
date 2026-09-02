@@ -1717,14 +1717,29 @@ func nullTimeToString(t sql.NullTime) string {
 //
 // Best-effort: caller should fire in a goroutine and log-on-error, not
 // fail the approve response.
+//
+// Back-compat entry that assumes registryID == dpClientID. Prefer
+// fireInternalReviewersNotifyForClient — the split is required whenever
+// the CP registry id differs from the DP's local clients.id (which is
+// the normal multi-tenant case).
 func (s *Server) fireInternalReviewersNotify(parent context.Context, clientID int64, institutionName, headName string) error {
+	return s.fireInternalReviewersNotifyForClient(parent, clientID, clientID, institutionName, headName)
+}
+
+// fireInternalReviewersNotifyForClient — same as fireInternalReviewersNotify
+// but takes the CP registry id (`registryID`, for locating the DP
+// api_url/api_key) SEPARATELY from the DP-native client id (`dpClientID`,
+// which the DP's reviewer lookup keys on). The two are almost never
+// the same in production, so callers with access to institution_applications.
+// dp_client_id must pass both.
+func (s *Server) fireInternalReviewersNotifyForClient(parent context.Context, registryID, dpClientID int64, institutionName, headName string) error {
 	var (
 		apiURL string
 		apiKey string
 		status string
 	)
 	err := s.deps.DB.QueryRowContext(parent,
-		`SELECT api_url, api_key, status FROM clients_registry WHERE id = $1`, clientID,
+		`SELECT api_url, api_key, status FROM clients_registry WHERE id = $1`, registryID,
 	).Scan(&apiURL, &apiKey, &status)
 	if err != nil {
 		return fmt.Errorf("registry lookup: %w", err)
@@ -1732,8 +1747,11 @@ func (s *Server) fireInternalReviewersNotify(parent context.Context, clientID in
 	if status != "active" && status != "ready" {
 		return fmt.Errorf("target client is %s", status)
 	}
+	if dpClientID <= 0 {
+		return fmt.Errorf("dp_client_id missing on application — reviewer lookup would fail")
+	}
 	body, _ := json.Marshal(map[string]any{
-		"client_id":        clientID,
+		"client_id":        dpClientID,
 		"institution_name": institutionName,
 		"head_name":        headName,
 	})
