@@ -1103,91 +1103,84 @@ export default function ClientDashboard() {
             </CardBody>
           </Card>
 
-          {/* Right column: FP + Iris side-by-side when BOTH are required
-              so the operator doesn't scroll a full screen to reach iris.
-              Falls back to single-column stack when only one modality
-              is active OR when we're on the Result card (result should
-              always be full-width for readability). */}
-          <div className={`lg:col-span-2 ${
-            step < S_RESULT && candidate?.requires_fp && candidate?.requires_iris && candidate?.has_iso_template && candidate?.has_iris_bytes
-              // items-start prevents the two capture cards from stretching
-              // to match each other's height — one card with a big dashed
-              // "waiting for device" area and the other with a compact
-              // "device ready" pill were leaving a huge empty band under
-              // the shorter one.
-              ? 'grid gap-3 lg:grid-cols-2 items-start'
-              : 'space-y-3'
-          }`}>
+          {/* Right column. Outer container always stacks (space-y-3).
+              When BOTH fp + iris are required, the FP + Iris capture
+              cards are wrapped in a nested `lg:grid-cols-2` row so they
+              stay locked side-by-side regardless of step / result
+              state. The Result card, when it appears, renders BELOW
+              that row at full column-2 width. Single-modality exams
+              render the single required card inline. */}
+          <div className="lg:col-span-2 space-y-3">
 
-            {step >= S_FINGERPRINT && !!candidate?.requires_fp && !!candidate?.has_iso_template && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Step 3 — Fingerprint scan</CardTitle>
-                </CardHeader>
-                <CardBody>
-                  {gallery ? (
-                    <FingerprintCapture
-                      rollNo={candidate.roll_no}
-                      galleryTemplate={gallery.template_b64}
-                      galleryFormat={gallery.format}
-                      // matchThreshold left unset on purpose: registry
-                      // provides the per-vendor default (both Mantra +
-                      // Startek = 50 on the unified TrustView 0-100
-                      // scale; 50 is the pass threshold end-to-end).
-                      // Pass an explicit number here only for one-off
-                      // calibration overrides.
+            {(() => {
+              // Compute once — both required and both actually
+              // capturable (gallery on file for each). When true, FP
+              // + Iris cards are wrapped in a nested 2-col grid so
+              // they stay locked side-by-side across capture, result
+              // landing, and step transitions. When false (single-
+              // modality exam OR one gallery missing), just render
+              // whichever card applies inline.
+              const bothSideBySide =
+                step >= S_FINGERPRINT &&
+                !!candidate?.requires_fp && !!candidate?.has_iso_template &&
+                !!candidate?.requires_iris && !!candidate?.has_iris_bytes
+              const fpCard = step >= S_FINGERPRINT && !!candidate?.requires_fp && !!candidate?.has_iso_template && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Step 3 — Fingerprint scan</CardTitle>
+                  </CardHeader>
+                  <CardBody>
+                    {gallery ? (
+                      <FingerprintCapture
+                        rollNo={candidate.roll_no}
+                        galleryTemplate={gallery.template_b64}
+                        galleryFormat={gallery.format}
+                        onResult={(r) => {
+                          // Do NOT bump step to S_RESULT here — the
+                          // auto-submit useEffect flips it only when
+                          // every required modality has a result.
+                          setFpResult(r)
+                        }}
+                      />
+                    ) : (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                        No fingerprint template on file for this candidate. Proceed with manual verification.
+                        <div className="mt-3">
+                          <Button onClick={() => step < S_RESULT && setStep(S_RESULT)}>Skip fingerprint step</Button>
+                        </div>
+                      </div>
+                    )}
+                  </CardBody>
+                </Card>
+              )
+              const irisCard = step >= S_FINGERPRINT && !!candidate?.requires_iris && !!candidate?.has_iris_bytes && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Iris capture</CardTitle>
+                  </CardHeader>
+                  <CardBody>
+                    <IrisCapture
+                      rollNo={candidate?.roll_no}
+                      matchThreshold={50}
                       onResult={(r) => {
-                        setFpResult(r)
-                        if (step < S_RESULT) setStep(S_RESULT)
+                        setIrisResult(r)
                       }}
                     />
-                  ) : (
-                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                      No fingerprint template on file for this candidate. Proceed with manual verification.
-                      <div className="mt-3">
-                        <Button onClick={() => step < S_RESULT && setStep(S_RESULT)}>Skip fingerprint step</Button>
-                      </div>
-                    </div>
-                  )}
-                </CardBody>
-              </Card>
-            )}
-
-            {/* Iris fallback: appears when fingerprint failed (or no template
-                on file) and the operator opts in. The sample data has no iris
-                templates, so this is capture-for-audit; if/when iris gallery
-                is enrolled, the matcher kicks in automatically. */}
-            {step >= S_FINGERPRINT && fpResult && fpResult.ok === false && !showIris && !(candidate?.requires_iris && candidate?.has_iris_bytes) && (
-              <Card>
-                <CardBody>
-                  <p className="text-sm text-slate-700">
-                    Fingerprint did not match. You can try iris as a fallback.
-                  </p>
-                  <div className="mt-3">
-                    <Button onClick={() => setShowIris(true)}>Try iris instead</Button>
-                  </div>
-                </CardBody>
-              </Card>
-            )}
-            {(showIris || (step >= S_FINGERPRINT && candidate?.requires_iris && candidate?.has_iris_bytes)) && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>
-                    {candidate?.requires_iris && candidate?.has_iris_bytes ? 'Iris capture' : 'Iris fallback'}
-                  </CardTitle>
-                </CardHeader>
-                <CardBody>
-                  <IrisCapture
-                    rollNo={candidate?.roll_no}
-                    matchThreshold={50}
-                    onResult={(r) => {
-                      setIrisResult(r)
-                      if (step < S_RESULT) setStep(S_RESULT)
-                    }}
-                  />
-                </CardBody>
-              </Card>
-            )}
+                  </CardBody>
+                </Card>
+              )
+              return bothSideBySide ? (
+                <div className="grid gap-3 lg:grid-cols-2 items-start">
+                  {fpCard}
+                  {irisCard}
+                </div>
+              ) : (
+                <>
+                  {fpCard}
+                  {irisCard}
+                </>
+              )
+            })()}
 
             {step >= S_RESULT && (
               <Card>
