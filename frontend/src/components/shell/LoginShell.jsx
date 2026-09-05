@@ -126,7 +126,7 @@ export default function LoginShell({
 
         <div className="relative max-w-lg">
           <h2 className="font-display text-[40px] xl:text-[46px] font-extrabold leading-[1.08] tracking-[-0.035em] text-white text-balance">
-            The candidate you admit is the candidate who sat the exam.
+            Identity, verified at admission.
           </h2>
           <p className="mt-5 text-[15px] leading-relaxed text-slate-300">
             Biometric verification at admission and joining, matched
