@@ -39,6 +39,13 @@ export default function PendingApplications() {
   const [debouncedSearch, setDebouncedSearch] = useState('')
   const [err, setErr] = useState('')
   const [loading, setLoading] = useState(true)
+  // Separate from `loading` (which only drives the initial skeleton).
+  // `refreshing` is what the Refresh button uses so a click has
+  // visible feedback even when items are already on screen — spins
+  // the icon, changes the label, disables the button until load()
+  // resolves. Without this the button appeared inert on subsequent
+  // refreshes.
+  const [refreshing, setRefreshing] = useState(false)
   const [revokingId, setRevokingId] = useState(null)
 
   useEffect(() => {
@@ -109,11 +116,16 @@ export default function PendingApplications() {
         subtitle="Review, approve, or reject institutions applying to onboard onto the platform."
         right={
           <button
-            onClick={() => { setLoading(true); load() }}
-            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
+            onClick={async () => {
+              if (refreshing) return
+              setRefreshing(true)
+              try { await load() } finally { setRefreshing(false) }
+            }}
+            disabled={refreshing}
+            className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 disabled:opacity-60 disabled:cursor-not-allowed transition-colors"
           >
-            <Icon.Refresh className="h-4 w-4" />
-            Refresh
+            <Icon.Refresh className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+            {refreshing ? 'Refreshing…' : 'Refresh'}
           </button>
         }
       />

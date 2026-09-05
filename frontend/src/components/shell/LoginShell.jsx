@@ -76,6 +76,15 @@ export default function LoginShell({
       if (rememberKey) {
         try { localStorage.setItem(rememberKey, username) } catch {}
       }
+      // Session-alive marker: set in sessionStorage the moment login
+      // succeeds. Any per-role in-flight state (Dashboard's
+      // nv_verify_state_v1, etc.) is gated on this marker being
+      // present, so if a browser session-restore drops the operator
+      // into the app WITHOUT going through this login handler, the
+      // stale mid-flow state gets cleared instead of resumed.
+      // Refresh preserves sessionStorage → marker + state both stay,
+      // so mid-flow still survives a legitimate F5.
+      try { sessionStorage.setItem('nv_session_alive_' + u.role, '1') } catch {}
       const dest = redirectByRole?.[u.role] || redirectTo || '/'
       nav(dest)
     } catch (e) {
@@ -238,6 +247,12 @@ export default function LoginShell({
                         setForgotErr('')
                         setForgotSent(false)
                       }}
+                      // Drop out of the tab sequence so Tab from
+                      // Username lands on Password, not this link.
+                      // Users still reach it by click — the intended
+                      // flow anyway; keyboard-only users get the
+                      // password field on the very next keystroke.
+                      tabIndex={-1}
                       className="text-xs font-semibold text-brand-700 hover:text-brand-800 hover:underline"
                     >
                       Forgot password?

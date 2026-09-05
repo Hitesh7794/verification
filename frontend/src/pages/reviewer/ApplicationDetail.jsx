@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react'
-import { Link, useParams } from 'react-router-dom'
+import { Link, useNavigate, useParams } from 'react-router-dom'
 import ReviewerShell from '../../components/reviewer/ReviewerShell.jsx'
 import {
   Button,
@@ -66,12 +66,26 @@ function isRecruiterType(t) {
 
 export default function ReviewerApplicationDetail() {
   const { id } = useParams()
+  const nav = useNavigate()
   const [app, setApp] = useState(null)
   const [err, setErr] = useState('')
   const [actionErr, setActionErr] = useState('')
   const [reviewing, setReviewing] = useState(false)
   const [note, setNote] = useState('')
   const [approvalResult, setApprovalResult] = useState(null)
+  // Post-decision overlay (mirrors the superadmin app detail page).
+  //   kind: 'approved' | 'rejected' | 'revoked'
+  const [decisionResult, setDecisionResult] = useState(null)
+
+  // Auto-redirect after a decision. Reviewer can click "Back to
+  // inbox now" for immediate return; this timer is the walk-away
+  // fallback so a decision doesn't just leave them staring at the
+  // same detail page wondering if it went through.
+  useEffect(() => {
+    if (!decisionResult) return
+    const t = setTimeout(() => nav('/reviewer'), 2000)
+    return () => clearTimeout(t)
+  }, [decisionResult, nav])
 
   // Inline preview state — which doc is showing.
   const [activeDocId, setActiveDocId] = useState(null)
@@ -135,8 +149,11 @@ export default function ReviewerApplicationDetail() {
     try {
       const res = await approveReviewerApplication(id, note)
       setApprovalResult(res)
-      const d = await getReviewerApplication(id)
-      setApp(d)
+      setDecisionResult({
+        kind: 'approved',
+        title: 'Application approved',
+        body: `${app?.institution_name || 'The institution'}'s admin dashboard is now unlocked. Activation email fires now.`,
+      })
     } catch (e) {
       setActionErr(e.message)
     } finally {
@@ -154,8 +171,11 @@ export default function ReviewerApplicationDetail() {
     setActionErr('')
     try {
       await rejectReviewerApplication(id, note.trim())
-      const d = await getReviewerApplication(id)
-      setApp(d)
+      setDecisionResult({
+        kind: 'rejected',
+        title: 'Application rejected',
+        body: `${app?.institution_name || 'The applicant'} was notified by email with your note.`,
+      })
     } catch (e) {
       setActionErr(e.message)
     } finally {
@@ -169,8 +189,11 @@ export default function ReviewerApplicationDetail() {
     setActionErr('')
     try {
       await revokeReviewerApplication(id, note)
-      const d = await getReviewerApplication(id)
-      setApp(d)
+      setDecisionResult({
+        kind: 'revoked',
+        title: 'Application revoked to Pending',
+        body: `${app?.institution_name || 'The application'} is back in the pending queue.`,
+      })
       setNote('')
     } catch (e) {
       setActionErr(e.message)
@@ -209,6 +232,18 @@ export default function ReviewerApplicationDetail() {
 
   return (
     <ReviewerShell>
+      {/* Post-decision popup — same shape the superadmin app-detail
+          page uses. Auto-dismisses via nav to /reviewer 2 s after
+          appearing; explicit "Back to inbox now" button skips the
+          wait. Kept here so the reviewer gets clear confirmation
+          instead of staring at the same page after clicking Approve
+          or Reject. */}
+      {decisionResult && (
+        <DecisionResultCard
+          result={decisionResult}
+          onBack={() => nav('/reviewer')}
+        />
+      )}
       <div className="mb-4 flex items-center justify-between">
         <Link
           to="/reviewer"
@@ -590,4 +625,70 @@ function formatRelative(iso) {
   if (diffMin < 60) return `${Math.round(diffMin)}m ago`
   if (diffMin < 60 * 24) return `${Math.round(diffMin / 60)}h ago`
   return d.toLocaleString()
+}
+
+// Post-decision lightbox. Mirror of the same component on the
+// superadmin ApplicationDetail — kept as a per-file copy rather
+// than a shared import because the two live in different frontend
+// bundles (reviewer + client shell in /frontend, superadmin CP in
+// /frontend-control-plane), so a shared file would need cross-
+// bundle plumbing. Change both in lockstep if the visual changes.
+function DecisionResultCard({ result, onBack }) {
+  const palette = {
+    approved: {
+      bg: 'bg-emerald-50', ring: 'ring-emerald-200',
+      iconBg: 'bg-emerald-100', iconFg: 'text-emerald-700',
+      icon: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"
+             strokeLinecap="round" strokeLinejoin="round" className="h-8 w-8" aria-hidden="true">
+          <polyline points="5 12 10 17 20 7" />
+        </svg>
+      ),
+    },
+    rejected: {
+      bg: 'bg-rose-50', ring: 'ring-rose-200',
+      iconBg: 'bg-rose-100', iconFg: 'text-rose-700',
+      icon: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.4"
+             strokeLinecap="round" strokeLinejoin="round" className="h-8 w-8" aria-hidden="true">
+          <path d="M6 6l12 12" /><path d="M6 18L18 6" />
+        </svg>
+      ),
+    },
+    revoked: {
+      bg: 'bg-amber-50', ring: 'ring-amber-200',
+      iconBg: 'bg-amber-100', iconFg: 'text-amber-700',
+      icon: (
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.2"
+             strokeLinecap="round" strokeLinejoin="round" className="h-8 w-8" aria-hidden="true">
+          <path d="M3 12a9 9 0 1 0 3-6.7" /><polyline points="3 4 3 10 9 10" />
+        </svg>
+      ),
+    },
+  }[result.kind] || {
+    bg: 'bg-slate-50', ring: 'ring-slate-200',
+    iconBg: 'bg-slate-100', iconFg: 'text-slate-700',
+    icon: null,
+  }
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/50 backdrop-blur-sm p-4">
+      <div className={`w-full max-w-md rounded-2xl ring-1 ${palette.ring} ${palette.bg} shadow-2xl p-6 text-center`}>
+        <div className={`mx-auto h-14 w-14 rounded-full ${palette.iconBg} ${palette.iconFg} flex items-center justify-center`}>
+          {palette.icon}
+        </div>
+        <h3 className="mt-4 text-lg font-semibold text-slate-900 tracking-tight">
+          {result.title}
+        </h3>
+        <p className="mt-1 text-sm text-slate-600">{result.body}</p>
+        <p className="mt-3 text-xs text-slate-500">Returning to your inbox…</p>
+        <button
+          type="button"
+          onClick={onBack}
+          className="mt-5 w-full rounded-lg bg-slate-900 px-4 py-2 text-sm font-semibold text-white hover:bg-slate-800 transition-colors"
+        >
+          Back to inbox now
+        </button>
+      </div>
+    </div>
+  )
 }

@@ -120,18 +120,28 @@ func (s *Server) ensureDPJWT(ctx context.Context, apiURL string) (string, error)
 // ready client in clients_registry. Single-DP assumption; returns an
 // error if nothing is reachable.
 func (s *Server) firstActiveDP(ctx context.Context) (string, string, error) {
+	_, apiURL, apiKey, err := s.firstActiveDPWithID(ctx)
+	return apiURL, apiKey, err
+}
+
+// firstActiveDPWithID is the id-returning variant of [firstActiveDP].
+// Callers that need to attribute the response back to the CP-side
+// clients_registry row (e.g. so the FE can build a link to
+// /superadmin/clients/:cp_id from a DP-native exam.client_id) use this.
+func (s *Server) firstActiveDPWithID(ctx context.Context) (int64, string, string, error) {
+	var id int64
 	var apiURL, apiKey string
 	err := s.deps.DB.QueryRowContext(ctx,
-		`SELECT api_url, api_key
+		`SELECT id, api_url, api_key
 		   FROM clients_registry
 		  WHERE status IN ('active','ready')
 		  ORDER BY id ASC
 		  LIMIT 1`,
-	).Scan(&apiURL, &apiKey)
+	).Scan(&id, &apiURL, &apiKey)
 	if err != nil {
-		return "", "", fmt.Errorf("no active client registered: %w", err)
+		return 0, "", "", fmt.Errorf("no active client registered: %w", err)
 	}
-	return apiURL, apiKey, nil
+	return id, apiURL, apiKey, nil
 }
 
 // proxyToDPSuperadmin forwards the current request to the DP's
@@ -235,7 +245,81 @@ func (s *Server) proxyToDPSuperadmin(w http.ResponseWriter, r *http.Request, dpP
 
 func (s *Server) proxyExamGet(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")
-	s.proxyToDPSuperadmin(w, r, "/api/superadmin/exams/"+id)
+	// The DP returns `exam.client_id` as its own native `clients.id`
+	// (44 for NTA), but the CP FE navigates to
+	// /superadmin/clients/:cp_client_id where :cp_client_id is the
+	// CP-side `clients_registry.id` (9 for NTA). Same conflation bug
+	// that broke reviewer notify earlier — fix here by intercepting
+	// the response, unmarshalling, and injecting `cp_client_id` so
+	// the FE has a stable field to link back to. Original
+	// `client_id` is preserved for any caller that still wants the
+	// DP-native id.
+	cpRegistryID, apiURL, apiKey, err := s.firstActiveDPWithID(r.Context())
+	if err != nil {
+		writeErr(w, http.StatusServiceUnavailable, "no active data plane registered: "+err.Error())
+		return
+	}
+	_ = apiKey // helper kept parallel with firstActiveDP even though only apiURL is used here
+	jwt, err := s.ensureDPJWT(r.Context(), apiURL)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "could not authenticate to data plane: "+err.Error())
+		return
+	}
+	outURL := apiURL + "/api/superadmin/exams/" + id
+	if r.URL.RawQuery != "" {
+		outURL += "?" + r.URL.RawQuery
+	}
+	req, err := http.NewRequestWithContext(r.Context(), http.MethodGet, outURL, nil)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "build proxy req: "+err.Error())
+		return
+	}
+	req.Header.Set("Authorization", "Bearer "+jwt)
+	req.Header.Set("Accept", "application/json")
+	resp, err := (&http.Client{Timeout: 30 * time.Second}).Do(req)
+	if err != nil {
+		writeErr(w, http.StatusBadGateway, "data plane unreachable: "+err.Error())
+		return
+	}
+	defer resp.Body.Close()
+	body, _ := io.ReadAll(resp.Body)
+
+	// Non-2xx: forward verbatim so the FE sees the DP's error text
+	// (404 "exam not found", etc.).
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		_, _ = w.Write(body)
+		return
+	}
+
+	// Unmarshal → inject cp_client_id → re-marshal. Falls back to the
+	// raw body if the DP response isn't the expected shape (unknown
+	// future fields survive because we use a map, not the strict
+	// examRow struct).
+	var envelope map[string]any
+	if err := json.Unmarshal(body, &envelope); err != nil {
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		_, _ = w.Write(body)
+		return
+	}
+	if exam, ok := envelope["exam"].(map[string]any); ok {
+		exam["cp_client_id"] = cpRegistryID
+		envelope["exam"] = exam
+	}
+	patched, err := json.Marshal(envelope)
+	if err != nil {
+		// Marshal shouldn't fail on a valid unmarshalled map, but if
+		// it does, forward the original body untouched.
+		w.Header().Set("Content-Type", "application/json")
+		w.WriteHeader(resp.StatusCode)
+		_, _ = w.Write(body)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusOK)
+	_, _ = w.Write(patched)
 }
 func (s *Server) proxyExamPatch(w http.ResponseWriter, r *http.Request) {
 	id := chi.URLParam(r, "id")

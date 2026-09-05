@@ -1871,11 +1871,11 @@ function DonePanel({ applicationId, email, institutionName, onStartOver, onHome 
           <ul className="text-xs text-amber-950 space-y-1.5">
             <li className="flex items-start gap-2">
               <span className="h-4 w-4 rounded-full bg-amber-200/80 text-amber-900 flex items-center justify-center shrink-0 mt-0.5 text-[10px] font-bold">1</span>
-              <span>Our verification team reviews your uploaded recognition letter and PAN.</span>
+              <span>An activation link has been emailed to <strong className="font-semibold text-amber-950">{email}</strong> — set your password from there.</span>
             </li>
             <li className="flex items-start gap-2">
               <span className="h-4 w-4 rounded-full bg-amber-200/80 text-amber-900 flex items-center justify-center shrink-0 mt-0.5 text-[10px] font-bold">2</span>
-              <span>Upon approval, the activation magic link will be sent to <strong className="font-semibold text-amber-950">{email}</strong> within 24–48 hours.</span>
+              <span>Your application enters review. Full portal access unlocks after approval.</span>
             </li>
           </ul>
         </div>

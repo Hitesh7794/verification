@@ -16,7 +16,7 @@ import FingerprintCapture from '../../components/verify/FingerprintCapture.jsx'
 import IrisCapture from '../../components/verify/IrisCapture.jsx'
 import LivenessPanel from '../../components/verify/LivenessPanel.jsx'
 import ExamWindowReminderModal from '../../components/verify/ExamWindowReminderModal.jsx'
-import { api, fetchFPTemplate, fetchPhotoBlob, isWalletEmptyError, getCandidateAttempts, downloadVerificationPDF, previewVerificationPDF, printVerificationPDF, postFaceMatch, getCurrentExamId, setCurrentExamId } from '../../lib/api.js'
+import { api, fetchFPTemplate, fetchPhotoBlob, isWalletEmptyError, getCandidateAttempts, downloadVerificationPDF, printVerificationPDF, postFaceMatch, getCurrentExamId, setCurrentExamId } from '../../lib/api.js'
 import { getWalletSummary, formatRupees } from '../../lib/wallet/wallet.js'
 import { formatDateTime } from '../../lib/dates.js'
 
@@ -55,6 +55,17 @@ const STATE_KEY = 'nv_verify_state_v1'
 
 function loadPersistedState() {
   try {
+    // Session-alive gate: only rehydrate when the login handler set
+    // `nv_session_alive_client` in THIS sessionStorage. Refresh
+    // preserves both (state + marker) → mid-flow rehydrates. Close-
+    // tab-then-reopen (including Chrome's "continue where you left
+    // off" / "reopen closed tab" that restores sessionStorage) →
+    // the marker is missing because login never fired in the
+    // restored context → we clear the state and start clean.
+    if (!sessionStorage.getItem('nv_session_alive_client')) {
+      sessionStorage.removeItem(STATE_KEY)
+      return null
+    }
     const raw = sessionStorage.getItem(STATE_KEY)
     if (!raw) return null
     const parsed = JSON.parse(raw)
@@ -941,7 +952,7 @@ export default function ClientDashboard() {
           <CardHeader>
             <CardTitle>Step 2 — Liveness &amp; face match</CardTitle>
           </CardHeader>
-          <CardBody className="py-4">
+          <CardBody className="py-3">
             <LivenessPanel
               rollNo={candidate.roll_no}
               sessionId={idempotencyKey}
@@ -987,12 +998,12 @@ export default function ClientDashboard() {
       )}
 
       {step >= S_FINGERPRINT && candidate && (
-        <div className="grid gap-4 lg:grid-cols-3">
+        <div className="grid gap-3 lg:grid-cols-3">
           <Card className="lg:col-span-1 self-start">
             <CardHeader>
               <CardTitle>Candidate on file</CardTitle>
             </CardHeader>
-            <CardBody className="py-4">
+            <CardBody className="py-3">
               {/* Once the liveness burst has produced a probe frame we
                   show enrolled + captured side by side so the operator
                   can eyeball the match without leaving this step. The
@@ -1001,9 +1012,16 @@ export default function ClientDashboard() {
                   stage jumped in early), we fall back to the single
                   enrolled tile that was here before. */}
               {snap ? (
-                <div className="grid grid-cols-2 gap-2 mb-3">
+                // Side-by-side, but with a PORTRAIT (3:4) aspect ratio
+                // per tile so the head fits without object-cover
+                // chopping the top and bottom off the enrolled photo.
+                // Passport-style enrolled photos and the liveness burst
+                // frame are both taller than wide; a landscape 4:3 tile
+                // was cropping the crown of the head and the chin.
+                // gap-1.5 (6 px) claws back a bit more per-tile width.
+                <div className="grid grid-cols-2 gap-1.5 mb-3">
                   <div>
-                    <div className="aspect-[4/3] w-full rounded-lg bg-slate-100 overflow-hidden">
+                    <div className="aspect-[3/4] w-full rounded-lg bg-slate-100 overflow-hidden">
                       {photoBlob ? (
                         <img src={photoBlob} alt="enrolled" className="w-full h-full object-cover" />
                       ) : (
@@ -1017,7 +1035,7 @@ export default function ClientDashboard() {
                     </div>
                   </div>
                   <div>
-                    <div className="aspect-[4/3] w-full rounded-lg bg-slate-100 overflow-hidden">
+                    <div className="aspect-[3/4] w-full rounded-lg bg-slate-100 overflow-hidden">
                       <img src={snap} alt="captured" className="w-full h-full object-cover" />
                     </div>
                     <div className="mt-1 text-[10px] uppercase tracking-wide text-slate-500 text-center">
@@ -1045,86 +1063,124 @@ export default function ClientDashboard() {
               {faceResult && (
                 <div className="mt-3 text-xs text-slate-600 flex items-baseline justify-between">
                   <span className="uppercase tracking-wide text-slate-500">Face match</span>
+                  {/* Numeric score removed — operators get pass/fail;
+                      raw match figures were internal debugging visible
+                      to the field. */}
                   <span className={`font-semibold tabular-nums ${faceResult.ok ? 'text-emerald-700' : 'text-rose-700'}`}>
                     {faceResult.ok ? 'PASS' : 'FAIL'}
-                    {typeof faceResult.score === 'number' && ` · ${faceResult.score.toFixed(2)}`}
                   </span>
                 </div>
+              )}
+
+              {/* Compact per-modality status rows. Mirror the FACE MATCH
+                  row above so the whole card reads as one "biometric
+                  summary" — small, dense, no cartoon tiles. We tried
+                  enrolled/captured pairs for FP + Iris but there's no
+                  real image on either side (no server-side FP photo, no
+                  UI-side capture image); the pair metaphor only makes
+                  sense for face. Status pills are all the operator
+                  actually needs to see. */}
+              {candidate?.requires_fp && (
+                <ModalityStatusRow
+                  label="Fingerprint"
+                  state={
+                    fpResult
+                      ? (fpResult.ok ? 'pass' : 'fail')
+                      : (step >= S_FINGERPRINT ? 'active' : 'pending')
+                  }
+                />
+              )}
+              {candidate?.requires_iris && (
+                <ModalityStatusRow
+                  label="Iris"
+                  state={
+                    irisResult
+                      ? (irisResult.galleryMissing ? 'audit' : (irisResult.ok ? 'pass' : 'fail'))
+                      : (step >= S_FINGERPRINT ? 'active' : 'pending')
+                  }
+                />
               )}
             </CardBody>
           </Card>
 
-          <div className="lg:col-span-2 space-y-4">
+          {/* Right column. Outer container always stacks (space-y-3).
+              When BOTH fp + iris are required, the FP + Iris capture
+              cards are wrapped in a nested `lg:grid-cols-2` row so they
+              stay locked side-by-side regardless of step / result
+              state. The Result card, when it appears, renders BELOW
+              that row at full column-2 width. Single-modality exams
+              render the single required card inline. */}
+          <div className="lg:col-span-2 space-y-3">
 
-            {step >= S_FINGERPRINT && !!candidate?.requires_fp && !!candidate?.has_iso_template && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>Step 3 — Fingerprint scan</CardTitle>
-                </CardHeader>
-                <CardBody>
-                  {gallery ? (
-                    <FingerprintCapture
-                      rollNo={candidate.roll_no}
-                      galleryTemplate={gallery.template_b64}
-                      galleryFormat={gallery.format}
-                      // matchThreshold left unset on purpose: registry
-                      // provides the per-vendor default (both Mantra +
-                      // Startek = 50 on the unified TrustView 0-100
-                      // scale; 50 is the pass threshold end-to-end).
-                      // Pass an explicit number here only for one-off
-                      // calibration overrides.
+            {(() => {
+              // Compute once — both required and both actually
+              // capturable (gallery on file for each). When true, FP
+              // + Iris cards are wrapped in a nested 2-col grid so
+              // they stay locked side-by-side across capture, result
+              // landing, and step transitions. When false (single-
+              // modality exam OR one gallery missing), just render
+              // whichever card applies inline.
+              const bothSideBySide =
+                step >= S_FINGERPRINT &&
+                !!candidate?.requires_fp && !!candidate?.has_iso_template &&
+                !!candidate?.requires_iris && !!candidate?.has_iris_bytes
+              const fpCard = step >= S_FINGERPRINT && !!candidate?.requires_fp && !!candidate?.has_iso_template && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Step 3 — Fingerprint scan</CardTitle>
+                  </CardHeader>
+                  <CardBody>
+                    {gallery ? (
+                      <FingerprintCapture
+                        rollNo={candidate.roll_no}
+                        galleryTemplate={gallery.template_b64}
+                        galleryFormat={gallery.format}
+                        onResult={(r) => {
+                          // Do NOT bump step to S_RESULT here — the
+                          // auto-submit useEffect flips it only when
+                          // every required modality has a result.
+                          setFpResult(r)
+                        }}
+                      />
+                    ) : (
+                      <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
+                        No fingerprint template on file for this candidate. Proceed with manual verification.
+                        <div className="mt-3">
+                          <Button onClick={() => step < S_RESULT && setStep(S_RESULT)}>Skip fingerprint step</Button>
+                        </div>
+                      </div>
+                    )}
+                  </CardBody>
+                </Card>
+              )
+              const irisCard = step >= S_FINGERPRINT && !!candidate?.requires_iris && !!candidate?.has_iris_bytes && (
+                <Card>
+                  <CardHeader>
+                    <CardTitle>Iris capture</CardTitle>
+                  </CardHeader>
+                  <CardBody>
+                    <IrisCapture
+                      rollNo={candidate?.roll_no}
+                      matchThreshold={50}
                       onResult={(r) => {
-                        setFpResult(r)
-                        if (step < S_RESULT) setStep(S_RESULT)
+                        setIrisResult(r)
                       }}
                     />
-                  ) : (
-                    <div className="rounded-lg border border-amber-200 bg-amber-50 px-4 py-3 text-sm text-amber-800">
-                      No fingerprint template on file for this candidate. Proceed with manual verification.
-                      <div className="mt-3">
-                        <Button onClick={() => step < S_RESULT && setStep(S_RESULT)}>Skip fingerprint step</Button>
-                      </div>
-                    </div>
-                  )}
-                </CardBody>
-              </Card>
-            )}
-
-            {/* Iris fallback: appears when fingerprint failed (or no template
-                on file) and the operator opts in. The sample data has no iris
-                templates, so this is capture-for-audit; if/when iris gallery
-                is enrolled, the matcher kicks in automatically. */}
-            {step >= S_FINGERPRINT && fpResult && fpResult.ok === false && !showIris && !(candidate?.requires_iris && candidate?.has_iris_bytes) && (
-              <Card>
-                <CardBody>
-                  <p className="text-sm text-slate-700">
-                    Fingerprint did not match. You can try iris as a fallback.
-                  </p>
-                  <div className="mt-3">
-                    <Button onClick={() => setShowIris(true)}>Try iris instead</Button>
-                  </div>
-                </CardBody>
-              </Card>
-            )}
-            {(showIris || (step >= S_FINGERPRINT && candidate?.requires_iris && candidate?.has_iris_bytes)) && (
-              <Card>
-                <CardHeader>
-                  <CardTitle>
-                    {candidate?.requires_iris && candidate?.has_iris_bytes ? 'Iris capture' : 'Iris fallback'}
-                  </CardTitle>
-                </CardHeader>
-                <CardBody>
-                  <IrisCapture
-                    rollNo={candidate?.roll_no}
-                    matchThreshold={50}
-                    onResult={(r) => {
-                      setIrisResult(r)
-                      if (step < S_RESULT) setStep(S_RESULT)
-                    }}
-                  />
-                </CardBody>
-              </Card>
-            )}
+                  </CardBody>
+                </Card>
+              )
+              return bothSideBySide ? (
+                <div className="grid gap-3 lg:grid-cols-2 items-start">
+                  {fpCard}
+                  {irisCard}
+                </div>
+              ) : (
+                <>
+                  {fpCard}
+                  {irisCard}
+                </>
+              )
+            })()}
 
             {step >= S_RESULT && (
               <Card>
@@ -1162,15 +1218,9 @@ export default function ClientDashboard() {
                         )}
                       </div>
                       <div className="mt-3 flex flex-wrap items-center gap-2">
-                        <Button onClick={reset}>Start next verification</Button>
+                        <Button onClick={reset}>Next verification</Button>
                         {verificationId && (
                           <>
-                            <Button
-                              variant="secondary"
-                              onClick={() => previewVerificationPDF(verificationId)}
-                            >
-                              Preview PDF
-                            </Button>
                             <Button
                               variant="secondary"
                               onClick={() => printVerificationPDF(verificationId)}
@@ -1196,7 +1246,7 @@ export default function ClientDashboard() {
                       )}
                       <div className="flex items-center gap-3 text-sm text-slate-600">
                         <span className="inline-block h-3 w-3 rounded-full bg-indigo-500 animate-pulse" />
-                        {submitting ? 'Recording verification…' : 'Deciding based on match thresholds…'}
+                        {submitting ? 'Recording verification…' : 'Finalising decision…'}
                       </div>
                     </>
                   )}
@@ -1236,6 +1286,35 @@ export default function ClientDashboard() {
 //   >= 100 lookups   → slate (plenty of runway)
 //   30 - 99 lookups  → amber (heads-up)
 //   <  30 lookups    → rose (ask admin to raise the cap or top up)
+// ModalityStatusRow — compact status line for fingerprint / iris in
+// the "Candidate on file" card. Mirrors the FACE MATCH row's exact
+// visual (uppercase label left, coloured status right) so the summary
+// reads as one dense strip instead of a stack of card-shaped tiles.
+//
+// state:
+//   'pending' → slate "Waiting" (before capture starts)
+//   'active'  → indigo "Capturing…" (while operator is capturing)
+//   'pass'    → emerald "PASS"
+//   'fail'    → rose "FAIL"
+//   'audit'   → amber "AUDIT" (iris capture with no enrolled template)
+function ModalityStatusRow({ label, state }) {
+  const tone = ({
+    pending: { fg: 'text-slate-500',  text: 'Waiting',    pulse: false },
+    active:  { fg: 'text-indigo-600', text: 'Capturing…', pulse: true  },
+    pass:    { fg: 'text-emerald-700',text: 'PASS',       pulse: false },
+    fail:    { fg: 'text-rose-700',   text: 'FAIL',       pulse: false },
+    audit:   { fg: 'text-amber-800',  text: 'AUDIT',      pulse: false },
+  })[state] || { fg: 'text-slate-500', text: '—', pulse: false }
+  return (
+    <div className="mt-2 text-xs text-slate-600 flex items-baseline justify-between">
+      <span className="uppercase tracking-wide text-slate-500">{label}</span>
+      <span className={`font-semibold tabular-nums ${tone.fg} ${tone.pulse ? 'animate-pulse' : ''}`}>
+        {tone.text}
+      </span>
+    </div>
+  )
+}
+
 function WalletPill({ wallet }) {
   if (!wallet) {
     return (
