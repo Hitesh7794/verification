@@ -180,11 +180,21 @@ export default function LoginShell({
             </span>
           </div>
 
-        {/* Card */}
-        <div className="rounded-2xl bg-white ring-1 ring-slate-200 shadow-lg p-8">
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600 mb-2">
+        {/* Card. The gold rule at its head is the same authority mark
+            the chrome bars carry, so the card belongs to the product
+            rather than floating beside it. */}
+        <div className="rounded-2xl bg-white ring-1 ring-slate-200 shadow-lg overflow-hidden">
+          <div className="h-[3px] rule-gold" />
+          <div className="p-8">
+          {/* Which desk you are signing in to — the one piece of
+              identity on this card, so it gets a chip rather than a
+              line of grey uppercase. */}
+          <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-50
+                           ring-1 ring-inset ring-brand-100 px-2.5 py-1 mb-3
+                           text-[10.5px] font-bold uppercase tracking-[0.13em] text-brand-800">
+            <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-brand-500" />
             {roleLabel}
-          </p>
+          </span>
 
           {view === 'login' ? (
             <>
@@ -227,13 +237,17 @@ export default function LoginShell({
                   <Label>
                     {allowedRoles.includes('superadmin') ? 'Username' : 'Username or email'}
                   </Label>
-                  <Input
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    autoComplete="username"
-                    autoFocus
-                    required
-                  />
+                  <div className="relative">
+                    <Icon.User className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                    <Input
+                      value={username}
+                      onChange={(e) => setUsername(e.target.value)}
+                      autoComplete="username"
+                      autoFocus
+                      required
+                      className="pl-9"
+                    />
+                  </div>
                 </div>
                 <div>
                   <div className="flex items-center justify-between">
@@ -258,13 +272,14 @@ export default function LoginShell({
                     </button>
                   </div>
                   <div className="relative">
+                    <Icon.Lock className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
                     <Input
                       type={showPw ? 'text' : 'password'}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       autoComplete="current-password"
                       required
-                      className="pr-10"
+                      className="pl-9 pr-10"
                     />
                     <button
                       type="button"
@@ -288,13 +303,18 @@ export default function LoginShell({
                 <button
                   type="submit"
                   disabled={busy}
-                  className="w-full inline-flex items-center justify-center rounded-lg
+                  className="group w-full inline-flex items-center justify-center rounded-lg
                              bg-brand-600 hover:bg-brand-700 text-white font-semibold
                              px-4 py-2.5 text-sm shadow-sm transition-colors
                              focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500
                              disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  {busy ? 'Signing in…' : 'Sign in'}
+                  {busy ? 'Signing in…' : (
+                    <>
+                      Sign in
+                      <Icon.ArrowRight className="ml-2 h-4 w-4 transition-transform duration-150 group-hover:translate-x-0.5" />
+                    </>
+                  )}
                 </button>
               </form>
             </>
@@ -376,16 +396,21 @@ export default function LoginShell({
               )}
             </>
           )}
-        </div>
+          </div>
 
-        {showRegisterLink && view === 'login' && (
-          <p className="mt-5 text-center text-xs text-slate-500">
-            Not yet onboarded?{' '}
-            <a href="/register/institution" className="font-semibold text-brand-700 hover:underline">
-              Register your institution →
-            </a>
-          </p>
-        )}
+          {/* Footer band — the register link belongs to the card rather
+              than floating unattached beneath it. */}
+          {showRegisterLink && view === 'login' && (
+            <div className="border-t border-slate-200 bg-slate-50 px-8 py-3.5 text-center">
+              <p className="text-xs text-slate-500">
+                Not yet onboarded?{' '}
+                <a href="/register/institution" className="font-semibold text-brand-700 hover:underline">
+                  Register your institution &rarr;
+                </a>
+              </p>
+            </div>
+          )}
+        </div>
         </motion.div>
       </div>
     </div>
