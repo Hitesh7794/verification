@@ -179,7 +179,7 @@ export default function ReviewerKycInbox() {
             pair; keeps the "count + interactive tab-swap" idea via the
             tab strip that follows below. */}
         <div className="mb-6 rounded-xl bg-warm-surface ring-1 ring-warm overflow-hidden shadow-sm">
-          <div className="h-1 bg-stone-900" />
+          <div className="h-[3px] rule-gold" />
           <div className="p-5 sm:p-6">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="flex items-start gap-4 min-w-0">
@@ -370,10 +370,10 @@ export default function ReviewerKycInbox() {
             ) : (
               <>
                 {isPendingTab && (
-                  <div className="flex items-center gap-3 px-4 sm:px-5 py-2.5 border-b border-warm bg-[#FBF7F0] text-[12px] text-stone-600">
+                  <div className="flex items-center gap-3 px-4 sm:px-5 py-2.5 border-b border-warm bg-[#F6F8FA] text-[12px] text-stone-600">
                     <input
                       type="checkbox"
-                      className="h-4 w-4 rounded border-stone-400 text-stone-900 focus:ring-stone-500"
+                      className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
                       checked={allSelected}
                       onChange={toggleAll}
                       aria-label="Select all visible pending applications"
@@ -463,7 +463,7 @@ function Row({ it, selectable, selected, onToggle, onRevoke, revoking }) {
         <div className="pt-1">
           <input
             type="checkbox"
-            className="h-4 w-4 rounded border-stone-400 text-stone-900 focus:ring-stone-500"
+            className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
             checked={selected}
             onChange={onToggle}
             aria-label={`Select application ${it.id} for ${it.institution_name}`}
@@ -518,7 +518,7 @@ function Row({ it, selectable, selected, onToggle, onRevoke, revoking }) {
         )}
         <Link
           to={`/reviewer/applications/${it.id}`}
-          className="inline-flex items-center px-3 py-1.5 text-xs font-semibold rounded-lg bg-stone-900 text-white hover:bg-stone-800 transition-colors"
+          className="inline-flex items-center px-3 py-1.5 text-xs font-semibold rounded-lg bg-brand-600 text-white hover:bg-brand-700 transition-colors"
         >
           Review
         </Link>
@@ -552,7 +552,7 @@ function MassActionModal({ kind, count, note, onNoteChange, busy, err, onConfirm
               value={note}
               onChange={(e) => onNoteChange(e.target.value)}
               placeholder={isApprove ? 'e.g. Verified with state medical council list' : 'e.g. Incomplete AISHE accreditation documentation'}
-              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-800 placeholder-slate-400 focus:border-stone-900 focus:outline-none focus:ring-1 focus:ring-stone-900"
+              className="mt-1 w-full rounded-lg border border-slate-300 px-3 py-2 text-xs text-slate-800 placeholder-slate-400 focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/12"
             />
           </div>
 

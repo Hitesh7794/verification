@@ -223,7 +223,7 @@ export default function ReviewerApplicationDetail() {
       <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04),0_8px_24px_-12px_rgba(15,23,42,0.08)] mb-6">
         <div className="px-6 py-6 flex flex-wrap items-start justify-between gap-4">
           <div className="flex items-start gap-4 min-w-0">
-            <span className="h-12 w-12 rounded-xl bg-stone-900 text-white flex items-center justify-center text-lg font-semibold shrink-0">
+            <span className="h-12 w-12 rounded-xl bg-brand-600 text-white flex items-center justify-center text-lg font-semibold shrink-0">
               {(app.institution_name || '?').slice(0, 1).toUpperCase()}
             </span>
             <div className="min-w-0">

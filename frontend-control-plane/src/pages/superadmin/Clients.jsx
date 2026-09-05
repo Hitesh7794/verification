@@ -183,7 +183,7 @@ export default function Clients() {
               className="overflow-hidden"
             >
               <div className="mb-6 rounded-xl bg-warm-surface ring-1 ring-warm shadow-sm overflow-hidden">
-                <div className="h-1 bg-stone-900" />
+                <div className="h-[3px] rule-gold" />
                 <div className="p-5 sm:p-6">
                   <div className="flex items-start gap-3 mb-5">
                     <div className="h-9 w-9 rounded-lg bg-stone-100 text-stone-800 flex items-center justify-center shrink-0">
@@ -359,7 +359,7 @@ export default function Clients() {
                               )}
                               <Link
                                 to={`/superadmin/clients/${c.id}`}
-                                className="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-lg bg-stone-900 text-white hover:bg-stone-800 transition-colors"
+                                className="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-600 text-white hover:bg-brand-700 transition-colors"
                                 title="Open this client's detail page to see and manage its exams"
                               >
                                 Manage

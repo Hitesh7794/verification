@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react'
 import { useAuth } from '../../lib/auth.jsx'
 import WalletWidget from '../wallet/WalletWidget.jsx'
 import AvatarMenu from './AvatarMenu.jsx'
+import { BrandMark } from '../ui/brand.jsx'
 
 // AdminTabs — the sticky top bar for every /admin/* surface.
 //
@@ -13,10 +14,10 @@ import AvatarMenu from './AvatarMenu.jsx'
 //   Wallet widget (org balance, top-up)
 //   Avatar menu (display_name, role, username, sign out)
 //
-// Same visual language as SuperTabs: warm ivory background, hairline
-// bottom border, tabs animate their pill via framer layoutId, hover
-// state is a cream wash. Amber accent on the "ADMIN" wordmark keeps
-// the two-tone story with the ink-black primary actions.
+// Same visual language as SuperTabs: navy chrome under a gold authority
+// rule, tabs animate their pill via framer layoutId. The gold accent on
+// the "ADMIN" wordmark is the only chroma in the bar — everything else
+// is ink and light, so the tab row stays the thing you read first.
 
 // V15 flow — access is minted automatically at KYC-approval time (no
 // admin-driven subscribe). Both 'Exam catalog' and 'My exams' are
@@ -55,12 +56,15 @@ export default function AdminTabs({ walletRefreshKey, onWalletBalanceChange }) {
   }) + ' IST'
 
   return (
-    <header className="sticky top-0 z-40 border-b border-warm bg-warm-surface/95 backdrop-blur supports-[backdrop-filter]:bg-warm-surface/85">
-      <div className="mx-auto max-w-7xl px-6 flex items-center gap-8 h-14">
+    <header className="sticky top-0 z-40 bg-ink-chrome">
+      <div className="mx-auto max-w-7xl px-6 flex items-center gap-8 h-16">
         {/* Brand */}
-        <div className="flex flex-col leading-tight shrink-0">
-          <span className="text-[13px] font-semibold text-stone-900 tracking-tight">Verification Portal</span>
-          <span className="text-[10px] uppercase tracking-widest text-warm-accent">Admin</span>
+        <div className="flex items-center gap-2.5 shrink-0">
+          <BrandMark size={26} tone="inverse" />
+          <div className="flex flex-col leading-tight">
+            <span className="font-display text-[14px] font-extrabold text-white tracking-[-0.02em]">Verification Portal</span>
+            <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-300/90">Admin</span>
+          </div>
         </div>
 
         {/* Primary tabs */}
@@ -75,17 +79,17 @@ export default function AdminTabs({ walletRefreshKey, onWalletBalanceChange }) {
               <li key={t.to} className="shrink-0">
                 <NavLink to={t.to} end={t.end}>
                   {({ isActive }) => (
-                    <div className={`relative inline-flex items-center px-3 py-1.5 text-[13px] font-medium rounded-md transition-colors ${isActive ? '' : 'hover:bg-[#F5EEDF]'}`}>
+                    <div className="relative inline-flex items-center px-3.5 py-1.5 text-[13px] font-semibold rounded-lg transition-colors">
                       {isActive && (
                         <motion.span
                           layoutId="admin-nav-indicator"
-                          className="absolute inset-0 rounded-md bg-white ring-1 ring-stone-900/15"
+                          className="absolute inset-0 rounded-lg bg-white/12 ring-1 ring-inset ring-white/20"
                           transition={{ type: 'spring', stiffness: 380, damping: 30 }}
                         />
                       )}
-                      <span className={`relative z-10 ${isActive
-                        ? 'text-stone-900'
-                        : 'text-stone-600 hover:text-stone-900 transition-colors'}`}>
+                      <span className={`relative z-10 transition-colors ${isActive
+                        ? 'text-white'
+                        : 'text-slate-300 hover:text-white'}`}>
                         {t.label}
                       </span>
                     </div>
@@ -98,8 +102,8 @@ export default function AdminTabs({ walletRefreshKey, onWalletBalanceChange }) {
 
         {/* Right cluster: live clock + wallet + avatar */}
         <div className="flex items-center gap-3 shrink-0">
-          <span className="hidden lg:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#F5EEDF] border border-warm text-[11px] font-mono text-stone-700">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+          <span className="hidden lg:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/8 ring-1 ring-inset ring-white/15 text-[11px] font-mono text-slate-200 tabular-nums">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
             {timeText}
           </span>
           {user?.role === 'admin' && (
@@ -111,6 +115,8 @@ export default function AdminTabs({ walletRefreshKey, onWalletBalanceChange }) {
           <AvatarMenu user={user} onLogout={handleLogout} />
         </div>
       </div>
+      {/* Gold authority rule */}
+      <div className="h-[2px] rule-gold" />
     </header>
   )
 }

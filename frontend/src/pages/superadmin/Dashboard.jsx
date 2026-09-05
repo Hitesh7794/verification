@@ -23,9 +23,12 @@ import { usePolling } from '../../lib/usePolling.js'
 //   - Trend chart and share list share a row underneath.
 //   - Organizations table is the source-of-truth at the bottom.
 
-const SERIES = ['#B45309', '#4D7C0F', '#9F1239', '#5B21B6', '#0F766E', '#CA8A04']
-const AXIS_MUTED = '#A8A29E'
-const GRID_LINE  = '#E7E5E4'
+// Categorical chart palette. Six hues at a matched lightness and chroma
+// so no single series shouts louder than the rest, and each stays
+// distinguishable in greyscale for a printed board report.
+const SERIES = ['#1A57A3', '#A96D15', '#127A53', '#9B2437', '#5B4B8A', '#0E6E7D']
+const AXIS_MUTED = '#93A2B5'
+const GRID_LINE  = '#DDE4EC'
 
 const nf = new Intl.NumberFormat('en-IN')
 
@@ -142,7 +145,7 @@ function RingHero({ pct, verified, denied, loaded }) {
       transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
       className="lg:col-span-2 rounded-2xl border border-warm bg-warm-surface p-6 shadow-sm"
     >
-      <p className="text-[11px] font-semibold uppercase tracking-widest text-warm-accent mb-4">
+      <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-600 mb-4">
         Verification success rate
       </p>
       <div className="flex items-center gap-6">
@@ -190,11 +193,11 @@ function Ring({ pct, size = 148, stroke = 12 }) {
     <svg width={size} height={size} viewBox={`0 0 ${size} ${size}`} className="-rotate-90">
       <circle
         cx={size / 2} cy={size / 2} r={r}
-        fill="none" stroke="#EDE4D3" strokeWidth={stroke}
+        fill="none" stroke="#DDE4EC" strokeWidth={stroke}
       />
       <motion.circle
         cx={size / 2} cy={size / 2} r={r}
-        fill="none" stroke="#059669" strokeWidth={stroke}
+        fill="none" stroke="#127A53" strokeWidth={stroke}
         strokeLinecap="round"
         strokeDasharray={c}
         initial={{ strokeDashoffset: c }}
@@ -226,7 +229,7 @@ function BigStat({ label, value, loaded, delay = 0, onClick, hint }) {
           {label}
         </p>
         {clickable && hint && (
-          <p className="mt-1 text-[11px] font-medium text-warm-accent opacity-0 group-hover:opacity-100 transition-opacity">
+          <p className="mt-1 text-[11px] font-medium text-brand-700 opacity-0 group-hover:opacity-100 transition-opacity">
             {hint}
           </p>
         )}
@@ -286,9 +289,9 @@ function OrgBarsCard({ orgs, loaded, colourFor }) {
                   tickLine={false} axisLine={false}
                   allowDecimals={false} />
                 <YAxis type="category" dataKey="name" stroke={GRID_LINE}
-                  tick={{ fill: '#57534E', fontSize: 12, fontWeight: 600 }}
+                  tick={{ fill: '#4C5C71', fontSize: 12, fontWeight: 600 }}
                   tickLine={false} axisLine={false} width={170} />
-                <Tooltip content={<OrgBarTooltip />} cursor={{ fill: '#FBF7F0' }} />
+                <Tooltip content={<OrgBarTooltip />} cursor={{ fill: '#F6F8FA' }} />
                 <Bar dataKey="total" radius={[0, 6, 6, 0]} barSize={20}>
                   {top.map((row) => (
                     <Cell key={row.name} fill={row.color} />
@@ -308,7 +311,7 @@ function OrgBarTooltip({ active, payload }) {
   const row = payload[0].payload
   const pct = row.total ? (row.verified / row.total) * 100 : 0
   return (
-    <div className="rounded-lg bg-stone-900 text-white shadow-lg px-3 py-2 text-xs border border-stone-700 min-w-[160px] max-w-[280px]">
+    <div className="rounded-lg bg-brand-600 text-white shadow-lg px-3 py-2 text-xs border border-stone-700 min-w-[160px] max-w-[280px]">
       <p className="font-medium mb-0.5 text-stone-100 break-words">{row.fullName || row.name}</p>
       {row.code && row.code !== row.fullName && (
         <p className="text-[10px] font-mono text-stone-400 mb-1">{row.code}</p>
@@ -341,14 +344,14 @@ function ShareCard({ orgs, total, loaded, colourFor }) {
           {active.map((o) => {
             const pct = total ? (o.total / total) * 100 : 0
             return (
-              <li key={o.id} className="px-5 py-3 hover:bg-[#FBF7F0] transition-colors">
+              <li key={o.id} className="px-5 py-3 hover:bg-[#F6F8FA] transition-colors">
                 <div className="flex items-center gap-3 text-xs">
                   <span className="h-2.5 w-2.5 rounded-sm shrink-0"
                     style={{ background: colourFor(o.id) }} />
                   <span className="font-medium text-stone-800 truncate flex-1">{o.name}</span>
                   <span className="tabular-nums text-stone-500 w-12 text-right">{pct.toFixed(1)}%</span>
                 </div>
-                <div className="mt-1.5 h-[3px] rounded-full bg-[#F5EEDF] overflow-hidden">
+                <div className="mt-1.5 h-[3px] rounded-full bg-[#ECF0F5] overflow-hidden">
                   <div className="h-full rounded-full transition-all duration-700 ease-out"
                     style={{ width: `${pct}%`, background: colourFor(o.id) }} />
                 </div>
@@ -382,7 +385,7 @@ function OrgsTable({ orgs, loaded, colourFor }) {
       <div className="overflow-x-auto">
         <table className="w-full text-sm">
           <thead>
-            <tr className="border-b border-warm bg-[#FBF7F0]">
+            <tr className="border-b border-warm bg-[#F6F8FA]">
               <th className="text-left px-5 py-2.5 text-[10px] font-semibold uppercase tracking-widest text-stone-500">Code</th>
               <th className="text-left px-3 py-2.5 text-[10px] font-semibold uppercase tracking-widest text-stone-500">Organization</th>
               <th className="text-right px-3 py-2.5 text-[10px] font-semibold uppercase tracking-widest text-stone-500">Verifications</th>
@@ -405,7 +408,7 @@ function OrgsTable({ orgs, loaded, colourFor }) {
                            : pct >= 85 ? 'text-amber-700'
                            :             'text-rose-700'
               return (
-                <tr key={o.id} className="hover:bg-[#FBF7F0] transition-colors">
+                <tr key={o.id} className="hover:bg-[#F6F8FA] transition-colors">
                   <td className="px-5 py-3">
                     <span className="inline-flex items-center gap-2">
                       <span className="h-2.5 w-2.5 rounded-sm shrink-0"

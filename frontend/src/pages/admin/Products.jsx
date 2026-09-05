@@ -89,7 +89,7 @@ export default function Products() {
             onClick={() => setFilter('all')}
             className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
               filter === 'all'
-                ? 'bg-stone-900 text-white shadow-sm'
+                ? 'bg-brand-600 text-white shadow-sm'
                 : 'bg-white border border-stone-200/80 text-stone-600 hover:bg-stone-50 hover:text-stone-900'
             }`}
           >
@@ -100,7 +100,7 @@ export default function Products() {
             onClick={() => setFilter('fingerprint')}
             className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
               filter === 'fingerprint'
-                ? 'bg-stone-900 text-white shadow-sm'
+                ? 'bg-brand-600 text-white shadow-sm'
                 : 'bg-white border border-stone-200/80 text-stone-600 hover:bg-stone-50 hover:text-stone-900'
             }`}
           >
@@ -111,7 +111,7 @@ export default function Products() {
             onClick={() => setFilter('iris')}
             className={`px-3.5 py-1.5 rounded-lg text-xs font-medium transition-all ${
               filter === 'iris'
-                ? 'bg-stone-900 text-white shadow-sm'
+                ? 'bg-brand-600 text-white shadow-sm'
                 : 'bg-white border border-stone-200/80 text-stone-600 hover:bg-stone-50 hover:text-stone-900'
             }`}
           >

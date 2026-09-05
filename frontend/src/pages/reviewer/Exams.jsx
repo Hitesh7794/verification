@@ -24,7 +24,7 @@ function FormSection({ num, title, hint, children }) {
   return (
     <div className="space-y-2">
       <div className="flex items-baseline gap-2">
-        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-stone-900 text-[10px] font-bold text-white">
+        <span className="flex h-5 w-5 items-center justify-center rounded-full bg-brand-600 text-[10px] font-bold text-white">
           {num}
         </span>
         <h4 className="text-xs font-semibold uppercase tracking-wider text-slate-800">{title}</h4>
@@ -125,7 +125,7 @@ function NewExamForm({ onCancel, onCreated, onBulkCreated }) {
 
   return (
     <div className="mb-8 rounded-2xl bg-white border border-stone-200/80 shadow-md overflow-hidden">
-      <div className="h-1 bg-stone-900" />
+      <div className="h-[3px] rule-gold" />
       <div className="p-6 sm:p-7">
         <div className="flex flex-wrap items-center justify-between gap-4 mb-6 pb-4 border-b border-slate-100">
           <div className="flex items-start gap-3">
@@ -236,7 +236,7 @@ function NewExamForm({ onCancel, onCreated, onBulkCreated }) {
                     type="checkbox"
                     checked={reqFace}
                     onChange={(e) => setReqFace(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 rounded border-slate-300 text-stone-900 focus:ring-stone-900"
+                    className="mt-0.5 h-4 w-4 rounded border-slate-300 text-stone-900 focus:ring-brand-500"
                   />
                   <div>
                     <span className="text-xs font-bold text-slate-900 block">Facial Recognition</span>
@@ -251,7 +251,7 @@ function NewExamForm({ onCancel, onCreated, onBulkCreated }) {
                     type="checkbox"
                     checked={reqFP}
                     onChange={(e) => setReqFP(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 rounded border-slate-300 text-stone-900 focus:ring-stone-900"
+                    className="mt-0.5 h-4 w-4 rounded border-slate-300 text-stone-900 focus:ring-brand-500"
                   />
                   <div>
                     <span className="text-xs font-bold text-slate-900 block">Fingerprint</span>
@@ -266,7 +266,7 @@ function NewExamForm({ onCancel, onCreated, onBulkCreated }) {
                     type="checkbox"
                     checked={reqIris}
                     onChange={(e) => setReqIris(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 rounded border-slate-300 text-stone-900 focus:ring-stone-900"
+                    className="mt-0.5 h-4 w-4 rounded border-slate-300 text-stone-900 focus:ring-brand-500"
                   />
                   <div>
                     <span className="text-xs font-bold text-slate-900 block">Iris Scan</span>
@@ -536,7 +536,7 @@ export default function ReviewerExams() {
       <FadeIn>
         {/* Client board hero banner matching superadmin ClientDetail */}
         <div className="mb-8 rounded-xl bg-warm-surface ring-1 ring-warm overflow-hidden shadow-sm">
-          <div className="h-1 bg-stone-900" />
+          <div className="h-[3px] rule-gold" />
           <div className="p-5 sm:p-6">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="flex items-start gap-4 min-w-0">
@@ -767,7 +767,7 @@ export default function ReviewerExams() {
                               </Button>
                               <Link
                                 to={`/reviewer/exams/${e.id}`}
-                                className="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-lg bg-stone-900 text-white hover:bg-stone-800 transition-colors"
+                                className="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-600 text-white hover:bg-brand-700 transition-colors"
                                 title="Open this exam's detail page to upload CSVs, edit window, and manage candidates"
                               >
                                 Manage

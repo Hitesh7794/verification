@@ -1,11 +1,13 @@
 import { NavLink, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { useEffect, useState } from 'react'
+import { BrandMark } from '../ui/brand.jsx'
 
-// Executive top-bar for the superadmin surfaces. Clean white header
-// with a hairline bottom border. Product mark on the left, primary
-// tabs in the middle, live IST clock + logout on the right. Active
-// tab gets a subtle animated underline via framer's layoutId.
+// Executive top-bar for the superadmin surfaces. Navy chrome with a
+// gold authority rule beneath it — the register a national credentialing
+// body writes in. Product mark on the left, primary tabs in the middle,
+// live IST clock + logout on the right. Active tab gets a subtle
+// animated pill via framer's layoutId.
 //
 // Route surface (kept in sync with server.go /api/super* + /api/superadmin/*):
 //   Overview      → /superadmin           (verification metrics)
@@ -42,12 +44,19 @@ export default function SuperTabs() {
   }) + ' IST'
 
   return (
-    <header className="sticky top-0 z-40 border-b border-warm bg-warm-surface/95 backdrop-blur supports-[backdrop-filter]:bg-warm-surface/85">
-      <div className="mx-auto max-w-7xl px-6 flex items-center gap-8 h-14">
+    <header className="sticky top-0 z-40 bg-ink-chrome">
+      <div className="mx-auto max-w-7xl px-6 flex items-center gap-8 h-16">
         {/* Brand */}
-        <div className="flex flex-col leading-tight shrink-0">
-          <span className="text-[13px] font-semibold text-stone-900 tracking-tight">Verification Portal</span>
-          <span className="text-[10px] uppercase tracking-widest text-warm-accent">Superadmin</span>
+        <div className="flex items-center gap-2.5 shrink-0">
+          <BrandMark size={26} tone="inverse" />
+          <div className="flex flex-col leading-tight">
+            <span className="font-display text-[14px] font-extrabold text-white tracking-[-0.02em]">
+              Verification Portal
+            </span>
+            <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-300/90">
+              Superadmin
+            </span>
+          </div>
         </div>
 
         {/* Primary tabs */}
@@ -57,17 +66,17 @@ export default function SuperTabs() {
               <li key={t.to}>
                 <NavLink to={t.to} end={t.end}>
                   {({ isActive }) => (
-                    <div className={`relative inline-flex items-center px-3 py-1.5 text-[13px] font-medium rounded-md transition-colors ${isActive ? '' : 'hover:bg-[#F5EEDF]'}`}>
+                    <div className="relative inline-flex items-center px-3.5 py-1.5 text-[13px] font-semibold rounded-lg transition-colors">
                       {isActive && (
                         <motion.span
                           layoutId="super-nav-indicator"
-                          className="absolute inset-0 rounded-md bg-white ring-1 ring-stone-900/15"
+                          className="absolute inset-0 rounded-lg bg-white/12 ring-1 ring-inset ring-white/20"
                           transition={{ type: 'spring', stiffness: 380, damping: 30 }}
                         />
                       )}
-                      <span className={`relative z-10 ${isActive
-                        ? 'text-stone-900'
-                        : 'text-stone-600 hover:text-stone-900 transition-colors'}`}>
+                      <span className={`relative z-10 transition-colors ${isActive
+                        ? 'text-white'
+                        : 'text-slate-300 hover:text-white'}`}>
                         {t.label}
                       </span>
                     </div>
@@ -80,13 +89,13 @@ export default function SuperTabs() {
 
         {/* Right cluster: time + logout */}
         <div className="flex items-center gap-3 shrink-0">
-          <span className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-md bg-[#F5EEDF] border border-warm text-[11px] font-mono text-stone-700">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-500 animate-pulse" />
+          <span className="hidden md:inline-flex items-center gap-1.5 px-2.5 py-1 rounded-lg bg-white/8 ring-1 ring-inset ring-white/15 text-[11px] font-mono text-slate-200 tabular-nums">
+            <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
             {timeText}
           </span>
           <button
             onClick={onLogout}
-            className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-stone-800 hover:text-white bg-white hover:bg-stone-900 border border-warm-strong hover:border-stone-900 px-3 py-1.5 rounded-md shadow-sm transition-colors"
+            className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-slate-200 hover:text-white bg-white/8 hover:bg-white/16 ring-1 ring-inset ring-white/15 px-3 py-1.5 rounded-lg transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-300"
             title="Sign out"
           >
             <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4"/><polyline points="16 17 21 12 16 7"/><line x1="21" y1="12" x2="9" y2="12"/></svg>
@@ -94,6 +103,8 @@ export default function SuperTabs() {
           </button>
         </div>
       </div>
+      {/* Gold authority rule */}
+      <div className="h-[2px] rule-gold" />
     </header>
   )
 }

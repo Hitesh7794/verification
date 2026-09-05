@@ -193,7 +193,7 @@ export default function KycResubmit() {
         <div className="mx-auto max-w-4xl px-6 h-14 flex items-center gap-4">
           <div className="flex flex-col leading-tight">
             <span className="text-[13px] font-semibold text-stone-900 tracking-tight">Verification Portal</span>
-            <span className="text-[10px] uppercase tracking-widest text-warm-accent">Admin · Re-submit</span>
+            <span className="text-[10px] uppercase tracking-widest text-brand-700">Admin · Re-submit</span>
           </div>
           <div className="flex-1" />
           <Link to="/admin" className="text-[12px] font-medium text-stone-600 hover:text-stone-900">
@@ -206,7 +206,7 @@ export default function KycResubmit() {
           )}
           <button
             onClick={onLogout}
-            className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-stone-800 hover:text-white bg-white hover:bg-stone-900 border border-warm-strong hover:border-stone-900 px-3 py-1.5 rounded-md shadow-sm transition-colors"
+            className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-slate-700 hover:text-white bg-white hover:bg-brand-600 border border-slate-300 hover:border-brand-600 px-3 py-1.5 rounded-md shadow-sm transition-colors"
           >
             Sign out
           </button>
@@ -354,8 +354,8 @@ function FormSection({ title, icon: I, children }) {
     <Card>
       <CardBody>
         <div className="flex items-center gap-2 mb-4">
-          {I && <I className="h-4 w-4 text-warm-accent" />}
-          <h3 className="text-sm font-semibold uppercase tracking-wider text-warm-accent">{title}</h3>
+          {I && <I className="h-4 w-4 text-slate-600" />}
+          <h3 className="text-sm font-semibold uppercase tracking-wider text-slate-600">{title}</h3>
         </div>
         <div className="space-y-3">{children}</div>
       </CardBody>

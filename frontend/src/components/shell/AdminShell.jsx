@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react'
 import { motion } from 'framer-motion'
 import { Link, useNavigate } from 'react-router-dom'
 import AdminTabs from './AdminTabs.jsx'
+import { BrandMark } from '../ui/brand.jsx'
 import { api } from '../../lib/api.js'
 import { useAuth } from '../../lib/auth.jsx'
 import { Icon, Pill } from '../ui/extras.jsx'
@@ -40,7 +41,7 @@ export default function AdminShell({ children, walletRefreshKey, onWalletBalance
   if (kyc === null && !kycErr) {
     return (
       <div className="min-h-full bg-warm-page flex items-center justify-center">
-        <div className="text-sm text-stone-500 animate-pulse">Loading your portal…</div>
+        <div className="text-sm text-slate-500 animate-pulse">Loading your portal…</div>
       </div>
     )
   }
@@ -91,21 +92,24 @@ function KYCLockScreen({ kyc }) {
 
   return (
     <div className="min-h-full bg-warm-page">
-      <header className="border-b border-warm bg-warm-surface/95 backdrop-blur sticky top-0 z-40">
-        <div className="mx-auto max-w-7xl px-6 h-14 flex items-center gap-4">
-          <div className="flex flex-col leading-tight">
-            <span className="text-[13px] font-semibold text-stone-900 tracking-tight">Verification Portal</span>
-            <span className="text-[10px] uppercase tracking-widest text-warm-accent">Admin</span>
+      <header className="sticky top-0 z-40 bg-ink-chrome">
+        <div className="mx-auto max-w-7xl px-6 h-16 flex items-center gap-4">
+          <div className="flex items-center gap-2.5">
+            <BrandMark size={26} tone="inverse" />
+            <div className="flex flex-col leading-tight">
+              <span className="font-display text-[14px] font-extrabold text-white tracking-[-0.02em]">Verification Portal</span>
+              <span className="text-[10px] font-semibold uppercase tracking-[0.14em] text-amber-300/90">Admin</span>
+            </div>
           </div>
           <div className="flex-1" />
           {user?.display_name && (
-            <span className="hidden md:inline text-[12px] text-stone-600 truncate max-w-[220px]">
+            <span className="hidden md:inline text-[12px] text-slate-300 truncate max-w-[220px]">
               {user.display_name}
             </span>
           )}
           <button
             onClick={onLogout}
-            className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-stone-800 hover:text-white bg-white hover:bg-stone-900 border border-warm-strong hover:border-stone-900 px-3 py-1.5 rounded-md shadow-sm transition-colors"
+            className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-slate-200 hover:text-white bg-white/8 hover:bg-white/16 ring-1 ring-inset ring-white/15 px-3 py-1.5 rounded-lg transition-colors"
           >
             Sign out
           </button>
@@ -185,7 +189,7 @@ function KYCLockScreen({ kyc }) {
                   <div className="pt-2">
                     <Link
                       to="/admin/kyc-resubmit"
-                      className="inline-flex items-center gap-1.5 rounded-md bg-stone-900 text-white text-sm font-semibold px-4 py-2 hover:bg-stone-800 transition-colors"
+                      className="inline-flex items-center gap-1.5 rounded-md bg-brand-600 text-white text-sm font-semibold px-4 py-2 hover:bg-brand-700 transition-colors"
                     >
                       Re-submit application
                       <Icon.ChevronRight className="h-4 w-4" />
@@ -213,7 +217,7 @@ export function PageHead({ eyebrow, title, subtitle, right }) {
     <div className="mb-6 flex items-start justify-between gap-4">
       <div>
         {eyebrow && (
-          <p className="text-[11px] font-semibold uppercase tracking-widest text-warm-accent mb-1.5">
+          <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-600 mb-1.5">
             {eyebrow}
           </p>
         )}

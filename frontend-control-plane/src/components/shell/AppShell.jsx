@@ -36,9 +36,12 @@ export default function AppShell({ children, walletRefreshKey, onWalletBalanceCh
 
   return (
     <div className="min-h-screen flex flex-col bg-slate-50">
-      <header className="sticky top-0 z-30 border-b border-slate-200 bg-white/85 backdrop-blur supports-[backdrop-filter]:bg-white/70">
-        <div className="mx-auto max-w-7xl px-6 h-14 flex items-center justify-between gap-4">
-          <Brand linkTo="/" />
+      {/* Navy chrome + gold rule — the same authority band the superadmin
+          and reviewer desks carry, so an operator, a reviewer and the
+          platform team are visibly inside one product. */}
+      <header className="sticky top-0 z-30 bg-ink-chrome">
+        <div className="mx-auto max-w-7xl px-6 h-16 flex items-center justify-between gap-4">
+          <Brand linkTo="/" tone="inverse" />
           <div className="flex items-center gap-4">
             {showWallet && (
               <WalletWidget
@@ -49,13 +52,17 @@ export default function AppShell({ children, walletRefreshKey, onWalletBalanceCh
             <AvatarMenu user={user} onLogout={handleLogout} />
           </div>
         </div>
+        <div className="h-[2px] rule-gold" />
       </header>
       <main className="flex-1">
-        <div className="mx-auto max-w-7xl px-6 py-8">{children}</div>
+        <div className="mx-auto max-w-7xl px-6 py-8 animate-surface-in">{children}</div>
       </main>
       <footer className="border-t border-slate-200 bg-white">
-        <div className="mx-auto max-w-7xl px-6 py-4 text-xs text-slate-500">
-          {PRODUCT_NAME}
+        <div className="mx-auto max-w-7xl px-6 py-4 flex flex-wrap items-center justify-between gap-2">
+          <span className="text-xs font-semibold text-slate-600">{PRODUCT_NAME}</span>
+          <span className="text-[11px] text-slate-400">
+            Biometric identity verification for examination boards
+          </span>
         </div>
       </footer>
     </div>

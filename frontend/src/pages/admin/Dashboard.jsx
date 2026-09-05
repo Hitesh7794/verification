@@ -21,14 +21,17 @@ import { getWallet, getWalletConfig, formatRupees } from '../../lib/wallet/walle
 //   Trend chart (2/3) + Top exams (1/3)
 //   Recent activity table
 
-const STATUS_GOOD = '#059669'
-const STATUS_BAD  = '#B91C1C'
-const AXIS_MUTED  = '#A8A29E'
-const GRID_LINE   = '#E7E5E4'
+const STATUS_GOOD = '#127A53'
+const STATUS_BAD  = '#9B2437'
+const AXIS_MUTED  = '#93A2B5'
+const GRID_LINE   = '#DDE4EC'
 
 const nf = new Intl.NumberFormat('en-IN')
 
-const SERIES = ['#B45309', '#4D7C0F', '#9F1239', '#5B21B6', '#0F766E', '#CA8A04']
+// Categorical chart palette. Six hues at a matched lightness and chroma
+// so no single series shouts louder than the rest, and each stays
+// distinguishable in greyscale for a printed board report.
+const SERIES = ['#1A57A3', '#A96D15', '#127A53', '#9B2437', '#5B4B8A', '#0E6E7D']
 
 function fmtTime(s) {
   try { return new Date(s).toLocaleString() } catch { return s }
@@ -150,7 +153,7 @@ function TodayTile({ today, verified, denied, loaded, delay = 0 }) {
       whileHover={{ y: -2 }}
       className="flex flex-col rounded-xl border border-warm bg-warm-surface px-5 py-4 shadow-sm hover:shadow-md transition-shadow"
     >
-      <p className="text-[10px] font-semibold uppercase tracking-widest text-warm-accent mb-1.5">
+      <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600 mb-1.5">
         Today
       </p>
       <p className="text-2xl font-semibold text-ink-900 tracking-tight tabular-nums leading-none">
@@ -187,7 +190,7 @@ function BigStat({ label, value, loaded, delay = 0, onClick, hint }) {
       <p className="text-2xl font-semibold text-ink-900 tracking-tight tabular-nums leading-none">
         {loaded ? <CountUp value={value} /> : <span className="text-stone-300">—</span>}
       </p>
-      <p className={`mt-2 text-[11px] ${clickable ? 'font-medium text-warm-accent opacity-0 group-hover:opacity-100 transition-opacity' : 'text-stone-400 italic'}`}>
+      <p className={`mt-2 text-[11px] ${clickable ? 'font-medium text-brand-700 opacity-0 group-hover:opacity-100 transition-opacity' : 'text-stone-400 italic'}`}>
         {clickable && hint ? hint : 'Across the platform'}
       </p>
     </motion.button>
@@ -208,7 +211,7 @@ function WalletStrip({ wallet, cfg, onTopUp }) {
       className={`mb-6 rounded-2xl border ${low ? 'border-amber-200 bg-amber-50/40' : 'border-warm bg-warm-surface'} px-6 py-5 shadow-sm flex flex-wrap items-center gap-6`}
     >
       <div className="flex-1 min-w-0">
-        <p className="text-[11px] font-semibold uppercase tracking-widest text-warm-accent mb-2">
+        <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-600 mb-2">
           Wallet balance
         </p>
         <div className="flex items-baseline gap-3 flex-wrap">
@@ -311,14 +314,14 @@ function TopExamsCard({ rows }) {
             const success = r.total ? (r.verified / r.total) * 100 : 0
             const color = SERIES[i % SERIES.length]
             return (
-              <li key={r.id} className="px-5 py-3 hover:bg-[#FBF7F0] transition-colors">
+              <li key={r.id} className="px-5 py-3 hover:bg-[#F6F8FA] transition-colors">
                 <div className="flex items-center gap-3 text-xs">
                   <span className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ background: color }} />
                   <span className="font-medium text-stone-800 truncate flex-1">{r.name}</span>
                   <span className="tabular-nums text-stone-700">{nf.format(r.total || 0)}</span>
                   <span className="tabular-nums text-stone-500 w-12 text-right">{success.toFixed(1)}%</span>
                 </div>
-                <div className="mt-1.5 h-[3px] rounded-full bg-[#F5EEDF] overflow-hidden">
+                <div className="mt-1.5 h-[3px] rounded-full bg-[#ECF0F5] overflow-hidden">
                   <motion.div
                     initial={{ width: 0 }}
                     animate={{ width: `${share}%` }}
@@ -345,7 +348,7 @@ function RecentTable({ recent, loaded }) {
           <h3 className="text-[13px] font-semibold text-ink-900 tracking-tight">Recent activity</h3>
           <p className="text-[11px] text-stone-500 mt-0.5">Latest 25 verifications</p>
         </div>
-        <Link to="/admin/history" className="text-[11px] font-medium text-warm-accent hover:underline">
+        <Link to="/admin/history" className="text-[11px] font-medium text-brand-700 hover:underline">
           Full history →
         </Link>
       </div>
@@ -357,7 +360,7 @@ function RecentTable({ recent, loaded }) {
         <div className="overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
-              <tr className="border-b border-warm bg-[#FBF7F0]">
+              <tr className="border-b border-warm bg-[#F6F8FA]">
                 <th className="text-left px-5 py-2.5 text-[10px] font-semibold uppercase tracking-widest text-stone-500">Roll</th>
                 <th className="text-left px-3 py-2.5 text-[10px] font-semibold uppercase tracking-widest text-stone-500">Exam / centre</th>
                 <th className="text-left px-3 py-2.5 text-[10px] font-semibold uppercase tracking-widest text-stone-500">Verification Agent</th>
@@ -367,7 +370,7 @@ function RecentTable({ recent, loaded }) {
             </thead>
             <tbody className="divide-y divide-warm">
               {recent.map((r) => (
-                <tr key={r.id} className="hover:bg-[#FBF7F0] transition-colors">
+                <tr key={r.id} className="hover:bg-[#F6F8FA] transition-colors">
                   <td className="px-5 py-3 font-medium text-ink-900 tabular-nums">{r.roll_no}</td>
                   <td className="px-3 py-3 text-stone-700 truncate max-w-[240px]">{r.center_name || '—'}</td>
                   <td className="px-3 py-3 text-stone-700 truncate max-w-[180px]">{r.operator || '—'}</td>
@@ -394,7 +397,7 @@ function TrendTooltip({ active, payload, label }) {
   const denied   = payload.find((p) => p.dataKey === 'denied')?.value ?? 0
   const total = verified + denied
   return (
-    <div className="rounded-lg bg-stone-900 text-white shadow-lg px-3 py-2 text-xs border border-stone-700">
+    <div className="rounded-lg bg-brand-600 text-white shadow-lg px-3 py-2 text-xs border border-stone-700">
       <p className="font-medium mb-1 text-stone-200">{label}</p>
       <p className="tabular-nums"><span className="text-emerald-300">■</span> {nf.format(verified)} verified</p>
       <p className="tabular-nums"><span className="text-rose-300">■</span> {nf.format(denied)} denied</p>

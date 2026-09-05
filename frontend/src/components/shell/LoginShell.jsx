@@ -4,15 +4,21 @@ import { motion } from 'framer-motion'
 import { useAuth } from '../../lib/auth.jsx'
 import { requestForgotPassword } from '../../lib/onboarding/register.js'
 import { Input, Label } from '../ui/ui.jsx'
-import { PRODUCT_NAME } from '../ui/brand.jsx'
+import { PRODUCT_NAME, BrandMark } from '../ui/brand.jsx'
+import { BiometricStrip } from '../ui/biometrics.jsx'
 import { Icon } from '../ui/icons.jsx'
 
-// LoginShell — single centered card on a soft warm ground.
+// LoginShell — a two-panel sign-in.
 //
-// Layout: logo mark + wordmark above the card, amber role eyebrow +
-// "Sign in" title inside, two fields, ink-black submit. Optional
-// register link (admin login only) sits below the card. Includes
-// integrated "Forgot password?" reset link dispatch.
+// Left (>=lg only): a navy brand panel stating what the product does.
+// Sign-in is the one screen every stakeholder sees, so it carries the
+// positioning rather than dropping straight into a form.
+// Right: the card — gold role eyebrow, "Sign in" title, two fields,
+// azure submit. Optional register link (admin login only) sits below.
+// Includes integrated "Forgot password?" reset link dispatch.
+//
+// The panel is hidden below lg, where the card centres on its own — an
+// operator signing in on a centre tablet gets the form and nothing else.
 
 const ROLE_LABEL = {
   client:          'Verification Agent',
@@ -94,36 +100,90 @@ export default function LoginShell({
   }
 
   return (
-    <div className="relative min-h-screen bg-warm-page flex items-center justify-center p-4 overflow-hidden">
-      {/* Ambient warm gradient washes */}
-      <div className="absolute -top-40 -left-20 h-96 w-96 rounded-full bg-amber-100/40 blur-3xl pointer-events-none" />
-      <div className="absolute -bottom-32 -right-20 h-96 w-96 rounded-full bg-[#F5EEDF]/60 blur-3xl pointer-events-none" />
+    <div className="min-h-screen grid lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
+      {/* ── Brand panel — lg and up ───────────────────────────────── */}
+      <aside className="relative hidden lg:flex flex-col justify-between bg-ink-chrome p-12 xl:p-16 overflow-hidden">
+        <div
+          className="absolute -inset-y-16 inset-x-0 bg-dot-grid opacity-[0.13] pointer-events-none"
+          style={{ animation: 'bio-drift 24s ease-in-out infinite' }}
+        />
 
-      <motion.div
-        initial={{ opacity: 0, y: 12 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-        className="relative w-full max-w-md"
-      >
-        {/* Wordmark above the card */}
-        <div className="text-center mb-6">
-          <span className="text-xl font-bold text-stone-900 tracking-tight">
+        <div className="relative flex items-center gap-3">
+          <BrandMark size={34} tone="inverse" />
+          <span className="font-display text-lg font-extrabold text-white tracking-[-0.025em]">
             {PRODUCT_NAME}
           </span>
         </div>
 
+        <div className="relative max-w-lg">
+          <h2 className="font-display text-[40px] xl:text-[46px] font-extrabold leading-[1.08] tracking-[-0.035em] text-white text-balance">
+            Identity, settled before the exam begins.
+          </h2>
+          <p className="mt-5 text-[15px] leading-relaxed text-slate-300">
+            Biometric verification for high-stakes examinations — every
+            candidate matched, every decision recorded, every centre
+            accountable.
+          </p>
+
+          {/* The three capture modalities, animating. Shown rather than
+              described — it is what the product does, and it is the
+              first thing a visiting stakeholder should understand. */}
+          <BiometricStrip className="mt-8" />
+
+          <ul className="mt-7 space-y-3.5">
+            {[
+              ['Face, fingerprint and iris', 'Per-exam modality rules, enforced at capture.'],
+              ['Liveness-checked', 'A printed photograph does not pass the gate.'],
+              ['Fully auditable', 'Match scores, device and operator on every record.'],
+            ].map(([head, sub]) => (
+              <li key={head} className="flex gap-3.5">
+                <span
+                  aria-hidden="true"
+                  className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-amber-300"
+                />
+                <span className="min-w-0">
+                  <span className="block text-sm font-semibold text-white">{head}</span>
+                  <span className="block text-[13px] text-slate-400 mt-0.5">{sub}</span>
+                </span>
+              </li>
+            ))}
+          </ul>
+        </div>
+
+        <p className="relative text-[11px] text-slate-500">
+          Authorised access only. All sign-in attempts are logged.
+        </p>
+      </aside>
+
+      {/* ── Sign-in panel ─────────────────────────────────────────── */}
+      <div className="relative flex items-center justify-center bg-slate-50 p-6 sm:p-10">
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
+          className="relative w-full max-w-[400px]"
+        >
+          {/* Wordmark — carries the mark on small screens, where the
+              brand panel above is hidden. */}
+          <div className="flex items-center justify-center gap-2.5 mb-7 lg:hidden">
+            <BrandMark size={28} />
+            <span className="font-display text-lg font-extrabold text-slate-900 tracking-[-0.025em]">
+              {PRODUCT_NAME}
+            </span>
+          </div>
+
         {/* Card */}
-        <div className="rounded-2xl bg-warm-surface ring-1 ring-warm shadow-lg shadow-stone-900/[0.04] p-8">
-          <p className="text-[11px] font-semibold uppercase tracking-widest text-warm-accent mb-2">
+        <div className="rounded-2xl bg-white ring-1 ring-slate-200 shadow-lg p-8">
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600 mb-2">
             {roleLabel}
           </p>
 
           {view === 'login' ? (
             <>
-              <h1 className="text-2xl font-semibold text-ink-900 tracking-tight">
+              <h1 className="font-display text-[26px] font-extrabold text-slate-900 tracking-[-0.03em]">
                 Sign in
               </h1>
-              <p className="mt-1 text-sm text-stone-500">
+              <p className="mt-1 text-sm text-slate-500">
                 Enter your credentials to continue.
               </p>
 
@@ -178,7 +238,7 @@ export default function LoginShell({
                         setForgotErr('')
                         setForgotSent(false)
                       }}
-                      className="text-xs font-medium text-amber-800 hover:text-amber-900 hover:underline"
+                      className="text-xs font-semibold text-brand-700 hover:text-brand-800 hover:underline"
                     >
                       Forgot password?
                     </button>
@@ -195,7 +255,7 @@ export default function LoginShell({
                     <button
                       type="button"
                       onClick={() => setShowPw((v) => !v)}
-                      className="absolute inset-y-0 right-0 px-3 flex items-center text-stone-400 hover:text-stone-700 transition-colors"
+                      className="absolute inset-y-0 right-0 px-3 flex items-center text-slate-400 hover:text-slate-700 transition-colors"
                       aria-label={showPw ? 'Hide password' : 'Show password'}
                       tabIndex={-1}
                     >
@@ -215,9 +275,9 @@ export default function LoginShell({
                   type="submit"
                   disabled={busy}
                   className="w-full inline-flex items-center justify-center rounded-lg
-                             bg-stone-900 hover:bg-stone-800 text-white font-medium
+                             bg-brand-600 hover:bg-brand-700 text-white font-semibold
                              px-4 py-2.5 text-sm shadow-sm transition-colors
-                             focus:outline-none focus:ring-2 focus:ring-stone-700 focus:ring-offset-1
+                             focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500
                              disabled:opacity-60 disabled:cursor-not-allowed"
                 >
                   {busy ? 'Signing in…' : 'Sign in'}
@@ -226,10 +286,10 @@ export default function LoginShell({
             </>
           ) : (
             <>
-              <h1 className="text-2xl font-semibold text-ink-900 tracking-tight">
+              <h1 className="font-display text-[26px] font-extrabold text-slate-900 tracking-[-0.03em]">
                 Reset password
               </h1>
-              <p className="mt-1 text-sm text-stone-500">
+              <p className="mt-1 text-sm text-slate-500">
                 Enter your registered email address or username to receive a secure reset link.
               </p>
 
@@ -251,7 +311,7 @@ export default function LoginShell({
                       setForgotSent(false)
                     }}
                     className="w-full inline-flex items-center justify-center rounded-lg
-                               bg-stone-900 hover:bg-stone-800 text-white font-medium
+                               bg-brand-600 hover:bg-brand-700 text-white font-semibold
                                px-4 py-2.5 text-sm shadow-sm transition-colors"
                   >
                     Return to sign in
@@ -281,9 +341,9 @@ export default function LoginShell({
                     type="submit"
                     disabled={forgotBusy}
                     className="w-full inline-flex items-center justify-center rounded-lg
-                               bg-stone-900 hover:bg-stone-800 text-white font-medium
+                               bg-brand-600 hover:bg-brand-700 text-white font-semibold
                                px-4 py-2.5 text-sm shadow-sm transition-colors
-                               focus:outline-none focus:ring-2 focus:ring-stone-700 focus:ring-offset-1
+                               focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500
                                disabled:opacity-60 disabled:cursor-not-allowed"
                   >
                     {forgotBusy ? 'Sending reset link…' : 'Send reset link'}
@@ -293,7 +353,7 @@ export default function LoginShell({
                     <button
                       type="button"
                       onClick={() => setView('login')}
-                      className="text-xs font-medium text-stone-500 hover:text-stone-800 hover:underline"
+                      className="text-xs font-medium text-slate-500 hover:text-slate-800 hover:underline"
                     >
                       ← Back to sign in
                     </button>
@@ -305,14 +365,15 @@ export default function LoginShell({
         </div>
 
         {showRegisterLink && view === 'login' && (
-          <p className="mt-5 text-center text-xs text-stone-500">
+          <p className="mt-5 text-center text-xs text-slate-500">
             Not yet onboarded?{' '}
-            <a href="/register/institution" className="font-semibold text-warm-accent hover:underline">
+            <a href="/register/institution" className="font-semibold text-brand-700 hover:underline">
               Register your institution →
             </a>
           </p>
         )}
-      </motion.div>
+        </motion.div>
+      </div>
     </div>
   )
 }

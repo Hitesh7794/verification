@@ -148,7 +148,7 @@ export default function ClientDetail() {
             stat strip. More visual weight than a bare PageHeader row,
             so the page has a clear "you're inside this client" anchor. */}
         <div className="mb-8 rounded-xl bg-warm-surface ring-1 ring-warm overflow-hidden">
-          <div className="h-1 bg-stone-900" />
+          <div className="h-[3px] rule-gold" />
           <div className="p-5 sm:p-6">
             <div className="flex flex-wrap items-start justify-between gap-4">
               <div className="flex items-start gap-4 min-w-0">
@@ -377,7 +377,7 @@ export default function ClientDetail() {
                               </Button>
                               <Link
                                 to={`/superadmin/exams/${e.id}`}
-                                className="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-lg bg-stone-900 text-white hover:bg-stone-800 transition-colors"
+                                className="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-600 text-white hover:bg-brand-700 transition-colors"
                                 title="Open this exam's detail page to upload CSVs, edit fields, and see verifications"
                               >
                                 Manage
@@ -1015,7 +1015,7 @@ function NewExamForm({ clientId, onCancel, onCreated, onBulkCreated }) {
 
   return (
     <div className="mb-6 rounded-xl bg-warm-surface ring-1 ring-warm shadow-sm overflow-hidden">
-      <div className="h-1 bg-stone-900" />
+      <div className="h-[3px] rule-gold" />
       <div className="p-5 sm:p-6">
         <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
           <div className="flex items-start gap-3">

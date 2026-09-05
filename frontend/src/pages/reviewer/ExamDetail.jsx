@@ -432,7 +432,7 @@ export default function ReviewerExamDetail() {
           <div className="mb-4 rounded-xl border border-warm bg-warm-surface p-4 shadow-sm">
             <div className="flex items-baseline justify-between flex-wrap gap-3 mb-3">
               <div>
-                <p className="text-[10px] font-semibold uppercase tracking-widest text-warm-accent">
+                <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600">
                   Biometric enrolment completeness
                 </p>
                 <p className="text-sm text-stone-600 mt-0.5">
@@ -540,7 +540,7 @@ function BioMetric({ label, have, total }) {
   const complete = pct >= 100
   const low = pct < 80 && !complete
   return (
-    <div className="rounded-lg border border-warm bg-[#FBF7F0] px-4 py-3">
+    <div className="rounded-lg border border-warm bg-[#F6F8FA] px-4 py-3">
       <p className="text-[10px] font-semibold uppercase tracking-widest text-stone-500 mb-1">{label}</p>
       <p className="text-xl font-semibold text-ink-900 tabular-nums leading-none">
         {have.toLocaleString('en-IN')} <span className="text-xs font-normal text-stone-400">/ {total.toLocaleString('en-IN')}</span>
@@ -593,7 +593,7 @@ function BiometricUploadModal({ open, examId, candidate, currentStatus, onClose,
       />
       <div className="relative w-full max-w-lg rounded-2xl bg-warm-surface border border-warm shadow-2xl overflow-hidden">
         <div className="px-6 py-5 border-b border-warm">
-          <p className="text-[11px] font-semibold uppercase tracking-widest text-warm-accent mb-1">
+          <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-600 mb-1">
             Upload biometrics
           </p>
           <h3 className="text-base font-semibold text-ink-900">
@@ -612,7 +612,7 @@ function BiometricUploadModal({ open, examId, candidate, currentStatus, onClose,
             </div>
           )}
         </div>
-        <div className="flex items-center justify-end gap-2 px-6 py-3 bg-[#FBF7F0] border-t border-warm">
+        <div className="flex items-center justify-end gap-2 px-6 py-3 bg-[#F6F8FA] border-t border-warm">
           <button
             type="button"
             onClick={onClose}

@@ -1313,7 +1313,7 @@ function ExamPicker({ exams, currentId, onChange }) {
                   className={[
                     'inline-flex items-center gap-1.5 rounded-full border px-3 py-1 text-xs font-medium transition-colors',
                     active
-                      ? 'bg-stone-900 text-white border-stone-900'
+                      ? 'bg-brand-600 text-white border-stone-900'
                       : 'bg-white text-slate-700 border-slate-200 hover:border-slate-400',
                   ].join(' ')}
                   title={`${e.name} (${e.exam_code}) — ${e.candidate_count.toLocaleString()} candidates`}
