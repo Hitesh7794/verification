@@ -117,12 +117,12 @@ export default function LoginShell({
 
         <div className="relative max-w-lg">
           <h2 className="font-display text-[40px] xl:text-[46px] font-extrabold leading-[1.08] tracking-[-0.035em] text-white text-balance">
-            Identity, settled before the exam begins.
+            The candidate you admit is the candidate who sat the exam.
           </h2>
           <p className="mt-5 text-[15px] leading-relaxed text-slate-300">
-            Biometric verification for high-stakes examinations — every
-            candidate matched, every decision recorded, every centre
-            accountable.
+            Biometric verification at admission and joining, matched
+            against the identity captured when the candidate sat the
+            exam.
           </p>
 
           {/* The three capture modalities, animating. Shown rather than
@@ -132,7 +132,7 @@ export default function LoginShell({
 
           <ul className="mt-7 space-y-3.5">
             {[
-              ['Face, fingerprint and iris', 'Per-exam modality rules, enforced at capture.'],
+              ['Face, fingerprint and iris', 'Matched against the exam enrolment. Modalities set per exam.'],
               ['Liveness-checked', 'A printed photograph does not pass the gate.'],
               ['Fully auditable', 'Match scores, device and operator on every record.'],
             ].map(([head, sub]) => (

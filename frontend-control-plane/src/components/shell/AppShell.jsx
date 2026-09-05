@@ -61,7 +61,7 @@ export default function AppShell({ children, walletRefreshKey, onWalletBalanceCh
         <div className="mx-auto max-w-7xl px-6 py-4 flex flex-wrap items-center justify-between gap-2">
           <span className="text-xs font-semibold text-slate-600">{PRODUCT_NAME}</span>
           <span className="text-[11px] text-slate-400">
-            Biometric identity verification for examination boards
+            Candidate identity verification for examination boards and institutions
           </span>
         </div>
       </footer>
