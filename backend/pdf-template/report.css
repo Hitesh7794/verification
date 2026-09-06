@@ -119,14 +119,20 @@ h2{font-size:var(--t-h2);font-weight:700;color:var(--navy);
 .mod.p{color:var(--pass)} .mod.f{color:var(--fail)}
 
 /* ── 4. result ──────────────────────────────────────────────────────────
-   A finding on a record: ruled top and bottom in the fail colour, unfilled. */
+   A finding on a record: ruled top and bottom in the verdict colour,
+   unfilled. `.result` alone is red (Mismatch) — override to green with
+   `.result.pass` (Matched). */
 .result{border-top:2px solid var(--fail);border-bottom:1px solid var(--fail);
   padding:9px 0}
 .res-head{display:flex;align-items:center;gap:var(--s3)}
 .wm{width:20px;height:20px;flex:none;display:block;color:var(--fail)}
-/* Only the verdict is red. The sentence around it is the record's own voice. */
+/* Only the verdict is coloured. The sentence around it is the record's
+   own voice. */
 h3{font-size:var(--t-h3);font-weight:700;color:var(--navy)}
 h3 span{color:var(--fail)}
+.result.pass{border-top-color:var(--pass);border-bottom-color:var(--pass)}
+.result.pass .wm{color:var(--pass)}
+.result.pass h3 span{color:var(--pass)}
 
 /* ── 5. attestation ─────────────────────────────────────────────────── */
 .sigs{width:100%;border-collapse:collapse;table-layout:fixed}

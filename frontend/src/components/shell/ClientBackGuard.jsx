@@ -26,8 +26,16 @@ export default function ClientBackGuard() {
   const [showDialog, setShowDialog] = useState(false)
 
   // Arm — pushes a guard entry once the role settles to 'client'.
-  // Diagnostics behind window.__navGuardDebug.
-  const dbg = (...m) => { try { if (window.__navGuardDebug) console.log('[nv-guard/react]', ...m) } catch (_) {} }
+  // Diagnostics: window.__navGuardDebug OR sessionStorage 'nv_guard_debug'=='1'
+  // (sessionStorage survives reload; window global does not).
+  const isDbgOn = () => {
+    try {
+      if (window.__navGuardDebug) return true
+      if (sessionStorage.getItem('nv_guard_debug') === '1') return true
+    } catch (_) {}
+    return false
+  }
+  const dbg = (...m) => { try { if (isDbgOn()) console.log('[nv-guard/react]', ...m) } catch (_) {} }
   useEffect(() => {
     if (user?.role !== 'client') return
     if (window.history.state?.__agentBackGuard === true) {

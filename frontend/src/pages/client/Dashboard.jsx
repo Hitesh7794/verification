@@ -333,21 +333,22 @@ export default function ClientDashboard() {
     // routes internally based on whether verificationId is set.
     if (submitting) return
     if (!candidate) return
-    // Gating rule (migration 022): a modality is "needed" only if the
-    // EXAM requires it AND the candidate actually has enrolment for
-    // it. If either is false, the panel is hidden + not gated on.
-    // Face defaults to required for safety (existing behaviour + the
-    // wallet-charged event), so exam.requires_face missing = true.
-    const needsFace = candidate.requires_face !== false && !!candidate.has_photo
-    const needsFP   = !!candidate.requires_fp   && !!candidate.has_iso_template
-    const needsIris = !!candidate.requires_iris && !!candidate.has_iris_bytes
+    // Per-candidate modality gate: presence of the uploaded data IS
+    // the requirement signal. A face-only candidate is verified on
+    // face match alone; face+fp+iris candidate needs all three.
+    // A candidate with NO uploaded biometrics gets denied at this
+    // gate — nothing to verify against.
+    const needsFace = !!candidate.has_photo
+    const needsFP   = !!candidate.has_iso_template
+    const needsIris = !!candidate.has_iris_bytes
     if (needsFace && !faceResult) return
     if (needsFP   && !fpResult)   return
     if (needsIris && !irisResult) return
+    const anyModality = needsFace || needsFP || needsIris
     const facePass = !needsFace || (faceResult && faceResult.ok === true)
     const fpPass   = !needsFP   || (fpResult   && fpResult.ok   === true)
     const irisPass = !needsIris || (irisResult && irisResult.ok === true)
-    const finalStatus = facePass && fpPass && irisPass ? 'verified' : 'denied'
+    const finalStatus = anyModality && facePass && fpPass && irisPass ? 'verified' : 'denied'
     if (step < S_RESULT) setStep(S_RESULT)
     submitVerification(finalStatus)
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -962,7 +963,15 @@ export default function ClientDashboard() {
                 // header pill so the operator sees the debited balance.
                 refreshWallet()
                 // Reuse the last liveness burst frame as the TrustView
-                // probe. No second camera panel, no second click.
+                // probe. Only call face-match if the candidate has a
+                // gallery photo on file — an fp-only or iris-only
+                // candidate has no enrolled face, so calling would
+                // 404. Liveness itself still runs (billing + real-
+                // human check).
+                if (!candidate.has_photo) {
+                  setStep(S_FINGERPRINT)
+                  return
+                }
                 if (faceFrame) {
                   try {
                     const resp = await postFaceMatch(candidate.roll_no, faceFrame, idempotencyKey)
@@ -1080,7 +1089,7 @@ export default function ClientDashboard() {
                   UI-side capture image); the pair metaphor only makes
                   sense for face. Status pills are all the operator
                   actually needs to see. */}
-              {candidate?.requires_fp && (
+              {candidate?.has_iso_template && (
                 <ModalityStatusRow
                   label="Fingerprint"
                   state={
@@ -1090,7 +1099,7 @@ export default function ClientDashboard() {
                   }
                 />
               )}
-              {candidate?.requires_iris && (
+              {candidate?.has_iris_bytes && (
                 <ModalityStatusRow
                   label="Iris"
                   state={
@@ -1122,9 +1131,9 @@ export default function ClientDashboard() {
               // whichever card applies inline.
               const bothSideBySide =
                 step >= S_FINGERPRINT &&
-                !!candidate?.requires_fp && !!candidate?.has_iso_template &&
-                !!candidate?.requires_iris && !!candidate?.has_iris_bytes
-              const fpCard = step >= S_FINGERPRINT && !!candidate?.requires_fp && !!candidate?.has_iso_template && (
+                !!candidate?.has_iso_template &&
+                !!candidate?.has_iris_bytes
+              const fpCard = step >= S_FINGERPRINT && !!candidate?.has_iso_template && (
                 <Card>
                   <CardHeader>
                     <CardTitle>Step 3 — Fingerprint scan</CardTitle>
@@ -1153,7 +1162,7 @@ export default function ClientDashboard() {
                   </CardBody>
                 </Card>
               )
-              const irisCard = step >= S_FINGERPRINT && !!candidate?.requires_iris && !!candidate?.has_iris_bytes && (
+              const irisCard = step >= S_FINGERPRINT && !!candidate?.has_iris_bytes && (
                 <Card>
                   <CardHeader>
                     <CardTitle>Iris capture</CardTitle>

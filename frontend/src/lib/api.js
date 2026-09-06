@@ -165,6 +165,36 @@ export async function fetchPhotoBlob(roll) {
   return URL.createObjectURL(blob)
 }
 
+// Decode a Startek FM220U ISO/IEC 19794-4 fingerprint image record
+// (WSQ-inside) into a browser-renderable PNG via the backend Python
+// helper. Returns a data URL on success, null on any failure — pure
+// UX helper, callers ignore failure and hide the tile.
+export async function fetchFPPreviewDataURL(isoImgB64) {
+  if (!isoImgB64) return null
+  try {
+    const res = await fetch(`${BASE}/fp-preview`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        Authorization: `Bearer ${getToken()}`,
+      },
+      body: JSON.stringify({ iso_img_b64: isoImgB64 }),
+    })
+    if (!res.ok) return null
+    const blob = await res.blob()
+    // Convert to data URL synchronously so the caller can drop it
+    // into a plain <img> src without object-URL lifetime concerns.
+    return await new Promise((resolve) => {
+      const reader = new FileReader()
+      reader.onloadend = () => resolve(typeof reader.result === 'string' ? reader.result : null)
+      reader.onerror = () => resolve(null)
+      reader.readAsDataURL(blob)
+    })
+  } catch (_) {
+    return null
+  }
+}
+
 // Fetches the candidate's enrolled fingerprint template ready to be passed
 // straight to morfin.match() as GalleryTemplate. Returns {template_b64,
 // format, size_bytes}. The format string ("FMR_V2005" etc.) maps to the

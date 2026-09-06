@@ -108,10 +108,16 @@ FOOTER = "Centre DL-0402&ensp;&middot;&ensp;Ref. VER-68"
 
 # No tick, no cross. On a form the colour is the verdict: the modality name in
 # green reads as met, in red as not met. A glyph on top of that is decoration.
+# WARN (triangle) accompanies a Mismatch; CHECK (circled tick) accompanies a
+# Matched verdict — same size + weight so they swap cleanly.
 WARN = ('<svg class="wm" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
         'stroke-width="1.6" stroke-linecap="square" stroke-linejoin="miter">'
         '<path d="M12 3L22 20.5H2z"/><path d="M12 9.5v5"/>'
         '<path d="M12 17.4h.01"/></svg>')
+CHECK = ('<svg class="wm" viewBox="0 0 24 24" fill="none" stroke="currentColor" '
+         'stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round">'
+         '<circle cx="12" cy="12" r="9"/>'
+         '<path d="M7.5 12.5l3 3 6-6.5"/></svg>')
 
 
 # The reading is gone from the sheet; the modality itself is now the whole
@@ -247,8 +253,8 @@ def main(out_dir=None, enrolled_photo=None, probe_photo=None):
       </section>
 
       <section class="block">
-        <div class="result">
-          <div class="res-head">{WARN}
+        <div class="result{' pass' if RESULT_WORD.strip().lower() == 'matched' else ''}">
+          <div class="res-head">{CHECK if RESULT_WORD.strip().lower() == 'matched' else WARN}
             <h3>{RESULT_LEAD} &mdash; <span>{RESULT_WORD}</span></h3></div>
         </div>
       </section>

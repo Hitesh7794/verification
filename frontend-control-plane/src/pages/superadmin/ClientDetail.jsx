@@ -1071,9 +1071,10 @@ function NewExamForm({ clientId, onCancel, onCreated, onBulkCreated }) {
   const [code, setCode] = useState('')
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
-  const [reqFace, setReqFace] = useState(true)
-  const [reqFP,   setReqFP]   = useState(true)
-  const [reqIris, setReqIris] = useState(false)
+  // Biometric requirements are now derived per-candidate from what
+  // was uploaded (has_photo / has_iso_template / has_iris_bytes),
+  // not set per-exam. The exam create form no longer asks; backend
+  // schema defaults are kept for column-shape compatibility.
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
@@ -1090,19 +1091,11 @@ function NewExamForm({ clientId, onCancel, onCreated, onBulkCreated }) {
     setSaving(true)
     setErr('')
     try {
-      if (!reqFace && !reqFP && !reqIris) {
-        setErr('Pick at least one biometric to require for this exam.')
-        setSaving(false)
-        return
-      }
       const { id: examId } = await createExam(clientId, {
         name: name.trim(),
         exam_code: code.trim(),
         verification_from: from,
         verification_to: to,
-        requires_face: reqFace,
-        requires_fp: reqFP,
-        requires_iris: reqIris,
       })
       onCreated(examId)
     } catch (e) {
@@ -1149,7 +1142,7 @@ function NewExamForm({ clientId, onCancel, onCreated, onBulkCreated }) {
     }
   }
 
-  const canSingleSubmit = name.trim() && code.trim() && from && to && (reqFace || reqFP || reqIris)
+  const canSingleSubmit = name.trim() && code.trim() && from && to
 
   return (
     <div className="mb-6 rounded-xl bg-warm-surface ring-1 ring-warm shadow-sm overflow-hidden">
@@ -1247,26 +1240,8 @@ function NewExamForm({ clientId, onCancel, onCreated, onBulkCreated }) {
               </div>
             </FormSection>
 
-            {/* Section 3 — biometric requirements */}
-            <FormSection num="3" title="Biometrics" hint="Which biometrics the verification agent must capture for a candidate to be verified. At least one required.">
-              <div className="flex flex-wrap gap-4">
-                <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-                  <input type="checkbox" checked={reqFace} onChange={(e) => setReqFace(e.target.checked)} />
-                  Face
-                </label>
-                <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-                  <input type="checkbox" checked={reqFP} onChange={(e) => setReqFP(e.target.checked)} />
-                  Fingerprint
-                </label>
-                <label className="inline-flex items-center gap-2 text-sm text-slate-700">
-                  <input type="checkbox" checked={reqIris} onChange={(e) => setReqIris(e.target.checked)} />
-                  Iris
-                </label>
-              </div>
-            </FormSection>
-
-            {/* Section 4 — candidate data */}
-            <FormSection num="4" title="Candidate data" hint="Uploaded from the exam page after the exam is created.">
+            {/* Section 3 — candidate data */}
+            <FormSection num="3" title="Candidate data" hint="Uploaded from the exam page after the exam is created.">
               <div className="rounded-lg bg-slate-50 border border-slate-200 px-3 py-2.5 text-xs text-slate-600">
                 After creating this exam, open it to upload the candidate roster
                 (name, roll_no + optional extras) and the centres CSV. Validation
@@ -1298,7 +1273,7 @@ function NewExamForm({ clientId, onCancel, onCreated, onBulkCreated }) {
                   <p className="text-xs text-slate-500 mt-1 max-w-xl">
                     Required headers: <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">exam_name</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">exam_code</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">verification_from</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">verification_to</code>.
                     <br />
-                    Optional biometrics: <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">requires_face</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">requires_fp</code>, <code className="bg-slate-200/80 px-1 py-0.5 rounded text-slate-800 font-mono text-[11px]">requires_iris</code> (<code className="text-slate-700">yes</code> / <code className="text-slate-700">no</code>).
+                    Biometric modalities are decided per-candidate at upload time — no need to declare them per-exam.
                   </p>
                 </div>
                 <Button

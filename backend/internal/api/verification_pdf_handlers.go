@@ -68,11 +68,13 @@ type pdfBundle struct {
 	FpMatchScore   sql.NullInt64
 	IrisScore      sql.NullFloat64
 	MatchThreshold sql.NullInt64
-	// Per-exam biometric requirements (migration 022) — drive which
-	// modality tiles appear in the biometric-summary block.
-	RequiresFace   bool
-	RequiresFP     bool
-	RequiresIris   bool
+	// Per-candidate uploaded modalities (sourced from the filesystem
+	// indexer, same source the operator UI reads). Drives which
+	// modality tiles appear in the biometric-summary block — only
+	// modalities the candidate actually has on file are rendered.
+	HasPhoto bool
+	HasFP    bool
+	HasIris  bool
 	DeviceSerial   sql.NullString
 	DeviceModel    sql.NullString
 	FpVendor       sql.NullString
@@ -127,9 +129,7 @@ func (s *Server) verificationPDF(w http.ResponseWriter, r *http.Request) {
 		       COALESCE(e.exam_code, ''), COALESCE(e.name, ''),
 		       COALESCE(c.name, ''),
 		       ectr.centre_name, ectr.address, ectr.city, ectr.state, ectr.pincode,
-		       u.display_name,
-		       COALESCE(e.requires_face, 1), COALESCE(e.requires_fp, 1),
-		       COALESCE(e.requires_iris, 0)
+		       u.display_name
 		  FROM verifications v
 		  LEFT JOIN exam_candidates ec ON ec.roll_no    = v.roll_no
 		  LEFT JOIN exams           e  ON e.id          = ec.exam_id
@@ -170,7 +170,6 @@ func (s *Server) verificationPDF(w http.ResponseWriter, r *http.Request) {
 		&b.ExamCode, &b.ExamName, &b.ClientName,
 		&b.CentreName, &b.Address, &b.City, &b.State, &b.Pincode,
 		&b.OperatorName,
-		&b.RequiresFace, &b.RequiresFP, &b.RequiresIris,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeErr(w, http.StatusNotFound, "verification not found")
@@ -181,11 +180,18 @@ func (s *Server) verificationPDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve the gallery photo the same way the operator endpoint
-	// does — through the filesystem indexer keyed by roll_no.
+	// Resolve the gallery photo AND populate per-candidate modality
+	// availability from the same filesystem indexer the operator UI
+	// reads. Modality tiles in the PDF render only for modalities the
+	// candidate actually has on file — matching the operator flow.
 	galleryPath := ""
-	if row, ok := s.deps.Index.Get(b.RollNo); ok && row.HasPhoto {
-		galleryPath = row.PhotoPath
+	if row, ok := s.deps.Index.Get(b.RollNo); ok {
+		if row.HasPhoto {
+			galleryPath = row.PhotoPath
+		}
+		b.HasPhoto = row.HasPhoto
+		b.HasFP    = row.HasIsoTpl
+		b.HasIris  = row.HasIrisBytes
 	}
 	probePath := ""
 	if b.ProbePhotoPath.Valid {
@@ -330,8 +336,9 @@ func buildPDFPayload(b *pdfBundle) map[string]any {
 		{"Verification Time", istT.Format("02 Jan 2006 at 15:04 IST")},
 	}
 
-	// Modality tiles — only include modalities the exam requires,
-	// each carrying its own pass/fail flag.
+	// Modality tiles — only include modalities the candidate has on
+	// file, each carrying its own pass/fail flag. Presence of the
+	// upload IS the requirement signal.
 	irisPass := b.IrisScore.Valid && b.IrisScore.Float64 >= 50
 	device := strings.TrimSpace(strings.Join(filterEmpty(
 		nullstr(b.FpVendor), nullstr(b.DeviceModel),
@@ -340,13 +347,13 @@ func buildPDFPayload(b *pdfBundle) map[string]any {
 		device = "on-device capture"
 	}
 	modalities := [][]any{}
-	if b.RequiresFace {
+	if b.HasPhoto {
 		modalities = append(modalities, []any{"Face", "—", "—", "TrustView Vision", b.FaceMatch})
 	}
-	if b.RequiresFP {
+	if b.HasFP {
 		modalities = append(modalities, []any{"Fingerprint", "—", "—", device, b.FpMatch})
 	}
-	if b.RequiresIris {
+	if b.HasIris {
 		modalities = append(modalities, []any{"Iris", "—", "—", "Mantra MIS100V2", irisPass})
 	}
 

@@ -2,16 +2,17 @@ import { useRef, useState } from 'react'
 import { Button, Card, CardBody } from '../../components/ui/ui.jsx'
 import { bulkUploadBiometrics } from '../../lib/superadmin/examCatalog.js'
 
-// Four-card bulk-upload panel that sits on ExamDetail. Superadmin
+// Three-card bulk-upload panel that sits on ExamDetail. Superadmin
 // drops a .zip per modality, backend streams every entry straight
 // into S3 keyed by <exam_code>/<modality>/<roll>.<ext>, DB flags
 // flip, and the operator UI sees the newly-enrolled biometrics on
 // the very next lookup — no restart.
 //
-// Cards for a modality the exam doesn't require (requires_face=false
-// etc.) render dimmed with a hint pointing at exam settings; we
-// leave them visible so the operator sees the full grid every time
-// and remembers the modalities exist.
+// Modalities are now per-candidate: any modality can be uploaded for
+// any exam. The verification agent flow reads has_* flags per
+// candidate and only asks for the modalities that were actually
+// uploaded for THAT candidate. All three cards are always active —
+// upload what you have.
 //
 // Filename convention is strict: <roll>.<ext>. Anything else shows
 // up in the per-file result table as a red row with the reason —
@@ -23,21 +24,18 @@ const MODALITIES = [
     label: 'Photos',
     hint:  'JPG or PNG · one per candidate · filename = <roll>.jpg',
     exts:  '.jpg,.jpeg,.png',
-    requires: (exam) => exam.requires_face !== false,
   },
   {
     key:   'fp-templates',
     label: 'Fingerprint templates',
     hint:  'ISO / FMR / ANSI · pre-extracted template · filename = <roll>.<ext>',
     exts:  '.iso,.fmr,.ansi,.bin',
-    requires: (exam) => !!exam.requires_fp,
   },
   {
     key:   'iris',
     label: 'Iris',
     hint:  'ISO / K7 / BMP · iris capture · filename = <roll>.<ext>',
     exts:  '.iso,.k7,.bmp,.bin',
-    requires: (exam) => !!exam.requires_iris,
   },
 ]
 
@@ -50,7 +48,9 @@ export default function BulkBiometricUpload({ examId, exam, onUploaded }) {
           <p className="text-xs text-slate-500 mt-0.5">
             Zip up one modality at a time, filenames as{' '}
             <code className="text-[11px] bg-slate-100 px-1 py-0.5 rounded">&lt;roll&gt;.&lt;ext&gt;</code>.
-            Rolls not present in this exam's CSV are skipped with a reason.
+            Whatever you upload for a candidate becomes the modalities the
+            verification agent asks for. Upload only real biometric data;
+            rolls not in this exam's CSV are skipped with a reason.
           </p>
         </div>
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3">
@@ -59,7 +59,7 @@ export default function BulkBiometricUpload({ examId, exam, onUploaded }) {
               key={m.key}
               examId={examId}
               modality={m}
-              enabled={m.requires(exam)}
+              enabled={true}
               onUploaded={onUploaded}
             />
           ))}
@@ -132,12 +132,6 @@ function ModalityCard({ examId, modality, enabled, onUploaded }) {
         <p className="text-sm font-semibold text-slate-900">{modality.label}</p>
         <p className="text-[11px] text-slate-500 mt-1">{modality.hint}</p>
       </div>
-
-      {!enabled && (
-        <p className="mt-3 text-[11px] text-amber-800 bg-amber-50 border border-amber-200 rounded-md px-2.5 py-1.5">
-          Not required for this exam — enable in exam settings above to activate.
-        </p>
-      )}
 
       {enabled && (
         <div className="mt-3">

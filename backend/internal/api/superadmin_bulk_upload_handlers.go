@@ -155,24 +155,17 @@ func (s *Server) superadminBulkUpload(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Exam scope + code lookup. We reject early if the exam doesn't
-	// require the modality being uploaded so the operator doesn't
-	// accidentally seed data the runtime won't use.
-	var (
-		examCode                       string
-		reqFace, reqFp, reqIris        bool
-	)
+	// Exam scope + code lookup. Modality choice is now per-candidate:
+	// any modality can be uploaded for any exam, and each uploaded
+	// file flips that candidate's has_* flag so the operator flow
+	// asks for exactly the modalities on file.
+	var examCode string
 	err = s.deps.DB.QueryRowContext(r.Context(),
-		db.Q(`SELECT exam_code, requires_face, requires_fp, requires_iris
-		        FROM exams WHERE id = ?`),
+		db.Q(`SELECT exam_code FROM exams WHERE id = ?`),
 		examID,
-	).Scan(&examCode, &reqFace, &reqFp, &reqIris)
+	).Scan(&examCode)
 	if err != nil {
 		writeErr(w, http.StatusNotFound, "exam not found")
-		return
-	}
-	if err := bulkModalityAllowedForExam(m.name, reqFace, reqFp, reqIris); err != nil {
-		writeErr(w, http.StatusBadRequest, err.Error())
 		return
 	}
 
@@ -498,29 +491,6 @@ func joinSortedExt(m map[string]bool) string {
 		}
 	}
 	return strings.Join(out, ", ")
-}
-
-// bulkModalityAllowedForExam refuses uploads for a modality the exam
-// doesn't require. Photos are the only always-required modality.
-func bulkModalityAllowedForExam(mod string, reqFace, reqFp, reqIris bool) error {
-	switch mod {
-	case "photos":
-		if !reqFace {
-			return fmt.Errorf(
-				"this exam has requires_face=false; enable it in exam settings before uploading photos")
-		}
-	case "fp-templates":
-		if !reqFp {
-			return fmt.Errorf(
-				"this exam has requires_fp=false; enable it in exam settings before uploading fingerprints")
-		}
-	case "iris":
-		if !reqIris {
-			return fmt.Errorf(
-				"this exam has requires_iris=false; enable it in exam settings before uploading iris data")
-		}
-	}
-	return nil
 }
 
 // safeSegmentForBulk mirrors storage.safeSegment. Duplicated here so
