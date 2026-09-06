@@ -655,13 +655,13 @@ export default function Register() {
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 1.2, ease: 'easeOut' }}
-          className="absolute -top-40 -left-24 h-[28rem] w-[28rem] rounded-full bg-amber-100/50 blur-[100px]"
+          className="absolute -top-40 -left-24 h-[28rem] w-[28rem] rounded-full bg-brand-100/45 blur-[100px]"
         />
         <motion.div
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 1.2, delay: 0.1, ease: 'easeOut' }}
-          className="absolute -top-24 right-[-6rem] h-[26rem] w-[26rem] rounded-full bg-[#F5EEDF]/70 blur-[100px]"
+          className="absolute -top-24 right-[-6rem] h-[26rem] w-[26rem] rounded-full bg-[#ECF0F5]/70 blur-[100px]"
         />
       </div>
 
@@ -669,13 +669,13 @@ export default function Register() {
         right={
           <Link
             to="/admin/login"
-            className="inline-flex items-center gap-2 rounded-xl
-                       bg-warm-surface hover:bg-white px-3.5 py-2 text-sm font-medium
-                       text-stone-700 hover:text-ink-900
-                       border border-warm hover:border-warm-strong
-                       shadow-xs backdrop-blur-md transition-all"
+            className="inline-flex items-center gap-2 rounded-lg px-3.5 py-2
+                       text-sm font-semibold text-slate-200 hover:text-white
+                       bg-white/8 hover:bg-white/16 ring-1 ring-inset ring-white/15
+                       transition-colors focus-visible:outline-2
+                       focus-visible:outline-offset-2 focus-visible:outline-amber-300"
           >
-            <Icon.ChevronLeft className="h-4 w-4 text-stone-500" />
+            <Icon.ChevronLeft className="h-4 w-4" />
             Back to sign in
           </Link>
         }
@@ -694,7 +694,7 @@ export default function Register() {
               : (
                 <>
                   Register your{' '}
-                  <span className="text-warm-accent">
+                  <span className="text-gold-display">
                     institution
                   </span>
                 </>
@@ -747,7 +747,7 @@ export default function Register() {
           // sidebar doesn't crowd the form visually. lg breakpoint
           // stacks the sidebar above the form on small screens.
           <div className="mt-6 grid grid-cols-1 lg:grid-cols-[260px_1fr] gap-8 items-start">
-            <StepSidebar step={step} />
+            <StepSidebar step={step} form={form} />
             <div className="min-w-0">
               <AnimatePresence mode="wait" initial={false}>
                 <SlideStep key={step}>
@@ -815,13 +815,13 @@ export default function Register() {
 // Left-rail step navigation. Just the vertical step list — no header,
 // no subtitle, no "draft saved" footer, no per-step help card. Clean.
 
-function StepSidebar({ step }) {
+function StepSidebar({ step, form }) {
   return (
     <aside className="lg:sticky lg:top-6 lg:self-start">
       <div className="rounded-2xl border border-warm bg-warm-surface shadow-xs p-3.5 overflow-hidden">
         <div className="px-3 pt-2 pb-3 mb-1 border-b border-warm flex items-center justify-between">
           <span className="text-[11px] font-bold uppercase tracking-wider text-stone-400">Onboarding Steps</span>
-          <span className="text-xs font-semibold text-amber-900 bg-[#F5EEDF] border border-warm px-2 py-0.5 rounded-md font-mono">
+          <span className="text-xs font-semibold text-brand-800 bg-brand-50 border border-brand-100 px-2 py-0.5 rounded-md font-mono">
             {step + 1} / 4
           </span>
         </div>
@@ -837,10 +837,10 @@ function StepSidebar({ step }) {
                   layout
                   className={`flex items-center gap-3.5 rounded-xl px-3.5 py-3 transition-all ${
                     active
-                      ? 'bg-ink-900 text-white shadow-sm ring-1 ring-ink-900/10'
+                      ? 'bg-ink-600 text-white shadow-sm'
                       : done
                       ? 'bg-emerald-50/70 hover:bg-emerald-50 text-emerald-950 border border-emerald-200/60'
-                      : 'bg-transparent text-stone-600 hover:bg-[#F5EEDF]/40'
+                      : 'bg-transparent text-stone-600 hover:bg-[#ECF0F5]/40'
                   }`}
                 >
                   <motion.span
@@ -852,7 +852,7 @@ function StepSidebar({ step }) {
                         ? 'bg-white/15 text-white'
                         : done
                         ? 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-200/80'
-                        : 'bg-[#F5EEDF] text-stone-600 font-mono text-xs font-semibold border border-warm'
+                        : 'bg-[#ECF0F5] text-stone-600 font-mono text-xs font-semibold border border-warm'
                     }`}
                   >
                     {done ? <Icon.Check className="h-4 w-4" /> : active ? <IconComp className="h-4 w-4" /> : stepNum}
@@ -860,13 +860,13 @@ function StepSidebar({ step }) {
                   <div className="min-w-0 flex-1">
                     <p
                       className={`text-sm font-semibold leading-tight ${
-                        active ? 'text-white' : done ? 'text-emerald-900' : 'text-stone-800'
+                        active ? 'text-white' : done ? 'text-emerald-900' : 'text-slate-800'
                       }`}
                     >
                       {s.label}
                     </p>
                     <p className={`text-[11px] mt-0.5 ${
-                      active ? 'text-stone-300' : done ? 'text-emerald-600 font-medium' : 'text-stone-400'
+                      active ? 'text-slate-300' : done ? 'text-emerald-700 font-medium' : 'text-slate-400'
                     }`}>
                       {done ? 'Completed' : active ? 'In progress' : 'Pending'}
                     </p>
@@ -885,7 +885,63 @@ function StepSidebar({ step }) {
           })}
         </ol>
       </div>
+
+      <PrepPanel form={form} />
     </aside>
+  )
+}
+
+// PrepPanel — "have these ready before you start". Mirrors exactly what
+// step 3 will ask for, and re-renders when the applicant changes
+// category, because a recruitment body is asked for a gazette where a
+// college is asked for a recognition letter.
+function PrepPanel({ form }) {
+  const docs = getRequiredDocs(form)
+  const required = docs.filter((d) => d.required !== false)
+  const optional = docs.filter((d) => d.required === false)
+
+  return (
+    <div className="mt-4 rounded-2xl border border-slate-200 bg-white shadow-xs overflow-hidden">
+      <div className="px-4 pt-3.5 pb-3 border-b border-slate-200">
+        <p className="text-[11px] font-bold uppercase tracking-[0.12em] text-slate-500">
+          Before you start
+        </p>
+      </div>
+
+      <div className="px-4 py-3.5">
+        <p className="text-[11px] font-semibold text-slate-700 mb-2.5">
+          Scans you&rsquo;ll upload at step 3
+        </p>
+        <ul className="space-y-2">
+          {required.map((d) => (
+            <li key={d.kind} className="flex gap-2.5">
+              <Icon.File className="h-3.5 w-3.5 text-slate-400 shrink-0 mt-[3px]" />
+              <span className="text-[12px] leading-snug text-slate-700">{d.label}</span>
+            </li>
+          ))}
+          {optional.map((d) => (
+            <li key={d.kind} className="flex gap-2.5">
+              <Icon.File className="h-3.5 w-3.5 text-slate-300 shrink-0 mt-[3px]" />
+              <span className="text-[12px] leading-snug text-slate-500">
+                {d.label}
+                <span className="text-slate-400"> &middot; optional</span>
+              </span>
+            </li>
+          ))}
+        </ul>
+
+        <div className="mt-4 pt-3.5 border-t border-slate-100 space-y-2">
+          <p className="flex items-center gap-2 text-[11.5px] text-slate-600">
+            <Icon.Clock className="h-3.5 w-3.5 text-slate-400 shrink-0" />
+            About 10 minutes to complete
+          </p>
+          <p className="flex items-start gap-2 text-[11.5px] text-amber-800">
+            <Icon.AlertCircle className="h-3.5 w-3.5 text-amber-600 shrink-0 mt-[1px]" />
+            <span>Complete in one sitting &mdash; refreshing the page clears the form.</span>
+          </p>
+        </div>
+      </div>
+    </div>
   )
 }
 
@@ -898,7 +954,7 @@ function Step0({ form, errors, update, onBlurField, onNext, onTypeSelect, checki
     <AestheticCard>
       {/* Header with warm icon and border */}
       <div className="px-7 py-5 border-b border-warm flex items-center gap-3.5">
-        <span className="h-11 w-11 rounded-xl bg-[#F5EEDF] text-amber-900 border border-warm flex items-center justify-center shrink-0">
+        <span className="h-11 w-11 rounded-xl bg-brand-50 text-brand-700 border border-brand-100 flex items-center justify-center shrink-0">
           <Icon.Building className="h-5 w-5" />
         </span>
         <div className="min-w-0">
@@ -915,17 +971,17 @@ function Step0({ form, errors, update, onBlurField, onNext, onTypeSelect, checki
 
       <div className="px-7 py-7 space-y-7">
         <div>
-          <div className="flex items-baseline justify-between mb-2">
-            <Label className="!mb-0 font-semibold text-ink-900">
-              Organization Category <span className="text-rose-600 ml-0.5">*</span>
-            </Label>
-            <span className="text-xs text-stone-400">Select institutional category</span>
-          </div>
-          <div className="grid grid-cols-1 sm:grid-cols-3 gap-5 max-w-4xl">
+          <Label className="font-semibold text-slate-900">
+            Organization Category <span className="text-rose-600 ml-0.5">*</span>
+          </Label>
+          {/* items-stretch + h-full on the card: the three options are one
+              radio group, so an option with a longer blurb must not make
+              its card taller than the two beside it. */}
+          <div className="grid grid-cols-1 sm:grid-cols-3 gap-4 max-w-4xl items-stretch">
             {INSTITUTION_TYPES.map((t) => {
               const iconMap = {
                 college: Icon.Building,
-                university: Icon.Sparkles,
+                university: Icon.ShieldCheck,
                 other: Icon.FileText,
               }
               const IconComp = iconMap[t.value] || Icon.Building
@@ -1034,8 +1090,7 @@ function Step0({ form, errors, update, onBlurField, onNext, onTypeSelect, checki
               required
               error={errors.approx_student_count}
             >
-              <InputWithIcon
-                icon={Icon.Sparkles}
+              <Input
                 type="number"
                 value={form.approx_student_count}
                 onChange={(e) => update('approx_student_count', e.target.value)}
@@ -1067,26 +1122,26 @@ function CompactChoice({ selected, onSelect, icon: IconComp, label, blurb }) {
       onClick={onSelect}
       whileHover={{ y: -1.5, transition: { duration: 0.15 } }}
       whileTap={{ scale: 0.98 }}
-      className={`relative text-left px-5 py-4 rounded-xl border transition-all ${
+      className={`relative h-full text-left px-5 py-4 rounded-xl border transition-all ${
         selected
-          ? 'border-amber-700 bg-amber-50/70 ring-2 ring-amber-600/20 shadow-xs'
-          : 'border-warm bg-warm-surface hover:border-warm-strong hover:bg-white'
+          ? 'border-brand-600 bg-brand-50 ring-2 ring-brand-500/25 shadow-xs'
+          : 'border-slate-200 bg-white hover:border-slate-300 hover:shadow-xs'
       }`}
     >
-      <div className="flex items-start gap-3">
+      <div className="flex items-start gap-3 h-full">
         <span
           className={`h-10 w-10 rounded-lg flex items-center justify-center shrink-0 transition-all ${
-            selected ? 'bg-amber-700 text-white shadow-xs' : 'bg-[#F5EEDF] text-stone-700 border border-warm'
+            selected ? 'bg-brand-600 text-white shadow-xs' : 'bg-slate-100 text-slate-600 border border-slate-200'
           }`}
         >
           {IconComp && <IconComp className="h-4 w-4" />}
         </span>
         <div className="min-w-0 flex-1 pr-6">
-          <p className={`text-sm font-bold tracking-tight leading-snug ${selected ? 'text-amber-950' : 'text-ink-900'}`}>
+          <p className={`text-sm font-bold tracking-tight leading-snug text-balance ${selected ? 'text-brand-900' : 'text-slate-900'}`}>
             {label}
           </p>
           {blurb ? (
-            <p className={`text-xs leading-snug mt-1 ${selected ? 'text-amber-900/80' : 'text-stone-500'}`}>
+            <p className={`text-xs leading-snug mt-1 ${selected ? 'text-brand-700' : 'text-slate-500'}`}>
               {blurb}
             </p>
           ) : null}
@@ -1097,7 +1152,7 @@ function CompactChoice({ selected, onSelect, icon: IconComp, label, blurb }) {
           initial={{ scale: 0 }}
           animate={{ scale: 1 }}
           transition={{ duration: 0.15, ease: [0.22, 1.5, 0.36, 1] }}
-          className="absolute right-3 top-3 h-4 w-4 rounded-full bg-amber-700 text-white flex items-center justify-center shadow-xs"
+          className="absolute right-3 top-3 h-4 w-4 rounded-full bg-brand-600 text-white flex items-center justify-center shadow-xs"
         >
           <Icon.Check className="h-2.5 w-2.5 stroke-[2.5]" />
         </motion.span>
@@ -1144,7 +1199,7 @@ function ReviewStep({ form, uploaded, onEdit, onBack, onSubmit, submitting }) {
     <AestheticCard>
       <div className="px-7 py-6 border-b border-warm">
         <div className="flex items-start gap-3">
-          <span className="h-10 w-10 rounded-xl bg-[#F5EEDF] text-amber-900 border border-warm flex items-center justify-center shrink-0">
+          <span className="h-10 w-10 rounded-xl bg-brand-50 text-brand-700 border border-brand-100 flex items-center justify-center shrink-0">
             <Icon.Eye className="h-5 w-5" />
           </span>
           <div>
@@ -1195,13 +1250,13 @@ function ReviewStep({ form, uploaded, onEdit, onBack, onSubmit, submitting }) {
 
         <div>
           <div className="flex items-center justify-between gap-3 mb-2">
-            <h3 className="text-xs font-semibold uppercase tracking-wider text-warm-accent">
+            <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-600">
               Documents
             </h3>
             <button
               type="button"
               onClick={() => onEdit(S_DOCUMENTS)}
-              className="text-xs font-semibold text-warm-accent hover:underline"
+              className="text-xs font-semibold text-brand-700 hover:underline"
             >
               Edit
             </button>
@@ -1224,7 +1279,7 @@ function ReviewStep({ form, uploaded, onEdit, onBack, onSubmit, submitting }) {
           </ul>
         </div>
 
-        <div className="rounded-xl bg-[#F5EEDF]/60 border border-warm px-4 py-3 text-xs text-stone-700 leading-relaxed">
+        <div className="rounded-xl bg-[#ECF0F5]/60 border border-warm px-4 py-3 text-xs text-stone-700 leading-relaxed">
           Submitting locks the application for review. You won't be able to edit it
           afterwards — our team will contact the head of institution at the email above.
         </div>
@@ -1247,11 +1302,11 @@ function ReviewGroup({ title, rows, onEdit, note }) {
   return (
     <div>
       <div className="flex items-center justify-between gap-3 mb-2">
-        <h3 className="text-xs font-semibold uppercase tracking-wider text-warm-accent">{title}</h3>
+        <h3 className="text-xs font-semibold uppercase tracking-wider text-slate-600">{title}</h3>
         <button
           type="button"
           onClick={onEdit}
-          className="text-xs font-semibold text-warm-accent hover:underline"
+          className="text-xs font-semibold text-brand-700 hover:underline"
         >
           Edit
         </button>
@@ -1275,9 +1330,9 @@ function ReviewGroup({ title, rows, onEdit, note }) {
 function Divider({ label }) {
   return (
     <div className="flex items-center gap-3 pt-1">
-      <span className="h-px flex-1 bg-[#EDE4D3]" />
+      <span className="h-px flex-1 bg-[#DDE4EC]" />
       <span className="text-[11px] font-semibold uppercase tracking-wider text-stone-400">{label}</span>
-      <span className="h-px flex-1 bg-[#EDE4D3]" />
+      <span className="h-px flex-1 bg-[#DDE4EC]" />
     </div>
   )
 }
@@ -1337,7 +1392,7 @@ function YearPicker({ value, onChange, placeholder = 'Pick year' }) {
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className={`w-full inline-flex items-center justify-between gap-2 rounded-xl border border-warm bg-white px-3 py-2 text-sm text-left transition-colors focus:border-amber-600 focus:outline-none focus:ring-2 focus:ring-amber-200 ${
+        className={`w-full inline-flex items-center justify-between gap-2 rounded-xl border border-warm bg-white px-3 py-2 text-sm text-left transition-colors focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/12 ${
           open ? 'border-amber-600 ring-2 ring-amber-200' : 'hover:border-warm-strong'
         }`}
       >
@@ -1360,7 +1415,7 @@ function YearPicker({ value, onChange, placeholder = 'Pick year' }) {
               <button
                 type="button"
                 onClick={() => setViewYear(viewYear - 10)}
-                className="rounded-md p-1 text-stone-500 hover:bg-[#F5EEDF] hover:text-ink-900 transition-colors"
+                className="rounded-md p-1 text-stone-500 hover:bg-[#ECF0F5] hover:text-ink-900 transition-colors"
                 aria-label="Previous decade"
               >
                 <Icon.ChevronLeft className="h-4 w-4" />
@@ -1372,7 +1427,7 @@ function YearPicker({ value, onChange, placeholder = 'Pick year' }) {
                 type="button"
                 onClick={() => setViewYear(viewYear + 10)}
                 disabled={!canGoForward}
-                className="rounded-md p-1 text-stone-500 hover:bg-[#F5EEDF] hover:text-ink-900 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                className="rounded-md p-1 text-stone-500 hover:bg-[#ECF0F5] hover:text-ink-900 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                 aria-label="Next decade"
               >
                 <Icon.ChevronRight className="h-4 w-4" />
@@ -1400,8 +1455,8 @@ function YearPicker({ value, onChange, placeholder = 'Pick year' }) {
                         : future
                         ? 'text-stone-300 cursor-not-allowed'
                         : isCurrent
-                        ? 'text-ink-900 ring-1 ring-warm-strong bg-warm-surface hover:bg-[#F5EEDF]'
-                        : 'text-stone-700 hover:bg-[#F5EEDF]'
+                        ? 'text-ink-900 ring-1 ring-warm-strong bg-warm-surface hover:bg-[#ECF0F5]'
+                        : 'text-stone-700 hover:bg-[#ECF0F5]'
                     }`}
                   >
                     {y}
@@ -1603,7 +1658,7 @@ function SectionCard({ icon: IconComp, title, subtitle, children }) {
           initial={{ scale: 0.85, opacity: 0 }}
           animate={{ scale: 1, opacity: 1 }}
           transition={{ duration: 0.28, ease: [0.22, 1.2, 0.36, 1] }}
-          className="h-10 w-10 rounded-xl bg-[#F5EEDF] text-amber-900 border border-warm flex items-center justify-center shrink-0 shadow-2xs"
+          className="h-10 w-10 rounded-xl bg-brand-50 text-brand-700 border border-brand-100 flex items-center justify-center shrink-0 shadow-2xs"
         >
           <IconComp className="h-5 w-5" />
         </motion.span>
@@ -1634,7 +1689,7 @@ function Step2({ form, applicationId, uploaded, errors, handleFile, removeDoc, o
   return (
     <AestheticCard>
       <div className="px-6 py-5 border-b border-warm flex items-start gap-3">
-        <span className="h-10 w-10 rounded-xl bg-[#F5EEDF] text-amber-900 border border-warm flex items-center justify-center shrink-0">
+        <span className="h-10 w-10 rounded-xl bg-brand-50 text-brand-700 border border-brand-100 flex items-center justify-center shrink-0">
           <Icon.Upload className="h-5 w-5" />
         </span>
         <div className="flex-1 min-w-0">
@@ -1701,7 +1756,7 @@ function DocUploadRow({ kind, label, hint, required, state, error, onFile, onRem
           className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 border ${
             done
               ? 'bg-emerald-50 text-emerald-600 border-emerald-200'
-              : 'bg-[#F5EEDF] text-stone-700 border-warm'
+              : 'bg-[#ECF0F5] text-stone-700 border-warm'
           }`}
         >
           {done ? <Icon.Check className="h-5 w-5" /> : <Icon.FileText className="h-5 w-5" />}
@@ -1721,7 +1776,7 @@ function DocUploadRow({ kind, label, hint, required, state, error, onFile, onRem
             </p>
           )}
           {uploading && (
-            <div className="mt-2 h-1.5 w-full bg-[#EDE4D3] rounded-full overflow-hidden">
+            <div className="mt-2 h-1.5 w-full bg-[#DDE4EC] rounded-full overflow-hidden">
               <motion.div
                 className="h-full bg-ink-900 rounded-full"
                 initial={false}
@@ -1796,7 +1851,7 @@ function DonePanel({ applicationId, email, institutionName, onStartOver, onHome 
           Your onboarding application for <strong className="text-ink-900 font-semibold">{institutionName}</strong> has been successfully received and placed in the accreditation queue.
         </p>
 
-        <div className="mt-6 p-4 rounded-xl bg-[#F5EEDF]/70 border border-warm flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div className="mt-6 p-4 rounded-xl bg-[#ECF0F5]/70 border border-warm flex flex-col sm:flex-row items-center justify-between gap-3">
           <div className="text-left">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-stone-500">Application Reference ID</p>
             <p className="text-base font-bold font-mono text-ink-900 tracking-tight">#{applicationId ?? '—'}</p>

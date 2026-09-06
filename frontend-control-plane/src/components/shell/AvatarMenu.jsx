@@ -67,10 +67,11 @@ export default function AvatarMenu({ user, onLogout }) {
         aria-expanded={open}
         aria-label="Account menu"
         onClick={() => setOpen((v) => !v)}
-        className="h-9 w-9 rounded-full bg-indigo-600 text-white text-sm font-semibold
-                   flex items-center justify-center
-                   hover:bg-indigo-700 focus:outline-none focus:ring-2 focus:ring-indigo-500
-                   focus:ring-offset-2 transition"
+        className="h-9 w-9 rounded-full bg-white/12 ring-1 ring-inset ring-white/25
+                   text-white text-sm font-bold flex items-center justify-center
+                   hover:bg-white/20 transition-colors
+                   focus-visible:outline-2 focus-visible:outline-offset-2
+                   focus-visible:outline-amber-300"
       >
         {initial}
       </button>
@@ -79,14 +80,15 @@ export default function AvatarMenu({ user, onLogout }) {
         <div
           role="menu"
           className="absolute right-0 mt-2 w-72 origin-top-right rounded-xl bg-white
-                     shadow-lg ring-1 ring-slate-200 z-50 overflow-hidden"
+                     shadow-lg ring-1 ring-slate-200 z-50 overflow-hidden
+                     animate-surface-in"
         >
           {/* Header: who's signed in */}
-          <div className="px-4 py-3 border-b border-slate-100">
-            <p className="text-xs font-medium uppercase tracking-wide text-slate-400">
+          <div className="px-4 py-3 border-b border-slate-200 bg-slate-50">
+            <p className="text-[10px] font-bold uppercase tracking-[0.13em] text-slate-500">
               Signed in as
             </p>
-            <p className="mt-1 text-sm font-semibold text-slate-900 break-words">
+            <p className="mt-1 font-display text-sm font-bold text-slate-900 break-words">
               {user?.display_name || user?.username || '—'}
             </p>
             <p className="text-xs text-slate-500 capitalize mt-0.5">

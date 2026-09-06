@@ -142,7 +142,7 @@ export default function Operators() {
 
         {creating && (
           <div className="mb-6 rounded-xl bg-warm-surface ring-1 ring-warm shadow-sm overflow-hidden">
-            <div className="h-1 bg-stone-900" />
+            <div className="h-[3px] rule-gold" />
             <div className="p-5 sm:p-6">
               <div className="flex flex-wrap items-center justify-between gap-4 mb-6">
                 <div className="flex items-start gap-3">
@@ -240,7 +240,7 @@ export default function Operators() {
                       // React can render both children under <tbody>
                       // without introducing an invalid element.
                       <React.Fragment key={o.id}>
-                        <tr className="border-b border-warm last:border-none hover:bg-[#FBF7F0]">
+                        <tr className="border-b border-warm last:border-none hover:bg-[#F6F8FA]">
                           <td className="px-4 py-3 font-mono text-xs text-slate-700">{o.username}</td>
                           <td className="px-4 py-3">
                             <div className="text-slate-900">{o.display_name}</div>
@@ -296,7 +296,7 @@ export default function Operators() {
                         </tr>
                         {editing === o.id && (
                           <tr>
-                            <td colSpan={7} className="bg-[#FBF7F0] border-b border-warm p-5">
+                            <td colSpan={7} className="bg-[#F6F8FA] border-b border-warm p-5">
                               <OperatorForm
                                 subs={subs}
                                 walletBalancePaise={walletBalancePaise}
@@ -974,7 +974,7 @@ function BulkOperatorForm({ subs, onCancel, onSaved }) {
             <select
               value={defaultExamId}
               onChange={(e) => setDefaultExamId(e.target.value)}
-              className="block w-full max-w-md rounded-md border border-slate-300 px-3 py-1.5 text-xs focus:border-stone-900 focus:ring-1 focus:ring-stone-900 bg-white"
+              className="block w-full max-w-md rounded-md border border-slate-300 px-3 py-1.5 text-xs focus:border-brand-500 focus:ring-1 focus:ring-brand-500 bg-white"
             >
               <option value="">None (Require exam_codes in every CSV row)</option>
               {subs.map((s) => (

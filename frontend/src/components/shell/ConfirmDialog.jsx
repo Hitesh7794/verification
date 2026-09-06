@@ -72,7 +72,7 @@ export default function ConfirmDialog({
   const toneStyles = {
     danger:  { icon: 'bg-rose-100 text-rose-700',       btn: 'bg-rose-600 hover:bg-rose-700 focus:ring-rose-500' },
     warn:    { icon: 'bg-amber-100 text-amber-800',     btn: 'bg-amber-600 hover:bg-amber-700 focus:ring-amber-500' },
-    primary: { icon: 'bg-stone-100 text-stone-800',     btn: 'bg-stone-900 hover:bg-stone-800 focus:ring-stone-700' },
+    primary: { icon: 'bg-stone-100 text-stone-800',     btn: 'bg-brand-600 hover:bg-brand-700 focus:ring-stone-700' },
   }[tone] || {}
 
   if (typeof document === 'undefined') return null
@@ -126,7 +126,7 @@ export default function ConfirmDialog({
               )}
             </div>
 
-            <div className="flex items-center justify-end gap-2 px-6 py-3 bg-[#FBF7F0] border-t border-warm">
+            <div className="flex items-center justify-end gap-2 px-6 py-3 bg-[#F6F8FA] border-t border-warm">
               <button
                 type="button"
                 onClick={onCancel}

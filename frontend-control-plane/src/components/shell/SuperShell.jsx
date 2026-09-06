@@ -31,18 +31,18 @@ export default function SuperShell({ children }) {
 
 export function PageHead({ eyebrow, title, subtitle, right }) {
   return (
-    <div className="mb-6 flex items-start justify-between gap-4">
+    <div className="mb-7 flex items-start justify-between gap-4">
       <div>
         {eyebrow && (
-          <p className="text-[11px] font-semibold uppercase tracking-widest text-warm-accent mb-1.5">
+          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600 mb-1.5">
             {eyebrow}
           </p>
         )}
-        <h1 className="text-2xl font-semibold text-ink-900 tracking-tight">
+        <h1 className="font-display text-[26px] font-extrabold text-slate-900 tracking-[-0.025em]">
           {title}
         </h1>
         {subtitle && (
-          <p className="text-sm text-stone-500 mt-1 max-w-2xl">{subtitle}</p>
+          <p className="text-sm text-slate-500 mt-1.5 max-w-2xl">{subtitle}</p>
         )}
       </div>
       {right && <div className="flex items-center gap-2 shrink-0">{right}</div>}
@@ -54,13 +54,13 @@ export function PageHead({ eyebrow, title, subtitle, right }) {
 // groupings. Small caps eyebrow, thin hairline underneath.
 export function SectionHead({ title, count, right }) {
   return (
-    <div className="mb-3 flex items-baseline justify-between gap-4 border-b border-slate-200 pb-2">
-      <div className="flex items-baseline gap-2">
-        <h2 className="text-[13px] font-semibold uppercase tracking-widest text-slate-600">
+    <div className="mb-3.5 flex items-baseline justify-between gap-4 border-b border-slate-200 pb-2.5">
+      <div className="flex items-baseline gap-2.5">
+        <h2 className="text-[12px] font-bold uppercase tracking-[0.13em] text-slate-600">
           {title}
         </h2>
         {typeof count === 'number' && (
-          <span className="text-[11px] font-mono text-slate-400 tabular-nums">
+          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-mono font-semibold text-slate-600 tabular-nums">
             {count}
           </span>
         )}

@@ -42,26 +42,29 @@ export function CountUp({ value = 0, duration = 720, className = '', format = 'i
 export function StatCard({
   label, value, subtitle, trend, tone = 'slate', icon, to, format = 'int',
 }) {
-  const toneMap = {
-    slate:   'border-warm hover:border-warm-strong',
-    indigo:  'border-warm hover:border-warm-strong',
-    emerald: 'border-emerald-200 hover:border-emerald-300 bg-emerald-50/40',
-    amber:   'border-amber-200 hover:border-amber-300 bg-amber-50/40',
-    rose:    'border-rose-200 hover:border-rose-300 bg-rose-50/40',
+  const railMap = {
+    slate:   'before:bg-slate-300',
+    indigo:  'before:bg-brand-500',
+    emerald: 'before:bg-emerald-500',
+    amber:   'before:bg-amber-400',
+    rose:    'before:bg-rose-500',
   }
   const iconToneMap = {
-    slate:   'bg-[#F5EEDF] text-stone-700',
-    indigo:  'bg-amber-100 text-amber-800',
-    emerald: 'bg-emerald-100 text-emerald-700',
-    amber:   'bg-amber-100 text-amber-700',
-    rose:    'bg-rose-100 text-rose-700',
+    slate:   'bg-slate-100 text-slate-600',
+    indigo:  'bg-brand-50 text-brand-700',
+    emerald: 'bg-emerald-50 text-emerald-700',
+    amber:   'bg-amber-50 text-amber-700',
+    rose:    'bg-rose-50 text-rose-700',
   }
 
   const inner = (
     <motion.div
       whileHover={{ y: -2 }}
       transition={{ type: 'spring', stiffness: 400, damping: 25 }}
-      className={`group relative rounded-xl border bg-warm-surface p-5 shadow-sm hover:shadow-md transition-shadow ${toneMap[tone] || toneMap.slate}`}
+      className={`group relative overflow-hidden rounded-xl border border-slate-200 bg-white p-5 pl-6
+                  shadow-xs hover:shadow-md transition-shadow
+                  before:absolute before:inset-y-0 before:left-0 before:w-[3px] before:content-['']
+                  ${railMap[tone] || railMap.slate}`}
     >
       <div className="flex items-start justify-between gap-3 mb-3">
         <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-500">
@@ -74,7 +77,7 @@ export function StatCard({
         )}
       </div>
       <div className="flex items-baseline gap-2">
-        <span className="text-3xl font-semibold tracking-tight text-ink-900">
+        <span className="stat-figure text-[34px] leading-none text-slate-900">
           <CountUp value={value} format={format} />
         </span>
         {trend && <TrendPill {...trend} />}
@@ -83,13 +86,13 @@ export function StatCard({
         <p className="mt-2 text-xs text-slate-500">{subtitle}</p>
       )}
       {to && (
-        <div className="mt-3 flex items-center gap-1 text-[11px] font-medium text-indigo-600 opacity-0 group-hover:opacity-100 transition-opacity">
+        <div className="mt-3 flex items-center gap-1 text-[11px] font-semibold text-brand-600 opacity-0 group-hover:opacity-100 transition-opacity">
           View details →
         </div>
       )}
     </motion.div>
   )
-  return to ? <Link to={to} className="block focus:outline-none focus:ring-2 focus:ring-indigo-300 rounded-xl">{inner}</Link> : inner
+  return to ? <Link to={to} className="block rounded-xl focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500">{inner}</Link> : inner
 }
 
 // ── TrendPill ────────────────────────────────────────────────────────
@@ -115,12 +118,12 @@ export function TrendPill({ delta = 0, unit = '%', label }) {
 // scrollable body. Use for anything that isn't a stat tile.
 export function DataCard({ title, subtitle, actions, footer, children, className = '', bodyClassName = '' }) {
   return (
-    <div className={`rounded-xl border border-warm bg-warm-surface shadow-sm overflow-hidden ${className}`}>
+    <div className={`rounded-xl border border-slate-200 bg-white shadow-xs overflow-hidden ${className}`}>
       {(title || actions) && (
-        <div className="flex items-center justify-between gap-3 px-5 py-3.5 border-b border-warm">
+        <div className="flex items-center justify-between gap-3 px-5 py-3.5 border-b border-slate-200">
           <div className="min-w-0">
             {title && (
-              <h3 className="text-[13px] font-semibold text-ink-900 tracking-tight truncate">
+              <h3 className="font-display text-[14px] font-bold text-slate-900 tracking-[-0.015em] truncate">
                 {title}
               </h3>
             )}
@@ -133,7 +136,7 @@ export function DataCard({ title, subtitle, actions, footer, children, className
       )}
       <div className={bodyClassName || 'p-5'}>{children}</div>
       {footer && (
-        <div className="px-5 py-2.5 border-t border-warm bg-[#FBF7F0] text-[11px] text-stone-500">
+        <div className="px-5 py-2.5 border-t border-slate-200 bg-slate-50 text-[11px] text-slate-500">
           {footer}
         </div>
       )}
@@ -146,15 +149,15 @@ export function DataCard({ title, subtitle, actions, footer, children, className
 // "Listed / Unlisted / Ended", etc.
 export function ToneBadge({ tone = 'slate', children }) {
   const toneMap = {
-    slate:   'bg-slate-100 text-slate-700 border-slate-200',
-    indigo:  'bg-indigo-50 text-indigo-700 border-indigo-200',
-    emerald: 'bg-emerald-50 text-emerald-700 border-emerald-200',
-    amber:   'bg-amber-50 text-amber-700 border-amber-200',
-    rose:    'bg-rose-50 text-rose-700 border-rose-200',
-    ink:     'bg-ink-900 text-white border-ink-800',
+    slate:   'bg-slate-100 text-slate-700 ring-slate-200',
+    indigo:  'bg-brand-50 text-brand-800 ring-brand-200',
+    emerald: 'bg-emerald-50 text-emerald-800 ring-emerald-200',
+    amber:   'bg-amber-50 text-amber-800 ring-amber-200',
+    rose:    'bg-rose-50 text-rose-800 ring-rose-200',
+    ink:     'bg-ink-800 text-white ring-ink-700',
   }
   return (
-    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-medium border ${toneMap[tone] || toneMap.slate}`}>
+    <span className={`inline-flex items-center gap-1 px-2 py-0.5 rounded-md text-[11px] font-semibold ring-1 ring-inset whitespace-nowrap ${toneMap[tone] || toneMap.slate}`}>
       {children}
     </span>
   )
@@ -173,9 +176,9 @@ export function DataTable({ columns, rows, empty = 'No data', onRowClick }) {
     <div className="overflow-x-auto">
       <table className="w-full text-sm">
         <thead>
-          <tr className="border-b border-slate-200">
+          <tr className="border-b border-slate-200 bg-slate-50/70">
             {columns.map((c) => (
-              <th key={c.key} className={`px-4 py-2.5 text-left text-[11px] font-semibold uppercase tracking-wider text-slate-500 ${c.align === 'right' ? 'text-right' : ''}`}>
+              <th key={c.key} className={`px-4 py-2.5 text-left text-[10.5px] font-bold uppercase tracking-[0.09em] text-slate-500 ${c.align === 'right' ? 'text-right' : ''}`}>
                 {c.label}
               </th>
             ))}
@@ -185,7 +188,7 @@ export function DataTable({ columns, rows, empty = 'No data', onRowClick }) {
           {rows.map((r, i) => (
             <tr
               key={r.id ?? i}
-              className={onRowClick ? 'hover:bg-slate-50 cursor-pointer transition-colors' : ''}
+              className={onRowClick ? 'hover:bg-brand-50/50 cursor-pointer transition-colors' : ''}
               onClick={() => onRowClick?.(r)}
             >
               {columns.map((c) => (
@@ -207,7 +210,16 @@ export function LoadingSkeleton({ rows = 3, height = 'h-4' }) {
   return (
     <div className="space-y-2">
       {Array.from({ length: rows }).map((_, i) => (
-        <div key={i} className={`${height} rounded bg-slate-200 animate-pulse`} style={{ opacity: 1 - i * 0.15 }} />
+        <div
+          key={i}
+          className={`${height} relative overflow-hidden rounded-md bg-slate-200`}
+          style={{ opacity: 1 - i * 0.15 }}
+        >
+          <div
+            className="absolute inset-0 -translate-x-full bg-gradient-to-r from-transparent via-white/70 to-transparent"
+            style={{ animation: 'shimmer 1.4s infinite' }}
+          />
+        </div>
       ))}
     </div>
   )

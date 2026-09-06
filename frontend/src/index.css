@@ -1,75 +1,557 @@
 @import "tailwindcss";
 
+/* ═══════════════════════════════════════════════════════════════════
+   SENTINEL — design tokens for the Verification Portal
+   ═══════════════════════════════════════════════════════════════════
+
+   The visual language of a national credentialing authority: deep
+   ink-navy chrome, cool paper ground, one confident azure for action,
+   and gold reserved for moments of authority (the mark, active state,
+   a pending decision).
+
+   ── How this file does its work ─────────────────────────────────────
+   Tailwind v4 compiles every colour utility to `var(--color-<name>)`,
+   so redefining a scale here redefines every existing usage of it
+   across all 96 components without touching one of them. Two
+   consequences worth knowing before editing:
+
+     1. `slate-*` and `stone-*` are deliberately mapped to the SAME
+        neutral ramp. The portal previously ran two competing grey
+        families — 1448 slate against 613 stone — with a warm parchment
+        body under cool slate cards. Collapsing them here is what makes
+        the whole product finally read as one surface. Do not re-split
+        them.
+
+     2. `indigo-*` is the primary azure, `amber-*` the gold. Both names
+        are legacy; the colours are not. New code should prefer the
+        semantic aliases at the bottom of the @theme block
+        (`brand-*`, `ink-*`) over the legacy scale names.
+
+   To retheme the entire product, edit the ramps below and nothing else.
+
+   ── Where gold is allowed ───────────────────────────────────────────
+   Gold marks authority, and it only means that if it stays scarce:
+
+     * On navy chrome  -> #E8C55E (amber-300). The wordmark's second
+       word, the desk eyebrow, the rule under the header. 10.3:1.
+     * On light        -> #8F5A11 (.text-warm-accent) at body size, and
+       #B87A15 (.text-gold-display) for display type, which WCAG scores
+       at 3:1. ONLY the brand wordmark and the registration hero's
+       accent word.
+
+   Everything else that used to be gold on light now says what it is:
+   an action is azure (text-brand-700) like every other action in the
+   product, and a page eyebrow is slate (text-slate-600) because a
+   kicker is metadata, not an accent. Adding gold to a third job is
+   what made it read as decoration the first time.
+   ═══════════════════════════════════════════════════════════════════ */
+
 @theme {
-  --color-brand-50:  #eef2ff;
-  --color-brand-100: #e0e7ff;
-  --color-brand-500: #6366f1;
-  --color-brand-600: #4f46e5;
-  --color-brand-700: #4338ca;
-  --color-brand-900: #312e81;
+  /* ── Neutral ────────────────────────────────────────────────────
+     Blue-biased rather than pure grey — a neutral that leans toward
+     the accent reads as chosen, where a dead grey reads as default.
+     Mapped onto BOTH slate and stone (see note 1 above). */
+  --color-slate-50:  #F6F8FA;
+  --color-slate-100: #ECF0F5;
+  --color-slate-200: #DDE4EC;
+  --color-slate-300: #C5D0DC;
+  --color-slate-400: #93A2B5;
+  --color-slate-500: #66768C;
+  --color-slate-600: #4C5C71;
+  --color-slate-700: #3A485B;
+  --color-slate-800: #26313F;
+  --color-slate-900: #18212C;
+  --color-slate-950: #0D141C;
 
-  /* Executive palette used by the superadmin surfaces. Navy base,
-     indigo accent, slate greys, emerald/amber/rose for status. */
-  --color-ink-950: #020617;
-  --color-ink-900: #0f172a;
-  --color-ink-800: #1e293b;
-  --color-ink-700: #334155;
+  --color-stone-50:  #F6F8FA;
+  --color-stone-100: #ECF0F5;
+  --color-stone-200: #DDE4EC;
+  --color-stone-300: #C5D0DC;
+  --color-stone-400: #93A2B5;
+  --color-stone-500: #66768C;
+  --color-stone-600: #4C5C71;
+  --color-stone-700: #3A485B;
+  --color-stone-800: #26313F;
+  --color-stone-900: #18212C;
+  --color-stone-950: #0D141C;
 
+  --color-gray-50:  #F6F8FA;
+  --color-gray-100: #ECF0F5;
+  --color-gray-200: #DDE4EC;
+  --color-gray-300: #C5D0DC;
+  --color-gray-400: #93A2B5;
+  --color-gray-500: #66768C;
+  --color-gray-600: #4C5C71;
+  --color-gray-700: #3A485B;
+  --color-gray-800: #26313F;
+  --color-gray-900: #18212C;
+  --color-gray-950: #0D141C;
+
+  --color-neutral-50:  #F6F8FA;
+  --color-neutral-100: #ECF0F5;
+  --color-neutral-200: #DDE4EC;
+  --color-neutral-300: #C5D0DC;
+  --color-neutral-400: #93A2B5;
+  --color-neutral-500: #66768C;
+  --color-neutral-600: #4C5C71;
+  --color-neutral-700: #3A485B;
+  --color-neutral-800: #26313F;
+  --color-neutral-900: #18212C;
+  --color-neutral-950: #0D141C;
+
+  --color-zinc-50:  #F6F8FA;
+  --color-zinc-100: #ECF0F5;
+  --color-zinc-200: #DDE4EC;
+  --color-zinc-300: #C5D0DC;
+  --color-zinc-400: #93A2B5;
+  --color-zinc-500: #66768C;
+  --color-zinc-600: #4C5C71;
+  --color-zinc-700: #3A485B;
+  --color-zinc-800: #26313F;
+  --color-zinc-900: #18212C;
+  --color-zinc-950: #0D141C;
+
+  /* ── Primary · azure ────────────────────────────────────────────
+     Official, calm, unmistakably a government-grade blue rather than
+     a product blue. Carries every primary action and active state.
+     Occupies the legacy `indigo-*` and `blue-*` names. */
+  --color-indigo-50:  #EEF5FD;
+  --color-indigo-100: #D8E8FA;
+  --color-indigo-200: #B4D2F4;
+  --color-indigo-300: #83B3E9;
+  --color-indigo-400: #4E8FD8;
+  --color-indigo-500: #2A6FC0;
+  --color-indigo-600: #1A57A3;
+  --color-indigo-700: #164788;
+  --color-indigo-800: #163C70;
+  --color-indigo-900: #16345D;
+  --color-indigo-950: #0D1F3B;
+
+  --color-blue-50:  #EEF5FD;
+  --color-blue-100: #D8E8FA;
+  --color-blue-200: #B4D2F4;
+  --color-blue-300: #83B3E9;
+  --color-blue-400: #4E8FD8;
+  --color-blue-500: #2A6FC0;
+  --color-blue-600: #1A57A3;
+  --color-blue-700: #164788;
+  --color-blue-800: #163C70;
+  --color-blue-900: #16345D;
+  --color-blue-950: #0D1F3B;
+
+  --color-violet-50:  #EEF5FD;
+  --color-violet-100: #D8E8FA;
+  --color-violet-200: #B4D2F4;
+  --color-violet-300: #83B3E9;
+  --color-violet-400: #4E8FD8;
+  --color-violet-500: #2A6FC0;
+  --color-violet-600: #1A57A3;
+  --color-violet-700: #164788;
+  --color-violet-800: #163C70;
+  --color-violet-900: #16345D;
+  --color-violet-950: #0D1F3B;
+
+  /* ── Gold ───────────────────────────────────────────────────────
+     The authority accent. Spent sparingly: the wordmark, the active
+     nav underline, a pending decision. Never a large fill. */
+  --color-amber-50:  #FDF9EC;
+  --color-amber-100: #F9F0CE;
+  --color-amber-200: #F2DE9A;
+  --color-amber-300: #E8C55E;
+  --color-amber-400: #DDAB33;
+  --color-amber-500: #C88E1B;
+  --color-amber-600: #A96D15;
+  --color-amber-700: #874F16;
+  --color-amber-800: #6F4019;
+  --color-amber-900: #5D3618;
+  --color-amber-950: #3A2210;
+
+  --color-yellow-50:  #FDF9EC;
+  --color-yellow-100: #F9F0CE;
+  --color-yellow-200: #F2DE9A;
+  --color-yellow-300: #E8C55E;
+  --color-yellow-400: #DDAB33;
+  --color-yellow-500: #C88E1B;
+  --color-yellow-600: #A96D15;
+  --color-yellow-700: #874F16;
+  --color-yellow-800: #6F4019;
+  --color-yellow-900: #5D3618;
+  --color-yellow-950: #3A2210;
+
+  /* ── Verified · emerald ─────────────────────────────────────────
+     Deepened from Tailwind's default so it holds 4.5:1 on white at
+     600 — status colour has to survive an exam hall projector. */
+  --color-emerald-50:  #EDFAF3;
+  --color-emerald-100: #D2F2E1;
+  --color-emerald-200: #A8E5C7;
+  --color-emerald-300: #71D0A5;
+  --color-emerald-400: #3EB482;
+  --color-emerald-500: #1E9767;
+  --color-emerald-600: #127A53;
+  --color-emerald-700: #106143;
+  --color-emerald-800: #114D37;
+  --color-emerald-900: #10402F;
+  --color-emerald-950: #06251A;
+
+  --color-green-50:  #EDFAF3;
+  --color-green-100: #D2F2E1;
+  --color-green-200: #A8E5C7;
+  --color-green-300: #71D0A5;
+  --color-green-400: #3EB482;
+  --color-green-500: #1E9767;
+  --color-green-600: #127A53;
+  --color-green-700: #106143;
+  --color-green-800: #114D37;
+  --color-green-900: #10402F;
+  --color-green-950: #06251A;
+
+  --color-teal-50:  #EDFAF3;
+  --color-teal-100: #D2F2E1;
+  --color-teal-200: #A8E5C7;
+  --color-teal-300: #71D0A5;
+  --color-teal-400: #3EB482;
+  --color-teal-500: #1E9767;
+  --color-teal-600: #127A53;
+  --color-teal-700: #106143;
+  --color-teal-800: #114D37;
+  --color-teal-900: #10402F;
+  --color-teal-950: #06251A;
+
+  /* ── Denied · rose ──────────────────────────────────────────────
+     Reads as a considered refusal, not an error toast. */
+  --color-rose-50:  #FDF2F3;
+  --color-rose-100: #FBE1E4;
+  --color-rose-200: #F6C6CC;
+  --color-rose-300: #EE9EA8;
+  --color-rose-400: #E26D7C;
+  --color-rose-500: #D14456;
+  --color-rose-600: #B92F42;
+  --color-rose-700: #9B2437;
+  --color-rose-800: #822132;
+  --color-rose-900: #6F1F2E;
+  --color-rose-950: #3D0D17;
+
+  --color-red-50:  #FDF2F3;
+  --color-red-100: #FBE1E4;
+  --color-red-200: #F6C6CC;
+  --color-red-300: #EE9EA8;
+  --color-red-400: #E26D7C;
+  --color-red-500: #D14456;
+  --color-red-600: #B92F42;
+  --color-red-700: #9B2437;
+  --color-red-800: #822132;
+  --color-red-900: #6F1F2E;
+  --color-red-950: #3D0D17;
+
+  /* ── Semantic aliases — prefer these in new code ────────────────*/
+  --color-brand-50:  #EEF5FD;
+  --color-brand-100: #D8E8FA;
+  --color-brand-200: #B4D2F4;
+  --color-brand-300: #83B3E9;
+  --color-brand-400: #4E8FD8;
+  --color-brand-500: #2A6FC0;
+  --color-brand-600: #1A57A3;
+  --color-brand-700: #164788;
+  --color-brand-800: #163C70;
+  --color-brand-900: #16345D;
+
+  /* Ink — the navy chrome. Darker and bluer than the neutral ramp;
+     used for top bars, sidebars and the primary button. */
+  --color-ink-600: #1B2B3D;
+  --color-ink-700: #14222F;
+  --color-ink-800: #0F1A25;
+  --color-ink-900: #0A121B;
+  --color-ink-950: #060C12;
+
+  /* ── Type ───────────────────────────────────────────────────────
+     Three roles, three faces. Display carries the headings and the
+     big dashboard figures; Inter does the dense UI work it is best
+     at; mono is for identifiers a human may have to read aloud
+     (roll numbers, AISHE codes, hashes). */
+  --font-display: "Plus Jakarta Sans", "Inter", ui-sans-serif, system-ui,
+                  "Segoe UI", Roboto, sans-serif;
   --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system,
                "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo,
                Consolas, monospace;
+
+  /* ── Elevation ──────────────────────────────────────────────────
+     Shadows are tinted with the ink navy rather than pure black —
+     a black shadow on a cool ground reads as dirt. */
+  --shadow-xs:   0 1px 2px rgba(10, 18, 27, 0.04);
+  --shadow-sm:   0 1px 2px rgba(10, 18, 27, 0.05), 0 1px 3px rgba(10, 18, 27, 0.04);
+  --shadow-md:   0 2px 4px rgba(10, 18, 27, 0.04), 0 6px 16px -6px rgba(10, 18, 27, 0.10);
+  --shadow-lg:   0 4px 8px rgba(10, 18, 27, 0.04), 0 16px 32px -12px rgba(10, 18, 27, 0.14);
+  --shadow-xl:   0 8px 16px rgba(10, 18, 27, 0.05), 0 28px 56px -20px rgba(10, 18, 27, 0.20);
+
+  /* Radius — one step up from stock Tailwind. Softer corners read as
+     more considered at dashboard density. */
+  --radius-lg:  0.625rem;   /* 10px — buttons, inputs */
+  --radius-xl:  0.875rem;   /* 14px — cards */
+  --radius-2xl: 1.125rem;   /* 18px — modals, hero panels */
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Base
+   ═══════════════════════════════════════════════════════════════════ */
 
 html, body, #root { height: 100%; }
 
 /* Lock overscroll at the document level. Without this, pulling the page
    past its top edge rubber-bands and reveals whichever surface sits
-   under the app — which is visible as an off-white flash on the
-   operator dashboard (bg-slate-50 app over bg #FBF7F0 body). This also
-   disables mobile pull-to-refresh, which is desirable here: an operator
-   swiping down mid-flow shouldn't reload the tab and lose a half-typed
-   roll number. */
+   under the app. This also disables mobile pull-to-refresh, which is
+   desirable here: an operator swiping down mid-flow shouldn't reload
+   the tab and lose a half-typed roll number. */
 html, body {
   overscroll-behavior: none;
 }
 
 body {
   font-family: var(--font-sans);
-  background-color: #FBF7F0; /* warm parchment — the superadmin surface tone */
-  /* Inter's tabular-nums + stylistic sets look sharper on dashboards. */
+  background-color: #F6F8FA;
+  color: #18212C;
+  /* Inter's stylistic sets sharpen the lowercase g/a and the digits. */
   font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01", "ss03";
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
 
-/* Superadmin warm palette tokens — applied via arbitrary tailwind
-   values (bg-[#FBF7F0], border-[#EDE4D3]) or via these utility classes. */
-.bg-warm-page { background-color: #FBF7F0; }        /* page canvas */
-.bg-warm-surface { background-color: #FFFDF8; }     /* card surface, slightly warm white */
-.bg-warm-tint { background-color: #F5EEDF; }        /* highlighted band / hero underlay */
-.border-warm { border-color: #EDE4D3; }             /* hairline warm border */
-.border-warm-strong { border-color: #D8CBB0; }      /* accented warm border */
-.text-warm-accent { color: #B45309; }               /* amber-700 rust accent */
+/* Headings and the big dashboard figures take the display face. */
+h1, h2, h3, .font-display {
+  font-family: var(--font-display);
+  letter-spacing: -0.018em;
+}
 
-/* Utility class for numeric fields (stat tiles, tables, charts).
-   Applied via className="font-mono" or directly for tabular columns. */
+::selection {
+  background-color: #D8E8FA;
+  color: #0D1F3B;
+}
+
+/* ── Focus ────────────────────────────────────────────────────────
+   One visible focus treatment for the whole product. Keyboard users
+   get a clear azure ring; mouse users never see it. */
+:focus-visible {
+  outline: 2px solid #2A6FC0;
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+/* Text inputs already draw a border + ring on focus. Without this the
+   global outline stacks on top of that ring and the field wears two. */
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+}
+
+/* ═══════════════════════════════════════════════════════════════════
+   Surface utilities
+
+   These class names are load-bearing — roughly 40 components already
+   use them. They are retained and redefined onto the new palette
+   rather than removed, so the rename never has to happen at 96 call
+   sites. `warm` is now a historical name for "the page surface".
+   ═══════════════════════════════════════════════════════════════════ */
+.bg-warm-page    { background-color: #F6F8FA; }   /* page canvas */
+.bg-warm-surface { background-color: #FFFFFF; }   /* card surface */
+.bg-warm-tint    { background-color: #ECF0F5; }   /* highlighted band */
+.border-warm     { border-color: #DDE4EC; }       /* hairline border */
+.border-warm-strong { border-color: #C5D0DC; }    /* accented border */
+/* Brand gold on light surfaces, at body size. Darker than the gold used
+   on navy (#E8C55E) because it has to clear 4.5:1 against white — at
+   #A96D15 it measured 4.30:1 and read brown rather than gold.
+   Used by the light-tone wordmark (ForcePasswordChange renders it at
+   16px, which is normal text), so it cannot be lightened. */
+.text-warm-accent   { color: #8F5A11; }           /* 5.77:1 on white */
+
+/* Brand gold for DISPLAY type only — 30px+ bold, which WCAG scores as
+   large text at 3:1 rather than 4.5:1. That budget buys a gold that
+   actually reads gold on a light ground, so the registration hero's
+   accent word relates to the "Portal" in the wordmark instead of
+   looking like a different, browner colour.
+   Do NOT use below 24px regular / 18.66px bold — it fails there. */
+.text-gold-display  { color: #B87A15; }           /* 3.38:1 on the page ground */
+
+/* Ring variants — several cards use ring-warm rather than border. */
+.ring-warm { --tw-ring-color: #DDE4EC; }
+
+/* ── Surfaces ─────────────────────────────────────────────────────
+   A small vocabulary of panel treatments. Border, fill and elevation
+   are spent by role rather than stamped on every block: `panel` is
+   the default card, `panel-raised` lifts the one thing on a page that
+   needs attention, `panel-sunken` recedes for empty and helper states. */
+.panel {
+  background-color: #FFFFFF;
+  border: 1px solid #DDE4EC;
+  border-radius: var(--radius-xl);
+}
+.panel-raised {
+  background-color: #FFFFFF;
+  border: 1px solid #DDE4EC;
+  border-radius: var(--radius-xl);
+  box-shadow: var(--shadow-md);
+}
+.panel-sunken {
+  background-color: #F6F8FA;
+  border: 1px solid #E6EBF1;
+  border-radius: var(--radius-xl);
+}
+
+/* The navy chrome band used by top bars and the login hero. */
+.bg-ink-chrome {
+  background-color: #101C29;
+  background-image:
+    linear-gradient(135deg, #16283A 0%, #101C29 55%, #0C1622 100%),
+    radial-gradient(90% 120% at 10% 0%, rgba(42, 111, 192, 0.30) 0%, transparent 60%),
+    radial-gradient(70% 90% at 95% 100%, rgba(169, 109, 21, 0.12) 0%, transparent 60%);
+  background-blend-mode: normal, screen, screen;
+}
+
+/* Gold hairline — the 2px authority rule under primary chrome. */
+.rule-gold {
+  background-image: linear-gradient(
+    90deg,
+    rgba(135, 79, 22, 0.85) 0%,
+    rgba(221, 171, 51, 0.95) 45%,
+    rgba(169, 109, 21, 0.85) 100%
+  );
+}
+
+/* ── Numerals ─────────────────────────────────────────────────────
+   Every figure that sits in a column gets tabular spacing, so digits
+   line up down a table and a CountUp doesn't jitter as it animates. */
 .tabular-nums { font-variant-numeric: tabular-nums; }
+.stat-figure {
+  font-family: var(--font-display);
+  font-variant-numeric: tabular-nums lining-nums;
+  letter-spacing: -0.03em;
+  font-weight: 700;
+}
 
+/* ── Scrollbars ───────────────────────────────────────────────────*/
 ::-webkit-scrollbar { width: 10px; height: 10px; }
-::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 6px; }
-::-webkit-scrollbar-thumb:hover { background: #94a3b8; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb {
+  background: #C5D0DC;
+  border-radius: 6px;
+  border: 2px solid transparent;
+  background-clip: content-box;
+}
+::-webkit-scrollbar-thumb:hover { background: #93A2B5; background-clip: content-box; }
+
+/* ── Motion ───────────────────────────────────────────────────────*/
 
 /* Loading-state shimmer used by <Skeleton>. The element overlays a
-   transparent → white-60% → transparent gradient and slides it left
-   to right. */
+   transparent → white → transparent gradient and slides it left to
+   right. */
 @keyframes shimmer {
   100% { transform: translateX(100%); }
 }
 
-/* Subtle dotted grid that pages can use as a faded background. Apply
-   with `bg-dot-grid` on a container; tone via opacity / colour. */
+/* ── Biometric glyphs ─────────────────────────────────────────────
+   The three capture modalities on the sign-in panel. Drawn bare on the
+   navy — structure in slate, the read itself in emerald, the product's
+   own "verified" colour.
+
+   ── The relay ──────────────────────────────────────────────────────
+   One 5.4s cycle split into three 1.8s phases. The face reads, then the
+   fingerprint, then the iris, and each result STAYS lit until the cycle
+   restarts — so the strip builds to all-three-verified and resets,
+   which is the multi-modal check the product actually runs per exam.
+   The glyphs offset into their phase with animation-delay (0 / 1.8s /
+   3.6s), set per glyph as --bio-phase.
+
+   That sequencing is the point. Three independent loops read as three
+   busy widgets; one relay reads as a pipeline.
+
+   Every keyframe is transform / opacity / stroke-dashoffset only, so it
+   runs on the compositor and never triggers layout — this is the first
+   paint of the first screen anyone sees. The global reduced-motion
+   block below stops all of it, and each glyph has a resting state drawn
+   underneath, so the frozen version is still a complete icon. */
+
+/* Face — the capture line sweeps within the first phase. */
+@keyframes bio-scan {
+  0%        { transform: translateY(0);    opacity: 0; }
+  3%        { opacity: 1; }
+  22%       { opacity: 1; }
+  28%, 100% { transform: translateY(26px); opacity: 0; }
+}
+
+/* Face — the tick lands as the sweep clears, and holds while the other
+   two modalities run. */
+@keyframes bio-check {
+  0%, 24%  { stroke-dashoffset: 15; opacity: 0; }
+  27%      { stroke-dashoffset: 15; opacity: 1; }
+  33%, 93% { stroke-dashoffset: 0;  opacity: 1; }
+  100%     { stroke-dashoffset: 0;  opacity: 0; }
+}
+
+/* Fingerprint — ridges trace, then hold lit. */
+@keyframes bio-draw {
+  0%       { stroke-dashoffset: var(--bio-len, 60); opacity: 1; }
+  26%, 93% { stroke-dashoffset: 0; opacity: 1; }
+  100%     { stroke-dashoffset: 0; opacity: 0; }
+}
+
+/* Iris — one acquisition pulse leaves the centre in its phase. */
+@keyframes bio-pulse {
+  0%, 2%    { transform: scale(0.4);  opacity: 0; }
+  9%        { opacity: 0.9; }
+  27%, 100% { transform: scale(1.25); opacity: 0; }
+}
+
+/* Iris — the measuring ring turns only while the iris is being read. */
+@keyframes bio-spin {
+  0%        { transform: rotate(0deg); opacity: 0.35; }
+  4%        { opacity: 1; }
+  28%       { opacity: 1; }
+  33%, 100% { transform: rotate(300deg); opacity: 0.35; }
+}
+
+/* The detection frame brightens during its own phase. */
+@keyframes bio-lock {
+  0%, 32%, 100% { stroke-opacity: 0.4; }
+  6%, 26%       { stroke-opacity: 0.95; }
+}
+
+/* Ambient: a very slow drift on the panel wash so the navy is never
+   completely inert behind the glyphs. 24s, 10px of travel. */
+@keyframes bio-drift {
+  0%, 100% { transform: translate3d(0, 0, 0); }
+  50%      { transform: translate3d(0, -10px, 0); }
+}
+
+.bio-svg { overflow: visible; }
+.bio-svg [data-bio] { animation-duration: 5.4s; animation-iteration-count: infinite; }
+.bio-svg [data-bio="scan"]  { animation-name: bio-scan;  animation-timing-function: cubic-bezier(.45,0,.25,1); }
+.bio-svg [data-bio="check"] { animation-name: bio-check; animation-timing-function: ease-out; }
+.bio-svg [data-bio="ridge"] { animation-name: bio-draw;  animation-timing-function: ease-in-out; }
+.bio-svg [data-bio="pulse"] { animation-name: bio-pulse; animation-timing-function: ease-out;
+                              transform-box: fill-box; transform-origin: center; }
+.bio-svg [data-bio="ring"]  { animation-name: bio-spin;  animation-timing-function: cubic-bezier(.3,0,.2,1);
+                              transform-box: fill-box; transform-origin: center; }
+.bio-svg [data-bio="lock"]  { animation-name: bio-lock;  animation-timing-function: ease-in-out; }
+
+/* Page-enter: content settles rather than flies. Used by the shells. */
+@keyframes surface-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to   { opacity: 1; transform: none; }
+}
+.animate-surface-in {
+  animation: surface-in 0.32s cubic-bezier(0.22, 1, 0.36, 1) both;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .animate-surface-in { animation: none; }
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}
+
+/* Subtle dotted grid that pages can use as a faded background. */
 .bg-dot-grid {
-  background-image: radial-gradient(circle, rgba(15, 23, 42, 0.06) 1px, transparent 1px);
-  background-size: 24px 24px;
+  background-image: radial-gradient(circle, rgba(24, 33, 44, 0.055) 1px, transparent 1px);
+  background-size: 22px 22px;
 }
