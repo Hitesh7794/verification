@@ -387,6 +387,9 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/admin/timeline", s.requireRole("admin", "superadmin")(s.adminTimeline))
 		r.Get("/api/admin/verifications", s.requireRole("admin", "superadmin")(s.adminListVerifications))
 		r.Get("/api/admin/verifications.csv", s.requireRole("admin", "superadmin")(s.adminExportVerificationsCSV))
+		// Abandoned-flow surface: liveness passes whose wallet debit
+		// never became a verifications row. See admin_verifications_handlers.
+		r.Get("/api/admin/verifications/pending", s.requireRole("admin", "superadmin")(s.adminListPendingVerifications))
 		r.Post("/api/admin/wallet/credit", s.requireRole("superadmin")(s.adminWalletCredit))
 
 		// Phase-2 admin surface: exam catalog subscribe / unsubscribe.

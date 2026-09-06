@@ -93,6 +93,20 @@ type verificationRow struct {
 	FaceScore    *float64 `json:"face_match_score,omitempty"`
 }
 
+// pendingLivenessRow — a liveness_checks entry whose wallet-charging
+// pass never produced a downstream verifications row. Used by the
+// admin history to surface "abandoned" flows so admins understand
+// where debits went when an operator closed the tab or hit Start Over
+// after the liveness step (see /api/admin/verifications/pending).
+type pendingLivenessRow struct {
+	ID         int64  `json:"id"`         // liveness_checks.id (namespaced separately from verifications.id)
+	RollNo     string `json:"roll_no"`
+	Status     string `json:"status"`     // always "abandoned"
+	CenterName string `json:"center_name"` // exam name (name (code)) — same shape as verifications row
+	CreatedAt  string `json:"created_at"`
+	SessionID  string `json:"session_id"` // idempotency_key that the missing verification would have used
+}
+
 // GET /api/admin/verifications
 func (s *Server) adminListVerifications(w http.ResponseWriter, r *http.Request) {
 	where, args := s.buildVerificationFilters(r)
@@ -246,3 +260,97 @@ func floatPtrToString(p *float64) string {
 	}
 	return strconv.FormatFloat(*p, 'f', -1, 64)
 }
+
+// GET /api/admin/verifications/pending
+//
+// Returns liveness_checks rows whose session_id never appeared as an
+// idempotency_key on any verifications row. These are the flows where
+// the operator abandoned mid-verification AFTER the wallet already
+// debited on liveness pass — the money left the org's balance but the
+// admin sees nothing in the standard history listing.
+//
+// Surfaces enough context for the admin to reconcile: roll number,
+// exam name, and when the abandoned attempt happened. No operator
+// column because liveness_checks doesn't store operator_id (added
+// 2026-08 for a face-match idempotency gate, not for audit); adding
+// that would need a schema migration + backfill.
+//
+// Scope: same as adminListVerifications — admin sees own org only,
+// superadmin sees all (or optionally ?org_id=N).
+//
+// Optional filters: ?from / ?to (YYYY-MM-DD, same semantics as the
+// standard history). No cursor pagination — hard-capped at 100 rows,
+// which is far more abandoned attempts than a healthy org accrues in
+// a shift. Admin can narrow date range to see older ones.
+func (s *Server) adminListPendingVerifications(w http.ResponseWriter, r *http.Request) {
+	c := claimsFrom(r)
+	where := " WHERE v.id IS NULL"
+	var args []any
+	if c.Role == "admin" && c.OrgID != nil {
+		where += " AND lc.org_id = ?"
+		args = append(args, *c.OrgID)
+	} else if c.Role == "superadmin" {
+		if v := strings.TrimSpace(r.URL.Query().Get("org_id")); v != "" {
+			if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
+				where += " AND lc.org_id = ?"
+				args = append(args, n)
+			}
+		}
+	}
+	q := r.URL.Query()
+	if roll := strings.TrimSpace(q.Get("roll")); roll != "" {
+		where += " AND lc.roll_no = ?"
+		args = append(args, roll)
+	}
+	if from := q.Get("from"); from != "" {
+		if t, err := time.Parse("2006-01-02", from); err == nil {
+			where += " AND lc.created_at >= ?"
+			args = append(args, t)
+		}
+	}
+	if to := q.Get("to"); to != "" {
+		if t, err := time.Parse("2006-01-02", to); err == nil {
+			where += " AND lc.created_at < ?"
+			args = append(args, t.Add(24*time.Hour))
+		}
+	}
+	args = append(args, 100)
+
+	rows, err := s.deps.DB.QueryContext(r.Context(),
+		db.Q(`SELECT lc.id, lc.roll_no, lc.session_id, lc.created_at,
+		        COALESCE(e.name || ' (' || e.exam_code || ')', '')
+		   FROM liveness_checks lc
+		   LEFT JOIN verifications v
+		          ON v.idempotency_key = lc.session_id
+		   LEFT JOIN exam_candidates ec ON ec.roll_no = lc.roll_no
+		   LEFT JOIN exams e ON e.id = ec.exam_id`+
+			where+` ORDER BY lc.created_at DESC LIMIT ?`), args...,
+	)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	out := make([]pendingLivenessRow, 0, 64)
+	for rows.Next() {
+		var row pendingLivenessRow
+		if err := rows.Scan(
+			&row.ID, &row.RollNo, &row.SessionID, &row.CreatedAt, &row.CenterName,
+		); err != nil {
+			writeErr(w, http.StatusInternalServerError, "scan: "+err.Error())
+			return
+		}
+		row.Status = "abandoned"
+		out = append(out, row)
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"rows": out,
+	})
+}
+
+// buildPendingLivenessRow — kept as a placeholder for future
+// enrichment (operator_id backfill, wallet-transaction cross-ref).
+// No callers today.
+var _ = fmt.Sprintf

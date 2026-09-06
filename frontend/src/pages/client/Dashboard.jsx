@@ -718,6 +718,30 @@ export default function ClientDashboard() {
           //   step === 0  → "Download installer"
           //   step >  0   → "Start over"
           <div className="flex items-center gap-3">
+            {/* Current-exam pill — always visible when the operator has
+                a scoped exam (single-exam ops auto-select, multi-exam
+                ops pick from the picker below). Small chip so it fits
+                comfortably alongside the wallet balance without
+                dominating the header. Shows the exam's short code
+                (e.g. "NEET") if present, else its name. */}
+            {(() => {
+              const activeExam = assignedExams.find(
+                (e) => String(e.id) === String(currentExamId),
+              )
+              if (!activeExam) return null
+              return (
+                <div
+                  title={`Verifying for ${activeExam.name}${activeExam.exam_code ? ' (' + activeExam.exam_code + ')' : ''}`}
+                  className="inline-flex items-center gap-2 rounded-full border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold"
+                >
+                  <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+                  <span className="uppercase tracking-wider text-slate-500">Exam</span>
+                  <span className="text-slate-900">
+                    {activeExam.exam_code || activeExam.name}
+                  </span>
+                </div>
+              )
+            })()}
             <WalletPill wallet={wallet} />
             {step === 0 ? (
               <Link
