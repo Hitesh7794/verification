@@ -119,34 +119,15 @@ export default function LoginShell({
           <h2 className="font-display text-[40px] xl:text-[46px] font-extrabold leading-[1.08] tracking-[-0.035em] text-white text-balance">
             From exam hall to admission desk.
           </h2>
-          <p className="mt-5 text-[15px] leading-relaxed text-slate-300">
-            One identity, carried across the months between. Verified
-            biometrically before a seat is granted.
+          <p className="mt-5 text-[15px] leading-relaxed text-slate-300 max-w-md">
+            One identity, months apart. Verified before a seat is granted.
           </p>
 
           {/* The three capture modalities, animating. Shown rather than
               described — it is what the product does, and it is the
               first thing a visiting stakeholder should understand. */}
-          <BiometricStrip className="mt-8" />
+          <BiometricStrip className="mt-10" />
 
-          <ul className="mt-7 space-y-3.5">
-            {[
-              ['Face, fingerprint and iris', 'Matched against the exam enrolment. Modalities set per exam.'],
-              ['Liveness-checked', 'A printed photograph does not pass the gate.'],
-              ['Fully auditable', 'Match scores, device and operator on every record.'],
-            ].map(([head, sub]) => (
-              <li key={head} className="flex gap-3.5">
-                <span
-                  aria-hidden="true"
-                  className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-amber-300"
-                />
-                <span className="min-w-0">
-                  <span className="block text-sm font-semibold text-white">{head}</span>
-                  <span className="block text-[13px] text-slate-400 mt-0.5">{sub}</span>
-                </span>
-              </li>
-            ))}
-          </ul>
         </div>
 
         <p className="relative text-[11px] text-slate-500">
