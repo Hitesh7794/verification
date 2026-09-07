@@ -5,10 +5,16 @@
 //
 // ── Design ──────────────────────────────────────────────────────────
 // Three glyphs on a shared 48×48 grid, each inside the same corner
-// detection frame, drawn bare on the navy — no tile behind them.
-// Structure is the panel's own slate; only the moving part is gold,
-// which keeps the palette rule intact (gold marks the authoritative
-// act, and here that act is the capture).
+// detection frame, drawn bare on the navy. Structure is the panel's own
+// slate; only the moving part is emerald, the product's verified colour.
+//
+// All three share ONE layout: the subject occupies the upper band
+// (y 8-29) and a verification tick sits below it (y 31-39). The
+// fingerprint and iris drawings are scaled into that band by a wrapping
+// transform rather than by re-authoring their paths — stroke-dasharray
+// is expressed in the path's own user units, so a parent transform
+// scales the dashes with the drawing and the measured lengths below
+// stay correct.
 //
 // Two notes on the drawings themselves:
 //
@@ -23,10 +29,10 @@
 //     the Aadhaar mark — neither is what this is.
 //
 // Motion is a relay, not three separate loops: one 5.4s cycle in which
-// the face reads, then the fingerprint, then the iris, each result
-// holding lit until the cycle restarts. See the note in index.css.
-// Every animated element also has a resting state drawn underneath it,
-// so the reduced-motion version is still a complete icon.
+// the face reads, then the fingerprint, then the iris, each tick holding
+// lit until the cycle restarts. See the note in index.css. Every
+// animated element also has a resting state drawn underneath it, so the
+// reduced-motion version is still a complete icon.
 //
 // No icon library and no runtime: these are inline paths, so the first
 // paint of the first screen costs nothing extra.
@@ -35,11 +41,13 @@ const STRUCTURE = '#93A2B5' // slate-400 — reads on navy without glare
 const ACCENT    = '#71D0A5' // emerald-300 — the product's verified
                             // colour. 9.23:1 on the navy panel.
 
-// The detection frame, shared by all three. Brightens once per cycle as
-// the read completes.
 // PHASE offsets the glyph into its slot in the relay.
 const PHASE = { face: '0s', print: '1.8s', iris: '3.6s' }
 
+const TICK = 'M18.8 35.4l3.4 3.4 7-7.2'
+
+// The detection frame, shared by all three. Brightens once per cycle as
+// the read completes.
 function Frame({ phase }) {
   return (
     <g
@@ -59,15 +67,36 @@ function Frame({ phase }) {
   )
 }
 
+// The verification tick, shared by all three: a resting stroke in slate
+// so the glyph is balanced even before its turn, with the emerald pass
+// drawing over it when the read completes.
+function Tick({ phase }) {
+  return (
+    <>
+      <path
+        d={TICK}
+        stroke={STRUCTURE} strokeWidth="2.4" opacity="0.45"
+        strokeLinecap="round" strokeLinejoin="round" fill="none"
+      />
+      <path
+        data-bio="check"
+        d={TICK}
+        stroke={ACCENT} strokeWidth="2.6"
+        strokeLinecap="round" strokeLinejoin="round" fill="none"
+        style={{ strokeDasharray: 15, strokeDashoffset: 15, animationDelay: phase }}
+      />
+    </>
+  )
+}
+
 // ── Face ────────────────────────────────────────────────────────────
-// Detection frame + head-and-shoulders bust + verification tick.
-// Two beats on a 2.8s loop: the capture line sweeps the bust, then the
-// tick draws and the frame tightens to acknowledge the match.
+// The capture line sweeps the bust, then the tick draws and the frame
+// tightens to acknowledge the match.
 export function FaceGlyph({ size = 64, className = '' }) {
   return (
     <svg
       width={size} height={size} viewBox="0 0 48 48"
-      className={`bio-svg ${className}`} role="img" aria-label="Face verification" fill="none"
+      className={`bio-svg ${className}`} role="img" aria-label="Face verified" fill="none"
     >
       <Frame phase={PHASE.face} />
 
@@ -77,25 +106,13 @@ export function FaceGlyph({ size = 64, className = '' }) {
         <path d="M14.6 29.6c0-4.7 4.2-7.4 9.4-7.4s9.4 2.7 9.4 7.4" />
       </g>
 
-      {/* capture line — sweeps the bust in the first half of the loop */}
+      {/* capture line */}
       <g data-bio="scan" style={{ animationDelay: PHASE.face }}>
         <line x1="8" y1="5" x2="40" y2="5" stroke={ACCENT} strokeWidth="1.7" strokeLinecap="round" />
         <rect x="8" y="5" width="32" height="7" fill="url(#faceFade)" />
       </g>
 
-      {/* verification tick — resting, then the gold pass draws over it */}
-      <path
-        d="M18.8 35.4l3.4 3.4 7-7.2"
-        stroke={STRUCTURE} strokeWidth="2.4" opacity="0.45"
-        strokeLinecap="round" strokeLinejoin="round" fill="none"
-      />
-      <path
-        data-bio="check"
-        d="M18.8 35.4l3.4 3.4 7-7.2"
-        stroke={ACCENT} strokeWidth="2.6"
-        strokeLinecap="round" strokeLinejoin="round" fill="none"
-        style={{ strokeDasharray: 15, strokeDashoffset: 15, animationDelay: PHASE.face }}
-      />
+      <Tick phase={PHASE.face} />
 
       <defs>
         <linearGradient id="faceFade" x1="0" y1="0" x2="0" y2="1">
@@ -108,10 +125,9 @@ export function FaceGlyph({ size = 64, className = '' }) {
 }
 
 // ── Fingerprint ─────────────────────────────────────────────────────
-// A loop-pattern print: four nested arches tapering to a fingertip,
-// plus a closed core and two ridge endings. The ridges run the full
-// height of the frame, so it reads as a whole print rather than the
-// half-print-plus-sun of the Aadhaar mark.
+// A loop-pattern print: four nested arches tapering to a fingertip, plus
+// a closed core and two ridge endings. Ridges light up outward-to-inward,
+// then the tick lands.
 //
 // Lengths below are the paths' measured arc lengths. A dash animation
 // whose dasharray does not match its path's true length draws at the
@@ -126,87 +142,124 @@ export function FingerprintGlyph({ size = 64, className = '' }) {
   return (
     <svg
       width={size} height={size} viewBox="0 0 48 48"
-      className={`bio-svg ${className}`} role="img" aria-label="Fingerprint capture" fill="none"
+      className={`bio-svg ${className}`} role="img" aria-label="Fingerprint verified" fill="none"
     >
       <Frame phase={PHASE.print} />
 
-      {/* resting print — always there; the gold pass is the read */}
-      <g stroke={STRUCTURE} strokeWidth="1.6" strokeLinecap="round" fill="none" opacity="0.5">
-        {ridges.map((r) => <path key={r.d} d={r.d} />)}
-        {/* ridge endings — a real print is not perfectly nested */}
-        <path d="M27.9 31.2c.5-2.8.4-5.2-.2-7" />
-        <path d="M20.4 20.4c-1.3 1.5-2.2 3.5-2.6 5.9" />
+      {/* Scaled into the shared upper band so the tick has room below. */}
+      <g transform="translate(24 18.6) scale(0.88) translate(-24 -24)">
+        {/* resting print — always there; the emerald pass is the read */}
+        <g stroke={STRUCTURE} strokeWidth="1.6" strokeLinecap="round" fill="none" opacity="0.5">
+          {ridges.map((r) => <path key={r.d} d={r.d} />)}
+          {/* ridge endings — a real print is not perfectly nested */}
+          <path d="M27.9 31.2c.5-2.8.4-5.2-.2-7" />
+          <path d="M20.4 20.4c-1.3 1.5-2.2 3.5-2.6 5.9" />
+        </g>
+
+        {/* the read itself */}
+        <g stroke={ACCENT} strokeWidth="1.8" strokeLinecap="round" fill="none">
+          {ridges.map((r) => (
+            <path
+              key={r.d}
+              d={r.d}
+              data-bio="ridge"
+              style={{
+                '--bio-len': r.len,
+                strokeDasharray: r.len,
+                strokeDashoffset: r.len,
+                animationDelay: r.delay,
+              }}
+            />
+          ))}
+        </g>
       </g>
 
-      {/* the read itself */}
-      <g stroke={ACCENT} strokeWidth="1.8" strokeLinecap="round" fill="none">
-        {ridges.map((r) => (
-          <path
-            key={r.d}
-            d={r.d}
-            data-bio="ridge"
-            style={{
-              '--bio-len': r.len,
-              strokeDasharray: r.len,
-              strokeDashoffset: r.len,
-              animationDelay: r.delay,
-            }}
-          />
-        ))}
-      </g>
+      <Tick phase={PHASE.print} />
     </svg>
   )
 }
 
 // ── Iris ────────────────────────────────────────────────────────────
-// A measuring ring turns around the pupil while acquisition pulses
-// leave the centre.
+// The measuring ring turns around the pupil while an acquisition pulse
+// leaves the centre, then the tick lands.
 export function IrisGlyph({ size = 64, className = '' }) {
   return (
     <svg
       width={size} height={size} viewBox="0 0 48 48"
-      className={`bio-svg ${className}`} role="img" aria-label="Iris capture" fill="none"
+      className={`bio-svg ${className}`} role="img" aria-label="Iris verified" fill="none"
     >
       <Frame phase={PHASE.iris} />
 
-      {/* eye aperture */}
-      <path
-        d="M9 24c3.9-5.8 9-8.8 15-8.8S35.1 18.2 39 24c-3.9 5.8-9 8.8-15 8.8S12.9 29.8 9 24Z"
-        stroke={STRUCTURE} strokeWidth="1.8" strokeLinejoin="round" fill="none"
-      />
-      {/* acquisition pulse */}
-      <circle data-bio="pulse" cx="24" cy="24" r="7.6" stroke={ACCENT} strokeWidth="1.5" fill="none"
-              style={{ animationDelay: PHASE.iris }} />
-      {/* measuring ring */}
-      <circle
-        data-bio="ring" cx="24" cy="24" r="6"
-        stroke={ACCENT} strokeWidth="1.7" fill="none"
-        strokeDasharray="3.8 3.8" strokeLinecap="round"
-        style={{ animationDelay: PHASE.iris }}
-      />
-      {/* pupil */}
-      <circle cx="24" cy="24" r="2.4" fill={STRUCTURE} />
+      {/* Scaled into the shared upper band so the tick has room below. */}
+      <g transform="translate(24 18.5) scale(0.82) translate(-24 -24)">
+        {/* eye aperture */}
+        <path
+          d="M9 24c3.9-5.8 9-8.8 15-8.8S35.1 18.2 39 24c-3.9 5.8-9 8.8-15 8.8S12.9 29.8 9 24Z"
+          stroke={STRUCTURE} strokeWidth="1.8" strokeLinejoin="round" fill="none"
+        />
+        {/* acquisition pulse */}
+        <circle
+          data-bio="pulse" cx="24" cy="24" r="7.6"
+          stroke={ACCENT} strokeWidth="1.5" fill="none"
+          style={{ animationDelay: PHASE.iris }}
+        />
+        {/* measuring ring */}
+        <circle
+          data-bio="ring" cx="24" cy="24" r="6"
+          stroke={ACCENT} strokeWidth="1.7" fill="none"
+          strokeDasharray="3.8 3.8" strokeLinecap="round"
+          style={{ animationDelay: PHASE.iris }}
+        />
+        {/* pupil */}
+        <circle cx="24" cy="24" r="2.4" fill={STRUCTURE} />
+      </g>
+
+      <Tick phase={PHASE.iris} />
     </svg>
   )
 }
 
 // ── Row ─────────────────────────────────────────────────────────────
-export function BiometricStrip({ className = '' }) {
+export function BiometricStrip({ className = '', size = 64, gap = 'gap-10', style }) {
   const items = [
     { Glyph: FaceGlyph,        label: 'Face' },
     { Glyph: FingerprintGlyph, label: 'Fingerprint' },
     { Glyph: IrisGlyph,        label: 'Iris' },
   ]
   return (
-    <div className={`flex items-start gap-10 ${className}`}>
-      {items.map(({ Glyph, label }) => (
-        <div key={label} className="flex flex-col items-center gap-2.5">
-          <Glyph />
-          <span className="text-[9.5px] font-bold uppercase tracking-[0.14em] text-slate-400">
-            {label}
-          </span>
-        </div>
-      ))}
+    <div className={className} style={style}>
+      <div className={`flex items-start ${gap}`}>
+        {items.map(({ Glyph, label }) => (
+          <div key={label} className="flex flex-col items-center gap-3 flex-1">
+            <Glyph size={size} />
+            {/* Node on the rail, directly under its glyph. */}
+            <span aria-hidden="true" className="relative flex h-1.5 w-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-white/30" />
+            </span>
+            <span className="text-[9px] font-bold uppercase tracking-[0.14em] text-slate-400">
+              {label}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// BiometricRail — the glyph row plus the rail its pulse travels. Kept
+// separate from BiometricStrip so the compact small-screen header can
+// use the plain row without the rail.
+export function BiometricRail({ className = '', size = 110, gap = 'gap-8', style }) {
+  return (
+    <div className={`relative ${className}`} style={style}>
+      <BiometricStrip size={size} gap={gap} />
+      {/* rail — sits behind the nodes, at their vertical centre */}
+      <div
+        className="absolute left-[8%] right-[8%] h-px bg-white/12 overflow-hidden pointer-events-none"
+        style={{ top: `${size + 18}px` }}
+      >
+        <div className="rail-pulse absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-emerald-300/90 to-transparent" />
+      </div>
     </div>
   )
 }

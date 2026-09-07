@@ -532,6 +532,76 @@ select:focus-visible {
                               transform-box: fill-box; transform-origin: center; }
 .bio-svg [data-bio="lock"]  { animation-name: bio-lock;  animation-timing-function: ease-in-out; }
 
+/* ── Sign-in panel decoration ─────────────────────────────────────
+   Depth on the navy, without anything that competes with the glyphs.
+   The sign-in form itself carries no card: it sits directly on white,
+   so there is nothing here for it. */
+
+/* Aurora: two large blurred blooms drifting behind the content on a
+   long cycle. Transform + opacity only, and they sit under a
+   pointer-events:none layer so they never intercept a click. */
+@keyframes aurora-a {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1); }
+  50%      { transform: translate3d(6%, -4%, 0) scale(1.12); }
+}
+@keyframes aurora-b {
+  0%, 100% { transform: translate3d(0, 0, 0) scale(1.08); }
+  50%      { transform: translate3d(-5%, 5%, 0) scale(1); }
+}
+.aurora-a { animation: aurora-a 18s ease-in-out infinite; }
+.aurora-b { animation: aurora-b 22s ease-in-out infinite; }
+
+/* A hairline of light down the panel's inner edge, so the split reads
+   as a deliberate seam rather than two blocks abutting. */
+.panel-seam {
+  background-image: linear-gradient(
+    to bottom,
+    transparent 0%,
+    rgba(255, 255, 255, 0.14) 22%,
+    rgba(232, 197, 94, 0.30) 50%,
+    rgba(255, 255, 255, 0.14) 78%,
+    transparent 100%
+  );
+}
+
+/* A pulse travelling the rail under the glyph strip, in step with the
+   5.4s relay — it arrives beneath each glyph as that glyph is read, so
+   the row shows a sequence running rather than three separate icons. */
+@keyframes rail-pulse {
+  0%   { transform: translateX(-14%); opacity: 0; }
+  6%   { opacity: 1; }
+  92%  { opacity: 1; }
+  100% { transform: translateX(100%); opacity: 0; }
+}
+.rail-pulse { animation: rail-pulse 5.4s cubic-bezier(0.5, 0, 0.5, 1) infinite; }
+
+/* ── Entrance stagger ─────────────────────────────────────────────
+   Sign-in content settles in sequence rather than appearing at once.
+   Order is set per element with --i, so the markup carries the timing
+   and no JS is involved. 55ms apart over a 0.45s rise puts the last of
+   five elements fully in at ~670ms — read as a sequence, done before it
+   feels like a wait. */
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+.rise-in {
+  animation: rise-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--i, 0) * 55ms);
+}
+
+/* Button working state — a ring that spins while a request is in
+   flight, so "Signing in" is visibly doing something. */
+@keyframes spin-ring { to { transform: rotate(360deg); } }
+.spin-ring { animation: spin-ring 0.7s linear infinite; }
+
+/* Errors arrive rather than blink into place. */
+@keyframes alert-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+.alert-in { animation: alert-in 0.25s ease-out both; }
+
 /* Page-enter: content settles rather than flies. Used by the shells. */
 @keyframes surface-in {
   from { opacity: 0; transform: translateY(6px); }

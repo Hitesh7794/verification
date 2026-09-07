@@ -5,7 +5,7 @@ import { useAuth } from '../../lib/auth.jsx'
 import { requestForgotPassword } from '../../lib/onboarding/register.js'
 import { Input, Label } from '../ui/ui.jsx'
 import { PRODUCT_NAME, BrandMark } from '../ui/brand.jsx'
-import { BiometricStrip } from '../ui/biometrics.jsx'
+import { BiometricStrip, BiometricRail } from '../ui/biometrics.jsx'
 import { Icon } from '../ui/icons.jsx'
 
 // LoginShell — a two-panel sign-in.
@@ -121,15 +121,29 @@ export default function LoginShell({
   }
 
   return (
-    <div className="min-h-screen grid lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
+    <div className="min-h-screen grid lg:grid-cols-[1fr_clamp(26rem,32vw,32rem)]">
       {/* ── Brand panel — lg and up ───────────────────────────────── */}
       <aside className="relative hidden lg:flex flex-col justify-between bg-ink-chrome p-12 xl:p-16 overflow-hidden">
-        <div
-          className="absolute -inset-y-16 inset-x-0 bg-dot-grid opacity-[0.13] pointer-events-none"
-          style={{ animation: 'bio-drift 24s ease-in-out infinite' }}
-        />
+        {/* Decoration layer — everything here is inert to the pointer. */}
+        <div className="absolute inset-0 pointer-events-none overflow-hidden">
+          <div
+            className="absolute -inset-y-16 inset-x-0 bg-dot-grid opacity-[0.13]"
+            style={{ animation: 'bio-drift 24s ease-in-out infinite' }}
+          />
+          <div className="aurora-a absolute -top-32 -left-24 h-[34rem] w-[34rem] rounded-full bg-brand-500/18 blur-[120px]" />
+          <div className="aurora-b absolute -bottom-40 -right-16 h-[30rem] w-[30rem] rounded-full bg-amber-400/10 blur-[130px]" />
+          {/* Oversized mark, barely visible — gives the lower half of the
+              panel something to hold without adding another element to read. */}
+          <BrandMark
+            size={520}
+            tone="inverse"
+            className="absolute -bottom-44 -right-40 opacity-[0.03]"
+          />
+        </div>
+        {/* Seam down the inner edge */}
+        <div className="panel-seam absolute inset-y-0 right-0 w-px pointer-events-none" />
 
-        <div className="relative flex items-center gap-3">
+        <div className="relative flex items-center gap-3 rise-in" style={{ '--i': 0 }}>
           <BrandMark size={34} tone="inverse" />
           <span className="font-display text-lg font-extrabold text-white tracking-[-0.025em]">
             {PRODUCT_NAME}
@@ -137,85 +151,80 @@ export default function LoginShell({
         </div>
 
         <div className="relative max-w-lg">
-          <h2 className="font-display text-[40px] xl:text-[46px] font-extrabold leading-[1.08] tracking-[-0.035em] text-white text-balance">
+          <h2 className="font-display text-[40px] xl:text-[46px] font-extrabold leading-[1.08] tracking-[-0.035em] text-white text-balance rise-in" style={{ '--i': 1 }}>
             From exam hall to admission desk.
           </h2>
-          <p className="mt-5 text-[15px] leading-relaxed text-slate-300">
-            One identity, carried across the months between. Verified
-            biometrically before a seat is granted.
+          <p className="mt-6 text-[16px] leading-relaxed text-slate-300 max-w-lg text-balance rise-in" style={{ '--i': 2 }}>
+            One identity, months apart. Verified before a seat is granted.
           </p>
 
           {/* The three capture modalities, animating. Shown rather than
               described — it is what the product does, and it is the
               first thing a visiting stakeholder should understand. */}
-          <BiometricStrip className="mt-8" />
+          <BiometricRail size={124} className="mt-20 max-w-2xl rise-in" style={{ '--i': 3 }} />
 
-          <ul className="mt-7 space-y-3.5">
-            {[
-              ['Face, fingerprint and iris', 'Matched against the exam enrolment. Modalities set per exam.'],
-              ['Liveness-checked', 'A printed photograph does not pass the gate.'],
-              ['Fully auditable', 'Match scores, device and operator on every record.'],
-            ].map(([head, sub]) => (
-              <li key={head} className="flex gap-3.5">
-                <span
-                  aria-hidden="true"
-                  className="mt-[7px] h-1.5 w-1.5 shrink-0 rounded-full bg-amber-300"
-                />
-                <span className="min-w-0">
-                  <span className="block text-sm font-semibold text-white">{head}</span>
-                  <span className="block text-[13px] text-slate-400 mt-0.5">{sub}</span>
-                </span>
-              </li>
-            ))}
-          </ul>
         </div>
 
-        <p className="relative text-[11px] text-slate-500">
+        <p className="relative text-[11px] text-slate-500 rise-in" style={{ '--i': 4 }}>
           Authorised access only. All sign-in attempts are logged.
         </p>
       </aside>
 
       {/* ── Sign-in panel ─────────────────────────────────────────── */}
-      <div className="relative flex items-center justify-center bg-slate-50 p-6 sm:p-10">
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-          className="relative w-full max-w-[400px]"
-        >
-          {/* Wordmark — carries the mark on small screens, where the
-              brand panel above is hidden. */}
-          <div className="flex items-center justify-center gap-2.5 mb-7 lg:hidden">
-            <BrandMark size={28} />
-            <span className="font-display text-lg font-extrabold text-slate-900 tracking-[-0.025em]">
+      <div className="relative flex flex-col bg-white">
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 pointer-events-none bg-dot-grid opacity-[0.5]"
+          style={{ maskImage: 'radial-gradient(120% 90% at 50% 0%, black 0%, transparent 72%)',
+                   WebkitMaskImage: 'radial-gradient(120% 90% at 50% 0%, black 0%, transparent 72%)' }}
+        />
+        {/* Below lg the brand panel is hidden, so small screens get a
+            condensed version of it rather than a card alone on grey.
+            Navy, so the glyphs keep the palette they were drawn for. */}
+        <div className="lg:hidden bg-ink-chrome px-6 pt-9 pb-7 flex flex-col items-center text-center">
+          <div className="flex items-center gap-2.5 rise-in" style={{ '--i': 0 }}>
+            <BrandMark size={28} tone="inverse" />
+            <span className="font-display text-[17px] font-extrabold text-white tracking-[-0.025em]">
               {PRODUCT_NAME}
             </span>
           </div>
+          <p className="mt-3 text-[13px] text-slate-300 max-w-xs rise-in" style={{ '--i': 1 }}>
+            One identity, months apart. Verified before a seat is granted.
+          </p>
+          <BiometricStrip size={44} gap="gap-7" className="mt-6 rise-in" style={{ '--i': 2 }} />
+        </div>
+        <div className="lg:hidden h-[2px] rule-gold" />
 
-        {/* Card. The gold rule at its head is the same authority mark
-            the chrome bars carry, so the card belongs to the product
-            rather than floating beside it. */}
-        <div className="rounded-2xl bg-white ring-1 ring-slate-200 shadow-lg overflow-hidden">
-          <div className="h-[3px] rule-gold" />
-          <div className="p-8">
-          {/* Which desk you are signing in to — the one piece of
-              identity on this card, so it gets a chip rather than a
-              line of grey uppercase. */}
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-50
-                           ring-1 ring-inset ring-brand-100 px-2.5 py-1 mb-3
-                           text-[10.5px] font-bold uppercase tracking-[0.13em] text-brand-800">
-            <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-brand-500" />
-            {roleLabel}
-          </span>
+        <div className="relative flex-1 flex items-center justify-center p-6 sm:p-10">
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1], delay: 0.12 }}
+          className="relative w-full max-w-[400px]"
+        >
+
+        {/* No card. The right half is white and the form sits directly
+            on it — a boxed card floating on grey is the stock sign-in
+            shape, and the split itself already frames this side. */}
+        <div>
+          <div>
+          {/* The desk, as a kicker with a gold rule running off it —
+              the same authority mark the chrome carries. */}
+          {/* The desk, marked by a short azure bar. Everything the form
+              accents — focus underlines, links — is azure, so a gold
+              rule here was the one thing in it wearing another colour. */}
+          <div className="flex items-center gap-2.5 mb-5">
+            <span aria-hidden="true" className="h-3.5 w-[3px] rounded-full bg-brand-600" />
+            <span className="text-[10.5px] font-bold uppercase tracking-[0.16em] text-slate-500 whitespace-nowrap">
+              {roleLabel}
+            </span>
+          </div>
 
           {view === 'login' ? (
             <>
-              <h1 className="font-display text-[26px] font-extrabold text-slate-900 tracking-[-0.03em]">
+              <h1 className="font-display text-[34px] leading-none font-extrabold text-slate-900 tracking-[-0.035em]">
                 Sign in
               </h1>
-              <p className="mt-1 text-sm text-slate-500">
-                Enter your credentials to continue.
-              </p>
 
               {portalDisabled && !err && (
                 <div role="status"
@@ -244,26 +253,26 @@ export default function LoginShell({
                 </div>
               )}
 
-              <form onSubmit={onSubmit} className="mt-6 space-y-4" autoComplete="on">
+              <form onSubmit={onSubmit} className="mt-7 space-y-5" autoComplete="on">
                 <div>
-                  <Label>
+                  <label className="block text-[13px] font-medium text-slate-600 mb-1.5">
                     {allowedRoles.includes('superadmin') ? 'Username' : 'Username or email'}
-                  </Label>
+                  </label>
                   <div className="relative">
-                    <Icon.User className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                    <Input
+                    <input
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
                       autoComplete="username"
                       autoFocus
                       required
-                      className="pl-9"
+                      className="peer w-full bg-transparent border-0 border-b border-slate-300 rounded-none px-0 py-2.5 text-base text-slate-900 placeholder-slate-300 focus:outline-none focus:border-slate-300 focus:ring-0 transition-colors"
                     />
+                    <span aria-hidden="true" className="pointer-events-none absolute bottom-0 left-0 h-[2px] w-full origin-left scale-x-0 bg-brand-600 transition-transform duration-300 ease-[cubic-bezier(.22,1,.36,1)] peer-focus:scale-x-100" />
                   </div>
                 </div>
                 <div>
                   <div className="flex items-center justify-between">
-                    <Label>Password</Label>
+                    <label className="block text-[13px] font-medium text-slate-600 mb-1.5">Password</label>
                     <button
                       type="button"
                       onClick={() => {
@@ -278,50 +287,65 @@ export default function LoginShell({
                       // flow anyway; keyboard-only users get the
                       // password field on the very next keystroke.
                       tabIndex={-1}
-                      className="text-xs font-semibold text-brand-700 hover:text-brand-800 hover:underline"
+                      className="text-[12.5px] font-medium text-brand-700 hover:text-brand-800 transition-colors"
                     >
                       Forgot password?
                     </button>
                   </div>
                   <div className="relative">
-                    <Icon.Lock className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
-                    <Input
+                    <input
                       type={showPw ? 'text' : 'password'}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       autoComplete="current-password"
                       required
-                      className="pl-9 pr-10"
+                      className="peer w-full bg-transparent border-0 border-b border-slate-300 rounded-none px-0 py-2.5 text-base text-slate-900 placeholder-slate-300 focus:outline-none focus:border-slate-300 focus:ring-0 transition-colors pr-9"
                     />
-                    <button
-                      type="button"
-                      onClick={() => setShowPw((v) => !v)}
-                      className="absolute inset-y-0 right-0 px-3 flex items-center text-slate-400 hover:text-slate-700 transition-colors"
-                      aria-label={showPw ? 'Hide password' : 'Show password'}
-                      tabIndex={-1}
-                    >
-                      <Icon.Eye className="h-4 w-4" />
-                    </button>
+                    <span aria-hidden="true" className="pointer-events-none absolute bottom-0 left-0 h-[2px] w-full origin-left scale-x-0 bg-brand-600 transition-transform duration-300 ease-[cubic-bezier(.22,1,.36,1)] peer-focus:scale-x-100" />
+                    {/* Only offer the reveal once there is something to
+                        reveal — on an empty field the icon sits orphaned
+                        in white space with nothing to act on. */}
+                    {password && (
+                      <button
+                        type="button"
+                        onClick={() => setShowPw((v) => !v)}
+                        className="absolute right-0 inset-y-0 px-1 flex items-center text-slate-400 hover:text-slate-700 transition-colors"
+                        aria-label={showPw ? 'Hide password' : 'Show password'}
+                        tabIndex={-1}
+                      >
+                        <Icon.Eye className="h-4 w-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
 
                 {err && (
                   <div role="alert"
-                       className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-700">
-                    {err}
+                       className="alert-in flex items-start gap-2 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-700">
+                    <Icon.AlertCircle className="h-4 w-4 shrink-0 mt-px" />
+                    <span>{err}</span>
                   </div>
                 )}
 
                 <button
                   type="submit"
                   disabled={busy}
-                  className="group w-full inline-flex items-center justify-center rounded-lg
-                             bg-brand-600 hover:bg-brand-700 text-white font-semibold
-                             px-4 py-2.5 text-sm shadow-sm transition-colors
+                  className="group w-full inline-flex items-center justify-center rounded-md
+                             bg-ink-800 hover:bg-ink-700 text-white font-semibold
+                             px-4 py-3.5 text-[14px] tracking-[-0.005em]
+                             transition-colors duration-150
                              focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500
-                             disabled:opacity-60 disabled:cursor-not-allowed"
+                             disabled:opacity-50 disabled:cursor-not-allowed"
                 >
-                  {busy ? 'Signing in…' : (
+                  {busy ? (
+                    <>
+                      <span
+                        aria-hidden="true"
+                        className="spin-ring mr-2 h-4 w-4 rounded-full border-2 border-white/35 border-t-white"
+                      />
+                      Signing in&hellip;
+                    </>
+                  ) : (
                     <>
                       Sign in
                       <Icon.ArrowRight className="ml-2 h-4 w-4 transition-transform duration-150 group-hover:translate-x-0.5" />
@@ -410,20 +434,19 @@ export default function LoginShell({
           )}
           </div>
 
-          {/* Footer band — the register link belongs to the card rather
-              than floating unattached beneath it. */}
           {showRegisterLink && view === 'login' && (
-            <div className="border-t border-slate-200 bg-slate-50 px-8 py-3.5 text-center">
-              <p className="text-xs text-slate-500">
+            <div className="mt-9 pt-5 border-t border-slate-200">
+              <p className="text-[13px] text-slate-500">
                 Not yet onboarded?{' '}
-                <a href="/register/institution" className="font-semibold text-brand-700 hover:underline">
-                  Register your institution &rarr;
+                <a href="/register/institution" className="font-semibold text-brand-700 hover:text-brand-800 underline underline-offset-4 decoration-brand-300 hover:decoration-brand-600 transition-colors">
+                  Register your institution
                 </a>
               </p>
             </div>
           )}
         </div>
         </motion.div>
+        </div>
       </div>
     </div>
   )
