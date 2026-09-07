@@ -67,7 +67,10 @@ export function Input({ className = '', ...rest }) {
   return (
     <input
       className={cn(
-        'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-sm text-slate-900',
+        // text-base below sm, not text-sm: iOS Safari zooms the viewport
+        // when an input under 16px takes focus and leaves the page
+        // scaled. Desktop keeps 14px, so no layout shifts there.
+        'w-full rounded-lg border border-slate-300 bg-white px-3 py-2 text-base sm:text-sm text-slate-900',
         'placeholder-slate-400 shadow-xs transition-[border-color,box-shadow] duration-150',
         'hover:border-slate-400',
         'focus:border-brand-500 focus:outline-none focus:ring-4 focus:ring-brand-500/12',

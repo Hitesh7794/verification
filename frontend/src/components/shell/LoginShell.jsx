@@ -253,9 +253,9 @@ export default function LoginShell({
                 </div>
               )}
 
-              <form onSubmit={onSubmit} className="mt-8 space-y-6" autoComplete="on">
+              <form onSubmit={onSubmit} className="mt-7 space-y-5" autoComplete="on">
                 <div>
-                  <label className="block text-[10.5px] font-bold uppercase tracking-[0.14em] text-slate-500 mb-1">
+                  <label className="block text-[13px] font-medium text-slate-600 mb-1.5">
                     {allowedRoles.includes('superadmin') ? 'Username' : 'Username or email'}
                   </label>
                   <div className="relative">
@@ -265,14 +265,14 @@ export default function LoginShell({
                       autoComplete="username"
                       autoFocus
                       required
-                      className="peer w-full bg-transparent border-0 border-b border-slate-300 rounded-none px-0 py-2.5 text-[15px] text-slate-900 placeholder-slate-300 focus:outline-none focus:border-slate-300 focus:ring-0 transition-colors"
+                      className="peer w-full bg-transparent border-0 border-b border-slate-300 rounded-none px-0 py-2.5 text-base text-slate-900 placeholder-slate-300 focus:outline-none focus:border-slate-300 focus:ring-0 transition-colors"
                     />
                     <span aria-hidden="true" className="pointer-events-none absolute bottom-0 left-0 h-[2px] w-full origin-left scale-x-0 bg-brand-600 transition-transform duration-300 ease-[cubic-bezier(.22,1,.36,1)] peer-focus:scale-x-100" />
                   </div>
                 </div>
                 <div>
                   <div className="flex items-center justify-between">
-                    <label className="block text-[10.5px] font-bold uppercase tracking-[0.14em] text-slate-500 mb-1">Password</label>
+                    <label className="block text-[13px] font-medium text-slate-600 mb-1.5">Password</label>
                     <button
                       type="button"
                       onClick={() => {
@@ -287,7 +287,7 @@ export default function LoginShell({
                       // flow anyway; keyboard-only users get the
                       // password field on the very next keystroke.
                       tabIndex={-1}
-                      className="text-[10.5px] font-bold uppercase tracking-[0.1em] text-slate-400 hover:text-brand-700 transition-colors"
+                      className="text-[12.5px] font-medium text-brand-700 hover:text-brand-800 transition-colors"
                     >
                       Forgot password?
                     </button>
@@ -299,18 +299,23 @@ export default function LoginShell({
                       onChange={(e) => setPassword(e.target.value)}
                       autoComplete="current-password"
                       required
-                      className="peer w-full bg-transparent border-0 border-b border-slate-300 rounded-none px-0 py-2.5 text-[15px] text-slate-900 placeholder-slate-300 focus:outline-none focus:border-slate-300 focus:ring-0 transition-colors pr-9"
+                      className="peer w-full bg-transparent border-0 border-b border-slate-300 rounded-none px-0 py-2.5 text-base text-slate-900 placeholder-slate-300 focus:outline-none focus:border-slate-300 focus:ring-0 transition-colors pr-9"
                     />
                     <span aria-hidden="true" className="pointer-events-none absolute bottom-0 left-0 h-[2px] w-full origin-left scale-x-0 bg-brand-600 transition-transform duration-300 ease-[cubic-bezier(.22,1,.36,1)] peer-focus:scale-x-100" />
-                    <button
-                      type="button"
-                      onClick={() => setShowPw((v) => !v)}
-                      className="absolute right-0 inset-y-0 px-1 flex items-center text-slate-400 hover:text-slate-700 transition-colors"
-                      aria-label={showPw ? 'Hide password' : 'Show password'}
-                      tabIndex={-1}
-                    >
-                      <Icon.Eye className="h-4 w-4" />
-                    </button>
+                    {/* Only offer the reveal once there is something to
+                        reveal — on an empty field the icon sits orphaned
+                        in white space with nothing to act on. */}
+                    {password && (
+                      <button
+                        type="button"
+                        onClick={() => setShowPw((v) => !v)}
+                        className="absolute right-0 inset-y-0 px-1 flex items-center text-slate-400 hover:text-slate-700 transition-colors"
+                        aria-label={showPw ? 'Hide password' : 'Show password'}
+                        tabIndex={-1}
+                      >
+                        <Icon.Eye className="h-4 w-4" />
+                      </button>
+                    )}
                   </div>
                 </div>
 
@@ -327,7 +332,7 @@ export default function LoginShell({
                   disabled={busy}
                   className="group w-full inline-flex items-center justify-center rounded-md
                              bg-ink-800 hover:bg-ink-700 text-white font-semibold
-                             px-4 py-3.5 text-[13px] uppercase tracking-[0.1em]
+                             px-4 py-3.5 text-[14px] tracking-[-0.005em]
                              transition-colors duration-150
                              focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500
                              disabled:opacity-50 disabled:cursor-not-allowed"
