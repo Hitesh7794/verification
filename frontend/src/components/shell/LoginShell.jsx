@@ -171,7 +171,7 @@ export default function LoginShell({
       </aside>
 
       {/* ── Sign-in panel ─────────────────────────────────────────── */}
-      <div className="relative flex flex-col bg-slate-50">
+      <div className="relative flex flex-col bg-white">
         {/* Below lg the brand panel is hidden, so small screens get a
             condensed version of it rather than a card alone on grey.
             Navy, so the glyphs keep the palette they were drawn for. */}
@@ -197,30 +197,25 @@ export default function LoginShell({
           className="relative w-full max-w-[400px]"
         >
 
-        {/* Card. The gold rule at its head is the same authority mark
-            the chrome bars carry, so the card belongs to the product
-            rather than floating beside it. */}
-        <div className="card-surface rounded-2xl ring-1 ring-slate-200/90 overflow-hidden">
-          <div className="h-[3px] rule-gold" />
-          <div className="p-8">
-          {/* Which desk you are signing in to — the one piece of
-              identity on this card, so it gets a chip rather than a
-              line of grey uppercase. */}
-          <span className="inline-flex items-center gap-1.5 rounded-full bg-brand-50
-                           ring-1 ring-inset ring-brand-100 px-2.5 py-1 mb-3
-                           text-[10.5px] font-bold uppercase tracking-[0.13em] text-brand-800">
-            <span aria-hidden="true" className="h-1.5 w-1.5 rounded-full bg-brand-500" />
-            {roleLabel}
-          </span>
+        {/* No card. The right half is white and the form sits directly
+            on it — a boxed card floating on grey is the stock sign-in
+            shape, and the split itself already frames this side. */}
+        <div>
+          <div>
+          {/* The desk, as a kicker with a gold rule running off it —
+              the same authority mark the chrome carries. */}
+          <div className="flex items-center gap-3 mb-5">
+            <span className="text-[10.5px] font-bold uppercase tracking-[0.16em] text-slate-500 whitespace-nowrap">
+              {roleLabel}
+            </span>
+            <span aria-hidden="true" className="h-[1.5px] flex-1 rule-gold" />
+          </div>
 
           {view === 'login' ? (
             <>
-              <h1 className="font-display text-[26px] font-extrabold text-slate-900 tracking-[-0.03em]">
+              <h1 className="font-display text-[34px] leading-none font-extrabold text-slate-900 tracking-[-0.035em]">
                 Sign in
               </h1>
-              <p className="mt-1 text-sm text-slate-500">
-                Enter your credentials to continue.
-              </p>
 
               {portalDisabled && !err && (
                 <div role="status"
@@ -249,26 +244,26 @@ export default function LoginShell({
                 </div>
               )}
 
-              <form onSubmit={onSubmit} className="mt-6 space-y-4" autoComplete="on">
+              <form onSubmit={onSubmit} className="mt-8 space-y-6" autoComplete="on">
                 <div>
-                  <Label>
+                  <label className="block text-[10.5px] font-bold uppercase tracking-[0.14em] text-slate-500 mb-1">
                     {allowedRoles.includes('superadmin') ? 'Username' : 'Username or email'}
-                  </Label>
-                  <div className="relative group">
-                    <Icon.User className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 transition-colors group-focus-within:text-brand-500" />
-                    <Input
+                  </label>
+                  <div className="relative">
+                    <input
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
                       autoComplete="username"
                       autoFocus
                       required
-                      className="pl-9"
+                      className="peer w-full bg-transparent border-0 border-b border-slate-300 rounded-none px-0 py-2.5 text-[15px] text-slate-900 placeholder-slate-300 focus:outline-none focus:border-slate-300 focus:ring-0 transition-colors"
                     />
+                    <span aria-hidden="true" className="pointer-events-none absolute bottom-0 left-0 h-[2px] w-full origin-left scale-x-0 bg-brand-600 transition-transform duration-300 ease-[cubic-bezier(.22,1,.36,1)] peer-focus:scale-x-100" />
                   </div>
                 </div>
                 <div>
                   <div className="flex items-center justify-between">
-                    <Label>Password</Label>
+                    <label className="block text-[10.5px] font-bold uppercase tracking-[0.14em] text-slate-500 mb-1">Password</label>
                     <button
                       type="button"
                       onClick={() => {
@@ -283,25 +278,25 @@ export default function LoginShell({
                       // flow anyway; keyboard-only users get the
                       // password field on the very next keystroke.
                       tabIndex={-1}
-                      className="text-xs font-semibold text-brand-700 hover:text-brand-800 hover:underline"
+                      className="text-[10.5px] font-bold uppercase tracking-[0.1em] text-slate-400 hover:text-brand-700 transition-colors"
                     >
                       Forgot password?
                     </button>
                   </div>
-                  <div className="relative group">
-                    <Icon.Lock className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 transition-colors group-focus-within:text-brand-500" />
-                    <Input
+                  <div className="relative">
+                    <input
                       type={showPw ? 'text' : 'password'}
                       value={password}
                       onChange={(e) => setPassword(e.target.value)}
                       autoComplete="current-password"
                       required
-                      className="pl-9 pr-10"
+                      className="peer w-full bg-transparent border-0 border-b border-slate-300 rounded-none px-0 py-2.5 text-[15px] text-slate-900 placeholder-slate-300 focus:outline-none focus:border-slate-300 focus:ring-0 transition-colors pr-9"
                     />
+                    <span aria-hidden="true" className="pointer-events-none absolute bottom-0 left-0 h-[2px] w-full origin-left scale-x-0 bg-brand-600 transition-transform duration-300 ease-[cubic-bezier(.22,1,.36,1)] peer-focus:scale-x-100" />
                     <button
                       type="button"
                       onClick={() => setShowPw((v) => !v)}
-                      className="absolute inset-y-0 right-0 px-3 flex items-center text-slate-400 hover:text-slate-700 transition-colors"
+                      className="absolute right-0 inset-y-0 px-1 flex items-center text-slate-400 hover:text-slate-700 transition-colors"
                       aria-label={showPw ? 'Hide password' : 'Show password'}
                       tabIndex={-1}
                     >
@@ -321,12 +316,12 @@ export default function LoginShell({
                 <button
                   type="submit"
                   disabled={busy}
-                  className="btn-sheen group w-full inline-flex items-center justify-center rounded-lg
-                             text-white font-semibold px-4 py-2.5 text-sm
-                             shadow-sm hover:shadow-md hover:-translate-y-px active:translate-y-0
-                             transition-[box-shadow,transform] duration-150
+                  className="group w-full inline-flex items-center justify-center rounded-md
+                             bg-ink-800 hover:bg-ink-700 text-white font-semibold
+                             px-4 py-3.5 text-[13px] uppercase tracking-[0.1em]
+                             transition-colors duration-150
                              focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500
-                             disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:translate-y-0"
+                             disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {busy ? (
                     <>
@@ -425,14 +420,12 @@ export default function LoginShell({
           )}
           </div>
 
-          {/* Footer band — the register link belongs to the card rather
-              than floating unattached beneath it. */}
           {showRegisterLink && view === 'login' && (
-            <div className="border-t border-slate-200 bg-slate-50 px-8 py-3.5 text-center">
-              <p className="text-xs text-slate-500">
+            <div className="mt-9 pt-5 border-t border-slate-200">
+              <p className="text-[13px] text-slate-500">
                 Not yet onboarded?{' '}
-                <a href="/register/institution" className="font-semibold text-brand-700 hover:underline">
-                  Register your institution &rarr;
+                <a href="/register/institution" className="font-semibold text-brand-700 hover:text-brand-800 underline underline-offset-4 decoration-brand-300 hover:decoration-brand-600 transition-colors">
+                  Register your institution
                 </a>
               </p>
             </div>
