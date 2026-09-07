@@ -220,18 +220,18 @@ export function IrisGlyph({ size = 64, className = '' }) {
 }
 
 // ── Row ─────────────────────────────────────────────────────────────
-export function BiometricStrip({ className = '' }) {
+export function BiometricStrip({ className = '', size = 64, gap = 'gap-10', style }) {
   const items = [
     { Glyph: FaceGlyph,        label: 'Face' },
     { Glyph: FingerprintGlyph, label: 'Fingerprint' },
     { Glyph: IrisGlyph,        label: 'Iris' },
   ]
   return (
-    <div className={`flex items-start gap-10 ${className}`}>
+    <div className={`flex items-start ${gap} ${className}`} style={style}>
       {items.map(({ Glyph, label }) => (
-        <div key={label} className="flex flex-col items-center gap-2.5">
-          <Glyph />
-          <span className="text-[9.5px] font-bold uppercase tracking-[0.14em] text-slate-400">
+        <div key={label} className="flex flex-col items-center gap-2">
+          <Glyph size={size} />
+          <span className="text-[9px] font-bold uppercase tracking-[0.14em] text-slate-400">
             {label}
           </span>
         </div>

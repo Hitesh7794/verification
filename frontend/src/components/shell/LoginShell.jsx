@@ -129,7 +129,7 @@ export default function LoginShell({
           style={{ animation: 'bio-drift 24s ease-in-out infinite' }}
         />
 
-        <div className="relative flex items-center gap-3">
+        <div className="relative flex items-center gap-3 rise-in" style={{ '--i': 0 }}>
           <BrandMark size={34} tone="inverse" />
           <span className="font-display text-lg font-extrabold text-white tracking-[-0.025em]">
             {PRODUCT_NAME}
@@ -137,41 +137,51 @@ export default function LoginShell({
         </div>
 
         <div className="relative max-w-lg">
-          <h2 className="font-display text-[40px] xl:text-[46px] font-extrabold leading-[1.08] tracking-[-0.035em] text-white text-balance">
+          <h2 className="font-display text-[40px] xl:text-[46px] font-extrabold leading-[1.08] tracking-[-0.035em] text-white text-balance rise-in" style={{ '--i': 1 }}>
             From exam hall to admission desk.
           </h2>
-          <p className="mt-5 text-[15px] leading-relaxed text-slate-300 max-w-md">
+          <p className="mt-5 text-[15px] leading-relaxed text-slate-300 max-w-md rise-in" style={{ '--i': 2 }}>
             One identity, months apart. Verified before a seat is granted.
           </p>
 
           {/* The three capture modalities, animating. Shown rather than
               described — it is what the product does, and it is the
               first thing a visiting stakeholder should understand. */}
-          <BiometricStrip className="mt-10" />
+          <BiometricStrip className="mt-10 rise-in" style={{ '--i': 3 }} />
 
         </div>
 
-        <p className="relative text-[11px] text-slate-500">
+        <p className="relative text-[11px] text-slate-500 rise-in" style={{ '--i': 4 }}>
           Authorised access only. All sign-in attempts are logged.
         </p>
       </aside>
 
       {/* ── Sign-in panel ─────────────────────────────────────────── */}
-      <div className="relative flex items-center justify-center bg-slate-50 p-6 sm:p-10">
-        <motion.div
-          initial={{ opacity: 0, y: 12 }}
-          animate={{ opacity: 1, y: 0 }}
-          transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1] }}
-          className="relative w-full max-w-[400px]"
-        >
-          {/* Wordmark — carries the mark on small screens, where the
-              brand panel above is hidden. */}
-          <div className="flex items-center justify-center gap-2.5 mb-7 lg:hidden">
-            <BrandMark size={28} />
-            <span className="font-display text-lg font-extrabold text-slate-900 tracking-[-0.025em]">
+      <div className="relative flex flex-col bg-slate-50">
+        {/* Below lg the brand panel is hidden, so small screens get a
+            condensed version of it rather than a card alone on grey.
+            Navy, so the glyphs keep the palette they were drawn for. */}
+        <div className="lg:hidden bg-ink-chrome px-6 pt-9 pb-7 flex flex-col items-center text-center">
+          <div className="flex items-center gap-2.5 rise-in" style={{ '--i': 0 }}>
+            <BrandMark size={28} tone="inverse" />
+            <span className="font-display text-[17px] font-extrabold text-white tracking-[-0.025em]">
               {PRODUCT_NAME}
             </span>
           </div>
+          <p className="mt-3 text-[13px] text-slate-300 max-w-xs rise-in" style={{ '--i': 1 }}>
+            One identity, months apart. Verified before a seat is granted.
+          </p>
+          <BiometricStrip size={44} gap="gap-7" className="mt-6 rise-in" style={{ '--i': 2 }} />
+        </div>
+        <div className="lg:hidden h-[2px] rule-gold" />
+
+        <div className="flex-1 flex items-center justify-center p-6 sm:p-10">
+        <motion.div
+          initial={{ opacity: 0, y: 12 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.4, ease: [0.22, 1, 0.36, 1], delay: 0.12 }}
+          className="relative w-full max-w-[400px]"
+        >
 
         {/* Card. The gold rule at its head is the same authority mark
             the chrome bars carry, so the card belongs to the product
@@ -230,8 +240,8 @@ export default function LoginShell({
                   <Label>
                     {allowedRoles.includes('superadmin') ? 'Username' : 'Username or email'}
                   </Label>
-                  <div className="relative">
-                    <Icon.User className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <div className="relative group">
+                    <Icon.User className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 transition-colors group-focus-within:text-brand-500" />
                     <Input
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
@@ -264,8 +274,8 @@ export default function LoginShell({
                       Forgot password?
                     </button>
                   </div>
-                  <div className="relative">
-                    <Icon.Lock className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400" />
+                  <div className="relative group">
+                    <Icon.Lock className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-slate-400 transition-colors group-focus-within:text-brand-500" />
                     <Input
                       type={showPw ? 'text' : 'password'}
                       value={password}
@@ -288,8 +298,9 @@ export default function LoginShell({
 
                 {err && (
                   <div role="alert"
-                       className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-700">
-                    {err}
+                       className="alert-in flex items-start gap-2 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-700">
+                    <Icon.AlertCircle className="h-4 w-4 shrink-0 mt-px" />
+                    <span>{err}</span>
                   </div>
                 )}
 
@@ -302,7 +313,15 @@ export default function LoginShell({
                              focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500
                              disabled:opacity-60 disabled:cursor-not-allowed"
                 >
-                  {busy ? 'Signing in…' : (
+                  {busy ? (
+                    <>
+                      <span
+                        aria-hidden="true"
+                        className="spin-ring mr-2 h-4 w-4 rounded-full border-2 border-white/35 border-t-white"
+                      />
+                      Signing in&hellip;
+                    </>
+                  ) : (
                     <>
                       Sign in
                       <Icon.ArrowRight className="ml-2 h-4 w-4 transition-transform duration-150 group-hover:translate-x-0.5" />
@@ -405,6 +424,7 @@ export default function LoginShell({
           )}
         </div>
         </motion.div>
+        </div>
       </div>
     </div>
   )

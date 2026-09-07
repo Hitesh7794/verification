@@ -532,6 +532,33 @@ select:focus-visible {
                               transform-box: fill-box; transform-origin: center; }
 .bio-svg [data-bio="lock"]  { animation-name: bio-lock;  animation-timing-function: ease-in-out; }
 
+/* ── Entrance stagger ─────────────────────────────────────────────
+   Sign-in content settles in sequence rather than appearing at once.
+   Order is set per element with --i, so the markup carries the timing
+   and no JS is involved. 55ms apart over a 0.45s rise puts the last of
+   five elements fully in at ~670ms — read as a sequence, done before it
+   feels like a wait. */
+@keyframes rise-in {
+  from { opacity: 0; transform: translateY(10px); }
+  to   { opacity: 1; transform: none; }
+}
+.rise-in {
+  animation: rise-in 0.45s cubic-bezier(0.22, 1, 0.36, 1) both;
+  animation-delay: calc(var(--i, 0) * 55ms);
+}
+
+/* Button working state — a ring that spins while a request is in
+   flight, so "Signing in" is visibly doing something. */
+@keyframes spin-ring { to { transform: rotate(360deg); } }
+.spin-ring { animation: spin-ring 0.7s linear infinite; }
+
+/* Errors arrive rather than blink into place. */
+@keyframes alert-in {
+  from { opacity: 0; transform: translateY(-4px); }
+  to   { opacity: 1; transform: none; }
+}
+.alert-in { animation: alert-in 0.25s ease-out both; }
+
 /* Page-enter: content settles rather than flies. Used by the shells. */
 @keyframes surface-in {
   from { opacity: 0; transform: translateY(6px); }
