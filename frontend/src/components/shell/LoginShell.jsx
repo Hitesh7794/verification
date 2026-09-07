@@ -124,10 +124,24 @@ export default function LoginShell({
     <div className="min-h-screen grid lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
       {/* ── Brand panel — lg and up ───────────────────────────────── */}
       <aside className="relative hidden lg:flex flex-col justify-between bg-ink-chrome p-12 xl:p-16 overflow-hidden">
-        <div
-          className="absolute -inset-y-16 inset-x-0 bg-dot-grid opacity-[0.13] pointer-events-none"
-          style={{ animation: 'bio-drift 24s ease-in-out infinite' }}
-        />
+        {/* Decoration layer — everything here is inert to the pointer. */}
+        <div className="absolute inset-0 pointer-events-none overflow-hidden">
+          <div
+            className="absolute -inset-y-16 inset-x-0 bg-dot-grid opacity-[0.13]"
+            style={{ animation: 'bio-drift 24s ease-in-out infinite' }}
+          />
+          <div className="aurora-a absolute -top-32 -left-24 h-[34rem] w-[34rem] rounded-full bg-brand-500/18 blur-[120px]" />
+          <div className="aurora-b absolute -bottom-40 -right-16 h-[30rem] w-[30rem] rounded-full bg-amber-400/10 blur-[130px]" />
+          {/* Oversized mark, barely visible — gives the lower half of the
+              panel something to hold without adding another element to read. */}
+          <BrandMark
+            size={520}
+            tone="inverse"
+            className="absolute -bottom-44 -right-40 opacity-[0.03]"
+          />
+        </div>
+        {/* Seam down the inner edge */}
+        <div className="panel-seam absolute inset-y-0 right-0 w-px pointer-events-none" />
 
         <div className="relative flex items-center gap-3 rise-in" style={{ '--i': 0 }}>
           <BrandMark size={34} tone="inverse" />
@@ -186,7 +200,7 @@ export default function LoginShell({
         {/* Card. The gold rule at its head is the same authority mark
             the chrome bars carry, so the card belongs to the product
             rather than floating beside it. */}
-        <div className="rounded-2xl bg-white ring-1 ring-slate-200 shadow-lg overflow-hidden">
+        <div className="card-surface rounded-2xl ring-1 ring-slate-200/90 overflow-hidden">
           <div className="h-[3px] rule-gold" />
           <div className="p-8">
           {/* Which desk you are signing in to — the one piece of
@@ -307,11 +321,12 @@ export default function LoginShell({
                 <button
                   type="submit"
                   disabled={busy}
-                  className="group w-full inline-flex items-center justify-center rounded-lg
-                             bg-brand-600 hover:bg-brand-700 text-white font-semibold
-                             px-4 py-2.5 text-sm shadow-sm transition-colors
+                  className="btn-sheen group w-full inline-flex items-center justify-center rounded-lg
+                             text-white font-semibold px-4 py-2.5 text-sm
+                             shadow-sm hover:shadow-md hover:-translate-y-px active:translate-y-0
+                             transition-[box-shadow,transform] duration-150
                              focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500
-                             disabled:opacity-60 disabled:cursor-not-allowed"
+                             disabled:opacity-60 disabled:cursor-not-allowed disabled:hover:translate-y-0"
                 >
                   {busy ? (
                     <>
