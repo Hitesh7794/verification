@@ -189,11 +189,14 @@ export default function LoginShell({
           <div>
           {/* The desk, as a kicker with a gold rule running off it —
               the same authority mark the chrome carries. */}
-          <div className="flex items-center gap-3 mb-5">
+          {/* The desk, marked by a short azure bar. Everything the form
+              accents — focus underlines, links — is azure, so a gold
+              rule here was the one thing in it wearing another colour. */}
+          <div className="flex items-center gap-2.5 mb-5">
+            <span aria-hidden="true" className="h-3.5 w-[3px] rounded-full bg-brand-600" />
             <span className="text-[10.5px] font-bold uppercase tracking-[0.16em] text-slate-500 whitespace-nowrap">
               {roleLabel}
             </span>
-            <span aria-hidden="true" className="h-[1.5px] flex-1 rule-gold" />
           </div>
 
           {view === 'login' ? (
