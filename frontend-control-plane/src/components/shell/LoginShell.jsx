@@ -100,27 +100,27 @@ export default function LoginShell({
   }
 
   return (
-    <div className="relative min-h-screen bg-ink-chrome overflow-hidden">
-      {/* Decoration spans the whole screen — everything here is inert to
-          the pointer. */}
-      <div className="absolute inset-0 pointer-events-none overflow-hidden">
-        <div
-          className="absolute -inset-y-16 inset-x-0 bg-dot-grid opacity-[0.12]"
-          style={{ animation: 'bio-drift 24s ease-in-out infinite' }}
-        />
-        <div className="aurora-a absolute -top-40 -left-32 h-[42rem] w-[42rem] rounded-full bg-brand-500/20 blur-[140px]" />
-        <div className="aurora-b absolute top-1/2 -translate-y-1/2 right-[-6rem] h-[40rem] w-[40rem] rounded-full bg-brand-400/12 blur-[150px]" />
-        <div className="aurora-a absolute bottom-[-10rem] left-[38%] h-[26rem] w-[26rem] rounded-full bg-amber-400/7 blur-[140px]" />
-        <BrandMark
-          size={620}
-          tone="inverse"
-          className="absolute -bottom-52 -left-32 opacity-[0.028]"
-        />
-      </div>
-
-      <div className="relative min-h-screen grid lg:grid-cols-[minmax(0,1.05fr)_minmax(0,1fr)]">
+    <div className="min-h-screen grid lg:grid-cols-[1fr_clamp(26rem,32vw,32rem)]">
       {/* ── Brand panel — lg and up ───────────────────────────────── */}
-      <aside className="relative hidden lg:flex flex-col justify-between p-12 xl:p-16">
+      <aside className="relative hidden lg:flex flex-col justify-between bg-ink-chrome p-12 xl:p-16 overflow-hidden">
+        {/* Decoration layer — everything here is inert to the pointer. */}
+        <div className="absolute inset-0 pointer-events-none overflow-hidden">
+          <div
+            className="absolute -inset-y-16 inset-x-0 bg-dot-grid opacity-[0.13]"
+            style={{ animation: 'bio-drift 24s ease-in-out infinite' }}
+          />
+          <div className="aurora-a absolute -top-32 -left-24 h-[34rem] w-[34rem] rounded-full bg-brand-500/18 blur-[120px]" />
+          <div className="aurora-b absolute -bottom-40 -right-16 h-[30rem] w-[30rem] rounded-full bg-amber-400/10 blur-[130px]" />
+          {/* Oversized mark, barely visible — gives the lower half of the
+              panel something to hold without adding another element to read. */}
+          <BrandMark
+            size={520}
+            tone="inverse"
+            className="absolute -bottom-44 -right-40 opacity-[0.03]"
+          />
+        </div>
+        {/* Seam down the inner edge */}
+        <div className="panel-seam absolute inset-y-0 right-0 w-px pointer-events-none" />
 
         <div className="relative flex items-center gap-3 rise-in" style={{ '--i': 0 }}>
           <BrandMark size={34} tone="inverse" />
@@ -150,20 +150,31 @@ export default function LoginShell({
       </aside>
 
       {/* ── Sign-in panel ─────────────────────────────────────────── */}
-      <div className="relative flex flex-col">
-        {/* The whole screen is navy now, so small screens simply stack
-            the brand above the form — no separate header band needed. */}
-        <div className="lg:hidden px-6 pt-10 flex flex-col items-center text-center">
+      <div className="relative flex flex-col bg-white">
+        <div
+          aria-hidden="true"
+          className="absolute inset-0 pointer-events-none bg-dot-grid opacity-[0.5]"
+          style={{ maskImage: 'radial-gradient(120% 90% at 50% 0%, black 0%, transparent 72%)',
+                   WebkitMaskImage: 'radial-gradient(120% 90% at 50% 0%, black 0%, transparent 72%)' }}
+        />
+        {/* Below lg the brand panel is hidden, so small screens get a
+            condensed version of it rather than a card alone on grey.
+            Navy, so the glyphs keep the palette they were drawn for. */}
+        <div className="lg:hidden bg-ink-chrome px-6 pt-9 pb-7 flex flex-col items-center text-center">
           <div className="flex items-center gap-2.5 rise-in" style={{ '--i': 0 }}>
             <BrandMark size={28} tone="inverse" />
             <span className="font-display text-[17px] font-extrabold text-white tracking-[-0.025em]">
               {PRODUCT_NAME}
             </span>
           </div>
-          <BiometricStrip size={46} gap="gap-7" className="mt-7 rise-in" style={{ '--i': 1 }} />
+          <p className="mt-3 text-[13px] text-slate-300 max-w-xs rise-in" style={{ '--i': 1 }}>
+            One identity, months apart. Verified before a seat is granted.
+          </p>
+          <BiometricStrip size={44} gap="gap-7" className="mt-6 rise-in" style={{ '--i': 2 }} />
         </div>
+        <div className="lg:hidden h-[2px] rule-gold" />
 
-        <div className="flex-1 flex items-center justify-center p-6 sm:p-10">
+        <div className="relative flex-1 flex items-center justify-center p-6 sm:p-10">
         <motion.div
           initial={{ opacity: 0, y: 12 }}
           animate={{ opacity: 1, y: 0 }}
@@ -171,15 +182,15 @@ export default function LoginShell({
           className="relative w-full max-w-[400px]"
         >
 
-        {/* Glass, not a card: the form reads as a pane of the same dark
-            surface rather than a white box dropped onto it. */}
-        <div className="rounded-2xl bg-white/[0.045] ring-1 ring-inset ring-white/12 backdrop-blur-xl
-                        shadow-[0_28px_70px_-28px_rgba(0,0,0,0.7)] px-8 py-9 sm:px-9">
+        {/* No card. The right half is white and the form sits directly
+            on it — a boxed card floating on grey is the stock sign-in
+            shape, and the split itself already frames this side. */}
+        <div>
           <div>
           {/* The desk, as a kicker with a gold rule running off it —
               the same authority mark the chrome carries. */}
           <div className="flex items-center gap-3 mb-5">
-            <span className="text-[10.5px] font-bold uppercase tracking-[0.16em] text-amber-300/90 whitespace-nowrap">
+            <span className="text-[10.5px] font-bold uppercase tracking-[0.16em] text-slate-500 whitespace-nowrap">
               {roleLabel}
             </span>
             <span aria-hidden="true" className="h-[1.5px] flex-1 rule-gold" />
@@ -187,7 +198,7 @@ export default function LoginShell({
 
           {view === 'login' ? (
             <>
-              <h1 className="font-display text-[34px] leading-none font-extrabold text-white tracking-[-0.035em]">
+              <h1 className="font-display text-[34px] leading-none font-extrabold text-slate-900 tracking-[-0.035em]">
                 Sign in
               </h1>
 
@@ -220,7 +231,7 @@ export default function LoginShell({
 
               <form onSubmit={onSubmit} className="mt-8 space-y-6" autoComplete="on">
                 <div>
-                  <label className="block text-[10.5px] font-bold uppercase tracking-[0.14em] text-slate-400 mb-1">
+                  <label className="block text-[10.5px] font-bold uppercase tracking-[0.14em] text-slate-500 mb-1">
                     {allowedRoles.includes('superadmin') ? 'Username' : 'Username or email'}
                   </label>
                   <div className="relative">
@@ -230,14 +241,14 @@ export default function LoginShell({
                       autoComplete="username"
                       autoFocus
                       required
-                      className="peer w-full bg-transparent border-0 border-b border-white/20 rounded-none px-0 py-3 text-[15px] text-white placeholder-slate-500 caret-emerald-300 focus:outline-none focus:border-white/20 focus:ring-0 transition-colors"
+                      className="peer w-full bg-transparent border-0 border-b border-slate-300 rounded-none px-0 py-2.5 text-[15px] text-slate-900 placeholder-slate-300 focus:outline-none focus:border-slate-300 focus:ring-0 transition-colors"
                     />
-                    <span aria-hidden="true" className="pointer-events-none absolute bottom-0 left-0 h-[2px] w-full origin-left scale-x-0 bg-emerald-300 transition-transform duration-300 ease-[cubic-bezier(.22,1,.36,1)] peer-focus:scale-x-100" />
+                    <span aria-hidden="true" className="pointer-events-none absolute bottom-0 left-0 h-[2px] w-full origin-left scale-x-0 bg-brand-600 transition-transform duration-300 ease-[cubic-bezier(.22,1,.36,1)] peer-focus:scale-x-100" />
                   </div>
                 </div>
                 <div>
                   <div className="flex items-center justify-between">
-                    <label className="block text-[10.5px] font-bold uppercase tracking-[0.14em] text-slate-400 mb-1">Password</label>
+                    <label className="block text-[10.5px] font-bold uppercase tracking-[0.14em] text-slate-500 mb-1">Password</label>
                     <button
                       type="button"
                       onClick={() => {
@@ -246,7 +257,7 @@ export default function LoginShell({
                         setForgotErr('')
                         setForgotSent(false)
                       }}
-                      className="text-[10.5px] font-bold uppercase tracking-[0.1em] text-slate-400 hover:text-emerald-300 transition-colors"
+                      className="text-[10.5px] font-bold uppercase tracking-[0.1em] text-slate-400 hover:text-brand-700 transition-colors"
                     >
                       Forgot password?
                     </button>
@@ -258,13 +269,13 @@ export default function LoginShell({
                       onChange={(e) => setPassword(e.target.value)}
                       autoComplete="current-password"
                       required
-                      className="peer w-full bg-transparent border-0 border-b border-white/20 rounded-none px-0 py-3 text-[15px] text-white placeholder-slate-500 caret-emerald-300 focus:outline-none focus:border-white/20 focus:ring-0 transition-colors pr-9"
+                      className="peer w-full bg-transparent border-0 border-b border-slate-300 rounded-none px-0 py-2.5 text-[15px] text-slate-900 placeholder-slate-300 focus:outline-none focus:border-slate-300 focus:ring-0 transition-colors pr-9"
                     />
-                    <span aria-hidden="true" className="pointer-events-none absolute bottom-0 left-0 h-[2px] w-full origin-left scale-x-0 bg-emerald-300 transition-transform duration-300 ease-[cubic-bezier(.22,1,.36,1)] peer-focus:scale-x-100" />
+                    <span aria-hidden="true" className="pointer-events-none absolute bottom-0 left-0 h-[2px] w-full origin-left scale-x-0 bg-brand-600 transition-transform duration-300 ease-[cubic-bezier(.22,1,.36,1)] peer-focus:scale-x-100" />
                     <button
                       type="button"
                       onClick={() => setShowPw((v) => !v)}
-                      className="absolute right-0 inset-y-0 px-1 flex items-center text-slate-500 hover:text-white transition-colors"
+                      className="absolute right-0 inset-y-0 px-1 flex items-center text-slate-400 hover:text-slate-700 transition-colors"
                       aria-label={showPw ? 'Hide password' : 'Show password'}
                       tabIndex={-1}
                     >
@@ -285,17 +296,17 @@ export default function LoginShell({
                   type="submit"
                   disabled={busy}
                   className="group w-full inline-flex items-center justify-center rounded-md
-                             bg-white hover:bg-slate-100 text-ink-900 font-bold
+                             bg-ink-800 hover:bg-ink-700 text-white font-semibold
                              px-4 py-3.5 text-[13px] uppercase tracking-[0.1em]
                              transition-colors duration-150
-                             focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-emerald-300
-                             disabled:opacity-40 disabled:cursor-not-allowed"
+                             focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500
+                             disabled:opacity-50 disabled:cursor-not-allowed"
                 >
                   {busy ? (
                     <>
                       <span
                         aria-hidden="true"
-                        className="spin-ring mr-2 h-4 w-4 rounded-full border-2 border-ink-900/25 border-t-ink-900"
+                        className="spin-ring mr-2 h-4 w-4 rounded-full border-2 border-white/35 border-t-white"
                       />
                       Signing in&hellip;
                     </>
@@ -389,10 +400,10 @@ export default function LoginShell({
           </div>
 
           {showRegisterLink && view === 'login' && (
-            <div className="mt-9 pt-5 border-t border-white/10">
-              <p className="text-[13px] text-slate-400">
+            <div className="mt-9 pt-5 border-t border-slate-200">
+              <p className="text-[13px] text-slate-500">
                 Not yet onboarded?{' '}
-                <a href="/register/institution" className="font-semibold text-emerald-300 hover:text-emerald-200 underline underline-offset-4 decoration-emerald-300/40 hover:decoration-emerald-200 transition-colors">
+                <a href="/register/institution" className="font-semibold text-brand-700 hover:text-brand-800 underline underline-offset-4 decoration-brand-300 hover:decoration-brand-600 transition-colors">
                   Register your institution
                 </a>
               </p>
@@ -401,7 +412,6 @@ export default function LoginShell({
         </div>
         </motion.div>
         </div>
-      </div>
       </div>
     </div>
   )
