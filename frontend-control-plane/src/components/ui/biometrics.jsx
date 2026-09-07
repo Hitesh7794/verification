@@ -227,15 +227,39 @@ export function BiometricStrip({ className = '', size = 64, gap = 'gap-10', styl
     { Glyph: IrisGlyph,        label: 'Iris' },
   ]
   return (
-    <div className={`flex items-start ${gap} ${className}`} style={style}>
-      {items.map(({ Glyph, label }) => (
-        <div key={label} className="flex flex-col items-center gap-2">
-          <Glyph size={size} />
-          <span className="text-[9px] font-bold uppercase tracking-[0.14em] text-slate-400">
-            {label}
-          </span>
-        </div>
-      ))}
+    <div className={className} style={style}>
+      <div className={`flex items-start ${gap}`}>
+        {items.map(({ Glyph, label }) => (
+          <div key={label} className="flex flex-col items-center gap-3 flex-1">
+            <Glyph size={size} />
+            {/* Node on the rail, directly under its glyph. */}
+            <span aria-hidden="true" className="relative flex h-1.5 w-1.5">
+              <span className="h-1.5 w-1.5 rounded-full bg-white/30" />
+            </span>
+            <span className="text-[9px] font-bold uppercase tracking-[0.14em] text-slate-400">
+              {label}
+            </span>
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
+
+// BiometricRail — the glyph row plus the rail its pulse travels. Kept
+// separate from BiometricStrip so the compact small-screen header can
+// use the plain row without the rail.
+export function BiometricRail({ className = '', size = 110, gap = 'gap-8', style }) {
+  return (
+    <div className={`relative ${className}`} style={style}>
+      <BiometricStrip size={size} gap={gap} />
+      {/* rail — sits behind the nodes, at their vertical centre */}
+      <div
+        className="absolute left-[8%] right-[8%] h-px bg-white/12 overflow-hidden pointer-events-none"
+        style={{ top: `${size + 18}px` }}
+      >
+        <div className="rail-pulse absolute inset-y-0 w-1/3 bg-gradient-to-r from-transparent via-emerald-300/90 to-transparent" />
+      </div>
     </div>
   )
 }

@@ -5,7 +5,7 @@ import { useAuth } from '../../lib/auth.jsx'
 import { requestForgotPassword } from '../../lib/onboarding/register.js'
 import { Input, Label } from '../ui/ui.jsx'
 import { PRODUCT_NAME, BrandMark } from '../ui/brand.jsx'
-import { BiometricStrip } from '../ui/biometrics.jsx'
+import { BiometricStrip, BiometricRail } from '../ui/biometrics.jsx'
 import { Icon } from '../ui/icons.jsx'
 
 // LoginShell — a two-panel sign-in.
@@ -133,14 +133,14 @@ export default function LoginShell({
           <h2 className="font-display text-[40px] xl:text-[46px] font-extrabold leading-[1.08] tracking-[-0.035em] text-white text-balance rise-in" style={{ '--i': 1 }}>
             From exam hall to admission desk.
           </h2>
-          <p className="mt-5 text-[15px] leading-relaxed text-slate-300 max-w-md rise-in" style={{ '--i': 2 }}>
+          <p className="mt-6 text-[16px] leading-relaxed text-slate-300 max-w-lg text-balance rise-in" style={{ '--i': 2 }}>
             One identity, months apart. Verified before a seat is granted.
           </p>
 
           {/* The three capture modalities, animating. Shown rather than
               described — it is what the product does, and it is the
               first thing a visiting stakeholder should understand. */}
-          <BiometricStrip className="mt-10 rise-in" style={{ '--i': 3 }} />
+          <BiometricRail size={124} className="mt-20 max-w-2xl rise-in" style={{ '--i': 3 }} />
 
         </div>
 

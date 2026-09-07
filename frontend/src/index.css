@@ -592,6 +592,17 @@ select:focus-visible {
 .btn-sheen:hover::after { transform: translateX(120%); }
 .btn-sheen:disabled::after { display: none; }
 
+/* A pulse travelling the rail under the glyph strip, in step with the
+   5.4s relay — it arrives beneath each glyph as that glyph is read, so
+   the row shows a sequence running rather than three separate icons. */
+@keyframes rail-pulse {
+  0%   { transform: translateX(-14%); opacity: 0; }
+  6%   { opacity: 1; }
+  92%  { opacity: 1; }
+  100% { transform: translateX(100%); opacity: 0; }
+}
+.rail-pulse { animation: rail-pulse 5.4s cubic-bezier(0.5, 0, 0.5, 1) infinite; }
+
 /* ── Entrance stagger ─────────────────────────────────────────────
    Sign-in content settles in sequence rather than appearing at once.
    Order is set per element with --i, so the markup carries the timing
