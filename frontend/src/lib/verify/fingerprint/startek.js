@@ -23,8 +23,9 @@
 // See STARTEK_INTEGRATION.md for the full investigation and fp-match-service/
 // for the matcher itself.
 
-import { postFpMatch } from '../../api.js'
+import { postFpMatch, fetchFPPreviewDataURL } from '../../api.js'
 import { Vendor } from './types.js'
+import { isoImgToDataURL } from './iso19794.js'
 
 const DEFAULT_BASE =
   import.meta.env.VITE_STARTEK_BASE || 'http://localhost:8090/FM220/'
@@ -233,12 +234,40 @@ export const startek = {
     // the match score + threshold + status. Errors from postFpMatch are
     // already typed (Error with message); we rewrap into StartekError so
     // FingerprintCapture's error rendering stays uniform.
+    //
+    // In parallel: shell the isoImgBase64 to /api/fp-preview so the
+    // backend Python venv decodes WSQ→PNG. Doing it concurrently means
+    // no user-visible latency added — the preview lands roughly when
+    // the match verdict does. Never blocks or fails the flow; a null
+    // return just leaves the operator UI on the "captured" placeholder.
     let res
+    let previewDataUrl = null
     try {
-      res = await postFpMatch(rollNo, probeB64, Vendor.Startek)
+      const [matchRes, preview] = await Promise.all([
+        postFpMatch(rollNo, probeB64, Vendor.Startek),
+        fetchFPPreviewDataURL(cap.isoImgBase64),
+      ])
+      res = matchRes
+      previewDataUrl = preview
     } catch (e) {
       throw new StartekError('sdk', -1,
         'fp-match failed: ' + (e.message || String(e)))
+    }
+
+    // Preview image resolution order (first success wins):
+    //   1. Server-side decode via /api/fp-preview — handles WSQ (the
+    //      typical UIDAI L1 payload). Populated by the Promise.all above.
+    //   2. Vendor-supplied bmpBase64 field (newer ACPL firmware only).
+    //   3. Browser-side ISO 19794-4 fallback (uncompressed / JPEG / PNG).
+    // All three are optional; failure just leaves the FingerprintCapture
+    // card on its "captured" placeholder.
+    let bitmapDataUrl = previewDataUrl
+    let bitmapBase64 = typeof cap.bmpBase64 === 'string' && cap.bmpBase64.length > 0
+      ? cap.bmpBase64
+      : null
+    if (!bitmapDataUrl && !bitmapBase64) {
+      const preview = isoImgToDataURL(cap.isoImgBase64)
+      if (preview) bitmapDataUrl = preview.dataUrl
     }
 
     return {
@@ -249,11 +278,12 @@ export const startek = {
       // calculated. We pass both so the component decides.
       Status: !!res.status,
       MatchScore: typeof res.score === 'number' ? res.score : 0,
-      // No preview bitmap — gettmpl returns isoImgBase64 but it's a raw
-      // FM220 image, not a Windows-renderable BMP. FingerprintCapture
-      // gracefully falls through to "Match · score N / threshold N"
-      // when bitmapBase64 is null.
-      BitmapData: null,
+      // Preferred: raw BMP base64 (identical shape to what Mantra
+      // MorFin returns → FingerprintCapture wraps as
+      // `data:image/bmp;base64,...`). Fallback: full data URL from the
+      // ISO decoder when the vendor firmware doesn't send bmpBase64.
+      BitmapData: bitmapBase64,
+      BitmapDataUrl: bitmapDataUrl,
       // NFIQ comes back on the gettmpl envelope (real fingerprint quality
       // 1-5, NIST scale). Map onto our Nfiq field for audit consistency
       // with what Mantra MorFin returns.

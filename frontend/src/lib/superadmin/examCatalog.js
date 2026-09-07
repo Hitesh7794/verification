@@ -121,10 +121,10 @@ export function downloadSampleExamCSV() {
   const d3To = new Date(now.getTime() + 60 * 86400000)
 
   const y = now.getFullYear()
-  const content = `exam_name,exam_code,verification_from,verification_to,requires_face,requires_fp,requires_iris
-National Eligibility Test Session 1,NET-${y}-S1,${fmtDate(d1From, '09:00')},${fmtDate(d1To, '18:00')},yes,yes,no
-Combined Entrance Examination,CEE-${y}-MAIN,${fmtDate(d2From, '08:30')},${fmtDate(d2To, '17:30')},yes,yes,yes
-Graduate Aptitude Verification,GAV-${y}-01,${fmtDate(d3From, '10:00')},${fmtDate(d3To, '16:00')},yes,no,no
+  const content = `exam_name,exam_code,verification_from,verification_to
+National Eligibility Test Session 1,NET-${y}-S1,${fmtDate(d1From, '09:00')},${fmtDate(d1To, '18:00')}
+Combined Entrance Examination,CEE-${y}-MAIN,${fmtDate(d2From, '08:30')},${fmtDate(d2To, '17:30')}
+Graduate Aptitude Verification,GAV-${y}-01,${fmtDate(d3From, '10:00')},${fmtDate(d3To, '16:00')}
 `
   const blob = new Blob(['\ufeff' + content], { type: 'text/csv;charset=utf-8;' })
   const url = URL.createObjectURL(blob)

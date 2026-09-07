@@ -27,23 +27,18 @@ export function usePolling(fn, ms, { enabled = true } = {}) {
   const fnRef = useRef(fn)
   fnRef.current = fn
 
-  // Fire-on-change: any time the caller's fn identity changes
-  // (typically because a filter / page state changed), run it
-  // immediately so the UI doesn't wait up to `ms` for the next
-  // background tick. Without this, switching tabs / changing
-  // status on a filtered list would show stale data for ~8s.
-  // We deliberately don't restart the interval here — that stays
-  // owned by the (ms, enabled) effect below.
-  useEffect(() => {
-    if (!enabled) return
-    if (typeof document !== 'undefined' && document.hidden) return
-    fn?.()
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [fn, enabled])
-
-  // Interval + visibility lifecycle. Independent of fn identity so
-  // a parent recreating its callback on every render doesn't churn
-  // the timer; we always read the latest fn via the ref.
+  // Single lifecycle effect — owns the immediate first-run, the
+  // interval, AND the visibility lifecycle. Depends only on (ms,
+  // enabled) so an inline arrow at the call site (fresh identity
+  // every render) can't churn it.
+  //
+  // Historical note: an earlier version had a second effect keyed on
+  // `[fn, enabled]` to "catch up when a filter changes." Passing an
+  // inline arrow to that hook turned into an infinite render loop
+  // (every render → new fn identity → effect fires → setState in
+  // callback → new render → new identity → ...). Removed. Callers
+  // that need "re-fire when a filter changes" should key on the
+  // filter value themselves, or wrap fn in useCallback.
   useEffect(() => {
     if (!enabled || !ms || ms <= 0) return
 
@@ -68,7 +63,12 @@ export function usePolling(fn, ms, { enabled = true } = {}) {
       }
     }
 
-    if (!document.hidden) start()
+    if (!document.hidden) {
+      // Fire once on mount so the UI doesn't wait up to `ms` for the
+      // first tick.
+      fnRef.current?.()
+      start()
+    }
     document.addEventListener('visibilitychange', onVisibility)
     return () => {
       document.removeEventListener('visibilitychange', onVisibility)

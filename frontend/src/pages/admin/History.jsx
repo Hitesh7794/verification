@@ -56,6 +56,7 @@ export default function AdminHistory() {
   // every keystroke.
   const [appliedFilters, setAppliedFilters] = useState({})
   const [rows, setRows] = useState([])
+  const [pendingRows, setPendingRows] = useState([])   // abandoned liveness-charged flows
   const [nextCursor, setNextCursor] = useState(0)
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState('')
@@ -74,9 +75,23 @@ export default function AdminHistory() {
     setErr('')
     try {
       const qs = buildQuery(extra)
-      const res = await api('/admin/verifications' + (qs ? '?' + qs : ''))
+      // Fetch the completed verifications and the pending (abandoned
+      // after wallet-debit on liveness) rows in parallel — the pending
+      // endpoint is scoped to the same admin org and honours the same
+      // roll/from/to filters where they overlap. Failures on the
+      // pending fetch are non-fatal: the standard history still
+      // renders, we just don't decorate with the pending strip.
+      const [res, pRes] = await Promise.all([
+        api('/admin/verifications' + (qs ? '?' + qs : '')),
+        api('/admin/verifications/pending' + (qs ? '?' + qs : ''))
+          .catch(() => ({ rows: [] })),
+      ])
       setRows((prev) => append ? [...prev, ...(res.rows || [])] : (res.rows || []))
       setNextCursor(res.next_cursor || 0)
+      // Only replace pending rows on first-page loads, not on paginated
+      // "load more" (append=true). Pending is a fixed top strip, not
+      // paginated.
+      if (!append) setPendingRows(pRes.rows || [])
     } catch (e) {
       setErr(e.message || 'failed to load history')
     } finally {
@@ -287,6 +302,33 @@ export default function AdminHistory() {
                 </tr>
               </thead>
               <tbody>
+                {/* Abandoned flows — the operator hit Start Over or
+                    closed the tab AFTER the wallet already debited on
+                    liveness pass, so a verifications row was never
+                    created and the debit looks orphaned in the wallet
+                    ledger. Render them ABOVE the completed rows with
+                    an amber "Abandoned" badge so the admin can reconcile
+                    debits to attempts even when the flow didn't finish.
+                    Backend key: liveness_checks WHERE session_id NOT
+                    IN verifications.idempotency_key. See
+                    /api/admin/verifications/pending. */}
+                {pendingRows.map((r) => (
+                  <tr
+                    key={'pending-' + r.id}
+                    className="border-t border-amber-100 bg-amber-50/40"
+                    title="This flow started (wallet debited on liveness pass) but was abandoned before the verification finished."
+                  >
+                    <td className="px-4 py-2 text-slate-500 whitespace-nowrap">{fmtDateTime(r.created_at)}</td>
+                    <td className="px-4 py-2 font-medium text-slate-900">{r.roll_no}</td>
+                    <td className="px-4 py-2">
+                      <Badge tone="amber">abandoned</Badge>
+                    </td>
+                    <td className="px-4 py-2 text-slate-500">—</td>
+                    <td className="px-4 py-2 text-slate-600 truncate max-w-[160px]">{r.center_name || '—'}</td>
+                    <td className="px-4 py-2 text-slate-500 italic">not recorded</td>
+                    <td className="px-4 py-2 text-right text-slate-400">—</td>
+                  </tr>
+                ))}
                 {rows.map((r) => (
                   <tr key={r.id} className="border-t border-slate-100">
                     <td className="px-4 py-2 text-slate-500 whitespace-nowrap">{fmtDateTime(r.created_at)}</td>
@@ -311,7 +353,7 @@ export default function AdminHistory() {
                     </td>
                   </tr>
                 ))}
-                {rows.length === 0 && !loading && (
+                {rows.length === 0 && pendingRows.length === 0 && !loading && (
                   <tr>
                     <td colSpan={7} className="py-10">
                       <EmptyState

@@ -95,6 +95,11 @@ export default function FingerprintCapture({
         score,
         threshold: effectiveThreshold,
         bitmapBase64: r.BitmapData || null,
+        // Vendors that return a pre-formed data URL (e.g. Startek via the
+        // ISO 19794-4 decoder) fill this; Mantra fills bitmapBase64
+        // as raw BMP base64 and this stays null. The JSX prefers this
+        // when present.
+        bitmapDataUrl: r.BitmapDataUrl || null,
       }
       setResult(out)
       onResult?.(out)
@@ -110,12 +115,26 @@ export default function FingerprintCapture({
       <DeviceBanner status={status} device={device} error={error} />
 
       <div className="aspect-square w-full max-w-xs mx-auto rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 flex flex-col items-center justify-center text-center p-6">
-        {result?.bitmapBase64 ? (
+        {result?.bitmapDataUrl ? (
+          <img
+            src={result.bitmapDataUrl}
+            alt="captured fingerprint"
+            className="w-full h-full object-contain"
+          />
+        ) : result?.bitmapBase64 ? (
           <img
             src={`data:image/bmp;base64,${result.bitmapBase64}`}
             alt="captured fingerprint"
             className="w-full h-full object-contain"
           />
+        ) : result ? (
+          // Match ran, no preview image (ISO record we couldn't decode
+          // — WSQ / JP2K variants). Don't fall back to "Device ready"
+          // — that reads as pre-capture.
+          <>
+            <p className="text-sm font-medium text-slate-700">Fingerprint captured</p>
+            <p className="text-xs text-slate-500 mt-1">ISO template forwarded to match service</p>
+          </>
         ) : status === Status.Capturing || busy ? (
           <>
             <div className="h-12 w-12 rounded-full border-4 border-indigo-200 border-t-indigo-600 animate-spin" />

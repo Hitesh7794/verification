@@ -24,7 +24,7 @@ const ROLE_LABEL = {
   client:          'Verification Agent',
   admin:           'Administrator',
   superadmin:      'Superadmin',
-  client_reviewer: 'Review portal',
+  client_reviewer: 'Reviewer',
 }
 
 export default function LoginShell({
@@ -70,7 +70,19 @@ export default function LoginShell({
     try {
       const u = await login(username, password)
       if (allowedRoles.length && !allowedRoles.includes(u.role)) {
-        setErr(`This account is a ${u.role}. Use the ${allowedRoles.join(' or ')} portal.`)
+        // Prior copy read: "This account is a client_reviewer. Use the
+        // admin portal." — two problems:
+        //   1. `${u.role}` printed the raw enum name (client_reviewer)
+        //      instead of a human label.
+        //   2. Said "Use the {portal-you're-on}" — but the user IS on
+        //      that portal, they're just the wrong role for it.
+        // New copy names both sides by their human label and tells the
+        // user to sign in on THEIR OWN role's portal.
+        const humanRole = ROLE_LABEL[u.role] || u.role
+        setErr(
+          `This account is a ${humanRole}. ` +
+          `Please sign in from the ${humanRole} portal instead.`
+        )
         return
       }
       if (rememberKey) {

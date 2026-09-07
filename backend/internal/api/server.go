@@ -291,6 +291,11 @@ func (s *Server) Router() http.Handler {
 			s.requireRole("client", "admin", "superadmin")(s.getCandidate))
 		r.Get("/api/candidates/{roll}/photo", s.requireRole("client", "admin", "superadmin")(s.getCandidatePhoto))
 		r.Get("/api/candidates/{roll}/fp-template", s.requireRole("client")(s.getCandidateFPTemplate))
+		// Decode the operator's live FM220U capture (ISO 19794-4 record,
+		// typically WSQ-inside) into a browser-renderable PNG. Purely a
+		// UX helper — no DB write, no match influence. Frontend calls
+		// this in parallel with /fp-match and hides the tile on error.
+		r.Post("/api/fp-preview", s.requireRole("client")(s.fpPreview))
 		// /candidates/{roll}/face-template retired 2026-08-27 — the
 		// TrustView migration removed the client-side face-template
 		// cache (see verify_face_handlers.go comment: "retired with the
@@ -382,6 +387,9 @@ func (s *Server) Router() http.Handler {
 		r.Get("/api/admin/timeline", s.requireRole("admin", "superadmin")(s.adminTimeline))
 		r.Get("/api/admin/verifications", s.requireRole("admin", "superadmin")(s.adminListVerifications))
 		r.Get("/api/admin/verifications.csv", s.requireRole("admin", "superadmin")(s.adminExportVerificationsCSV))
+		// Abandoned-flow surface: liveness passes whose wallet debit
+		// never became a verifications row. See admin_verifications_handlers.
+		r.Get("/api/admin/verifications/pending", s.requireRole("admin", "superadmin")(s.adminListPendingVerifications))
 		r.Post("/api/admin/wallet/credit", s.requireRole("superadmin")(s.adminWalletCredit))
 
 		// Phase-2 admin surface: exam catalog subscribe / unsubscribe.

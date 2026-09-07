@@ -685,30 +685,37 @@ func (s *Server) patchVerification(w http.ResponseWriter, r *http.Request) {
 	// still sends its own req.Status but we trust the flags -- the
 	// whole point of PATCH is that recapture may have flipped verdict.
 	irisPass := req.IrisLeftScore != nil && *req.IrisLeftScore >= 50
-	// Load the exam requires_* flags for this verification's roll so
-	// we know which modalities count toward the AND-gate.
-	var reqFace, reqFP, reqIris int
+	// Per-candidate modality gate: what's on file for this candidate
+	// drives which modalities count toward the AND. A face-only
+	// candidate is verified on face alone; face+fp+iris candidate
+	// needs all three. Zero-modality candidate is denied at this gate.
+	// Source of truth is the same filesystem index the operator UI
+	// reads (has_photo / has_iso_template / has_iris_bytes) so verdict
+	// and UI stay consistent.
+	var vRoll string
 	_ = s.deps.DB.QueryRowContext(r.Context(),
-		`SELECT COALESCE(e.requires_face,1), COALESCE(e.requires_fp,1), COALESCE(e.requires_iris,0)
-		   FROM verifications v
-		   JOIN exam_candidates ec ON ec.roll_no = v.roll_no
-		   JOIN exams e ON e.id = ec.exam_id
-		  WHERE v.id = $1 LIMIT 1`, id,
-	).Scan(&reqFace, &reqFP, &reqIris)
-	facePass := reqFace == 0 || req.FaceMatch
-	fpPassFlag := reqFP == 0 || req.FpMatch
-	irisPassFlag := reqIris == 0 || irisPass
+		`SELECT roll_no FROM verifications WHERE id = $1`, id,
+	).Scan(&vRoll)
+	var hasPhoto, hasFP, hasIris bool
+	if vRoll != "" {
+		if fsRow, ok := s.deps.Index.Get(vRoll); ok {
+			hasPhoto = fsRow.HasPhoto
+			hasFP    = fsRow.HasIsoTpl
+			hasIris  = fsRow.HasIrisBytes
+		}
+	}
+	facePass := !hasPhoto || req.FaceMatch
+	fpPassFlag := !hasFP  || req.FpMatch
+	irisPassFlag := !hasIris || irisPass
 	newStatus := "denied"
-	if facePass && fpPassFlag && irisPassFlag {
+	if (hasPhoto || hasFP || hasIris) && facePass && fpPassFlag && irisPassFlag {
 		newStatus = "verified"
 	}
-	// Compute the new "via" list the same way the PDF does.
+	// "via" reflects which uploaded modalities passed.
 	passed := []string{}
-	if reqFace == 1 && req.FaceMatch { passed = append(passed, "fingerprint") } // placeholder -- overwritten below
-	passed = passed[:0]
-	if reqFace == 1 && req.FaceMatch { passed = append(passed, "face") }
-	if reqFP   == 1 && req.FpMatch   { passed = append(passed, "fingerprint") }
-	if reqIris == 1 && irisPass      { passed = append(passed, "iris") }
+	if hasPhoto && req.FaceMatch { passed = append(passed, "face") }
+	if hasFP    && req.FpMatch   { passed = append(passed, "fingerprint") }
+	if hasIris  && irisPass      { passed = append(passed, "iris") }
 	newVia := "manual"
 	if newStatus == "verified" && len(passed) > 0 {
 		newVia = strings.Join(passed, "+")

@@ -43,9 +43,9 @@ function NewExamForm({ onCancel, onCreated, onBulkCreated }) {
   const [code, setCode] = useState('')
   const [from, setFrom] = useState('')
   const [to, setTo] = useState('')
-  const [reqFace, setReqFace] = useState(true)
-  const [reqFP, setReqFP] = useState(true)
-  const [reqIris, setReqIris] = useState(false)
+  // Biometric requirements are now derived per-candidate from what
+  // was uploaded (has_photo / has_iso_template / has_iris_bytes),
+  // not set per-exam. The exam create form no longer asks.
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
@@ -62,19 +62,11 @@ function NewExamForm({ onCancel, onCreated, onBulkCreated }) {
     setSaving(true)
     setErr('')
     try {
-      if (!reqFace && !reqFP && !reqIris) {
-        setErr('Pick at least one biometric to require for this exam.')
-        setSaving(false)
-        return
-      }
       const res = await createReviewerExam({
         name: name.trim(),
         exam_code: code.trim(),
         verification_from: from,
         verification_to: to,
-        requires_face: reqFace,
-        requires_fp: reqFP,
-        requires_iris: reqIris,
       })
       onCreated(res.id)
     } catch (e) {
@@ -121,7 +113,7 @@ function NewExamForm({ onCancel, onCreated, onBulkCreated }) {
     }
   }
 
-  const canSingleSubmit = name.trim() && code.trim() && from && to && (reqFace || reqFP || reqIris)
+  const canSingleSubmit = name.trim() && code.trim() && from && to
 
   return (
     <div className="mb-8 rounded-2xl bg-white border border-stone-200/80 shadow-md overflow-hidden">
@@ -227,55 +219,6 @@ function NewExamForm({ onCancel, onCreated, onBulkCreated }) {
               </div>
             </FormSection>
 
-            <FormSection num="3" title="Biometric requirements" hint="Select which biometric capture channels are enforced for candidates of this exam.">
-              <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-                <label className={`flex items-start gap-3 rounded-xl border p-3.5 transition-all cursor-pointer ${
-                  reqFace ? 'border-stone-900 bg-stone-50/50 shadow-xs' : 'border-slate-200 hover:border-slate-300'
-                }`}>
-                  <input
-                    type="checkbox"
-                    checked={reqFace}
-                    onChange={(e) => setReqFace(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 rounded border-slate-300 text-stone-900 focus:ring-brand-500"
-                  />
-                  <div>
-                    <span className="text-xs font-bold text-slate-900 block">Facial Recognition</span>
-                    <span className="text-[11px] text-slate-500 mt-0.5 block leading-tight">Live camera face match against enrolled photo</span>
-                  </div>
-                </label>
-
-                <label className={`flex items-start gap-3 rounded-xl border p-3.5 transition-all cursor-pointer ${
-                  reqFP ? 'border-stone-900 bg-stone-50/50 shadow-xs' : 'border-slate-200 hover:border-slate-300'
-                }`}>
-                  <input
-                    type="checkbox"
-                    checked={reqFP}
-                    onChange={(e) => setReqFP(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 rounded border-slate-300 text-stone-900 focus:ring-brand-500"
-                  />
-                  <div>
-                    <span className="text-xs font-bold text-slate-900 block">Fingerprint</span>
-                    <span className="text-[11px] text-slate-500 mt-0.5 block leading-tight">Biometric sensor scan (ISO/FMR templates)</span>
-                  </div>
-                </label>
-
-                <label className={`flex items-start gap-3 rounded-xl border p-3.5 transition-all cursor-pointer ${
-                  reqIris ? 'border-stone-900 bg-stone-50/50 shadow-xs' : 'border-slate-200 hover:border-slate-300'
-                }`}>
-                  <input
-                    type="checkbox"
-                    checked={reqIris}
-                    onChange={(e) => setReqIris(e.target.checked)}
-                    className="mt-0.5 h-4 w-4 rounded border-slate-300 text-stone-900 focus:ring-brand-500"
-                  />
-                  <div>
-                    <span className="text-xs font-bold text-slate-900 block">Iris Scan</span>
-                    <span className="text-[11px] text-slate-500 mt-0.5 block leading-tight">Dual-eye optical iris capture & verification</span>
-                  </div>
-                </label>
-              </div>
-            </FormSection>
-
             {err && (
               <div role="alert" className="rounded-lg bg-rose-50 border border-rose-200 px-4 py-2.5 text-sm text-rose-700">
                 {err}
@@ -310,10 +253,7 @@ function NewExamForm({ onCancel, onCreated, onBulkCreated }) {
                 <code className="bg-white px-1.5 py-0.5 rounded border font-mono text-[11px] text-stone-900">verification_from</code>,{' '}
                 <code className="bg-white px-1.5 py-0.5 rounded border font-mono text-[11px] text-stone-900">verification_to</code>.
                 <br />
-                Optional columns:{' '}
-                <code className="bg-white px-1.5 py-0.5 rounded border font-mono text-[11px] text-stone-900">requires_face</code>,{' '}
-                <code className="bg-white px-1.5 py-0.5 rounded border font-mono text-[11px] text-stone-900">requires_fp</code>,{' '}
-                <code className="bg-white px-1.5 py-0.5 rounded border font-mono text-[11px] text-stone-900">requires_iris</code> (use <code className="font-mono text-stone-800">yes</code> or <code className="font-mono text-stone-800">no</code>).
+                Biometric modalities are decided per-candidate at upload time — no need to declare them per-exam.
               </p>
             </div>
 
