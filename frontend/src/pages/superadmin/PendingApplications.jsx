@@ -47,7 +47,15 @@ export default function PendingApplications() {
   }, [search])
 
   useEffect(() => {
+    // Clear the previous tab's rows and re-arm the skeleton so the user
+    // doesn't see e.g. Approved rows briefly under a Pending header while
+    // the new fetch is in flight. Rahul's split-fetch (bbb9841) makes
+    // that window very short (~10ms in prod), but this still reads as
+    // "loading new data" rather than "same rows just misfiled" for any
+    // network hiccup that pushes the fetch above a frame.
     setOffset(0)
+    setItems([])
+    setLoading(true)
   }, [status, debouncedSearch])
 
   // The visible page of rows. Changes with the tab, the search box and
