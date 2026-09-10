@@ -4,6 +4,7 @@ import { Link, useNavigate } from 'react-router-dom'
 import AdminTabs from './AdminTabs.jsx'
 import { BrandMark } from '../ui/brand.jsx'
 import { api } from '../../lib/api.js'
+import { getRoleScope, getStoredToken } from '../../lib/authStorage.js'
 import { useAuth } from '../../lib/auth.jsx'
 import { Icon, Pill } from '../ui/extras.jsx'
 
@@ -24,20 +25,69 @@ import { Icon, Pill } from '../ui/extras.jsx'
 //     ...page content
 //   </AdminShell>
 
+// ── KYC status cache ────────────────────────────────────────────────
+// AdminShell is rendered by each /admin/* page rather than by a layout
+// route, so React unmounts it and mounts a fresh one on every tab
+// switch. Without this cache each switch reset `kyc` to null, refired
+// /admin/kyc-status, and — while that request was in flight — took the
+// early return below, which replaces the entire viewport, AdminTabs
+// included. The navy bar, tabs, wallet and clock left the page and came
+// back on every navigation, which reads as a page reload.
+//
+// Keyed by the session token rather than held bare: logout() clears the
+// stored session but cannot clear a module variable, so an unkeyed
+// cache would serve one admin's KYC state to the next admin who signs
+// in on the same tab. A new login mints a new token, which misses.
+//
+// `ts` throttles revalidation. Clicking between tabs costs nothing;
+// returning after REVALIDATE_MS re-checks in the background, so an
+// approval or rejection that lands mid-session still surfaces without
+// a reload.
+const REVALIDATE_MS = 30_000
+let kycCache = { key: '', data: null, err: false, ts: 0 }
+
+// Same lookup api.js uses, so the key always matches the token the
+// request will actually be sent with.
+const sessionKey = () => getStoredToken(getRoleScope())
+
 export default function AdminShell({ children, walletRefreshKey, onWalletBalanceChange }) {
-  const [kyc, setKyc] = useState(null)   // null while loading; then object
-  const [kycErr, setKycErr] = useState(false)
+  // Seed from the cache when the token matches, so a tab switch paints
+  // the finished shell on its first render with no request in the way.
+  const key = sessionKey()
+  const hit = key !== '' && kycCache.key === key
+
+  const [kyc, setKyc] = useState(hit ? kycCache.data : null)
+  const [kycErr, setKycErr] = useState(hit ? kycCache.err : false)
 
   useEffect(() => {
+    const k = sessionKey()
+    const warm = k !== '' && kycCache.key === k
+    // Nothing to do if a recent answer is already on screen.
+    if (warm && Date.now() - kycCache.ts < REVALIDATE_MS) return
+
     let alive = true
     api('/admin/kyc-status')
-      .then((r) => { if (alive) setKyc(r) })
-      .catch(() => { if (alive) setKycErr(true) })
+      .then((r) => {
+        kycCache = { key: k, data: r, err: false, ts: Date.now() }
+        if (alive) { setKyc(r); setKycErr(false) }
+      })
+      .catch(() => {
+        // A failed revalidation must not discard a good answer —
+        // locking (or unlocking) the portal on a transient blip is
+        // worse than serving the last known state.
+        if (warm && kycCache.data) return
+        kycCache = { key: k, data: null, err: true, ts: Date.now() }
+        if (alive) setKycErr(true)
+      })
     return () => { alive = false }
-  }, [])
+  }, [key])
 
-  // While the status is loading, render a neutral page so we don't
-  // flash the (potentially blocked) child content for a moment.
+  // First load only — reached when nothing is cached for this session.
+  // Deliberately still replaces the whole viewport: until the status
+  // comes back we do not know whether this admin is allowed to see the
+  // tabs at all, and flashing the chrome at a pending applicant before
+  // swapping in the lock screen would be worse than a brief neutral
+  // page. Tab switches never reach here, because the cache is warm.
   if (kyc === null && !kycErr) {
     return (
       <div className="min-h-full bg-warm-page flex items-center justify-center">
