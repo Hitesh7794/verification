@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import SuperShell, { PageHead } from '../../components/shell/SuperShell.jsx'
@@ -50,7 +50,9 @@ export default function PendingApplications() {
     setOffset(0)
   }, [status, debouncedSearch])
 
-  const load = useCallback(async () => {
+  // The visible page of rows. Changes with the tab, the search box and
+  // the page offset.
+  const loadList = useCallback(async () => {
     try {
       const qs = new URLSearchParams()
       if (status) qs.set('status', status)
@@ -61,16 +63,6 @@ export default function PendingApplications() {
       setItems(res.items || [])
       setTotal(res.total || 0)
       setErr('')
-
-      const countQs = new URLSearchParams()
-      if (debouncedSearch) countQs.set('q', debouncedSearch)
-      countQs.set('limit', '1')
-      const [p, a, r] = await Promise.all(
-        ['pending', 'approved', 'rejected'].map((st) =>
-          api(`/superadmin/applications?${countQs}&status=${st}`).catch(() => ({ total: 0 })),
-        ),
-      )
-      setCounts({ pending: p.total || 0, approved: a.total || 0, rejected: r.total || 0 })
     } catch (e) {
       setErr(e.message)
     } finally {
@@ -78,13 +70,36 @@ export default function PendingApplications() {
     }
   }, [status, debouncedSearch, offset])
 
+  // The three tile counts. Deliberately NOT keyed on `status` or
+  // `offset`: every count query pins its own status and asks for a
+  // single row, so switching tabs or paging cannot change any of them.
+  // They used to ride along inside the list fetch, which meant four
+  // requests every poll to refresh three numbers that had not moved.
+  const loadCounts = useCallback(async () => {
+    const countQs = new URLSearchParams()
+    if (debouncedSearch) countQs.set('q', debouncedSearch)
+    countQs.set('limit', '1')
+    const [p, a, r] = await Promise.all(
+      ['pending', 'approved', 'rejected'].map((st) =>
+        api(`/superadmin/applications?${countQs}&status=${st}`).catch(() => ({ total: 0 })),
+      ),
+    )
+    setCounts({ pending: p.total || 0, approved: a.total || 0, rejected: r.total || 0 })
+  }, [debouncedSearch])
+
+  const loadAll = useCallback(
+    () => Promise.all([loadList(), loadCounts()]),
+    [loadList, loadCounts],
+  )
+
   async function handleRevoke(e, id) {
     e.stopPropagation()
     if (!confirm('Revoke this rejected application back to Pending review?')) return
     setRevokingId(id)
     try {
       await api(`/superadmin/applications/${id}/revoke`, { method: 'POST' })
-      await load()
+      // A revoke moves a row between tabs, so the counts move with it.
+      await loadAll()
     } catch (err) {
       setErr(err.message || 'Could not revoke application')
     } finally {
@@ -92,10 +107,33 @@ export default function PendingApplications() {
     }
   }
 
-  // Visibility-aware polling — load runs immediately, then every 8s
+  // Visibility-aware polling — loadList runs immediately, then every 8s
   // while the tab is visible; paused entirely while hidden, with an
   // immediate catch-up fire on re-show.
-  usePolling(load, 8000)
+  usePolling(loadList, 8000)
+
+  // Re-fetch the moment a filter changes, instead of waiting for the
+  // next poll. usePolling deliberately ignores the identity of the
+  // function it is given (see the note in usePolling.js — depending on
+  // it caused an infinite render loop), so a status or search change
+  // updated the query but nothing asked for the new rows. The tab
+  // highlighted instantly and the table below it sat stale for up to
+  // the full 8s interval, averaging 4.
+  //
+  // The mount run is skipped because usePolling already fires once on
+  // mount; without the guard every visit would fetch the first page
+  // twice.
+  const mounted = useRef(false)
+  useEffect(() => {
+    if (!mounted.current) {
+      mounted.current = true
+      return
+    }
+    loadList()
+  }, [loadList])
+
+  // Counts on mount, and again only when the search text changes.
+  useEffect(() => { loadCounts() }, [loadCounts])
 
 
   const showingFrom = items.length > 0 ? offset + 1 : 0
@@ -109,7 +147,7 @@ export default function PendingApplications() {
         subtitle="Review, approve, or reject institutions applying to onboard onto the platform."
         right={
           <button
-            onClick={() => { setLoading(true); load() }}
+            onClick={() => { setLoading(true); loadAll() }}
             className="inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-medium text-slate-700 hover:bg-slate-50 transition-colors"
           >
             <Icon.Refresh className="h-4 w-4" />
