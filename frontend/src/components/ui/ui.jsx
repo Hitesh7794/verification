@@ -44,6 +44,15 @@ export function Button({ variant = 'primary', size = 'md', className = '', ...re
     // Ghost — for destructive-adjacent or tertiary actions in toolbars.
     ghost:
       'text-slate-600 hover:bg-slate-100 hover:text-slate-900',
+    // Outline — a bordered button on a tinted panel, where `secondary`
+    // would disappear into the panel's own fill. Used by the CSV
+    // sample-download buttons on the exam and agent bulk-upload cards.
+    // It must stay defined: the fallback below resolves an unknown
+    // variant to `primary`, whose text-white would render these
+    // buttons white-on-white.
+    outline:
+      'bg-white text-slate-800 border border-slate-300 hover:bg-slate-50 ' +
+      'hover:border-slate-400 shadow-xs',
     // Ink — reserved for the one authoritative action on dark chrome.
     ink:
       'bg-ink-800 text-white shadow-sm hover:bg-ink-700',
