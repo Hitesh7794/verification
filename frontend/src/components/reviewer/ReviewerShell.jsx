@@ -3,6 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { useAuth } from '../../lib/auth.jsx'
 import { reviewerMe } from '../../lib/reviewer/api.js'
+import ReportProblem from '../support/ReportProblem.jsx'
 
 const tabs = [
   { to: '/reviewer', label: 'KYC Applications', end: true },
@@ -39,6 +40,7 @@ export default function ReviewerShell({ children, meOverride }) {
       >
         {children}
       </motion.main>
+      <ReportProblem />
     </div>
   )
 }

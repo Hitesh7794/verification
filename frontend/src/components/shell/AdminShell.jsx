@@ -7,6 +7,7 @@ import { api } from '../../lib/api.js'
 import { getRoleScope, getStoredToken } from '../../lib/authStorage.js'
 import { useAuth } from '../../lib/auth.jsx'
 import { Icon, Pill } from '../ui/extras.jsx'
+import ReportProblem from '../support/ReportProblem.jsx'
 
 // AdminShell — page chrome for every /admin/* surface.
 //
@@ -120,6 +121,7 @@ export default function AdminShell({ children, walletRefreshKey, onWalletBalance
       >
         {children}
       </motion.main>
+      <ReportProblem />
     </div>
   )
 }

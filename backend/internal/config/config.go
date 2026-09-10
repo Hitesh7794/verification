@@ -137,6 +137,11 @@ type Config struct {
 	SMTPPort string // default 587
 	SMTPUser string
 	SMTPPass string // Gmail App Password / SES SMTP secret / etc — NOT a regular login password
+	// SupportEmail receives the in-portal "Report a problem" messages
+	// from admins, reviewers and agents. Separate from SMTPFrom so the
+	// destination can move to a helpdesk address without touching the
+	// sending identity.
+	SupportEmail string
 	SMTPFrom string // RFC-5322 From header, e.g. `Verification Portal <noreply@example.com>`
 
 	// Outbound SMS via AuthKey.io
@@ -248,6 +253,7 @@ func Load() Config {
 		SMTPPort:                  envOr("SMTP_PORT", "587"),
 		SMTPUser:                  envOr("SMTP_USER", "inno.verifyportal@gmail.com"),
 		SMTPPass:                  envOr("SMTP_PASS", "lascwknfeqmmayyg"),
+		SupportEmail:              envOr("SUPPORT_EMAIL", "inno.verifyportal@gmail.com"),
 		SMTPFrom:                  envOr("SMTP_FROM", "Verification Portal <inno.verifyportal@gmail.com>"),
 		AuthKeySMSKey:             envOr("AUTHKEY_SMS_KEY", "877f65eb773cee5d"),
 		AuthKeySMSSID:             envOr("AUTHKEY_SMS_SID", "44529"),

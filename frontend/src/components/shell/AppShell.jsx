@@ -3,6 +3,7 @@ import { useAuth } from '../../lib/auth.jsx'
 import WalletWidget from '../wallet/WalletWidget.jsx'
 import AvatarMenu from './AvatarMenu.jsx'
 import { Brand, PRODUCT_NAME } from '../ui/brand.jsx'
+import ReportProblem from '../support/ReportProblem.jsx'
 
 // AppShell — page chrome shared across client / admin / superadmin pages.
 //
@@ -82,6 +83,7 @@ export default function AppShell({ children, walletRefreshKey, onWalletBalanceCh
           </span>
         </div>
       </footer>
+      <ReportProblem />
     </div>
   )
 }

@@ -417,6 +417,13 @@ func (s *Server) Router() http.Handler {
 		// Bundle artefact lives in DOWNLOADS_DIR; the handler picks
 		// the latest matching file at request time so a deploy drops
 		// a new build in place without a restart.
+		// In-portal "Report a problem". requireRoleOpen, not requireRole:
+		// an admin whose KYC is pending or rejected is exactly the person
+		// most likely to need to ask a question, and the KYC gate would
+		// refuse them.
+		r.Post("/api/support/report",
+			s.requireRoleOpen("admin", "client", "client_reviewer", "superadmin")(s.supportReport))
+
 		r.Get("/api/downloads",
 			s.requireRole("admin", "client", "superadmin")(s.adminListDownloads))
 		r.Get("/api/downloads/operator-client",

@@ -620,6 +620,48 @@ select:focus-visible {
   }
 }
 
+/* ── Report-a-problem launcher ───────────────────────────────────────
+   The support button sits on every admin, reviewer and agent page, so
+   it has to be noticeable without ever competing with the work. Three
+   restrained pieces:
+
+     * halo — a slow, low-amplitude ring that breathes once every 4s.
+       Enough peripheral motion to be found when someone is looking for
+       help; too slow and too faint to pull the eye when they aren't.
+     * nudge — the exclamation inside the mark tips over every 7s. A
+       single beat, then eight seconds of stillness.
+     * The hover expansion itself is a transition, not an animation —
+       it belongs to the pointer, not to a timer.
+
+   All three collapse under prefers-reduced-motion via the global rule
+   above, leaving a static, fully legible button. */
+@keyframes support-halo {
+  0%, 100% { opacity: 0.35; transform: scale(1); }
+  50%      { opacity: 0;    transform: scale(1.45); }
+}
+.support-halo { animation: support-halo 4s cubic-bezier(0.4, 0, 0.2, 1) infinite; }
+
+/* The halo stops the instant the pointer arrives, so the ambient beat
+   and the hover expansion never run at once. It has to be switched off
+   rather than faded: keyframes driving `opacity` outrank any opacity
+   utility, so a `group-hover:opacity-0` alone left it pulsing behind
+   the open pill. */
+.support-launcher:hover .support-halo,
+.support-launcher:focus-visible .support-halo {
+  animation: none;
+  opacity: 0;
+}
+
+@keyframes support-nudge {
+  0%, 88%, 100% { transform: rotate(0deg); }
+  91%           { transform: rotate(-11deg); }
+  95%           { transform: rotate(9deg); }
+}
+.support-nudge {
+  animation: support-nudge 7s ease-in-out infinite;
+  transform-origin: 50% 62%;
+}
+
 /* Subtle dotted grid that pages can use as a faded background. */
 .bg-dot-grid {
   background-image: radial-gradient(circle, rgba(24, 33, 44, 0.055) 1px, transparent 1px);
