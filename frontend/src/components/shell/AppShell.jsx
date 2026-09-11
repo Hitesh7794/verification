@@ -67,6 +67,7 @@ export default function AppShell({ children, walletRefreshKey, onWalletBalanceCh
                 onBalanceChange={onWalletBalanceChange}
               />
             )}
+            <ReportProblem />
             <AvatarMenu user={user} onLogout={handleLogout} />
           </div>
         </div>
@@ -83,7 +84,6 @@ export default function AppShell({ children, walletRefreshKey, onWalletBalanceCh
           </span>
         </div>
       </footer>
-      <ReportProblem />
     </div>
   )
 }

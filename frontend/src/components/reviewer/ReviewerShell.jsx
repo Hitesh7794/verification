@@ -40,7 +40,6 @@ export default function ReviewerShell({ children, meOverride }) {
       >
         {children}
       </motion.main>
-      <ReportProblem />
     </div>
   )
 }
@@ -166,7 +165,7 @@ function ReviewerHeader({ meOverride }) {
           </ul>
         </nav>
 
-        {/* Right cluster: username + time + logout */}
+        {/* Right cluster: username + time + support + logout */}
         <div className="flex items-center gap-3 shrink-0">
           {user?.display_name && (
             <span className="hidden md:inline text-[12px] text-slate-300 truncate max-w-[180px]">
@@ -177,6 +176,7 @@ function ReviewerHeader({ meOverride }) {
             <span className="h-1.5 w-1.5 rounded-full bg-emerald-400" />
             {timeText}
           </span>
+          <ReportProblem />
           <button
             onClick={onLogout}
             className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-slate-200 hover:text-white bg-white/8 hover:bg-white/16 ring-1 ring-inset ring-white/15 px-3 py-1.5 rounded-lg transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-300"

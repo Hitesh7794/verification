@@ -5,6 +5,7 @@ import { useAuth } from '../../lib/auth.jsx'
 import WalletWidget from '../wallet/WalletWidget.jsx'
 import AvatarMenu from './AvatarMenu.jsx'
 import { BrandMark } from '../ui/brand.jsx'
+import ReportProblem from '../support/ReportProblem.jsx'
 
 // AdminTabs — the sticky top bar for every /admin/* surface.
 //
@@ -12,6 +13,7 @@ import { BrandMark } from '../ui/brand.jsx'
 //   Brand mark (Verification Portal / ADMIN)
 //   Tab strip (Overview · Exam catalog · My exams · Operators · History · Downloads)
 //   Wallet widget (org balance, top-up)
+//   Support chip (Report a problem)
 //   Avatar menu (display_name, role, username, sign out)
 //
 // Same visual language as SuperTabs: navy chrome under a gold authority
@@ -112,6 +114,7 @@ export default function AdminTabs({ walletRefreshKey, onWalletBalanceChange }) {
               onBalanceChange={onWalletBalanceChange}
             />
           )}
+          <ReportProblem />
           <AvatarMenu user={user} onLogout={handleLogout} />
         </div>
       </div>

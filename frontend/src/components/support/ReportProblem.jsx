@@ -1,10 +1,9 @@
 import { useEffect, useRef, useState } from 'react'
 import { createPortal } from 'react-dom'
 import { api } from '../../lib/api.js'
-import { useAuth } from '../../lib/auth.jsx'
 
-// ReportProblem — the floating "Report a problem" affordance carried by
-// the admin, reviewer and agent shells.
+// ReportProblem — the "Report a problem" affordance carried in the top
+// bar of the admin, reviewer and agent shells.
 //
 // ── Why a form rather than a mailto: link ───────────────────────────
 // Exam-centre machines are routinely locked down with no mail client
@@ -18,16 +17,25 @@ import { useAuth } from '../../lib/auth.jsx'
 // Those fields come from the session on the server, never from this
 // form, so a report can't be dressed up as someone else.
 //
+// The form used to list those attachments back to the reporter. It has
+// been dropped: someone who has just hit a fault wants one box and a
+// send button, and a panel of account metadata reads as paperwork in
+// the way. Nothing about what the server sends has changed.
+//
 // ── The launcher ───────────────────────────────────────────────────
-// A disc at rest carrying one mark, expanding to a labelled pill on
-// hover or focus. Icon-only keeps a permanent, every-page element from
-// competing with the work; the label on hover means nobody has to guess
-// what the mark does.
+// A round chip in the header's right cluster, cut to the same 36px
+// circle and the same white-on-navy tint as the avatar beside it, so
+// the row reads as one set of controls rather than a widget parked on
+// top of the chrome.
+//
+// The label arrives as a tooltip under the chip rather than by widening
+// the button. In a fixed-width header an expanding pill would shove the
+// clock, wallet and avatar sideways every time a pointer crossed it.
 //
 // Motion is rationed to two slow ambient beats — a halo that breathes
-// once every 4s and an exclamation that tips once every 7s — plus the
-// hover expansion, which belongs to the pointer rather than a timer.
-// The halo fades out on hover so the two never run at once. This is a
+// once every 4s and the headset tipping once every 7s — plus the
+// tooltip, which belongs to the pointer rather than a timer. The halo
+// stops on hover so the two never run at once. This is a
 // government-facing portal, so anything more insistent would read as a
 // chat widget. Both beats collapse under prefers-reduced-motion.
 
@@ -35,7 +43,6 @@ const MIN_CHARS = 10
 const MAX_CHARS = 4000
 
 export default function ReportProblem() {
-  const { user } = useAuth()
   const [open, setOpen] = useState(false)
   const [message, setMessage] = useState('')
   const [state, setState] = useState('idle') // idle | sending | sent | error
@@ -48,9 +55,9 @@ export default function ReportProblem() {
   //
   // The `everOpened` guard matters: without it this effect's `open ===
   // false` branch runs on mount too, so simply loading any admin,
-  // reviewer or agent page pulled focus onto the floating button. That
-  // stole focus from the page for every user, and left the button
-  // sitting expanded under a focus ring before anyone had touched it.
+  // reviewer or agent page pulled focus onto the launcher. That stole
+  // focus from the page for every user, and left the chip sitting under
+  // a focus ring, tooltip open, before anyone had touched it.
   const everOpened = useRef(false)
   useEffect(() => {
     if (open) {
@@ -105,21 +112,12 @@ export default function ReportProblem() {
   const tooShort = chars > 0 && chars < MIN_CHARS
   const canSend = chars >= MIN_CHARS && chars <= MAX_CHARS && state !== 'sending'
 
-  const roleLabel = {
-    admin: 'Institution admin',
-    client: 'Verification agent',
-    client_reviewer: 'Reviewer',
-    superadmin: 'Superadmin',
-  }[user?.role] || user?.role || '—'
-
   return (
     <>
-      {/* A disc at rest, a pill on hover. The label is always in the DOM
-          for screen readers and is revealed by animating the grid track
-          from 0fr to 1fr — width transitions from a fixed value to
-          `auto` don't animate, and a max-width guess would either clip
-          the text or leave a gap. Focus opens it too, so a keyboard
-          user gets the same affordance as a pointer. */}
+      {/* Sized and tinted to match AvatarMenu's circle, which sits
+          immediately to its right in every header that carries it.
+          Focus reveals the tooltip as well as hover, so a keyboard user
+          gets the same affordance as a pointer. */}
       <button
         ref={triggerRef}
         type="button"
@@ -127,17 +125,15 @@ export default function ReportProblem() {
         aria-haspopup="dialog"
         aria-expanded={open}
         aria-label="Report a problem"
-        className="group support-launcher fixed bottom-5 right-5 z-40 inline-flex items-center rounded-full
-                   bg-ink-800 text-white h-12 pl-[13px] pr-[13px]
-                   hover:pr-4 focus-visible:pr-4
-                   shadow-lg shadow-slate-900/25 ring-1 ring-inset ring-white/12
-                   hover:bg-ink-700 hover:-translate-y-0.5
-                   focus-visible:bg-ink-700 focus-visible:-translate-y-0.5
-                   transition-[transform,background-color,padding] duration-300
-                   ease-[cubic-bezier(0.22,1,0.36,1)]
+        title="Report a problem"
+        className="group support-launcher relative shrink-0 grid place-items-center
+                   h-9 w-9 rounded-full
+                   bg-white/12 ring-1 ring-inset ring-white/25 text-slate-200
+                   hover:bg-white/20 hover:text-white
+                   focus-visible:bg-white/20 focus-visible:text-white
+                   transition-colors duration-200
                    focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2
-                   focus-visible:outline-brand-500
-                   motion-reduce:hover:translate-y-0 motion-reduce:focus-visible:translate-y-0"
+                   focus-visible:outline-amber-300"
       >
         {/* Halo sits behind the mark, clipped by the button's own radius
             so it reads as the button breathing rather than a stray ring. */}
@@ -146,21 +142,24 @@ export default function ReportProblem() {
             utility, so it can't be expressed as a hover class. */}
         <span aria-hidden="true"
               className="pointer-events-none absolute inset-0 rounded-full
-                         ring-2 ring-amber-300/70 support-halo
+                         ring-1 ring-amber-300/70 support-halo
                          transition-opacity duration-200" />
-        <span className="relative grid h-[22px] w-[22px] place-items-center shrink-0">
-          <ReportIcon />
-        </span>
-        <span className="relative grid grid-cols-[0fr] transition-[grid-template-columns] duration-300
+        <HeadsetIcon />
+        {/* Tooltip. aria-hidden because the button already carries the
+            same string as its accessible name — a screen reader
+            announcing it twice would be noise. */}
+        <span aria-hidden="true"
+              className="pointer-events-none absolute top-full right-0 mt-2 z-10
+                         rounded-lg bg-ink-900 px-2.5 py-1.5 shadow-lg
+                         ring-1 ring-inset ring-white/12
+                         text-[11.5px] font-semibold text-white whitespace-nowrap
+                         opacity-0 translate-y-1
+                         transition-[opacity,transform] duration-200
                          ease-[cubic-bezier(0.22,1,0.36,1)]
-                         group-hover:grid-cols-[1fr] group-focus-visible:grid-cols-[1fr]">
-          <span className="overflow-hidden">
-            <span className="block whitespace-nowrap pl-2.5 pr-0.5 text-[13px] font-semibold
-                             opacity-0 transition-opacity duration-200
-                             group-hover:opacity-100 group-focus-visible:opacity-100">
-              Report a problem
-            </span>
-          </span>
+                         group-hover:opacity-100 group-hover:translate-y-0
+                         group-focus-visible:opacity-100 group-focus-visible:translate-y-0
+                         motion-reduce:translate-y-0 motion-reduce:transition-none">
+          Report a problem
         </span>
       </button>
 
@@ -242,22 +241,6 @@ export default function ReportProblem() {
                     </span>
                   </div>
 
-                  {/* Say exactly what gets attached. A support form that
-                      quietly harvests context is worse than one that
-                      shows its working. */}
-                  <div className="mt-4 rounded-lg bg-slate-50 border border-slate-200 px-3.5 py-3">
-                    <p className="text-[11px] font-semibold uppercase tracking-[0.09em] text-slate-500">
-                      Sent with your message
-                    </p>
-                    <dl className="mt-2 space-y-1 text-[12.5px]">
-                      <Row k="Who" v={`${user?.display_name || user?.username || '—'} · ${roleLabel}`} />
-                      <Row k="Page" v={window.location.pathname} mono />
-                      <Row k="When" v={new Date().toLocaleString('en-IN', {
-                        dateStyle: 'medium', timeStyle: 'short',
-                      })} />
-                    </dl>
-                  </div>
-
                   {state === 'error' && (
                     <div role="alert"
                          className="mt-4 rounded-lg bg-rose-50 border border-rose-200 px-3.5 py-2.5
@@ -301,15 +284,6 @@ export default function ReportProblem() {
   )
 }
 
-function Row({ k, v, mono = false }) {
-  return (
-    <div className="flex items-baseline gap-2">
-      <dt className="w-11 shrink-0 text-slate-500">{k}</dt>
-      <dd className={`min-w-0 truncate text-slate-800 ${mono ? 'font-mono text-[11.5px]' : ''}`}>{v}</dd>
-    </div>
-  )
-}
-
 function Sent({ onClose }) {
   return (
     <div className="px-6 py-9 text-center">
@@ -338,20 +312,26 @@ function Sent({ onClose }) {
 
 /* Inline SVG rather than an icon package — the product ships none, and
    three glyphs aren't worth a dependency. */
-// A speech bubble carrying an exclamation: "I want to tell you something
-// is wrong". A question mark would say "I don't understand how this
-// works", which is a different request and the wrong promise — this
-// button opens a fault report, not documentation. The exclamation is
-// what tips on the idle nudge, so the mark itself stays still.
-function ReportIcon() {
+// A headset with its boom mic: the universally read mark for "there is
+// a person on the other end of this". The boom is the half that carries
+// the meaning — band and earcups alone are headphones, which say
+// "listening", not "someone will answer".
+//
+// It draws in currentColor so it inherits the header's own slate-to-
+// white, which keeps it in the navy chrome's palette instead of
+// introducing a colour of its own.
+//
+// Band and earcups are one continuous path so the stroke joins cleanly
+// at the corners at this size, where overlapping shapes would show a
+// seam. The boom is the second path, sweeping down from the right cup
+// and round to the mouth.
+function HeadsetIcon() {
   return (
-    <svg width="21" height="21" viewBox="0 0 24 24" fill="none" aria-hidden="true"
-         stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round">
-      <path d="M20.2 14.4a2.4 2.4 0 0 1-2.4 2.4H8.9L4.6 20v-3.2H4.4a2.4 2.4 0 0 1-2.4-2.4V6.2a2.4 2.4 0 0 1 2.4-2.4h13.4a2.4 2.4 0 0 1 2.4 2.4Z" />
-      <g className="support-nudge">
-        <path d="M11.1 7.4v3.5" stroke="var(--color-amber-300)" strokeWidth="2.2" />
-        <path d="M11.1 13.5h.01" stroke="var(--color-amber-300)" strokeWidth="2.4" />
-      </g>
+    <svg width="20" height="20" viewBox="0 0 24 24" fill="none" aria-hidden="true"
+         className="relative support-nudge"
+         stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M3 11h3a2 2 0 0 1 2 2v3a2 2 0 0 1-2 2H4a1 1 0 0 1-1-1v-6a9 9 0 0 1 18 0v6a1 1 0 0 1-1 1h-2a2 2 0 0 1-2-2v-3a2 2 0 0 1 2-2h3" />
+      <path d="M21 16v2a4 4 0 0 1-4 4h-5" />
     </svg>
   )
 }
