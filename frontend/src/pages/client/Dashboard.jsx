@@ -1338,57 +1338,6 @@ export default function ClientDashboard() {
             </div>
           )}
 
-          {/* Biometric Device Peripherals Card */}
-          <div className="p-4 rounded-xl bg-white border border-[#D5DDE7] shadow-xs space-y-2.5 text-xs">
-            <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest mb-1">
-              Biometric Device Status
-            </div>
-
-            {/* Webcam */}
-            <div className="flex items-center justify-between text-slate-700 text-xs">
-              <span className="flex items-center gap-1.5 font-medium">
-                <span className={`w-2 h-2 rounded-full ${cameraActive ? 'bg-[#0F6B45]' : 'bg-slate-400'}`} />
-                Webcam (WebRTC HD)
-              </span>
-              <span className={`font-semibold text-[11px] ${cameraActive ? 'text-[#0F6B45]' : 'text-slate-500'}`}>
-                {cameraActive ? 'CONNECTED' : 'STANDBY'}
-              </span>
-            </div>
-
-            {/* Fingerprint Sensor */}
-            <div className="flex items-center justify-between text-slate-700 text-xs">
-              <span className="flex items-center gap-1.5 font-medium">
-                <span className={`w-2 h-2 rounded-full ${
-                  hwFpStatus === Status.Ready ? 'bg-[#0F6B45]' :
-                  hwFpStatus === Status.Initializing || hwFpStatus === Status.Capturing ? 'bg-amber-500 animate-pulse' :
-                  hwFpStatus === Status.NoDevice ? 'bg-amber-400' : 'bg-slate-400'
-                }`} />
-                Fingerprint Sensor (L1)
-              </span>
-              <span className={`font-semibold text-[11px] ${
-                hwFpStatus === Status.Ready ? 'text-[#0F6B45]' :
-                hwFpStatus === Status.Initializing || hwFpStatus === Status.Capturing ? 'text-amber-600' :
-                hwFpStatus === Status.NoDevice ? 'text-amber-600' : 'text-slate-500'
-              }`}>
-                {hwFpStatus === Status.Ready ? (hwFpDevice?.label || 'CONNECTED') :
-                 hwFpStatus === Status.Initializing ? 'INITIALIZING' :
-                 hwFpStatus === Status.Capturing ? 'CAPTURING' :
-                 hwFpStatus === Status.NoDevice ? 'NO DEVICE' : 'NOT DETECTED'}
-              </span>
-            </div>
-
-            {/* Iris Scanner */}
-            <div className="flex items-center justify-between text-slate-700 text-xs">
-              <span className="flex items-center gap-1.5 font-medium">
-                <span className={`w-2 h-2 rounded-full ${hwIrisConnected ? 'bg-[#0F6B45]' : 'bg-slate-400'}`} />
-                Iris Scanner (L1)
-              </span>
-              <span className={`font-semibold text-[11px] ${hwIrisConnected ? 'text-[#0F6B45]' : 'text-slate-500'}`}>
-                {hwIrisConnected ? 'CONNECTED' : 'NOT DETECTED'}
-              </span>
-            </div>
-          </div>
-
         </div>
 
         {/* ================= RIGHT WORK CANVAS: PROGRESSIVE STAGES (UPDATES IN-PLACE) ================= */}
