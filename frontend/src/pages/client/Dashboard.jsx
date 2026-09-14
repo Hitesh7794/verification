@@ -311,23 +311,6 @@ export default function ClientDashboard() {
   const [irisStatus, setIrisStatus] = useState('idle') // 'idle' | 'scanning' | 'pass' | 'fail'
   const [irisResult, setIrisResult] = useState(persisted?.irisResult ?? null)
   
-  // Hardware status hook
-  const { status: hwFpStatus, device: hwFpDevice } = useDeviceStatus()
-  const [hwIrisConnected, setHwIrisConnected] = useState(false)
-
-  useEffect(() => {
-    let alive = true
-    async function checkIris() {
-      const ok = await isIrisServiceReachable(1000)
-      if (alive) setHwIrisConnected(ok)
-    }
-    checkIris()
-    const t = setInterval(checkIris, 3000)
-    return () => {
-      alive = false
-      clearInterval(t)
-    }
-  }, [])
 
   // Video / Live Stream
   const videoRef = useRef(null)
