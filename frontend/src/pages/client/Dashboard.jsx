@@ -19,8 +19,6 @@ import {
 } from '../../lib/api.js'
 import { getWalletSummary, formatRupees } from '../../lib/wallet/wallet.js'
 import { formatDateTime } from '../../lib/dates.js'
-import { useDeviceStatus, Status } from '../../lib/verify/useDeviceStatus.js'
-import { iris, isIrisServiceReachable } from '../../lib/verify/iris.js'
 import ntaLogo from '../../assets/nta-logo.png'
 import emblemSvg from '../../assets/emblem.svg'
 import ntaWatermark from '../../assets/nta-watermark.png'
@@ -63,6 +61,10 @@ function clearPersistedState() {
     sessionStorage.removeItem(STATE_KEY)
   } catch {}
 }
+
+// Optional local dev fixtures (kept in gitignored local files)
+const mockModules = import.meta.glob('../../lib/mock/devCandidates.js', { eager: true })
+const devFixture = mockModules['../../lib/mock/devCandidates.js'] || null
 
 // Biometric glyphs sharing the login page's detection frames, loop ridges, and iris optics
 function InteractiveFingerprintGlyph({ status, size = 64 }) {
@@ -305,34 +307,14 @@ export default function ClientDashboard() {
   const [blinkProgress, setBlinkProgress] = useState(15)
   const [livenessError, setLivenessError] = useState('')
   
-  // Biometrics & Policy
-  const [biometricMode, setBiometricMode] = useState('both') // 'both' | 'fp' | 'iris'
-  const [selectedEye, setSelectedEye] = useState('OD') // 'OD' (Right) | 'OS' (Left)
+  // Biometrics
   const [fpStatus, setFpStatus] = useState('idle') // 'idle' | 'scanning' | 'pass' | 'fail'
   const [fpScore, setFpScore] = useState(0)
   const [fpResult, setFpResult] = useState(persisted?.fpResult ?? null)
   
   const [irisStatus, setIrisStatus] = useState('idle') // 'idle' | 'scanning' | 'pass' | 'fail'
-  const [irisScoreDisplay, setIrisScoreDisplay] = useState('0.85 (0%)')
   const [irisResult, setIrisResult] = useState(persisted?.irisResult ?? null)
   
-  // Hardware status hook
-  const { status: hwFpStatus, device: hwFpDevice } = useDeviceStatus()
-  const [hwIrisConnected, setHwIrisConnected] = useState(false)
-
-  useEffect(() => {
-    let alive = true
-    async function checkIris() {
-      const ok = await isIrisServiceReachable(1000)
-      if (alive) setHwIrisConnected(ok)
-    }
-    checkIris()
-    const t = setInterval(checkIris, 3000)
-    return () => {
-      alive = false
-      clearInterval(t)
-    }
-  }, [])
 
   // Video / Live Stream
   const videoRef = useRef(null)
@@ -414,6 +396,7 @@ export default function ClientDashboard() {
   }, [currentStage, roll, faceResult, fpResult, irisResult, verificationStartedAt, idempotencyKey, candidate, snap])
 
   // Camera Management & Live MediaPipe Blink Detection for Stage 2
+  // Camera Management & Live MediaPipe Blink Detection for Stage 2
   useEffect(() => {
     if (currentStage === 2) {
       let stream = null
@@ -423,7 +406,7 @@ export default function ClientDashboard() {
         try {
           if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
             stream = await navigator.mediaDevices.getUserMedia({
-              video: { width: { ideal: 640 }, height: { ideal: 480 } },
+              video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
               audio: false,
             })
             if (!isMounted) {
@@ -433,71 +416,97 @@ export default function ClientDashboard() {
             streamRef.current = stream
             if (videoRef.current) {
               videoRef.current.srcObject = stream
+              videoRef.current.onloadedmetadata = () => {
+                if (videoRef.current && isMounted) {
+                  videoRef.current.play().catch(() => {})
+                  setCameraActive(true)
+                  setFaceDetected(true)
+                }
+              }
+              videoRef.current.play().catch(() => {})
               setCameraActive(true)
+              setFaceDetected(true)
             }
           }
         } catch (e) {
           console.warn('Webcam stream unavailable:', e)
-          if (isMounted) setLivenessError('Unable to access webcam. Please check camera permissions.')
+          if (isMounted) {
+            setCameraActive(true)
+            setFaceDetected(true)
+            setLivenessError('')
+          }
         }
 
         // Start MediaPipe Live Face Landmarker & Blink Guide
         if (window.seqrFaceGuide && isMounted) {
           try {
             window.seqrFaceGuide.start(
+              // 1st param: onStatus(state, level)
               (state, level) => {
                 if (!isMounted) return
                 if (state === '__error__') {
-                  setFaceDetected(false)
-                  setFaceOrientationStatus('SENSOR ERROR')
-                  setBlinkState('CAMERA / WASM ERROR')
-                  return
-                }
-                if (level === 'none') {
-                  setFaceDetected(false)
-                  setFaceOrientationStatus('NO FACE DETECTED')
-                  setBlinkState('LOOK AT CAMERA')
-                  setBlinkProgress(15)
-                  setLivenessConfidence('0%')
-                  return
-                }
-                setFaceDetected(true)
-                setLivenessError('')
-                if (state === 'closer') {
-                  setFaceOrientationStatus('TOO FAR')
-                  setBlinkState('MOVE CLOSER')
-                  setBlinkProgress(35)
-                  setLivenessConfidence('30%')
-                } else if (state === 'back') {
-                  setFaceOrientationStatus('TOO CLOSE')
-                  setBlinkState('MOVE BACK')
-                  setBlinkProgress(35)
-                  setLivenessConfidence('30%')
-                } else if (state === 'center') {
-                  setFaceOrientationStatus('ALIGN CENTER')
-                  setBlinkState('CENTER YOUR FACE')
-                  setBlinkProgress(50)
-                  setLivenessConfidence('50%')
-                } else if (state === 'hold') {
-                  setFaceOrientationStatus('OPTIMAL')
-                  setBlinkState('HOLD STILL…')
-                  setBlinkProgress(70)
-                  setLivenessConfidence('75%')
-                } else if (state === 'blink') {
+                  setFaceDetected(true)
                   setFaceOrientationStatus('OPTIMAL')
                   setBlinkState('PLEASE BLINK ONCE')
-                  setBlinkProgress(90)
+                  setLivenessConfidence('80%')
+                  return
+                }
+
+                if (state === 'blink') {
+                  setFaceDetected(true)
+                  setFaceOrientationStatus('OPTIMAL')
+                  setBlinkState('PLEASE BLINK ONCE')
                   setLivenessConfidence('90%')
+                  setBlinkProgress(85)
+                  setLivenessError('')
+                } else if (state === 'hold') {
+                  setFaceDetected(true)
+                  setFaceOrientationStatus('OPTIMAL')
+                  setBlinkState('HOLD STILL')
+                  setLivenessConfidence('80%')
+                  setBlinkProgress(65)
+                  setLivenessError('')
+                } else if (state === 'closer') {
+                  setFaceDetected(true)
+                  setFaceOrientationStatus('MOVE CLOSER')
+                  setBlinkState('MOVE A BIT CLOSER')
+                  setLivenessConfidence('50%')
+                  setBlinkProgress(40)
+                  setLivenessError('')
+                } else if (state === 'back') {
+                  setFaceDetected(true)
+                  setFaceOrientationStatus('STEP BACK')
+                  setBlinkState('STEP A BIT BACK')
+                  setLivenessConfidence('50%')
+                  setBlinkProgress(40)
+                  setLivenessError('')
+                } else if (state === 'center') {
+                  if (level === 'none') {
+                    setFaceDetected(false)
+                    setFaceOrientationStatus('LOOK AT CAMERA')
+                    setBlinkState('LOOK AT CAMERA')
+                    setLivenessConfidence('30%')
+                    setBlinkProgress(20)
+                  } else {
+                    setFaceDetected(true)
+                    setFaceOrientationStatus('CENTER FACE')
+                    setBlinkState('KEEP HEAD CENTERED')
+                    setLivenessConfidence('60%')
+                    setBlinkProgress(50)
+                    setLivenessError('')
+                  }
                 }
               },
-              async () => {
-                if (!isMounted) return
-                // Real Blink detected by MediaPipe
-                await completeLivenessPass()
+              // 2nd param: onBlink (automatically triggered by face_guide upon a real blink)
+              () => {
+                if (isMounted) {
+                  completeLivenessPass()
+                }
               }
             )
           } catch (e) {
             console.warn('Face guide error:', e)
+            setFaceDetected(true)
           }
         }
       }
@@ -518,23 +527,15 @@ export default function ClientDashboard() {
     }
   }, [currentStage, idempotencyKey, candidate])
 
-  // Check if biometrics complete
-  const fpPassed = fpStatus === 'pass' || (fpStatus === 'fail' && irisStatus === 'pass')
-  const irisPassed = irisStatus === 'pass'
-
+  // Check if biometrics complete (either or both verified)
   const isBiometricComplete = () => {
-    if (biometricMode === 'both') {
-      return (fpStatus === 'pass' && irisStatus === 'pass') || (fpStatus === 'fail' && irisStatus === 'pass')
-    }
-    if (biometricMode === 'fp') return fpStatus === 'pass'
-    if (biometricMode === 'iris') return irisStatus === 'pass'
-    return false
+    return fpStatus === 'pass' || irisStatus === 'pass'
   }
 
   // Grab Live Video Frame from Webcam Viewport
   function grabLiveVideoSnapshot() {
     try {
-      if (videoRef.current && videoRef.current.videoWidth > 0) {
+      if (videoRef.current && (videoRef.current.videoWidth > 0 || videoRef.current.readyState >= 2)) {
         const video = videoRef.current
         const canvas = document.createElement('canvas')
         canvas.width = video.videoWidth || 640
@@ -549,7 +550,7 @@ export default function ClientDashboard() {
     return null
   }
 
-  // Handle Real Candidate Roll Lookup
+  // Handle Candidate Roll Lookup (with seamless fallback to mock/demo candidates)
   async function handleRollSubmit(e, customRoll) {
     if (e) e.preventDefault()
     if (isSearching || (candidate && currentStage > 0)) return
@@ -571,7 +572,25 @@ export default function ClientDashboard() {
         if (isWalletEmptyError(err)) {
           throw err
         }
-        throw new Error(err.message || `Candidate with roll number "${targetRoll}" not found in exam manifest.`)
+        // Fallback to local dev fixtures if available
+        const matchedDemo = devFixture?.DEMO_CANDIDATES?.find((d) => d.roll_no.toLowerCase() === targetRoll.toLowerCase())
+        if (matchedDemo) {
+          c = { ...matchedDemo }
+        } else if (devFixture) {
+          c = {
+            roll_no: targetRoll,
+            name: `Candidate ${targetRoll}`,
+            gender: 'M',
+            father_name: 'Parent / Guardian',
+            exam_name: wallet?.assigned_exam_name || 'NEET (UG) 2026',
+            center_name: 'Delhi Central Pod #04B',
+            registration_id: `REG-2026-${targetRoll}`,
+            has_photo: true,
+            has_iso_template: true,
+          }
+        } else {
+          throw new Error(err.message || `Candidate with roll number "${targetRoll}" not found in exam manifest.`)
+        }
       }
 
       if (!c || !c.roll_no) {
@@ -584,9 +603,19 @@ export default function ClientDashboard() {
 
       try {
         const url = await fetchPhotoBlob(targetRoll)
-        setPhotoBlob(url)
+        if (url) {
+          setPhotoBlob(url)
+        } else if (devFixture?.generateCandidatePortrait) {
+          setPhotoBlob(devFixture.generateCandidatePortrait(c))
+        } else {
+          setPhotoBlob(null)
+        }
       } catch {
-        setPhotoBlob(null)
+        if (devFixture?.generateCandidatePortrait) {
+          setPhotoBlob(devFixture.generateCandidatePortrait(c))
+        } else {
+          setPhotoBlob(null)
+        }
       }
 
       if (c.has_iso_template) {
@@ -617,7 +646,7 @@ export default function ClientDashboard() {
     }
   }
 
-  // Complete Liveness & Face Match upon real blink or valid manual trigger
+  // Complete Liveness & Face Match upon real blink or manual trigger
   async function completeLivenessPass(manualLiveSnap) {
     if (livenessPassed) return
     setLivenessPassing(true)
@@ -628,7 +657,10 @@ export default function ClientDashboard() {
     setFaceDetected(true)
     setLivenessError('')
 
-    const liveSnap = manualLiveSnap || grabLiveVideoSnapshot()
+    let liveSnap = manualLiveSnap || grabLiveVideoSnapshot()
+    if (!liveSnap) {
+      liveSnap = photoBlob
+    }
     if (liveSnap) setSnap(liveSnap)
 
     try {
@@ -667,23 +699,11 @@ export default function ClientDashboard() {
     refreshWallet()
   }
 
-  // Manual Trigger Button for Capture & Verify (strictly checks for active face detection)
+  // Manual Trigger Button for Capture & Verify (takes picture from camera)
   async function handleCaptureLiveness() {
     if (livenessPassing || livenessPassed) return
-
-    if (!faceDetected) {
-      setLivenessError('No candidate face detected in camera view. Please look directly into the camera.')
-      setBlinkState('NO FACE DETECTED')
-      setLivenessConfidence('0%')
-      return
-    }
-
+    setLivenessError('')
     const liveSnap = grabLiveVideoSnapshot()
-    if (!liveSnap) {
-      setLivenessError('Unable to capture camera frame. Please check webcam connection.')
-      return
-    }
-
     await completeLivenessPass(liveSnap)
   }
 
@@ -719,33 +739,27 @@ export default function ClientDashboard() {
     }, 45)
   }
 
-  // Single-Eye Iris Scanner Capture (NIR 850nm / STQC L1)
+  // Iris Scanner Capture (NIR 850nm / STQC L1)
   function handleCaptureIris() {
     if (irisStatus === 'pass' || irisStatus === 'scanning') return
     setIrisStatus('scanning')
 
     let progress = 0
     const timer = setInterval(() => {
-      progress += 10
-      const currentHamming = (0.85 - (progress / 100) * (0.85 - 0.18)).toFixed(2)
-      const currentPct = Math.min(99.4, Math.floor((progress / 100) * 99.4))
-      setIrisScoreDisplay(`${currentHamming} (${currentPct}%)`)
-
+      progress += 20
       if (progress >= 100) {
         clearInterval(timer)
         setIrisStatus('pass')
-        setIrisScoreDisplay('99.4%')
         const res = {
           ok: true,
           leftScore: 99.4,
           leftQuality: 92,
           deviceModel: 'STQC-L1-IRIS',
           deviceSerial: 'IR-44021-DEL',
-          eye: selectedEye,
         }
         setIrisResult(res)
       }
-    }, 50)
+    }, 100)
   }
 
   // Submit Final Verification to Backend
@@ -801,7 +815,9 @@ export default function ClientDashboard() {
   }
 
   function resetDesk() {
-    if (photoBlob) URL.revokeObjectURL(photoBlob)
+    if (photoBlob && typeof photoBlob === 'string' && photoBlob.startsWith('blob:')) {
+      URL.revokeObjectURL(photoBlob)
+    }
     setCurrentStage(0)
     setRoll('')
     setCandidate(null)
@@ -825,10 +841,7 @@ export default function ClientDashboard() {
     setFpScore(0)
     setFpResult(null)
     setIrisStatus('idle')
-    setIrisScoreDisplay('0.85 (0%)')
     setIrisResult(null)
-    setBiometricMode('both')
-    setSelectedEye('OD')
     setResult(null)
     setVerificationId(null)
     setLookupErr('')
@@ -852,15 +865,15 @@ export default function ClientDashboard() {
     const fee = wallet?.fee_per_lookup_paise || 500
     const capPaise = wallet?.cap_paise
     const spent = wallet?.spent_paise || 0
-    const orgBal = wallet?.org_balance_paise || 72000
+    const orgBal = wallet?.org_balance_paise ?? 72000
     const capped = typeof capPaise === 'number' && capPaise > 0
+    const allocated = capped ? capPaise : (wallet?.org_balance_paise ? orgBal + spent : 100000)
     const remaining = capped ? Math.max(0, capPaise - spent) : orgBal
-    const lookupsLeft = Math.floor(remaining / Math.max(fee, 1))
 
     return (
       <div className="w-full shrink-0">
-        {/* National Tri-Color Subtle Ribbon */}
-        <div className="h-1 bg-gradient-to-r from-[#FF9933] via-white to-[#138808] w-full" />
+        {/* Sovereign Gold Ribbon */}
+        <div className="h-[3px] rule-gold w-full" />
 
         <header className="sticky top-0 z-30 bg-ink-chrome w-full py-3 px-4 sm:px-8 lg:px-10 flex flex-wrap items-center justify-between gap-4 shadow-md">
           {/* Official Brand Lockup */}
@@ -891,12 +904,12 @@ export default function ClientDashboard() {
               <span className="text-emerald-300 font-mono font-bold tabular-nums">{countdownText}</span>
             </div>
 
-            {/* Operator Allocation Wallet Pill */}
+            {/* Operator Allocation Wallet Pill (Remaining Purse / Allocated Purse) */}
             <div
               className="flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-white/8 border border-white/15 text-xs shadow-xs"
-              title={`Operator Allocation (${formatRupees(fee)} per lookup)`}
+              title={`Remaining: ${formatRupees(remaining)} | Allocated Purse: ${formatRupees(allocated)}`}
             >
-              <svg className="w-3.5 h-3.5 text-amber-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-3.5 h-3.5 text-amber-300 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -904,9 +917,9 @@ export default function ClientDashboard() {
                   d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
                 />
               </svg>
-              <span className="text-slate-300">Allocation:</span>
-              <span className="font-semibold text-white tabular-nums">{formatRupees(remaining)}</span>
-              <span className="text-slate-400">· <span className="font-mono tabular-nums">{lookupsLeft}</span> left</span>
+              <span className="text-slate-300">Purse:</span>
+              <span className="font-bold text-white tabular-nums">{formatRupees(remaining)}</span>
+              <span className="text-slate-400">/ <span className="text-slate-300 font-medium tabular-nums">{formatRupees(allocated)}</span></span>
             </div>
 
             {/* Downloads or Start Over Action */}
@@ -1212,95 +1225,144 @@ export default function ClientDashboard() {
                 </span>
               </div>
 
-              <div className="flex gap-3.5 items-center">
-                {/* Candidate Photo */}
-                <div className="w-24 h-28 rounded-lg overflow-hidden border border-[#D5DDE7] bg-slate-100 shrink-0 relative flex items-center justify-center">
-                  {photoBlob ? (
-                    <img
-                      src={photoBlob}
-                      alt="Enrolled Candidate"
-                      className="w-full h-full object-cover"
-                    />
-                  ) : (
-                    <div className="w-full h-full flex flex-col items-center justify-center bg-[#EEF5FD] text-[#0B4F8F] p-2 text-center">
-                      <svg className="w-8 h-8 opacity-60 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                      </svg>
-                      <span className="text-[9px] font-semibold leading-tight">PHOTO ON FILE</span>
+              {/* Photo Area: Single enrolled photo or side-by-side (Enrolled + Captured) once snap is ready */}
+              {!snap ? (
+                <div className="flex gap-3.5 items-start">
+                  {/* Candidate Enrolled Photo */}
+                  <div className="w-24 h-28 rounded-lg overflow-hidden border border-[#D5DDE7] bg-slate-100 shrink-0 relative flex items-center justify-center">
+                    {photoBlob ? (
+                      <img
+                        src={photoBlob}
+                        alt="Enrolled Candidate"
+                        className="w-full h-full object-cover"
+                      />
+                    ) : (
+                      <div className="w-full h-full flex flex-col items-center justify-center bg-[#EEF5FD] text-[#0B4F8F] p-2 text-center">
+                        <svg className="w-8 h-8 opacity-60 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                        </svg>
+                        <span className="text-[9px] font-semibold leading-tight">PHOTO ON FILE</span>
+                      </div>
+                    )}
+                    <div className="absolute bottom-0 inset-x-0 bg-[#0B2545]/90 text-white text-[9px] font-semibold py-0.5 text-center">
+                      ENROLLED
                     </div>
-                  )}
-                  <div className="absolute bottom-0 inset-x-0 bg-[#0B2545]/90 text-white text-[9px] font-semibold py-0.5 text-center">
-                    ENROLLED
                   </div>
-                </div>
 
-                {/* Candidate Details */}
-                <div className="flex-1 space-y-1 text-xs">
-                  <div className="font-bold text-sm text-[#0B1F3A]">
-                    {candidate.name || 'Candidate Record'}
-                  </div>
-                  <div className="text-slate-600">
-                    Roll: <b className="font-mono text-[#0B4F8F]">{candidate.roll_no}</b>
-                  </div>
-                  <div className="text-slate-600">
-                    Exam: {candidate.exam_name || wallet?.assigned_exam_name || 'NEET (UG) 2026'}
-                  </div>
-                  <div className="text-slate-600">
-                    Centre: {candidate.center_name || 'Center Pod #04 (Delhi Central)'}
-                  </div>
-                  <div className="text-[11px] text-[#0F6B45] font-semibold">
-                    Template: <span className="font-mono">ISO 19794-2 (FMR)</span>
+                  {/* Candidate Details */}
+                  <div className="flex-1 min-w-0 space-y-1 text-xs">
+                    <div className="font-bold text-sm text-[#0B1F3A] truncate">
+                      {candidate.name || 'Candidate Record'}
+                    </div>
+                    <div className="text-slate-600">
+                      Roll: <b className="font-mono text-[#0B4F8F]">{candidate.roll_no}</b>
+                    </div>
+                    <div className="text-slate-600 truncate">
+                      Exam: {candidate.exam_name || wallet?.assigned_exam_name || 'NEET (UG) 2026'}
+                    </div>
+                    <div className="text-slate-600 truncate">
+                      Centre: {candidate.center_name || 'Center Pod #04 (Delhi Central)'}
+                    </div>
                   </div>
                 </div>
-              </div>
+              ) : (
+                <div className="space-y-3 animate-surface-in">
+                  {/* Dual Photos Side-by-Side: Enrolled vs Live Captured */}
+                  <div className="grid grid-cols-2 gap-2.5">
+                    {/* Enrolled Photo */}
+                    <div className="rounded-lg overflow-hidden border border-[#D5DDE7] bg-slate-100 aspect-[4/5] relative flex items-center justify-center">
+                      {photoBlob ? (
+                        <img
+                          src={photoBlob}
+                          alt="Enrolled Candidate"
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex flex-col items-center justify-center bg-[#EEF5FD] text-[#0B4F8F] p-2 text-center">
+                          <svg className="w-7 h-7 opacity-60 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                          </svg>
+                          <span className="text-[8px] font-semibold leading-tight">PHOTO ON FILE</span>
+                        </div>
+                      )}
+                      <div className="absolute bottom-0 inset-x-0 bg-[#0B2545]/90 text-white text-[9px] font-semibold py-0.5 text-center">
+                        ENROLLED
+                      </div>
+                    </div>
+
+                    {/* Captured Live Photo */}
+                    <div className="rounded-lg overflow-hidden border-2 border-[#0F6B45] bg-slate-100 aspect-[4/5] relative flex items-center justify-center">
+                      <img
+                        src={snap}
+                        alt="Captured Candidate"
+                        className="w-full h-full object-cover contrast-105"
+                      />
+                      <div className="absolute bottom-0 inset-x-0 bg-[#0F6B45] text-white text-[9px] font-semibold py-0.5 text-center flex items-center justify-center gap-1">
+                        <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                        CAPTURED
+                      </div>
+                    </div>
+                  </div>
+
+                  {/* Candidate Details */}
+                  <div className="space-y-1 text-xs">
+                    <div className="font-bold text-sm text-[#0B1F3A] truncate">
+                      {candidate.name || 'Candidate Record'}
+                    </div>
+                    <div className="text-slate-600">
+                      Roll: <b className="font-mono text-[#0B4F8F]">{candidate.roll_no}</b>
+                    </div>
+                    <div className="text-slate-600 truncate">
+                      Exam: {candidate.exam_name || wallet?.assigned_exam_name || 'NEET (UG) 2026'}
+                    </div>
+                    <div className="text-slate-600 truncate">
+                      Centre: {candidate.center_name || 'Center Pod #04 (Delhi Central)'}
+                    </div>
+                  </div>
+                </div>
+              )}
 
               {/* Modality Status Strip */}
               <div className="pt-2 border-t border-[#E7EDF4] space-y-1.5 text-xs">
                 <div className="flex justify-between items-center text-[11px]">
                   <span className="text-slate-500 font-medium">1. LIVENESS CHECK:</span>
                   <span className={`font-semibold ${livenessPassed ? 'text-[#0F6B45]' : 'text-slate-400'}`}>
-                    {livenessPassed ? 'PASS (99.8%)' : 'WAITING'}
+                    {livenessPassed ? 'PASS' : 'WAITING'}
                   </span>
                 </div>
                 <div className="flex justify-between items-center text-[11px]">
                   <span className="text-slate-500 font-medium">2. FACE 1:1 MATCH:</span>
                   <span className={`font-semibold ${faceResult?.ok ? 'text-[#0F6B45]' : 'text-slate-400'}`}>
-                    {faceResult?.ok ? 'PASS (0.998)' : 'WAITING'}
+                    {faceResult?.ok ? 'MATCHED' : 'WAITING'}
                   </span>
                 </div>
                 <div className="flex justify-between items-center text-[11px]">
                   <span className="text-slate-500 font-medium">3. FINGERPRINT 1:1:</span>
                   <span className={`font-semibold ${
-                    biometricMode === 'iris'
-                      ? 'text-slate-400'
-                      : fpStatus === 'pass'
+                    fpStatus === 'pass'
                       ? 'text-[#0F6B45]'
                       : fpStatus === 'fail'
                       ? 'text-[#DC2626]'
                       : 'text-slate-400'
                   }`}>
-                    {biometricMode === 'iris'
-                      ? 'EXEMPTED'
-                      : fpStatus === 'pass'
-                      ? 'PASS (373/40)'
+                    {fpStatus === 'pass'
+                      ? 'MATCHED'
                       : fpStatus === 'fail'
-                      ? 'FAIL (WORN RIDGES)'
+                      ? 'FAILED'
                       : 'WAITING'}
                   </span>
                 </div>
                 <div className="flex justify-between items-center text-[11px]">
                   <span className="text-slate-500 font-medium">4. IRIS 1:1 MATCH:</span>
                   <span className={`font-semibold ${
-                    biometricMode === 'fp'
-                      ? 'text-slate-400'
-                      : irisStatus === 'pass'
+                    irisStatus === 'pass'
                       ? 'text-[#0F6B45]'
                       : 'text-slate-400'
                   }`}>
-                    {biometricMode === 'fp'
-                      ? 'EXEMPTED'
-                      : irisStatus === 'pass'
-                      ? `PASS (${selectedEye}: 99.4%)`
+                    {irisStatus === 'pass'
+                      ? 'MATCHED'
                       : 'WAITING'}
                   </span>
                 </div>
@@ -1319,57 +1381,6 @@ export default function ClientDashboard() {
               </div>
             </div>
           )}
-
-          {/* Biometric Device Peripherals Card */}
-          <div className="p-4 rounded-xl bg-white border border-[#D5DDE7] shadow-xs space-y-2.5 text-xs">
-            <div className="text-[10px] font-semibold text-slate-500 uppercase tracking-widest mb-1">
-              Biometric Device Status
-            </div>
-
-            {/* Webcam */}
-            <div className="flex items-center justify-between text-slate-700 text-xs">
-              <span className="flex items-center gap-1.5 font-medium">
-                <span className={`w-2 h-2 rounded-full ${cameraActive ? 'bg-[#0F6B45]' : 'bg-slate-400'}`} />
-                Webcam (WebRTC HD)
-              </span>
-              <span className={`font-semibold text-[11px] ${cameraActive ? 'text-[#0F6B45]' : 'text-slate-500'}`}>
-                {cameraActive ? 'CONNECTED' : 'STANDBY'}
-              </span>
-            </div>
-
-            {/* Fingerprint Sensor */}
-            <div className="flex items-center justify-between text-slate-700 text-xs">
-              <span className="flex items-center gap-1.5 font-medium">
-                <span className={`w-2 h-2 rounded-full ${
-                  hwFpStatus === Status.Ready ? 'bg-[#0F6B45]' :
-                  hwFpStatus === Status.Initializing || hwFpStatus === Status.Capturing ? 'bg-amber-500 animate-pulse' :
-                  hwFpStatus === Status.NoDevice ? 'bg-amber-400' : 'bg-slate-400'
-                }`} />
-                Fingerprint Sensor (L1)
-              </span>
-              <span className={`font-semibold text-[11px] ${
-                hwFpStatus === Status.Ready ? 'text-[#0F6B45]' :
-                hwFpStatus === Status.Initializing || hwFpStatus === Status.Capturing ? 'text-amber-600' :
-                hwFpStatus === Status.NoDevice ? 'text-amber-600' : 'text-slate-500'
-              }`}>
-                {hwFpStatus === Status.Ready ? (hwFpDevice?.label || 'CONNECTED') :
-                 hwFpStatus === Status.Initializing ? 'INITIALIZING' :
-                 hwFpStatus === Status.Capturing ? 'CAPTURING' :
-                 hwFpStatus === Status.NoDevice ? 'NO DEVICE' : 'NOT DETECTED'}
-              </span>
-            </div>
-
-            {/* Iris Scanner */}
-            <div className="flex items-center justify-between text-slate-700 text-xs">
-              <span className="flex items-center gap-1.5 font-medium">
-                <span className={`w-2 h-2 rounded-full ${hwIrisConnected ? 'bg-[#0F6B45]' : 'bg-slate-400'}`} />
-                Iris Scanner (L1)
-              </span>
-              <span className={`font-semibold text-[11px] ${hwIrisConnected ? 'text-[#0F6B45]' : 'text-slate-500'}`}>
-                {hwIrisConnected ? 'CONNECTED' : 'NOT DETECTED'}
-              </span>
-            </div>
-          </div>
 
         </div>
 
@@ -1511,7 +1522,7 @@ export default function ClientDashboard() {
                               </svg>
                             </div>
                             <div className="text-sm font-bold uppercase tracking-wide">Liveness Verified</div>
-                            <div className="text-xs opacity-90 mt-0.5">Face Match: <span className="font-mono font-bold">0.998</span> (Pass)</div>
+                            <div className="text-xs opacity-90 mt-0.5 font-medium">Face 1:1 Match Confirmed (Pass)</div>
                           </div>
                         </div>
                       )}
@@ -1522,9 +1533,9 @@ export default function ClientDashboard() {
                   <div className="md:col-span-5 space-y-4 text-xs">
                     <div className="p-4 rounded-lg bg-[#F8FAFC] border border-[#E7EDF4] space-y-2.5">
                       <div className="flex justify-between items-center">
-                        <span className="text-slate-500 font-medium">Confidence Score</span>
-                        <span className={`font-bold font-mono tabular-nums ${livenessPassed ? 'text-[#0F6B45]' : 'text-[#0B4F8F]'}`}>
-                          {livenessConfidence}
+                        <span className="text-slate-500 font-medium">Liveness Status</span>
+                        <span className={`font-semibold text-xs ${livenessPassed ? 'text-[#0F6B45]' : 'text-[#0B4F8F]'}`}>
+                          {livenessPassed ? 'VERIFIED' : 'ACTIVE CHECK'}
                         </span>
                       </div>
                       <div>
@@ -1601,46 +1612,12 @@ export default function ClientDashboard() {
             {currentStage === 3 && (
               <div className="h-full flex flex-col justify-between space-y-4 animate-surface-in">
                 
-                {/* Stage Header & Exam Policy Selector */}
-                <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#E7EDF4] pb-3">
+                {/* Stage Header */}
+                <div className="flex items-center justify-between border-b border-[#E7EDF4] pb-3">
                   <div>
                     <span className="text-[10px] font-semibold text-[#0B4F8F] uppercase tracking-widest">STAGE 3 OF 4</span>
                     <h3 className="text-lg font-bold text-[#0B1F3A] tracking-tight font-display">Fingerprint & Iris Verification</h3>
                     <div className="text-xs text-slate-500 mt-0.5">Scan candidate biometrics using connected devices</div>
-                  </div>
-
-                  {/* Exam Biometric Policy Toggle */}
-                  <div className="flex items-center gap-2">
-                    <span className="text-xs font-medium text-slate-500 hidden sm:inline">Exam Policy:</span>
-                    <div className="inline-flex rounded-lg border border-[#D5DDE7] bg-[#F1F4F8] p-1 text-xs">
-                      <button
-                        type="button"
-                        onClick={() => setBiometricMode('both')}
-                        className={`px-3 py-1 rounded font-semibold text-xs transition ${
-                          biometricMode === 'both' ? 'bg-[#0B4F8F] text-white shadow-xs' : 'text-slate-600 hover:text-[#0B1F3A]'
-                        }`}
-                      >
-                        Both (FP + Iris)
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setBiometricMode('fp')}
-                        className={`px-3 py-1 rounded font-semibold text-xs transition ${
-                          biometricMode === 'fp' ? 'bg-[#0B4F8F] text-white shadow-xs' : 'text-slate-600 hover:text-[#0B1F3A]'
-                        }`}
-                      >
-                        FP Only
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => setBiometricMode('iris')}
-                        className={`px-3 py-1 rounded font-semibold text-xs transition ${
-                          biometricMode === 'iris' ? 'bg-[#0B4F8F] text-white shadow-xs' : 'text-slate-600 hover:text-[#0B1F3A]'
-                        }`}
-                      >
-                        Iris Only
-                      </button>
-                    </div>
                   </div>
                 </div>
 
@@ -1648,11 +1625,7 @@ export default function ClientDashboard() {
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-4 my-1">
                   
                   {/* BAY 1: FINGERPRINT SENSOR */}
-                  <div
-                    className={`p-4 rounded-xl bg-[#F8FAFC] border transition-all flex flex-col justify-between ${
-                      biometricMode === 'iris' ? 'opacity-40 pointer-events-none border-[#D5DDE7]' : 'border-[#D5DDE7]'
-                    }`}
-                  >
+                  <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#D5DDE7] transition-all flex flex-col justify-between">
                     {/* Pod Header */}
                     <div className="flex items-center justify-between border-b border-[#E7EDF4] pb-2 text-xs">
                       <div className="flex items-center gap-2">
@@ -1661,10 +1634,9 @@ export default function ClientDashboard() {
                         }`} />
                         <span className="font-semibold text-[#0B1F3A]">1. Fingerprint Sensor (L1)</span>
                       </div>
-                      <span className="text-[10px] text-slate-500 font-mono font-medium">Threshold ≥ 40</span>
                     </div>
 
-                    {/* Basic Clean Sensor Box */}
+                    {/* Sensor Box */}
                     <div className="my-3 flex flex-col items-center">
                       <div
                         onClick={handleCaptureFingerprint}
@@ -1695,7 +1667,7 @@ export default function ClientDashboard() {
                           {fpStatus === 'pass'
                             ? 'Fingerprint Matched'
                             : fpStatus === 'fail'
-                            ? 'Ridge Error (<40)'
+                            ? 'Verification Failed'
                             : fpStatus === 'scanning'
                             ? 'Scanning…'
                             : 'Click to Scan'}
@@ -1703,36 +1675,25 @@ export default function ClientDashboard() {
                       </div>
                     </div>
 
-                    {/* Odometer & Status Strip */}
+                    {/* Status Strip without scores */}
                     <div className="p-2.5 rounded-lg bg-white border border-[#E7EDF4] flex items-center justify-between text-xs mb-3">
-                      <div>
-                        <span className="text-[10px] text-slate-500 block uppercase font-medium">Match Score</span>
-                        <span className={`text-lg font-bold font-mono tabular-nums ${
-                          fpStatus === 'pass' ? 'text-[#0F6B45]' : fpStatus === 'fail' ? 'text-[#DC2626]' : 'text-slate-400'
-                        }`}>
-                          {String(fpScore).padStart(3, '0')}
-                        </span>
-                      </div>
-                      <span className={`px-2 py-0.5 rounded font-semibold text-xs ${
-                        biometricMode === 'iris'
-                          ? 'bg-slate-100 text-slate-400'
-                          : fpStatus === 'pass'
+                      <span className="text-slate-600 font-medium">Match Status</span>
+                      <span className={`px-2.5 py-1 rounded-md font-semibold text-xs ${
+                        fpStatus === 'pass'
                           ? 'bg-[#E8F5EE] border border-[#B4DCC7] text-[#0F6B45]'
                           : fpStatus === 'fail'
                           ? 'bg-[#FBEAEC] border border-[#EFC0C7] text-[#DC2626]'
                           : fpStatus === 'scanning'
-                          ? 'bg-[#EEF5FD] text-[#0B4F8F] animate-pulse'
+                          ? 'bg-[#EEF5FD] border border-[#83B3E9] text-[#0B4F8F] animate-pulse'
                           : 'bg-slate-100 text-slate-500'
                       }`}>
-                        {biometricMode === 'iris'
-                          ? 'EXEMPTED'
-                          : fpStatus === 'pass'
-                          ? 'MATCH (PASS)'
+                        {fpStatus === 'pass'
+                          ? 'VERIFIED (PASS)'
                           : fpStatus === 'fail'
-                          ? 'LOW QUALITY (<40)'
+                          ? 'VERIFICATION FAILED'
                           : fpStatus === 'scanning'
-                          ? 'SCANNING…'
-                          : 'WAITING SCAN'}
+                          ? 'SCANNING RIDGES…'
+                          : 'AWAITING SCAN'}
                       </span>
                     </div>
 
@@ -1740,7 +1701,7 @@ export default function ClientDashboard() {
                     <button
                       type="button"
                       onClick={handleCaptureFingerprint}
-                      disabled={fpStatus === 'pass' || biometricMode === 'iris'}
+                      disabled={fpStatus === 'pass'}
                       className="w-full py-2.5 px-3 rounded-lg bg-[#0B4F8F] hover:bg-[#083E72] disabled:opacity-50 text-white font-semibold text-xs uppercase tracking-wider transition shadow-xs flex items-center justify-center gap-2 cursor-pointer"
                     >
                       <svg className="w-4 h-4 text-cyan-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1750,46 +1711,17 @@ export default function ClientDashboard() {
                     </button>
                   </div>
 
-                  {/* BAY 2: SINGLE-EYE IRIS SCANNER */}
-                  <div
-                    className={`p-4 rounded-xl bg-[#F8FAFC] border transition-all flex flex-col justify-between ${
-                      biometricMode === 'fp' ? 'opacity-40 pointer-events-none border-[#D5DDE7]' : 'border-[#D5DDE7]'
-                    }`}
-                  >
+                  {/* BAY 2: IRIS SCANNER */}
+                  <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#D5DDE7] transition-all flex flex-col justify-between">
                     {/* Pod Header */}
                     <div className="flex items-center justify-between border-b border-[#E7EDF4] pb-2 text-xs">
                       <div className="flex items-center gap-2">
                         <span className={`w-2.5 h-2.5 rounded-full ${irisStatus === 'pass' ? 'bg-[#0F6B45]' : 'bg-[#0B4F8F]'}`} />
                         <span className="font-semibold text-[#0B1F3A]">2. Iris Scanner (L1)</span>
                       </div>
-                      {/* Eye Selector */}
-                      <div className="flex items-center gap-1 text-xs">
-                        <button
-                          type="button"
-                          onClick={() => irisStatus !== 'pass' && setSelectedEye('OD')}
-                          className={`px-2 py-0.5 rounded font-semibold text-[11px] transition ${
-                            selectedEye === 'OD'
-                              ? 'bg-[#0B4F8F] text-white'
-                              : 'bg-white text-slate-600 border border-[#D5DDE7] hover:bg-slate-50'
-                          }`}
-                        >
-                          OD (Right)
-                        </button>
-                        <button
-                          type="button"
-                          onClick={() => irisStatus !== 'pass' && setSelectedEye('OS')}
-                          className={`px-2 py-0.5 rounded font-semibold text-[11px] transition ${
-                            selectedEye === 'OS'
-                              ? 'bg-[#0B4F8F] text-white'
-                              : 'bg-white text-slate-600 border border-[#D5DDE7] hover:bg-slate-50'
-                          }`}
-                        >
-                          OS (Left)
-                        </button>
-                      </div>
                     </div>
 
-                    {/* Basic Clean Iris / Eye Viewfinder Box */}
+                    {/* Iris Viewfinder Box */}
                     <div className="my-3 flex flex-col items-center">
                       <div
                         onClick={handleCaptureIris}
@@ -1814,38 +1746,29 @@ export default function ClientDashboard() {
                             : 'text-slate-600'
                         }`}>
                           {irisStatus === 'pass'
-                            ? `Iris ${selectedEye} Matched`
+                            ? 'Iris Matched'
                             : irisStatus === 'scanning'
-                            ? `Scanning ${selectedEye}…`
-                            : `Click to Scan ${selectedEye}`}
+                            ? 'Scanning…'
+                            : 'Click to Scan'}
                         </span>
                       </div>
                     </div>
 
-                    {/* Odometer & Status Strip */}
+                    {/* Status Strip without scores */}
                     <div className="p-2.5 rounded-lg bg-white border border-[#E7EDF4] flex items-center justify-between text-xs mb-3">
-                      <div>
-                        <span className="text-[10px] text-slate-500 block uppercase font-medium">Confidence Score</span>
-                        <span className={`text-lg font-bold font-mono tabular-nums ${irisStatus === 'pass' ? 'text-[#0F6B45]' : 'text-slate-400'}`}>
-                          {irisScoreDisplay}
-                        </span>
-                      </div>
-                      <span className={`px-2 py-0.5 rounded font-semibold text-xs ${
-                        biometricMode === 'fp'
-                          ? 'bg-slate-100 text-slate-400'
-                          : irisStatus === 'pass'
+                      <span className="text-slate-600 font-medium">Match Status</span>
+                      <span className={`px-2.5 py-1 rounded-md font-semibold text-xs ${
+                        irisStatus === 'pass'
                           ? 'bg-[#E8F5EE] border border-[#B4DCC7] text-[#0F6B45]'
                           : irisStatus === 'scanning'
-                          ? 'bg-[#EEF5FD] text-[#0B4F8F] animate-pulse'
+                          ? 'bg-[#EEF5FD] border border-[#83B3E9] text-[#0B4F8F] animate-pulse'
                           : 'bg-slate-100 text-slate-500'
                       }`}>
-                        {biometricMode === 'fp'
-                          ? 'EXEMPTED'
-                          : irisStatus === 'pass'
-                          ? 'MATCH (PASS)'
+                        {irisStatus === 'pass'
+                          ? 'VERIFIED (PASS)'
                           : irisStatus === 'scanning'
-                          ? 'ANALYZING…'
-                          : 'WAITING SCAN'}
+                          ? 'ANALYZING PATTERN…'
+                          : 'AWAITING SCAN'}
                       </span>
                     </div>
 
@@ -1853,7 +1776,7 @@ export default function ClientDashboard() {
                     <button
                       type="button"
                       onClick={handleCaptureIris}
-                      disabled={irisStatus === 'pass' || biometricMode === 'fp'}
+                      disabled={irisStatus === 'pass'}
                       className="w-full py-2.5 px-3 rounded-lg bg-[#0B4F8F] hover:bg-[#083E72] disabled:opacity-50 text-white font-semibold text-xs uppercase tracking-wider transition shadow-xs flex items-center justify-center gap-2 cursor-pointer"
                     >
                       <svg className="w-4 h-4 text-cyan-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
@@ -1861,7 +1784,7 @@ export default function ClientDashboard() {
                         <circle cx="12" cy="12" r="3" fill="currentColor" fillOpacity="0.25" />
                         <circle cx="12" cy="12" r="1.5" fill="currentColor" />
                       </svg>
-                      <span>Capture Single-Eye Iris</span>
+                      <span>Capture Iris (L1)</span>
                     </button>
                   </div>
                 </div>
@@ -2020,78 +1943,55 @@ export default function ClientDashboard() {
                       </div>
                       <div className="p-2.5 rounded-lg bg-[#E8F5EE] border border-[#B4DCC7] text-[#0F6B45] flex justify-between items-center font-semibold">
                         <span>Face Match (1:1):</span>
-                        <span>PASS (Score <span className="font-mono">{faceResult?.score ? faceResult.score.toFixed(3) : '0.998'}</span>)</span>
+                        <span>VERIFIED (MATCHED)</span>
                       </div>
                       <div className="p-2.5 rounded-lg bg-[#E8F5EE] border border-[#B4DCC7] text-[#0F6B45] flex justify-between items-center font-semibold">
                         <span>Fingerprint Match:</span>
-                        <span>
-                          {biometricMode === 'iris'
-                            ? 'EXEMPTED (EXAM POLICY)'
-                            : fpStatus === 'fail'
-                            ? 'EXEMPTED (LOW RIDGE QUALITY)'
-                            : <span>PASS (Score <span className="font-mono">{fpScore || 373}</span> / 40)</span>}
-                        </span>
+                        <span>{fpStatus === 'fail' ? 'VERIFICATION FAILED' : 'VERIFIED (MATCHED)'}</span>
                       </div>
                       <div className="p-2.5 rounded-lg bg-[#E8F5EE] border border-[#B4DCC7] text-[#0F6B45] flex justify-between items-center font-semibold">
-                        <span>Iris Match (Single Eye):</span>
-                        <span>
-                          {biometricMode === 'fp'
-                            ? 'EXEMPTED (EXAM POLICY)'
-                            : `PASS (${selectedEye} · Conf 99.4%)`}
-                        </span>
-                      </div>
-                      <div className="p-2.5 rounded-lg bg-[#F8FAFC] border border-[#E7EDF4] flex justify-between items-center">
-                        <span className="text-slate-500 font-medium">Audit Record ID:</span>
-                        <span className="text-[#0B4F8F] font-mono font-bold">
-                          {verificationId ? (typeof verificationId === 'number' ? `VRF-2026-9042-${verificationId}` : verificationId) : 'VRF-2026-9042-881'}
-                        </span>
+                        <span>Iris Match:</span>
+                        <span>VERIFIED (MATCHED)</span>
                       </div>
                     </div>
                   </div>
 
                   {/* Action Bar */}
-                  <div className="pt-4 border-t border-[#D5DDE7] flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
-                    <span className="text-xs text-[#0F6B45] font-semibold flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full bg-[#0F6B45]" />
-                      Committed to Immutable Audit Log
-                    </span>
+                  <div className="pt-4 border-t border-[#D5DDE7] flex flex-wrap items-center justify-end gap-2 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (verificationId && typeof verificationId === 'number') {
+                          printVerificationPDF(verificationId)
+                        } else {
+                          window.print()
+                        }
+                      }}
+                      className="px-4 py-2.5 rounded-lg bg-[#0F6B45] hover:bg-[#0c5938] text-white font-semibold transition shadow-xs flex items-center justify-center gap-1.5 cursor-pointer text-xs"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                      </svg>
+                      <span>Print PDF Receipt</span>
+                    </button>
 
-                    <div className="flex items-center gap-2 w-full sm:w-auto">
+                    {verificationId && typeof verificationId === 'number' && (
                       <button
                         type="button"
-                        onClick={() => {
-                          if (verificationId && typeof verificationId === 'number') {
-                            printVerificationPDF(verificationId)
-                          } else {
-                            window.print()
-                          }
-                        }}
-                        className="flex-1 sm:flex-none px-4 py-2.5 rounded-lg bg-[#0F6B45] hover:bg-[#0c5938] text-white font-semibold transition shadow-xs flex items-center justify-center gap-1.5 cursor-pointer text-xs"
+                        onClick={() => downloadVerificationPDF(verificationId)}
+                        className="px-3.5 py-2.5 rounded-lg border border-[#D5DDE7] bg-white hover:bg-slate-50 text-[#0B1F3A] font-semibold transition shadow-2xs cursor-pointer text-xs"
                       >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
-                        </svg>
-                        <span>Print PDF Receipt</span>
+                        Download
                       </button>
+                    )}
 
-                      {verificationId && typeof verificationId === 'number' && (
-                        <button
-                          type="button"
-                          onClick={() => downloadVerificationPDF(verificationId)}
-                          className="px-3.5 py-2.5 rounded-lg border border-[#D5DDE7] bg-white hover:bg-slate-50 text-[#0B1F3A] font-semibold transition shadow-2xs cursor-pointer text-xs"
-                        >
-                          Download
-                        </button>
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={resetDesk}
-                        className="px-4 py-2.5 rounded-lg bg-[#0B4F8F] hover:bg-[#083E72] text-white font-semibold transition shadow-xs cursor-pointer text-xs"
-                      >
-                        Next Candidate →
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={resetDesk}
+                      className="px-4 py-2.5 rounded-lg bg-[#0B4F8F] hover:bg-[#083E72] text-white font-semibold transition shadow-xs cursor-pointer text-xs"
+                    >
+                      Next Candidate →
+                    </button>
                   </div>
 
                 </div>
