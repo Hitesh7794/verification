@@ -60,7 +60,7 @@ const PRODUCTS = [
       'Dual infrared LED illumination for clear capture in any lighting condition',
       'Scratch-proof optical prism with high ambient light rejection',
       'Fast auto-focus & optical distance indicator for seamless capture',
-      'Standard USB interface compatible with examination workstations',
+      'Standard USB interface compatible with examination verification desks',
     ],
   },
 ]
@@ -79,7 +79,7 @@ export default function Products() {
         <PageHead
           eyebrow="Hardware"
           title="Certified Biometric Products"
-          subtitle="Officially compatible biometric capture devices for center verification agent workstations."
+          subtitle="Officially compatible biometric capture devices for center verification desks."
         />
 
         {/* Filter Pills */}

@@ -17,7 +17,14 @@ import ReportProblem from '../support/ReportProblem.jsx'
 // with existing callers (client, admin, superadmin dashboards still pass
 // them) but are no longer rendered in the chrome — page-level titles
 // live in the PageHeader component inside each page's body.
-export default function AppShell({ children, walletRefreshKey, onWalletBalanceChange }) {
+export default function AppShell({
+  children,
+  walletRefreshKey,
+  onWalletBalanceChange,
+  fullWidth = false,
+  customHeader = null,
+  customFooter = null,
+}) {
   const { user, logout } = useAuth()
   const nav = useNavigate()
 
@@ -53,37 +60,54 @@ export default function AppShell({ children, walletRefreshKey, onWalletBalanceCh
   const showWallet = user?.role === 'admin'
 
   return (
-    <div className="min-h-screen flex flex-col bg-slate-50">
-      {/* Navy chrome + gold rule — the same authority band the superadmin
-          and reviewer desks carry, so an operator, a reviewer and the
-          platform team are visibly inside one product. */}
-      <header className="sticky top-0 z-30 bg-ink-chrome">
-        <div className="mx-auto max-w-7xl px-6 h-16 flex items-center justify-between gap-4">
-          <Brand linkTo="/" tone="inverse" />
-          <div className="flex items-center gap-4">
-            {showWallet && (
-              <WalletWidget
-                refreshKey={walletRefreshKey || 0}
-                onBalanceChange={onWalletBalanceChange}
-              />
-            )}
-            <ReportProblem />
-            <AvatarMenu user={user} onLogout={handleLogout} />
+    <div className="min-h-screen flex flex-col justify-between bg-[#F1F4F8] text-[#0B1F3A]">
+      {customHeader ? (
+        typeof customHeader === 'function' ? (
+          customHeader({ user, handleLogout, ReportProblem, AvatarMenu })
+        ) : (
+          customHeader
+        )
+      ) : (
+        <header className="sticky top-0 z-30 bg-ink-chrome">
+          <div className="mx-auto max-w-7xl px-6 h-16 flex items-center justify-between gap-4">
+            <Brand linkTo="/" tone="inverse" />
+            <div className="flex items-center gap-4">
+              {showWallet && (
+                <WalletWidget
+                  refreshKey={walletRefreshKey || 0}
+                  onBalanceChange={onWalletBalanceChange}
+                />
+              )}
+              <ReportProblem />
+              <AvatarMenu user={user} onLogout={handleLogout} />
+            </div>
           </div>
+          <div className="h-[2px] rule-gold" />
+        </header>
+      )}
+
+      <main className="flex-1 w-full">
+        <div className={fullWidth ? 'w-full px-4 sm:px-8 lg:px-10 py-5 space-y-5 animate-surface-in' : 'mx-auto max-w-7xl px-6 py-8 animate-surface-in'}>
+          {children}
         </div>
-        <div className="h-[2px] rule-gold" />
-      </header>
-      <main className="flex-1">
-        <div className="mx-auto max-w-7xl px-6 py-8 animate-surface-in">{children}</div>
       </main>
-      <footer className="border-t border-slate-200 bg-white">
-        <div className="mx-auto max-w-7xl px-6 py-4 flex flex-wrap items-center justify-between gap-2">
-          <span className="text-xs font-semibold text-slate-600">{PRODUCT_NAME}</span>
-          <span className="text-[11px] text-slate-400">
-            Candidate identity verification for examination boards and institutions
-          </span>
-        </div>
-      </footer>
+
+      {customFooter ? (
+        typeof customFooter === 'function' ? (
+          customFooter({ user, handleLogout, ReportProblem, AvatarMenu })
+        ) : (
+          customFooter
+        )
+      ) : (
+        <footer className="border-t border-slate-200 bg-white">
+          <div className="mx-auto max-w-7xl px-6 py-4 flex flex-wrap items-center justify-between gap-2">
+            <span className="text-xs font-semibold text-slate-600">{PRODUCT_NAME}</span>
+            <span className="text-[11px] text-slate-400">
+              Candidate identity verification for examination boards and institutions
+            </span>
+          </div>
+        </footer>
+      )}
     </div>
   )
 }
