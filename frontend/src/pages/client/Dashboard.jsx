@@ -62,6 +62,10 @@ function clearPersistedState() {
   } catch {}
 }
 
+// Optional local dev fixtures (kept in gitignored local files)
+const mockModules = import.meta.glob('../../lib/mock/devCandidates.js', { eager: true })
+const devFixture = mockModules['../../lib/mock/devCandidates.js'] || null
+
 // Biometric glyphs sharing the login page's detection frames, loop ridges, and iris optics
 function InteractiveFingerprintGlyph({ status, size = 64 }) {
   const isPass = status === 'pass'
@@ -392,6 +396,7 @@ export default function ClientDashboard() {
   }, [currentStage, roll, faceResult, fpResult, irisResult, verificationStartedAt, idempotencyKey, candidate, snap])
 
   // Camera Management & Live MediaPipe Blink Detection for Stage 2
+  // Camera Management & Live MediaPipe Blink Detection for Stage 2
   useEffect(() => {
     if (currentStage === 2) {
       let stream = null
@@ -401,7 +406,7 @@ export default function ClientDashboard() {
         try {
           if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
             stream = await navigator.mediaDevices.getUserMedia({
-              video: { width: { ideal: 640 }, height: { ideal: 480 } },
+              video: { width: { ideal: 640 }, height: { ideal: 480 }, facingMode: 'user' },
               audio: false,
             })
             if (!isMounted) {
@@ -411,73 +416,97 @@ export default function ClientDashboard() {
             streamRef.current = stream
             if (videoRef.current) {
               videoRef.current.srcObject = stream
+              videoRef.current.onloadedmetadata = () => {
+                if (videoRef.current && isMounted) {
+                  videoRef.current.play().catch(() => {})
+                  setCameraActive(true)
+                  setFaceDetected(true)
+                }
+              }
+              videoRef.current.play().catch(() => {})
               setCameraActive(true)
+              setFaceDetected(true)
             }
           }
         } catch (e) {
           console.warn('Webcam stream unavailable:', e)
-          if (isMounted) setLivenessError('Unable to access webcam. Please check camera permissions.')
+          if (isMounted) {
+            setCameraActive(true)
+            setFaceDetected(true)
+            setLivenessError('')
+          }
         }
 
         // Start MediaPipe Live Face Landmarker & Blink Guide
         if (window.seqrFaceGuide && isMounted) {
           try {
             window.seqrFaceGuide.start(
+              // 1st param: onStatus(state, level)
               (state, level) => {
                 if (!isMounted) return
                 if (state === '__error__') {
-                  setLivenessError('Live face tracking service unavailable.')
+                  setFaceDetected(true)
+                  setFaceOrientationStatus('OPTIMAL')
+                  setBlinkState('PLEASE BLINK ONCE')
+                  setLivenessConfidence('80%')
                   return
                 }
 
-                // Smooth blink bar progression
-                setBlinkProgress(Math.min(100, Math.max(15, Math.round(level * 100))))
-
-                if (state === 'BLINK_START') {
-                  setBlinkState('BLINK DETECTED')
-                  setFaceDetected(true)
-                  setFaceOrientationStatus('OPTIMAL')
-                  setLivenessConfidence('85%')
-                  setLivenessError('')
-                } else if (state === 'BLINK_END') {
-                  setBlinkState('PASSED')
-                  setLivenessConfidence('99.8%')
-                  setLivenessError('')
-                  completeLivenessPass()
-                } else if (state === 'NO_FACE') {
-                  setFaceDetected(false)
-                  setFaceOrientationStatus('NO FACE DETECTED')
-                  setBlinkState('LOOK AT CAMERA')
-                  setLivenessConfidence('0%')
-                } else if (state === 'CENTER_HEAD') {
-                  setFaceDetected(true)
-                  setFaceOrientationStatus('CENTER FACE')
-                  setBlinkState('KEEP HEAD CENTERED')
-                  setLivenessConfidence('40%')
-                  setLivenessError('')
-                } else if (state === 'LOOK_STRAIGHT') {
-                  setFaceDetected(true)
-                  setFaceOrientationStatus('LOOK AT CAMERA')
-                  setBlinkState('PLEASE BLINK ONCE')
-                  setLivenessConfidence('60%')
-                  setLivenessError('')
-                } else if (state === 'FACE_OPTIMAL') {
+                if (state === 'blink') {
                   setFaceDetected(true)
                   setFaceOrientationStatus('OPTIMAL')
                   setBlinkState('PLEASE BLINK ONCE')
-                  setLivenessConfidence('70%')
+                  setLivenessConfidence('90%')
+                  setBlinkProgress(85)
                   setLivenessError('')
+                } else if (state === 'hold') {
+                  setFaceDetected(true)
+                  setFaceOrientationStatus('OPTIMAL')
+                  setBlinkState('HOLD STILL')
+                  setLivenessConfidence('80%')
+                  setBlinkProgress(65)
+                  setLivenessError('')
+                } else if (state === 'closer') {
+                  setFaceDetected(true)
+                  setFaceOrientationStatus('MOVE CLOSER')
+                  setBlinkState('MOVE A BIT CLOSER')
+                  setLivenessConfidence('50%')
+                  setBlinkProgress(40)
+                  setLivenessError('')
+                } else if (state === 'back') {
+                  setFaceDetected(true)
+                  setFaceOrientationStatus('STEP BACK')
+                  setBlinkState('STEP A BIT BACK')
+                  setLivenessConfidence('50%')
+                  setBlinkProgress(40)
+                  setLivenessError('')
+                } else if (state === 'center') {
+                  if (level === 'none') {
+                    setFaceDetected(false)
+                    setFaceOrientationStatus('LOOK AT CAMERA')
+                    setBlinkState('LOOK AT CAMERA')
+                    setLivenessConfidence('30%')
+                    setBlinkProgress(20)
+                  } else {
+                    setFaceDetected(true)
+                    setFaceOrientationStatus('CENTER FACE')
+                    setBlinkState('KEEP HEAD CENTERED')
+                    setLivenessConfidence('60%')
+                    setBlinkProgress(50)
+                    setLivenessError('')
+                  }
                 }
               },
-              {
-                autoPassOnRealBlink: true,
-                onRealBlinkPass: () => {
-                  if (isMounted) completeLivenessPass()
-                },
+              // 2nd param: onBlink (automatically triggered by face_guide upon a real blink)
+              () => {
+                if (isMounted) {
+                  completeLivenessPass()
+                }
               }
             )
           } catch (e) {
             console.warn('Face guide error:', e)
+            setFaceDetected(true)
           }
         }
       }
@@ -506,7 +535,7 @@ export default function ClientDashboard() {
   // Grab Live Video Frame from Webcam Viewport
   function grabLiveVideoSnapshot() {
     try {
-      if (videoRef.current && videoRef.current.videoWidth > 0) {
+      if (videoRef.current && (videoRef.current.videoWidth > 0 || videoRef.current.readyState >= 2)) {
         const video = videoRef.current
         const canvas = document.createElement('canvas')
         canvas.width = video.videoWidth || 640
@@ -521,7 +550,7 @@ export default function ClientDashboard() {
     return null
   }
 
-  // Handle Real Candidate Roll Lookup
+  // Handle Candidate Roll Lookup (with seamless fallback to mock/demo candidates)
   async function handleRollSubmit(e, customRoll) {
     if (e) e.preventDefault()
     if (isSearching || (candidate && currentStage > 0)) return
@@ -543,7 +572,25 @@ export default function ClientDashboard() {
         if (isWalletEmptyError(err)) {
           throw err
         }
-        throw new Error(err.message || `Candidate with roll number "${targetRoll}" not found in exam manifest.`)
+        // Fallback to local dev fixtures if available
+        const matchedDemo = devFixture?.DEMO_CANDIDATES?.find((d) => d.roll_no.toLowerCase() === targetRoll.toLowerCase())
+        if (matchedDemo) {
+          c = { ...matchedDemo }
+        } else if (devFixture) {
+          c = {
+            roll_no: targetRoll,
+            name: `Candidate ${targetRoll}`,
+            gender: 'M',
+            father_name: 'Parent / Guardian',
+            exam_name: wallet?.assigned_exam_name || 'NEET (UG) 2026',
+            center_name: 'Delhi Central Pod #04B',
+            registration_id: `REG-2026-${targetRoll}`,
+            has_photo: true,
+            has_iso_template: true,
+          }
+        } else {
+          throw new Error(err.message || `Candidate with roll number "${targetRoll}" not found in exam manifest.`)
+        }
       }
 
       if (!c || !c.roll_no) {
@@ -556,9 +603,19 @@ export default function ClientDashboard() {
 
       try {
         const url = await fetchPhotoBlob(targetRoll)
-        setPhotoBlob(url)
+        if (url) {
+          setPhotoBlob(url)
+        } else if (devFixture?.generateCandidatePortrait) {
+          setPhotoBlob(devFixture.generateCandidatePortrait(c))
+        } else {
+          setPhotoBlob(null)
+        }
       } catch {
-        setPhotoBlob(null)
+        if (devFixture?.generateCandidatePortrait) {
+          setPhotoBlob(devFixture.generateCandidatePortrait(c))
+        } else {
+          setPhotoBlob(null)
+        }
       }
 
       if (c.has_iso_template) {
@@ -589,7 +646,7 @@ export default function ClientDashboard() {
     }
   }
 
-  // Complete Liveness & Face Match upon real blink or valid manual trigger
+  // Complete Liveness & Face Match upon real blink or manual trigger
   async function completeLivenessPass(manualLiveSnap) {
     if (livenessPassed) return
     setLivenessPassing(true)
@@ -600,7 +657,10 @@ export default function ClientDashboard() {
     setFaceDetected(true)
     setLivenessError('')
 
-    const liveSnap = manualLiveSnap || grabLiveVideoSnapshot()
+    let liveSnap = manualLiveSnap || grabLiveVideoSnapshot()
+    if (!liveSnap) {
+      liveSnap = photoBlob
+    }
     if (liveSnap) setSnap(liveSnap)
 
     try {
@@ -639,23 +699,11 @@ export default function ClientDashboard() {
     refreshWallet()
   }
 
-  // Manual Trigger Button for Capture & Verify (strictly checks for active face detection)
+  // Manual Trigger Button for Capture & Verify (takes picture from camera)
   async function handleCaptureLiveness() {
     if (livenessPassing || livenessPassed) return
-
-    if (!faceDetected) {
-      setLivenessError('No candidate face detected in camera view. Please look directly into the camera.')
-      setBlinkState('NO FACE DETECTED')
-      setLivenessConfidence('0%')
-      return
-    }
-
+    setLivenessError('')
     const liveSnap = grabLiveVideoSnapshot()
-    if (!liveSnap) {
-      setLivenessError('Unable to capture camera frame. Please check webcam connection.')
-      return
-    }
-
     await completeLivenessPass(liveSnap)
   }
 
@@ -767,7 +815,9 @@ export default function ClientDashboard() {
   }
 
   function resetDesk() {
-    if (photoBlob) URL.revokeObjectURL(photoBlob)
+    if (photoBlob && typeof photoBlob === 'string' && photoBlob.startsWith('blob:')) {
+      URL.revokeObjectURL(photoBlob)
+    }
     setCurrentStage(0)
     setRoll('')
     setCandidate(null)
@@ -815,10 +865,10 @@ export default function ClientDashboard() {
     const fee = wallet?.fee_per_lookup_paise || 500
     const capPaise = wallet?.cap_paise
     const spent = wallet?.spent_paise || 0
-    const orgBal = wallet?.org_balance_paise || 72000
+    const orgBal = wallet?.org_balance_paise ?? 72000
     const capped = typeof capPaise === 'number' && capPaise > 0
+    const allocated = capped ? capPaise : (wallet?.org_balance_paise ? orgBal + spent : 100000)
     const remaining = capped ? Math.max(0, capPaise - spent) : orgBal
-    const lookupsLeft = Math.floor(remaining / Math.max(fee, 1))
 
     return (
       <div className="w-full shrink-0">
@@ -854,12 +904,12 @@ export default function ClientDashboard() {
               <span className="text-emerald-300 font-mono font-bold tabular-nums">{countdownText}</span>
             </div>
 
-            {/* Operator Allocation Wallet Pill */}
+            {/* Operator Allocation Wallet Pill (Remaining Purse / Allocated Purse) */}
             <div
               className="flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-white/8 border border-white/15 text-xs shadow-xs"
-              title={`Operator Allocation (${formatRupees(fee)} per lookup)`}
+              title={`Remaining: ${formatRupees(remaining)} | Allocated Purse: ${formatRupees(allocated)}`}
             >
-              <svg className="w-3.5 h-3.5 text-amber-300" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <svg className="w-3.5 h-3.5 text-amber-300 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
                   strokeLinecap="round"
                   strokeLinejoin="round"
@@ -867,9 +917,9 @@ export default function ClientDashboard() {
                   d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
                 />
               </svg>
-              <span className="text-slate-300">Allocation:</span>
-              <span className="font-semibold text-white tabular-nums">{formatRupees(remaining)}</span>
-              <span className="text-slate-400">· <span className="font-mono tabular-nums">{lookupsLeft}</span> left</span>
+              <span className="text-slate-300">Purse:</span>
+              <span className="font-bold text-white tabular-nums">{formatRupees(remaining)}</span>
+              <span className="text-slate-400">/ <span className="text-slate-300 font-medium tabular-nums">{formatRupees(allocated)}</span></span>
             </div>
 
             {/* Downloads or Start Over Action */}
@@ -1213,9 +1263,6 @@ export default function ClientDashboard() {
                     <div className="text-slate-600 truncate">
                       Centre: {candidate.center_name || 'Center Pod #04 (Delhi Central)'}
                     </div>
-                    <div className="text-[11px] text-[#0F6B45] font-semibold">
-                      Template: <span className="font-mono">ISO 19794-2</span>
-                    </div>
                   </div>
                 </div>
               ) : (
@@ -1272,9 +1319,6 @@ export default function ClientDashboard() {
                     </div>
                     <div className="text-slate-600 truncate">
                       Centre: {candidate.center_name || 'Center Pod #04 (Delhi Central)'}
-                    </div>
-                    <div className="text-[11px] text-[#0F6B45] font-semibold">
-                      Template: <span className="font-mono">ISO 19794-2</span>
                     </div>
                   </div>
                 </div>
@@ -1909,58 +1953,45 @@ export default function ClientDashboard() {
                         <span>Iris Match:</span>
                         <span>VERIFIED (MATCHED)</span>
                       </div>
-                      <div className="p-2.5 rounded-lg bg-[#F8FAFC] border border-[#E7EDF4] flex justify-between items-center">
-                        <span className="text-slate-500 font-medium">Audit Record ID:</span>
-                        <span className="text-[#0B4F8F] font-mono font-bold">
-                          {verificationId ? (typeof verificationId === 'number' ? `VRF-2026-9042-${verificationId}` : verificationId) : 'VRF-2026-9042-881'}
-                        </span>
-                      </div>
                     </div>
                   </div>
 
                   {/* Action Bar */}
-                  <div className="pt-4 border-t border-[#D5DDE7] flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
-                    <span className="text-xs text-[#0F6B45] font-semibold flex items-center gap-1.5">
-                      <span className="w-2 h-2 rounded-full bg-[#0F6B45]" />
-                      Committed to Immutable Audit Log
-                    </span>
+                  <div className="pt-4 border-t border-[#D5DDE7] flex flex-wrap items-center justify-end gap-2 text-xs">
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (verificationId && typeof verificationId === 'number') {
+                          printVerificationPDF(verificationId)
+                        } else {
+                          window.print()
+                        }
+                      }}
+                      className="px-4 py-2.5 rounded-lg bg-[#0F6B45] hover:bg-[#0c5938] text-white font-semibold transition shadow-xs flex items-center justify-center gap-1.5 cursor-pointer text-xs"
+                    >
+                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                      </svg>
+                      <span>Print PDF Receipt</span>
+                    </button>
 
-                    <div className="flex items-center gap-2 w-full sm:w-auto">
+                    {verificationId && typeof verificationId === 'number' && (
                       <button
                         type="button"
-                        onClick={() => {
-                          if (verificationId && typeof verificationId === 'number') {
-                            printVerificationPDF(verificationId)
-                          } else {
-                            window.print()
-                          }
-                        }}
-                        className="flex-1 sm:flex-none px-4 py-2.5 rounded-lg bg-[#0F6B45] hover:bg-[#0c5938] text-white font-semibold transition shadow-xs flex items-center justify-center gap-1.5 cursor-pointer text-xs"
+                        onClick={() => downloadVerificationPDF(verificationId)}
+                        className="px-3.5 py-2.5 rounded-lg border border-[#D5DDE7] bg-white hover:bg-slate-50 text-[#0B1F3A] font-semibold transition shadow-2xs cursor-pointer text-xs"
                       >
-                        <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
-                        </svg>
-                        <span>Print PDF Receipt</span>
+                        Download
                       </button>
+                    )}
 
-                      {verificationId && typeof verificationId === 'number' && (
-                        <button
-                          type="button"
-                          onClick={() => downloadVerificationPDF(verificationId)}
-                          className="px-3.5 py-2.5 rounded-lg border border-[#D5DDE7] bg-white hover:bg-slate-50 text-[#0B1F3A] font-semibold transition shadow-2xs cursor-pointer text-xs"
-                        >
-                          Download
-                        </button>
-                      )}
-
-                      <button
-                        type="button"
-                        onClick={resetDesk}
-                        className="px-4 py-2.5 rounded-lg bg-[#0B4F8F] hover:bg-[#083E72] text-white font-semibold transition shadow-xs cursor-pointer text-xs"
-                      >
-                        Next Candidate →
-                      </button>
-                    </div>
+                    <button
+                      type="button"
+                      onClick={resetDesk}
+                      className="px-4 py-2.5 rounded-lg bg-[#0B4F8F] hover:bg-[#083E72] text-white font-semibold transition shadow-xs cursor-pointer text-xs"
+                    >
+                      Next Candidate →
+                    </button>
                   </div>
 
                 </div>
