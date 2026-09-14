@@ -1161,73 +1161,76 @@ export default function ClientDashboard() {
       </section>
 
       {/* TWO-COLUMN WORK SURFACE (LEFT SEARCH CARD + DYNAMIC RIGHT STAGE CANVAS) */}
-      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-start">
+      <div className="grid grid-cols-1 lg:grid-cols-12 gap-5 items-stretch">
         
         {/* ================= LEFT RAIL: CANDIDATE SEARCH & REGISTERED DOSSIER ================= */}
-        <div className="lg:col-span-4 xl:col-span-4 space-y-4">
+        <div className="lg:col-span-4 xl:col-span-4 flex flex-col space-y-4 h-full">
           
-          {/* Step 1: Candidate Roll Search Card */}
-          <div className="p-5 rounded-xl bg-white border border-[#D5DDE7] shadow-xs space-y-4">
-            <div className="flex items-center justify-between border-b border-[#E7EDF4] pb-2.5">
-              <h2 className="text-sm font-semibold text-[#0B1F3A] flex items-center gap-2">
-                <span className="w-2 h-2 rounded-full bg-[#0B4F8F]" />
-                Candidate Search
-              </h2>
-              <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">ADMIT CARD ENTRY</span>
+          {/* Step 1: Candidate Roll Search Card (Visible when no candidate is active) */}
+          {!candidate && (
+            <div className="p-5 rounded-xl bg-white border border-[#D5DDE7] shadow-xs space-y-4 animate-surface-in">
+              <div className="flex items-center justify-between border-b border-[#E7EDF4] pb-2.5">
+                <h2 className="text-sm font-semibold text-[#0B1F3A] flex items-center gap-2">
+                  <span className="w-2 h-2 rounded-full bg-[#0B4F8F]" />
+                  Candidate Search
+                </h2>
+                <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">ADMIT CARD ENTRY</span>
+              </div>
+
+              <form onSubmit={handleRollSubmit} className="space-y-3">
+                <div>
+                  <label className="block text-xs font-medium text-slate-700 mb-1">
+                    Candidate Roll Number
+                  </label>
+                  <div className="relative">
+                    <input
+                      type="text"
+                      value={roll}
+                      onChange={(e) => setRoll(e.target.value)}
+                      placeholder="e.g. 10001"
+                      disabled={isSearchLocked}
+                      className="w-full px-3 py-2.5 rounded-lg border border-[#D5DDE7] bg-[#F8FAFC] text-[#0B1F3A] font-mono text-base font-bold focus:bg-white focus:outline-none focus:border-[#0B4F8F] focus:ring-2 focus:ring-[#0B4F8F]/20 transition placeholder:font-sans placeholder:font-normal placeholder:text-slate-400 disabled:opacity-60 disabled:cursor-not-allowed"
+                      autoFocus={!isSearchLocked}
+                    />
+                  </div>
+                </div>
+
+                {lookupErr && !isSearchLocked && (
+                  <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-700 font-medium">
+                    {lookupErr}
+                  </div>
+                )}
+
+                <button
+                  type="submit"
+                  disabled={isSearchLocked || isSearching || !roll.trim()}
+                  className="w-full py-2.5 px-4 rounded-lg bg-[#0B4F8F] hover:bg-[#083E72] disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-xs tracking-wide uppercase transition shadow-xs flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
+                  </svg>
+                  <span>{isSearching ? 'Looking Up Database…' : 'Look Up Record'}</span>
+                </button>
+              </form>
             </div>
+          )}
 
-            <form onSubmit={handleRollSubmit} className="space-y-3">
-              <div>
-                <label className="block text-xs font-medium text-slate-700 mb-1">
-                  Candidate Roll Number
-                </label>
-                <div className="relative">
-                  <input
-                    type="text"
-                    value={roll}
-                    onChange={(e) => setRoll(e.target.value)}
-                    placeholder="e.g. 10001"
-                    disabled={isSearchLocked}
-                    className="w-full px-3 py-2.5 rounded-lg border border-[#D5DDE7] bg-[#F8FAFC] text-[#0B1F3A] font-mono text-base font-bold focus:bg-white focus:outline-none focus:border-[#0B4F8F] focus:ring-2 focus:ring-[#0B4F8F]/20 transition placeholder:font-sans placeholder:font-normal placeholder:text-slate-400 disabled:opacity-60 disabled:cursor-not-allowed"
-                    autoFocus={!isSearchLocked}
-                  />
-                </div>
-              </div>
-
-              {lookupErr && !isSearchLocked && (
-                <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-700 font-medium">
-                  {lookupErr}
-                </div>
-              )}
-
-              <button
-                type="submit"
-                disabled={isSearchLocked || isSearching || !roll.trim()}
-                className="w-full py-2.5 px-4 rounded-lg bg-[#0B4F8F] hover:bg-[#083E72] disabled:opacity-50 disabled:cursor-not-allowed text-white font-semibold text-xs tracking-wide uppercase transition shadow-xs flex items-center justify-center gap-2 cursor-pointer"
-              >
-                <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M21 21l-6-6m2-5a7 7 0 11-14 0 7 7 0 0114 0z" />
-                </svg>
-                <span>{isSearching ? 'Looking Up Database…' : 'Look Up Record'}</span>
-              </button>
-            </form>
-          </div>
-
-          {/* Enrolled Registration Record Card (Revealed Once Searched) */}
+          {/* Enrolled Registration Record Card (Revealed Once Searched, Takes Full Left Column) */}
           {candidate && (
-            <div className="p-5 rounded-xl bg-white border border-[#D5DDE7] shadow-xs space-y-3.5 transition-all duration-300">
-              <div className="flex items-center justify-between border-b border-[#E7EDF4] pb-2">
-                <span className="text-[10px] font-semibold text-[#0B4F8F] uppercase tracking-wider">
-                  ENROLLED DOSSIER <span className="font-mono font-bold">#{candidate.roll_no}</span>
-                </span>
-                <span className="px-2 py-0.5 rounded bg-[#E8F5EE] border border-[#B4DCC7] text-[#0F6B45] text-[11px] font-semibold">
-                  ELIGIBLE
-                </span>
-              </div>
+            <div className="p-5 rounded-xl bg-white border border-[#D5DDE7] shadow-xs space-y-3.5 transition-all duration-300 flex-1 flex flex-col justify-between animate-surface-in">
+              <div>
+                <div className="flex items-center justify-between border-b border-[#E7EDF4] pb-2">
+                  <span className="text-[10px] font-semibold text-[#0B4F8F] uppercase tracking-wider">
+                    ENROLLED DOSSIER <span className="font-mono font-bold">#{candidate.roll_no}</span>
+                  </span>
+                  <span className="px-2 py-0.5 rounded bg-[#E8F5EE] border border-[#B4DCC7] text-[#0F6B45] text-[11px] font-semibold">
+                    ELIGIBLE
+                  </span>
+                </div>
 
-              {/* Photo Area: Single enrolled photo or side-by-side (Enrolled + Captured) once snap is ready */}
-              {!snap ? (
-                <div className="flex gap-3.5 items-start">
+                {/* Photo Area: Single enrolled photo or side-by-side (Enrolled + Captured) once snap is ready */}
+                {!snap ? (
+                  <div className="flex gap-3.5 items-start mt-3.5">
                   {/* Candidate Enrolled Photo */}
                   <div className="w-24 h-28 rounded-lg overflow-hidden border border-[#D5DDE7] bg-slate-100 shrink-0 relative flex items-center justify-center">
                     {photoBlob ? (
@@ -1323,6 +1326,7 @@ export default function ClientDashboard() {
                   </div>
                 </div>
               )}
+              </div>
 
               {/* Modality Status Strip */}
               <div className="pt-2 border-t border-[#E7EDF4] space-y-1.5 text-xs">
@@ -1385,12 +1389,12 @@ export default function ClientDashboard() {
         </div>
 
         {/* ================= RIGHT WORK CANVAS: PROGRESSIVE STAGES (UPDATES IN-PLACE) ================= */}
-        <div className="lg:col-span-8 xl:col-span-8">
-          <div className="min-h-[580px] rounded-xl bg-white border border-[#D5DDE7] shadow-xs p-6 relative overflow-hidden flex flex-col justify-between">
+        <div className="lg:col-span-8 xl:col-span-8 flex flex-col h-full">
+          <div className="min-h-[580px] h-full flex-1 rounded-xl bg-white border border-[#D5DDE7] shadow-xs p-6 relative overflow-hidden flex flex-col justify-between">
             
             {/* STAGE 0: STANDBY (WAITING FOR SEARCH) */}
             {currentStage === 0 && (
-              <div className="h-full flex flex-col items-center justify-center text-center my-auto py-16 animate-surface-in">
+              <div className="h-full flex-1 flex flex-col items-center justify-center text-center my-auto py-16 animate-surface-in">
                 <div className="w-16 h-16 rounded-full bg-[#EEF5FD] border border-[#83B3E9] flex items-center justify-center text-[#0B4F8F] mb-4">
                   <svg className="w-8 h-8 text-[#0B4F8F]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round">
                     <path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z" />
@@ -1409,7 +1413,7 @@ export default function ClientDashboard() {
 
             {/* STAGE 1: CANDIDATE LOADED -> START LIVENESS */}
             {currentStage === 1 && candidate && (
-              <div className="h-full flex flex-col justify-between space-y-6 animate-surface-in">
+              <div className="h-full flex-1 flex flex-col justify-between space-y-6 animate-surface-in">
                 <div className="flex items-center justify-between border-b border-[#E7EDF4] pb-4">
                   <div>
                     <span className="text-[10px] font-semibold text-[#0B4F8F] uppercase tracking-widest">STAGE 1 OF 4</span>
@@ -1453,7 +1457,7 @@ export default function ClientDashboard() {
 
             {/* STAGE 2: LIVE CAMERA HUD RETICLE & BLINK CHALLENGE */}
             {currentStage === 2 && (
-              <div className="h-full flex flex-col justify-between space-y-5 animate-surface-in">
+              <div className="h-full flex-1 flex flex-col justify-between space-y-5 animate-surface-in">
                 <div className="flex items-center justify-between border-b border-[#E7EDF4] pb-3">
                   <div>
                     <span className="text-[10px] font-semibold text-[#0B4F8F] uppercase tracking-widest">STAGE 2 OF 4</span>
@@ -1610,7 +1614,7 @@ export default function ClientDashboard() {
 
             {/* STAGE 3: BIOMETRIC VERIFICATION (FP & IRIS) */}
             {currentStage === 3 && (
-              <div className="h-full flex flex-col justify-between space-y-4 animate-surface-in">
+              <div className="h-full flex-1 flex flex-col justify-between space-y-4 animate-surface-in">
                 
                 {/* Stage Header */}
                 <div className="flex items-center justify-between border-b border-[#E7EDF4] pb-3">
@@ -1622,10 +1626,10 @@ export default function ClientDashboard() {
                 </div>
 
                 {/* Dual Biometric Sensor Bays (Side-by-Side) */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 my-1">
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 my-auto flex-1 items-stretch py-1">
                   
                   {/* BAY 1: FINGERPRINT SENSOR */}
-                  <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#D5DDE7] transition-all flex flex-col justify-between">
+                  <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#D5DDE7] transition-all flex flex-col justify-between flex-1">
                     {/* Pod Header */}
                     <div className="flex items-center justify-between border-b border-[#E7EDF4] pb-2 text-xs">
                       <div className="flex items-center gap-2">
@@ -1637,7 +1641,7 @@ export default function ClientDashboard() {
                     </div>
 
                     {/* Sensor Box */}
-                    <div className="my-3 flex flex-col items-center">
+                    <div className="my-auto py-2 flex flex-col items-center justify-center">
                       <div
                         onClick={handleCaptureFingerprint}
                         className={`w-36 h-40 rounded-xl flex flex-col items-center justify-center cursor-pointer transition-all duration-200 relative overflow-hidden bg-white border ${
@@ -1712,7 +1716,7 @@ export default function ClientDashboard() {
                   </div>
 
                   {/* BAY 2: IRIS SCANNER */}
-                  <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#D5DDE7] transition-all flex flex-col justify-between">
+                  <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#D5DDE7] transition-all flex flex-col justify-between flex-1">
                     {/* Pod Header */}
                     <div className="flex items-center justify-between border-b border-[#E7EDF4] pb-2 text-xs">
                       <div className="flex items-center gap-2">
@@ -1722,7 +1726,7 @@ export default function ClientDashboard() {
                     </div>
 
                     {/* Iris Viewfinder Box */}
-                    <div className="my-3 flex flex-col items-center">
+                    <div className="my-auto py-2 flex flex-col items-center justify-center">
                       <div
                         onClick={handleCaptureIris}
                         className={`w-36 h-40 rounded-xl flex flex-col items-center justify-center cursor-pointer transition-all duration-200 relative overflow-hidden bg-white border ${
@@ -1815,149 +1819,180 @@ export default function ClientDashboard() {
 
             {/* STAGE 4: OFFICIAL CERTIFICATE & SOVEREIGN SEAL STAMP */}
             {currentStage === 4 && (
-              <div className="h-full flex flex-col justify-between space-y-4 animate-surface-in">
+              <div className="h-full flex-1 -m-6 p-6 sm:p-7 bg-white border-2 border-[#0F6B45] rounded-xl shadow-md security-watermark-grid relative overflow-hidden flex flex-col justify-between animate-surface-in">
                 
-                {/* Official Certificate Card */}
-                <div className="p-6 sm:p-8 rounded-xl bg-white border-2 border-[#0F6B45] shadow-md security-watermark-grid relative overflow-hidden">
+                {/* Subtle Background Watermark */}
+                <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-72 sm:w-96 opacity-[0.06] pointer-events-none select-none z-0">
+                  <img src={ntaWatermark} alt="" className="w-full h-auto object-contain" />
+                </div>
+
+                {/* Top Header & Official Sovereign Masthead */}
+                <div className="relative z-1 flex flex-col md:flex-row md:items-center justify-between gap-5 border-b border-[#D5DDE7] pb-4 bg-gradient-to-b from-[#F8FAFC] to-white -mx-6 -mt-6 sm:-mx-7 sm:-mt-7 p-5 sm:p-6 rounded-t-xl">
                   
-                  {/* Subtle Background Watermark */}
-                  <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-72 sm:w-96 opacity-[0.06] pointer-events-none select-none z-0">
-                    <img src={ntaWatermark} alt="" className="w-full h-auto object-contain" />
-                  </div>
-
-                  {/* Top Header & Official Sovereign Masthead */}
-                  <div className="relative z-1 flex flex-col md:flex-row md:items-center justify-between gap-5 border-b border-[#D5DDE7] pb-5 bg-gradient-to-b from-[#F8FAFC] to-white -mx-6 -mt-6 sm:-mx-8 sm:-mt-8 p-5 sm:p-7 rounded-t-xl">
+                  {/* Sovereign Marks: Ashoka Lion Capital + NTA Official Mark */}
+                  <div className="flex flex-wrap items-center gap-4 sm:gap-6">
                     
-                    {/* Sovereign Marks: Ashoka Lion Capital + NTA Official Mark */}
-                    <div className="flex flex-wrap items-center gap-4 sm:gap-6">
-                      
-                      {/* Left: Ashoka Lion Capital (State Emblem of India with Satyameva Jayate) */}
-                      <div className="flex items-center gap-2 shrink-0">
-                        <img
-                          src={emblemSvg}
-                          alt="State Emblem of India - Satyameva Jayate"
-                          className="h-16 sm:h-20 w-auto object-contain drop-shadow-xs"
-                        />
-                      </div>
-
-                      {/* Divider */}
-                      <div className="hidden sm:block h-14 w-[1px] bg-slate-300" />
-
-                      {/* Right: NTA Logo + Central Candidate Biometric Verification System */}
-                      <div className="flex flex-col justify-center">
-                        <img
-                          src={ntaLogo}
-                          alt="National Testing Agency - Excellence in Assessment"
-                          className="h-9 sm:h-11 w-auto object-contain self-start"
-                        />
-                        <div className="text-xs sm:text-[13px] font-semibold text-slate-600 tracking-tight mt-1.5 font-sans">
-                          Central Candidate Biometric Verification System
-                        </div>
-                      </div>
+                    {/* Left: Ashoka Lion Capital */}
+                    <div className="flex items-center gap-2 shrink-0">
+                      <img
+                        src={emblemSvg}
+                        alt="State Emblem of India - Satyameva Jayate"
+                        className="h-16 sm:h-18 w-auto object-contain drop-shadow-xs"
+                      />
                     </div>
 
-                    {/* 3D Embossed Seal */}
-                    <div className="relative flex items-center justify-center w-20 h-20 self-center sm:self-auto shrink-0">
-                      <div className="shockwave-ring absolute w-20 h-20 rounded-full border-2 border-[#0F6B45] pointer-events-none" />
+                    {/* Divider */}
+                    <div className="hidden sm:block h-12 w-[1px] bg-slate-300" />
 
-                      <div className="seal-stamp-anim w-18 h-18 rounded-full bg-gradient-to-br from-[#0F6B45] to-[#0A4A30] p-[2.5px] shadow-lg flex items-center justify-center">
-                        <div className="w-full h-full rounded-full border border-white/40 flex flex-col items-center justify-center text-center p-1 text-white">
-                          <span className="font-seal text-[9px] font-black tracking-wider leading-none text-amber-200">
-                            VERIFIED
-                          </span>
-                          <span className="font-bold text-[11px] mt-0.5">PASS</span>
-                          <span className="text-[7px] text-emerald-200 font-semibold tracking-wider">BOARD AUTH</span>
-                        </div>
+                    {/* Right: NTA Logo + Central Candidate Biometric Verification System */}
+                    <div className="flex flex-col justify-center">
+                      <img
+                        src={ntaLogo}
+                        alt="National Testing Agency - Excellence in Assessment"
+                        className="h-8 sm:h-10 w-auto object-contain self-start"
+                      />
+                      <div className="text-xs sm:text-[13px] font-semibold text-slate-600 tracking-tight mt-1 font-sans">
+                        Central Candidate Biometric Verification System
                       </div>
                     </div>
                   </div>
 
-                  {/* Certificate Title & Exam Metadata Sub-Header */}
-                  <div className="relative z-1 pt-4 pb-2 border-b border-dashed border-[#D5DDE7] flex flex-col sm:flex-row sm:items-center justify-between gap-2">
-                    <div>
-                      <div className="text-[10px] font-semibold text-[#0B4F8F] uppercase tracking-widest flex items-center gap-1.5">
-                        <span className="w-1.5 h-1.5 rounded-full bg-[#0B4F8F]" />
-                        Official Verification Certificate & Admit Clearance
-                      </div>
-                      <h2 className="text-lg sm:text-xl font-bold text-[#0B1F3A] tracking-tight font-display">
-                        Examination Hall Candidate Biometric Verification Record
-                      </h2>
-                    </div>
-                    <div className="text-left sm:text-right text-xs text-slate-500">
-                      <div><span className="font-semibold text-[#0B1F3A]">EXAM:</span> {candidate?.exam_name || wallet?.assigned_exam_name || 'NEET (UG) 2026'}</div>
-                      <div><span className="font-semibold text-[#0B1F3A]">SESSION:</span> FORENOON (09:00 - 12:00)</div>
-                    </div>
-                  </div>
+                  {/* 3D Embossed Seal */}
+                  <div className="relative flex items-center justify-center w-18 h-18 self-center sm:self-auto shrink-0">
+                    <div className="shockwave-ring absolute w-18 h-18 rounded-full border-2 border-[#0F6B45] pointer-events-none" />
 
-                  {/* Side by Side Photos & Audit Grid */}
-                  <div className="grid grid-cols-1 sm:grid-cols-12 gap-5 my-5 items-center">
-                    {/* Dual Photos */}
-                    <div className="sm:col-span-5 grid grid-cols-2 gap-2.5">
-                      <div className="rounded-lg overflow-hidden border border-[#D5DDE7] bg-slate-100 aspect-[4/5] relative flex items-center justify-center">
-                        {photoBlob ? (
-                          <img
-                            src={photoBlob}
-                            alt="Enrolled"
-                            className="w-full h-full object-cover"
-                          />
-                        ) : (
-                          <div className="w-full h-full flex flex-col items-center justify-center bg-[#EEF5FD] text-[#0B4F8F] p-2 text-center">
-                            <svg className="w-8 h-8 opacity-60 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                            </svg>
-                            <span className="text-[9px] font-semibold">ENROLLED</span>
-                          </div>
-                        )}
-                        <div className="absolute bottom-0 inset-x-0 bg-[#0B2545]/90 text-white text-[9px] font-semibold py-0.5 text-center">
-                          ENROLLED
-                        </div>
-                      </div>
-                      <div className="rounded-lg overflow-hidden border-2 border-[#0F6B45] bg-slate-100 aspect-[4/5] relative flex items-center justify-center">
-                        {snap ? (
-                          <img
-                            src={snap}
-                            alt="Live Match"
-                            className="w-full h-full object-cover contrast-110"
-                          />
-                        ) : (
-                          <div className="w-full h-full flex flex-col items-center justify-center bg-[#E8F5EE] text-[#0F6B45] p-2 text-center">
-                            <svg className="w-8 h-8 opacity-70 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
-                            </svg>
-                            <span className="text-[9px] font-semibold">LIVE MATCH</span>
-                          </div>
-                        )}
-                        <div className="absolute bottom-0 inset-x-0 bg-[#0F6B45] text-white text-[9px] font-semibold py-0.5 text-center">
-                          LIVE MATCH
-                        </div>
-                      </div>
-                    </div>
-
-                    {/* Audit Fields */}
-                    <div className="sm:col-span-7 space-y-1.5 text-xs">
-                      <div className="p-2.5 rounded-lg bg-[#F8FAFC] border border-[#E7EDF4] flex justify-between items-center">
-                        <span className="text-slate-500 font-medium">Candidate:</span>
-                        <span className="text-[#0B1F3A] font-bold">
-                          {(candidate?.name || 'VERIFIED CANDIDATE').toUpperCase()} (<span className="font-mono text-[#0B4F8F]">{candidate?.roll_no || roll}</span>)
+                    <div className="seal-stamp-anim w-16 h-16 rounded-full bg-gradient-to-br from-[#0F6B45] to-[#0A4A30] p-[2px] shadow-lg flex items-center justify-center">
+                      <div className="w-full h-full rounded-full border border-white/40 flex flex-col items-center justify-center text-center p-1 text-white">
+                        <span className="font-seal text-[8px] font-black tracking-wider leading-none text-amber-200">
+                          VERIFIED
                         </span>
+                        <span className="font-bold text-[10px] mt-0.5">PASS</span>
+                        <span className="text-[6.5px] text-emerald-200 font-semibold tracking-wider">BOARD AUTH</span>
                       </div>
-                      <div className="p-2.5 rounded-lg bg-[#E8F5EE] border border-[#B4DCC7] text-[#0F6B45] flex justify-between items-center font-semibold">
-                        <span>Face Match (1:1):</span>
-                        <span>VERIFIED (MATCHED)</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Certificate Title & Exam Metadata Sub-Header */}
+                <div className="relative z-1 pt-3 pb-3 border-b border-dashed border-[#D5DDE7] flex flex-col sm:flex-row sm:items-center justify-between gap-2">
+                  <div>
+                    <div className="text-[10px] font-semibold text-[#0B4F8F] uppercase tracking-widest flex items-center gap-1.5">
+                      <span className="w-1.5 h-1.5 rounded-full bg-[#0B4F8F]" />
+                      Official Verification Certificate & Admit Clearance
+                    </div>
+                    <h2 className="text-lg sm:text-xl font-bold text-[#0B1F3A] tracking-tight font-display">
+                      Examination Hall Candidate Biometric Verification Record
+                    </h2>
+                  </div>
+                  <div className="text-left sm:text-right text-xs text-slate-500">
+                    <div><span className="font-semibold text-[#0B1F3A]">EXAM:</span> {candidate?.exam_name || wallet?.assigned_exam_name || 'NEET (UG) 2026'}</div>
+                    <div><span className="font-semibold text-[#0B1F3A]">SESSION:</span> FORENOON (09:00 - 12:00)</div>
+                  </div>
+                </div>
+
+                {/* Side by Side Photos & Audit Grid */}
+                <div className="relative z-1 grid grid-cols-1 sm:grid-cols-12 gap-5 my-auto py-3 items-center flex-1">
+                  {/* Dual Photos */}
+                  <div className="sm:col-span-5 grid grid-cols-2 gap-2.5">
+                    <div className="rounded-lg overflow-hidden border border-[#D5DDE7] bg-slate-100 aspect-[4/5] relative flex items-center justify-center shadow-xs">
+                      {photoBlob ? (
+                        <img
+                          src={photoBlob}
+                          alt="Enrolled"
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex flex-col items-center justify-center bg-[#EEF5FD] text-[#0B4F8F] p-2 text-center">
+                          <svg className="w-8 h-8 opacity-60 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
+                          </svg>
+                          <span className="text-[9px] font-semibold">ENROLLED</span>
+                        </div>
+                      )}
+                      <div className="absolute bottom-0 inset-x-0 bg-[#0B2545]/90 text-white text-[9px] font-semibold py-0.5 text-center">
+                        ENROLLED
                       </div>
-                      <div className="p-2.5 rounded-lg bg-[#E8F5EE] border border-[#B4DCC7] text-[#0F6B45] flex justify-between items-center font-semibold">
-                        <span>Fingerprint Match:</span>
-                        <span>{fpStatus === 'fail' ? 'VERIFICATION FAILED' : 'VERIFIED (MATCHED)'}</span>
-                      </div>
-                      <div className="p-2.5 rounded-lg bg-[#E8F5EE] border border-[#B4DCC7] text-[#0F6B45] flex justify-between items-center font-semibold">
-                        <span>Iris Match:</span>
-                        <span>VERIFIED (MATCHED)</span>
+                    </div>
+                    <div className="rounded-lg overflow-hidden border-2 border-[#0F6B45] bg-slate-100 aspect-[4/5] relative flex items-center justify-center shadow-xs">
+                      {snap ? (
+                        <img
+                          src={snap}
+                          alt="Live Match"
+                          className="w-full h-full object-cover contrast-110"
+                        />
+                      ) : (
+                        <div className="w-full h-full flex flex-col items-center justify-center bg-[#E8F5EE] text-[#0F6B45] p-2 text-center">
+                          <svg className="w-8 h-8 opacity-70 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+                          </svg>
+                          <span className="text-[9px] font-semibold">LIVE MATCH</span>
+                        </div>
+                      )}
+                      <div className="absolute bottom-0 inset-x-0 bg-[#0F6B45] text-white text-[9px] font-semibold py-0.5 text-center flex items-center justify-center gap-1">
+                        <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3">
+                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                        </svg>
+                        LIVE MATCH
                       </div>
                     </div>
                   </div>
 
-                  {/* Action Bar */}
-                  <div className="pt-4 border-t border-[#D5DDE7] flex flex-wrap items-center justify-end gap-2 text-xs">
+                  {/* Audit & Verification Clearance Fields */}
+                  <div className="sm:col-span-7 space-y-2 text-xs">
+                    <div className="p-2.5 rounded-lg bg-[#F8FAFC] border border-[#E7EDF4] flex justify-between items-center">
+                      <span className="text-slate-500 font-medium">Candidate:</span>
+                      <span className="text-[#0B1F3A] font-bold">
+                        {(candidate?.name || 'VERIFIED CANDIDATE').toUpperCase()} (<span className="font-mono text-[#0B4F8F]">{candidate?.roll_no || roll}</span>)
+                      </span>
+                    </div>
+                    <div className="grid grid-cols-2 gap-2">
+                      <div className="p-2 rounded-lg bg-[#F8FAFC] border border-[#E7EDF4] text-[11px]">
+                        <span className="text-slate-500 block">Verification Station:</span>
+                        <span className="font-semibold text-[#0B1F3A] truncate block">{candidate?.center_name || 'Center Pod #04'}</span>
+                      </div>
+                      <div className="p-2 rounded-lg bg-[#F8FAFC] border border-[#E7EDF4] text-[11px]">
+                        <span className="text-slate-500 block">Gate Clearance:</span>
+                        <span className="font-semibold text-[#0F6B45] block">ADMIT GRANTED ✓</span>
+                      </div>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-[#E8F5EE] border border-[#B4DCC7] text-[#0F6B45] flex justify-between items-center font-semibold">
+                      <span className="flex items-center gap-1.5">
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
+                        </svg>
+                        Face Match (1:1):
+                      </span>
+                      <span>VERIFIED (MATCHED)</span>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-[#E8F5EE] border border-[#B4DCC7] text-[#0F6B45] flex justify-between items-center font-semibold">
+                      <span className="flex items-center gap-1.5">
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
+                        </svg>
+                        Fingerprint Match:
+                      </span>
+                      <span>{fpStatus === 'fail' ? 'VERIFICATION FAILED' : 'VERIFIED (MATCHED)'}</span>
+                    </div>
+                    <div className="p-2.5 rounded-lg bg-[#E8F5EE] border border-[#B4DCC7] text-[#0F6B45] flex justify-between items-center font-semibold">
+                      <span className="flex items-center gap-1.5">
+                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
+                        </svg>
+                        Iris Match:
+                      </span>
+                      <span>VERIFIED (MATCHED)</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Action Bar */}
+                <div className="relative z-1 pt-3.5 border-t border-[#D5DDE7] flex flex-wrap items-center justify-between gap-3 text-xs -mx-6 -mb-6 sm:-mx-7 sm:-mb-7 p-4 sm:p-5 bg-[#F8FAFC] rounded-b-xl">
+                  <div className="text-[11px] text-slate-500 flex items-center gap-1.5">
+                    <span className="w-2 h-2 rounded-full bg-[#0F6B45] animate-pulse" />
+                    <span>Digital record cryptographically sealed</span>
+                  </div>
+
+                  <div className="flex items-center gap-2">
                     <button
                       type="button"
                       onClick={() => {
@@ -1993,8 +2028,8 @@ export default function ClientDashboard() {
                       Next Candidate →
                     </button>
                   </div>
-
                 </div>
+
               </div>
             )}
 
