@@ -46,7 +46,7 @@ export function AuthProvider({ children }) {
         const u = token.replace('mock-dev-token-', '')
         const role = u === 'reviewer' ? 'client_reviewer' : u
         const displayName =
-          role === 'client' ? 'Station Operator #DEL-04B' :
+          role === 'client' ? 'Verification Officer #DEL-04B' :
           role === 'admin' ? 'Delhi Exam Authority' :
           role === 'superadmin' ? 'Central Superadmin' : 'Review Board Member'
         const mockUser = {
@@ -121,7 +121,7 @@ export function AuthProvider({ children }) {
         ) {
           const role = u === 'reviewer' ? 'client_reviewer' : u
           const displayName =
-            role === 'client' ? 'Station Operator #DEL-04B' :
+            role === 'client' ? 'Verification Officer #DEL-04B' :
             role === 'admin' ? 'Delhi Exam Authority' :
             role === 'superadmin' ? 'Central Superadmin' : 'Review Board Member'
           res = {

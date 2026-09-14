@@ -867,3 +867,21 @@ select:focus-visible {
 .success-glow-ring {
   animation: successGlowPulse 1.8s infinite;
 }
+
+/* Basic Clean Fingerprint & Iris Scan Indicators */
+@keyframes basicScanLine {
+  0% { top: 12%; opacity: 0.4; }
+  50% { top: 82%; opacity: 0.9; }
+  100% { top: 12%; opacity: 0.4; }
+}
+.basic-scan-line {
+  position: absolute;
+  left: 12%;
+  right: 12%;
+  height: 2px;
+  background: #0B4F8F;
+  border-radius: 2px;
+  animation: basicScanLine 1.6s ease-in-out infinite;
+  z-index: 10;
+}
+
