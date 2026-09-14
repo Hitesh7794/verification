@@ -1228,52 +1228,12 @@ export default function ClientDashboard() {
                   </span>
                 </div>
 
-                {/* Photo Area: Single enrolled photo or side-by-side (Enrolled + Captured) once snap is ready */}
-                {!snap ? (
-                  <div className="flex gap-3.5 items-start mt-3.5">
-                  {/* Candidate Enrolled Photo */}
-                  <div className="w-24 h-28 rounded-lg overflow-hidden border border-[#D5DDE7] bg-slate-100 shrink-0 relative flex items-center justify-center">
-                    {photoBlob ? (
-                      <img
-                        src={photoBlob}
-                        alt="Enrolled Candidate"
-                        className="w-full h-full object-cover"
-                      />
-                    ) : (
-                      <div className="w-full h-full flex flex-col items-center justify-center bg-[#EEF5FD] text-[#0B4F8F] p-2 text-center">
-                        <svg className="w-8 h-8 opacity-60 mb-1" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M16 7a4 4 0 11-8 0 4 4 0 018 0zM12 14a7 7 0 00-7 7h14a7 7 0 00-7-7z" />
-                        </svg>
-                        <span className="text-[9px] font-semibold leading-tight">PHOTO ON FILE</span>
-                      </div>
-                    )}
-                    <div className="absolute bottom-0 inset-x-0 bg-[#0B2545]/90 text-white text-[9px] font-semibold py-0.5 text-center">
-                      ENROLLED
-                    </div>
-                  </div>
-
-                  {/* Candidate Details */}
-                  <div className="flex-1 min-w-0 space-y-1 text-xs">
-                    <div className="font-bold text-sm text-[#0B1F3A] truncate">
-                      {candidate.name || 'Candidate Record'}
-                    </div>
-                    <div className="text-slate-600">
-                      Roll: <b className="font-mono text-[#0B4F8F]">{candidate.roll_no}</b>
-                    </div>
-                    <div className="text-slate-600 truncate">
-                      Exam: {candidate.exam_name || wallet?.assigned_exam_name || 'NEET (UG) 2026'}
-                    </div>
-                    <div className="text-slate-600 truncate">
-                      Centre: {candidate.center_name || 'Center Pod #04 (Delhi Central)'}
-                    </div>
-                  </div>
-                </div>
-              ) : (
-                <div className="space-y-3 animate-surface-in">
-                  {/* Dual Photos Side-by-Side: Enrolled vs Live Captured */}
+                {/* Photo Area: Always uniform Dual-Photo Grid (Enrolled + Captured / Awaiting Capture) */}
+                <div className="space-y-3 animate-surface-in mt-3">
+                  {/* Dual Photos Side-by-Side */}
                   <div className="grid grid-cols-2 gap-2.5">
                     {/* Enrolled Photo */}
-                    <div className="rounded-lg overflow-hidden border border-[#D5DDE7] bg-slate-100 aspect-[4/5] relative flex items-center justify-center">
+                    <div className="rounded-lg overflow-hidden border border-[#D5DDE7] bg-slate-100 aspect-[4/5] relative flex items-center justify-center shadow-2xs">
                       {photoBlob ? (
                         <img
                           src={photoBlob}
@@ -1288,44 +1248,70 @@ export default function ClientDashboard() {
                           <span className="text-[8px] font-semibold leading-tight">PHOTO ON FILE</span>
                         </div>
                       )}
-                      <div className="absolute bottom-0 inset-x-0 bg-[#0B2545]/90 text-white text-[9px] font-semibold py-0.5 text-center">
+                      <div className="absolute bottom-0 inset-x-0 bg-[#0B2545]/90 text-white text-[9px] font-semibold py-0.5 text-center tracking-wider">
                         ENROLLED
                       </div>
                     </div>
 
-                    {/* Captured Live Photo */}
-                    <div className="rounded-lg overflow-hidden border-2 border-[#0F6B45] bg-slate-100 aspect-[4/5] relative flex items-center justify-center">
-                      <img
-                        src={snap}
-                        alt="Captured Candidate"
-                        className="w-full h-full object-cover contrast-105"
-                      />
-                      <div className="absolute bottom-0 inset-x-0 bg-[#0F6B45] text-white text-[9px] font-semibold py-0.5 text-center flex items-center justify-center gap-1">
-                        <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3">
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                        </svg>
-                        CAPTURED
+                    {/* Captured Live Photo OR Awaiting Capture Viewport */}
+                    {snap ? (
+                      <div className="rounded-lg overflow-hidden border-2 border-[#0F6B45] bg-slate-100 aspect-[4/5] relative flex items-center justify-center shadow-2xs animate-surface-in">
+                        <img
+                          src={snap}
+                          alt="Captured Candidate"
+                          className="w-full h-full object-cover contrast-105"
+                        />
+                        <div className="absolute bottom-0 inset-x-0 bg-[#0F6B45] text-white text-[9px] font-semibold py-0.5 text-center flex items-center justify-center gap-1 tracking-wider">
+                          <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3">
+                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                          </svg>
+                          CAPTURED
+                        </div>
+                      </div>
+                    ) : (
+                      <div className="rounded-lg border-2 border-dashed border-[#83B3E9]/70 bg-[#EEF5FD]/40 aspect-[4/5] relative flex flex-col items-center justify-center text-center p-2.5 transition-all">
+                        <div className="w-10 h-10 rounded-full bg-white border border-[#83B3E9] flex items-center justify-center text-[#0B4F8F] mb-1.5 shadow-2xs">
+                          <svg className="w-5 h-5 text-[#0B4F8F] animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.8" d="M3 9a2 2 0 012-2h.93a2 2 0 001.664-.89l.812-1.22A2 2 0 0110.07 4h3.86a2 2 0 011.664.89l.812 1.22A2 2 0 0018.07 7H19a2 2 0 012 2v9a2 2 0 01-2 2H5a2 2 0 01-2-2V9z" />
+                            <circle cx="12" cy="13" r="3" strokeWidth="1.8" />
+                          </svg>
+                        </div>
+                        <span className="text-[10px] font-bold text-[#0B4F8F] leading-tight">Live Camera</span>
+                        <span className="text-[9px] text-slate-500 mt-0.5 leading-tight">Awaiting Capture</span>
+                        <div className="absolute bottom-0 inset-x-0 bg-[#EEF5FD] border-t border-[#83B3E9]/60 text-[#0B4F8F] text-[9px] font-semibold py-0.5 text-center tracking-wider">
+                          STAGE 2 CAMERA
+                        </div>
+                      </div>
+                    )}
+                  </div>
+
+                  {/* Candidate Details Grid Card */}
+                  <div className="p-3 rounded-lg bg-[#F8FAFC] border border-[#E7EDF4] space-y-1.5 text-xs">
+                    <div className="flex items-center justify-between border-b border-[#E7EDF4] pb-1.5">
+                      <div className="font-bold text-sm text-[#0B1F3A] truncate">
+                        {candidate.name || 'Candidate Record'}
+                      </div>
+                      <span className="font-mono text-[11px] font-bold text-[#0B4F8F] bg-[#EEF5FD] px-2 py-0.5 rounded border border-[#83B3E9]/50">
+                        #{candidate.roll_no}
+                      </span>
+                    </div>
+
+                    <div className="space-y-1 text-[11.5px] pt-0.5">
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span className="text-slate-500">Exam:</span>
+                        <span className="font-medium text-[#0B1F3A] truncate max-w-[190px]">
+                          {candidate.exam_name || wallet?.assigned_exam_name || 'NEET (UG) 2026'}
+                        </span>
+                      </div>
+                      <div className="flex items-center justify-between text-slate-600">
+                        <span className="text-slate-500">Center:</span>
+                        <span className="font-medium text-[#0B1F3A] truncate max-w-[190px]" title={candidate.center_name}>
+                          {candidate.center_name || 'Center Pod #04 (Delhi Central)'}
+                        </span>
                       </div>
                     </div>
                   </div>
-
-                  {/* Candidate Details */}
-                  <div className="space-y-1 text-xs">
-                    <div className="font-bold text-sm text-[#0B1F3A] truncate">
-                      {candidate.name || 'Candidate Record'}
-                    </div>
-                    <div className="text-slate-600">
-                      Roll: <b className="font-mono text-[#0B4F8F]">{candidate.roll_no}</b>
-                    </div>
-                    <div className="text-slate-600 truncate">
-                      Exam: {candidate.exam_name || wallet?.assigned_exam_name || 'NEET (UG) 2026'}
-                    </div>
-                    <div className="text-slate-600 truncate">
-                      Centre: {candidate.center_name || 'Center Pod #04 (Delhi Central)'}
-                    </div>
-                  </div>
                 </div>
-              )}
               </div>
 
               {/* Modality Status Strip */}
