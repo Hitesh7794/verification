@@ -659,7 +659,10 @@ select:focus-visible {
 }
 .support-nudge {
   animation: support-nudge 7s ease-in-out infinite;
-  transform-origin: 50% 62%;
+  /* Just above the middle of the glyph, so the headset rocks about its
+     band the way one sitting on a desk would, rather than pivoting
+     around the earcups. */
+  transform-origin: 50% 42%;
 }
 
 /* Subtle dotted grid that pages can use as a faded background. */
