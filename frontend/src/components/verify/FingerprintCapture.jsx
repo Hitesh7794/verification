@@ -111,71 +111,181 @@ export default function FingerprintCapture({
   }
 
   return (
-    <div className="space-y-3">
+  const isPass = result && result.ok === true
+  const isFail = result && result.ok === false
+
+  return (
+    <div className="space-y-3 font-mono text-xs">
       <DeviceBanner status={status} device={device} error={error} />
 
-      <div className="aspect-square w-full max-w-xs mx-auto rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 flex flex-col items-center justify-center text-center p-6">
-        {result?.bitmapDataUrl ? (
-          <img
-            src={result.bitmapDataUrl}
-            alt="captured fingerprint"
-            className="w-full h-full object-contain"
-          />
-        ) : result?.bitmapBase64 ? (
-          <img
-            src={`data:image/bmp;base64,${result.bitmapBase64}`}
-            alt="captured fingerprint"
-            className="w-full h-full object-contain"
-          />
-        ) : result ? (
-          // Match ran, no preview image (ISO record we couldn't decode
-          // — WSQ / JP2K variants). Don't fall back to "Device ready"
-          // — that reads as pre-capture.
-          <>
-            <p className="text-sm font-medium text-slate-700">Fingerprint captured</p>
-            <p className="text-xs text-slate-500 mt-1">ISO template forwarded to match service</p>
-          </>
-        ) : status === Status.Capturing || busy ? (
-          <>
-            <div className="h-12 w-12 rounded-full border-4 border-indigo-200 border-t-indigo-600 animate-spin" />
-            <p className="mt-3 text-sm text-slate-600">Place finger on the device…</p>
-          </>
-        ) : ready ? (
-          <>
-            <p className="text-sm font-medium text-slate-700">Device ready</p>
-            <p className="text-xs text-slate-500 mt-1">
-              {device?.label ? `${device.label} · ` : ''}
-              {device?.info?.Model} · {device?.info?.SerialNo}
-            </p>
-          </>
-        ) : (
-          <p className="text-sm text-slate-500">Waiting for fingerprint device…</p>
-        )}
+      <div className="my-2 flex flex-col items-center">
+        <div
+          onClick={ready && !busy ? onCapture : undefined}
+          className={`platen-sensor w-36 h-40 rounded-xl flex flex-col items-center justify-center transition-all duration-300 relative overflow-hidden ${
+            ready && !busy ? 'cursor-pointer hover:border-[#0B4F8F]' : ''
+          } ${
+            isPass
+              ? 'border-2 border-[#0F6B45] ring-2 ring-[#0F6B45]/30 bg-emerald-50/60'
+              : isFail
+              ? 'border-2 border-[#DC2626] ring-2 ring-red-500/40 bg-red-50/60 shake-error-anim'
+              : busy || status === Status.Capturing
+              ? 'border-2 border-cyan-500/80 bg-cyan-950/10'
+              : ''
+          }`}
+        >
+          {/* Laser Scanner Line */}
+          {(busy || status === Status.Capturing) && <div className="fp-laser-scanner" />}
+          {isPass && <div className="fp-laser-scanner scanner-green" />}
+          {isFail && <div className="fp-laser-scanner scanner-red" />}
+
+          {/* Captured Bitmap Preview or Vector SVG */}
+          {result?.bitmapDataUrl || result?.bitmapBase64 ? (
+            <div className="relative w-full h-full p-2 flex items-center justify-center">
+              <img
+                src={result.bitmapDataUrl || `data:image/bmp;base64,${result.bitmapBase64}`}
+                alt="captured fingerprint"
+                className="w-full h-full object-contain"
+              />
+              {isPass && (
+                <div className="absolute inset-0 flex items-center justify-center bg-emerald-950/20 z-10">
+                  <div className="w-10 h-10 rounded-full bg-[#0F6B45] text-white flex items-center justify-center shadow-lg success-glow-ring">
+                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  </div>
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="relative flex items-center justify-center">
+              <svg
+                className={`w-20 h-28 transition-all duration-300 ${
+                  isPass
+                    ? 'text-[#0F6B45] drop-shadow-[0_0_12px_rgba(15,107,69,0.9)]'
+                    : isFail
+                    ? 'text-[#DC2626] drop-shadow-[0_0_12px_rgba(220,38,38,0.9)]'
+                    : busy || status === Status.Capturing
+                    ? 'text-cyan-500 drop-shadow-[0_0_8px_rgba(6,182,212,0.8)]'
+                    : 'text-slate-400 group-hover:text-[#0B4F8F]'
+                }`}
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                strokeWidth="1.6"
+                strokeLinecap="round"
+                strokeLinejoin="round"
+              >
+                <path d="M12 2C6.48 2 2 6.48 2 12c0 2.85 1.2 5.41 3.12 7.23M12 6c-3.31 0-6 2.69-6 6 0 1.94.92 3.66 2.36 4.77M12 10c-1.1 0-2 .9-2 2 0 .8.47 1.48 1.15 1.8M12 14c-.55 0-1 .45-1 1M18.88 19.23C20.8 17.41 22 14.85 22 12c0-5.52-4.48-10-10-10M17.64 16.77C19.08 15.66 20 13.94 20 12c0-4.42-3.58-8-8-8M14.85 13.8C15.53 13.48 16 12.8 16 12c0-2.21-1.79-4-4-4" />
+              </svg>
+
+              {isPass && (
+                <div className="absolute inset-0 flex items-center justify-center z-10">
+                  <div className="w-10 h-10 rounded-full bg-[#0F6B45] text-white flex items-center justify-center shadow-lg success-glow-ring">
+                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                    </svg>
+                  </div>
+                </div>
+              )}
+
+              {isFail && (
+                <div className="absolute inset-0 flex items-center justify-center z-10">
+                  <div className="w-10 h-10 rounded-full bg-[#DC2626] text-white flex items-center justify-center shadow-lg">
+                    <svg className="w-5 h-5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3">
+                      <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
+
+          <span
+            className={`text-[9.5px] font-mono font-bold uppercase mt-2 transition-colors ${
+              isPass
+                ? 'text-[#0F6B45]'
+                : isFail
+                ? 'text-[#DC2626]'
+                : busy || status === Status.Capturing
+                ? 'text-cyan-700 animate-pulse'
+                : 'text-slate-500'
+            }`}
+          >
+            {isPass
+              ? 'Fingerprint Verified (Pass)'
+              : isFail
+              ? 'Ridge Defect (<40)'
+              : busy || status === Status.Capturing
+              ? 'Scanning Ridges…'
+              : 'Touch Sensor Glass'}
+          </span>
+        </div>
       </div>
 
-      {result && (
-        <ResultSummary result={result} />
-      )}
+      {/* Odometer & Status Strip */}
+      <div className="p-2.5 rounded-lg bg-white border border-[#E7EDF4] flex items-center justify-between font-mono text-xs mb-3">
+        <div>
+          <span className="text-[9px] text-slate-400 block uppercase">Match Score</span>
+          <span className={`text-lg font-bold tabular-nums ${isPass ? 'text-[#0F6B45]' : isFail ? 'text-[#DC2626]' : 'text-slate-400'}`}>
+            {result?.score != null ? String(result.score).padStart(3, '0') : '000'}
+          </span>
+        </div>
+        <span
+          className={`px-2 py-0.5 rounded font-bold text-[11px] ${
+            isPass
+              ? 'bg-[#E8F5EE] border border-[#B4DCC7] text-[#0F6B45]'
+              : isFail
+              ? 'bg-[#FBEAEC] border border-[#EFC0C7] text-[#DC2626]'
+              : busy || status === Status.Capturing
+              ? 'bg-cyan-100 text-cyan-800 animate-pulse'
+              : 'bg-slate-100 text-slate-500'
+          }`}
+        >
+          {isPass ? 'MATCH (PASS)' : isFail ? 'LOW QUALITY (<40)' : busy ? 'SCANNING…' : 'WAITING SCAN'}
+        </span>
+      </div>
+
       {callError && (
-        <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">
+        <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700 font-mono">
           {callError instanceof MorfinError || callError instanceof StartekError
             ? `${callError.code}: ${callError.description}`
             : callError.message}
         </div>
       )}
 
-      {/* Action row — full-width primary button so the fingerprint
-          and iris cards land with visually identical bottom action
-          areas regardless of button label length. */}
+      {/* Action row */}
       <div className="flex flex-col gap-2">
         {result ? (
-          <Button variant="secondary" className="w-full" onClick={() => { setResult(null); setCallError(null); }}>
+          <Button
+            variant="secondary"
+            className="w-full font-mono text-xs uppercase tracking-wider"
+            onClick={() => {
+              setResult(null)
+              setCallError(null)
+            }}
+          >
             Recapture
           </Button>
         ) : (
-          <Button className="w-full" onClick={onCapture} disabled={!ready || busy}>
-            {busy ? 'Capturing…' : 'Capture & match'}
-          </Button>
+          <button
+            type="button"
+            onClick={onCapture}
+            disabled={!ready || busy}
+            className="w-full py-2 px-3 rounded-lg bg-[#0B4F8F] hover:bg-[#083E72] disabled:opacity-50 text-white font-mono font-bold text-xs uppercase tracking-wider transition shadow-xs flex items-center justify-center gap-2 group cursor-pointer"
+          >
+            <svg
+              className="w-4 h-4 text-cyan-300 group-hover:scale-110 transition-transform"
+              viewBox="0 0 24 24"
+              fill="none"
+              stroke="currentColor"
+              strokeWidth="2"
+              strokeLinecap="round"
+              strokeLinejoin="round"
+            >
+              <path d="M12 2a10 10 0 0 0-10 10c0 2.85 1.2 5.41 3.12 7.23M12 6a6 6 0 0 0-6 6c0 1.94.92 3.66 2.36 4.77M12 10a2 2 0 0 0-2 2c0 .8.47 1.48 1.15 1.8M12 14c-.55 0-1 .45-1 1M18.88 19.23A10 10 0 0 0 22 12c0-5.52-4.48-10-10-10M17.64 16.77A6 6 0 0 0 20 12c0-4.42-3.58-8-8-8M14.85 13.8A2 2 0 0 0 16 12c0-2.21-1.79-4-4-4" />
+            </svg>
+            <span>{busy ? 'Capturing Ridges…' : 'Scan Candidate Fingerprint'}</span>
+          </button>
         )}
       </div>
     </div>

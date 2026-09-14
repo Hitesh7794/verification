@@ -670,3 +670,200 @@ select:focus-visible {
   background-image: radial-gradient(circle, rgba(24, 33, 44, 0.055) 1px, transparent 1px);
   background-size: 22px 22px;
 }
+
+/* ═══════════════════════════════════════════════════════════════════
+   AGENT WORKSTATION — Sovereign Institutional Hardware & UI Tokens
+   ═══════════════════════════════════════════════════════════════════ */
+
+:root {
+  --font-seal: 'Cinzel', serif;
+}
+
+.font-seal { font-family: var(--font-seal); }
+
+/* Guaranteed Single-Row Stepper Connector */
+.stepper-connector {
+  flex: 1 1 20px;
+  min-width: 16px;
+  height: 3px;
+  background-color: #D5DDE7;
+  border-radius: 9999px;
+  position: relative;
+  overflow: hidden;
+  margin: 0 10px;
+}
+.stepper-fill {
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  width: 0%;
+  background-color: #0B4F8F;
+  transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
+}
+.stepper-fill-active {
+  width: 100% !important;
+  background-color: #0F6B45 !important;
+}
+.stepper-fill-pulse {
+  width: 100% !important;
+  background: linear-gradient(90deg, #0F6B45, #0B4F8F, #00F2FE);
+  background-size: 200% 100%;
+  animation: beamPulse 1.8s linear infinite;
+}
+@keyframes beamPulse {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
+/* Active Exam Window Breathing Ring */
+@keyframes breatheGlow {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(15, 107, 69, 0.4); }
+  50% { box-shadow: 0 0 0 6px rgba(15, 107, 69, 0); }
+}
+.breathe-ring { animation: breatheGlow 2.5s infinite; }
+
+/* Optical Sensor Platen */
+.platen-sensor {
+  background: radial-gradient(circle at 50% 50%, #EEF5FD 0%, #E2ECF7 100%);
+  border: 2px solid #83B3E9;
+  box-shadow: inset 0 2px 6px rgba(11, 79, 143, 0.15);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Laser Scanner Beam */
+@keyframes laserScanVertical {
+  0% { top: 6%; opacity: 0.8; }
+  50% { top: 92%; opacity: 1; }
+  100% { top: 6%; opacity: 0.8; }
+}
+.laser-hud-beam {
+  animation: laserScanVertical 2.2s ease-in-out infinite;
+  box-shadow: 0 0 10px rgba(11, 79, 143, 0.8);
+}
+
+/* 3D Wax Seal Stamp Physics */
+@keyframes stampDown {
+  0% { transform: scale(2.4) rotate(-20deg); opacity: 0; filter: blur(4px); }
+  70% { transform: scale(0.94) rotate(3deg); opacity: 1; filter: blur(0); }
+  85% { transform: scale(1.03) rotate(-1deg); }
+  100% { transform: scale(1) rotate(0deg); opacity: 1; }
+}
+.seal-stamp-anim {
+  animation: stampDown 0.7s cubic-bezier(0.175, 0.885, 0.32, 1.275) forwards;
+}
+
+@keyframes shockwaveExpand {
+  0% { transform: scale(0.4); opacity: 1; }
+  100% { transform: scale(2.2); opacity: 0; }
+}
+.shockwave-ring {
+  animation: shockwaveExpand 0.75s cubic-bezier(0.1, 0.8, 0.2, 1) forwards;
+}
+
+/* Anti-Tamper Security Watermark */
+.security-watermark-grid {
+  background-image: repeating-linear-gradient(
+    -45deg,
+    rgba(11, 79, 143, 0.03) 0,
+    rgba(11, 79, 143, 0.03) 1px,
+    transparent 0,
+    transparent 16px
+  );
+}
+
+/* Single-Eye Optical Reticle & Radar Conic Sweep */
+@keyframes irisRotateRing {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+.iris-rotate-anim {
+  animation: irisRotateRing 14s linear infinite;
+}
+@keyframes irisRotateRev {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(-360deg); }
+}
+.iris-rotate-rev {
+  animation: irisRotateRev 10s linear infinite;
+}
+@keyframes irisLaserSweep {
+  0% { top: 0%; opacity: 0.9; }
+  50% { top: 90%; opacity: 1; }
+  100% { top: 0%; opacity: 0.9; }
+}
+.iris-laser-sweep {
+  animation: irisLaserSweep 1.8s ease-in-out infinite;
+  box-shadow: 0 0 12px rgba(6, 182, 212, 0.9);
+}
+@keyframes irisRadarSweep {
+  0% { transform: rotate(0deg); }
+  100% { transform: rotate(360deg); }
+}
+.iris-radar-conic {
+  background: conic-gradient(from 0deg, rgba(6, 182, 212, 0.45) 0deg, rgba(6, 182, 212, 0.08) 55deg, transparent 80deg, transparent 360deg);
+  animation: irisRadarSweep 2s linear infinite;
+}
+@keyframes pupilPulseAntiSpoof {
+  0%, 100% { transform: scale(1); }
+  50% { transform: scale(0.84); }
+}
+.pupil-pulse-active {
+  animation: pupilPulseAntiSpoof 1.2s ease-in-out infinite;
+}
+
+/* Eye Blinking Animation */
+@keyframes eyeBlinkSoft {
+  0%, 86%, 100% { transform: scaleY(1); }
+  93% { transform: scaleY(0.12); }
+}
+.eye-blink-anim {
+  transform-origin: center;
+  animation: eyeBlinkSoft 3.8s ease-in-out infinite;
+}
+
+/* Laser Scanner Beam over Fingerprint */
+@keyframes fpScannerVertical {
+  0% { top: 6%; opacity: 0.85; }
+  50% { top: 88%; opacity: 1; filter: drop-shadow(0 0 6px currentColor); }
+  100% { top: 6%; opacity: 0.85; }
+}
+.fp-laser-scanner {
+  position: absolute;
+  left: 14px;
+  right: 14px;
+  height: 3px;
+  border-radius: 9999px;
+  background: linear-gradient(90deg, transparent, #00F2FE, #0B4F8F, transparent);
+  box-shadow: 0 0 10px rgba(0, 242, 254, 0.9);
+  animation: fpScannerVertical 1.6s ease-in-out infinite;
+  z-index: 20;
+}
+.fp-laser-scanner.scanner-green {
+  background: linear-gradient(90deg, transparent, #34D399, #0F6B45, transparent);
+  box-shadow: 0 0 14px rgba(16, 185, 129, 0.95);
+}
+.fp-laser-scanner.scanner-red {
+  background: linear-gradient(90deg, transparent, #F87171, #DC2626, transparent);
+  box-shadow: 0 0 14px rgba(220, 38, 38, 0.95);
+}
+
+/* Platen Error Shake */
+@keyframes platenShake {
+  0%, 100% { transform: translateX(0); }
+  20%, 60% { transform: translateX(-5px); }
+  40%, 80% { transform: translateX(5px); }
+}
+.shake-error-anim {
+  animation: platenShake 0.45s ease-in-out;
+}
+
+/* Success Glow Ring */
+@keyframes successGlowPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(15, 107, 69, 0.5); }
+  50% { box-shadow: 0 0 0 8px rgba(15, 107, 69, 0); }
+}
+.success-glow-ring {
+  animation: successGlowPulse 1.8s infinite;
+}
