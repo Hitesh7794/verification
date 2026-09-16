@@ -355,6 +355,14 @@ select:focus-visible {
 .bg-warm-surface { background-color: #FFFFFF; }   /* card surface */
 .bg-warm-tint    { background-color: #ECF0F5; }   /* highlighted band */
 .border-warm     { border-color: #DDE4EC; }       /* hairline border */
+/* Same hairline, applied between siblings. Five surfaces already wrote
+   `divide-y divide-warm` expecting this to exist; without it `divide-y`
+   fell back to currentColor and drew the separators in near-black —
+   most visibly down the reviewer's application list. The selector
+   mirrors what Tailwind v4 emits for `divide-y` (bottom border on
+   every child but the last), so the colour lands on the same edge the
+   width does. */
+.divide-warm > :not(:last-child) { border-color: #DDE4EC; }
 .border-warm-strong { border-color: #C5D0DC; }    /* accented border */
 /* Brand gold on light surfaces, at body size. Darker than the gold used
    on navy (#E8C55E) because it has to clear 4.5:1 against white — at

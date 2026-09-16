@@ -144,7 +144,12 @@ export function StatTile({ label, value, accent, icon: IconComp, hint, onClick, 
 
         {/* Caption — small, slate-500, single line. */}
         {hint && (
-          <p className="mt-2 text-xs text-slate-500 truncate">{hint}</p>
+          // While the tile is active the "Filtered" marker sits in the
+          // bottom-right corner, on the same line as this caption. Room is
+          // reserved for it so a narrow tile truncates the caption instead
+          // of printing the two on top of each other; a wide tile's short
+          // caption never reaches the marker, so nothing changes there.
+          <p className={`mt-2 text-xs text-slate-500 truncate ${active ? 'pr-20' : ''}`}>{hint}</p>
         )}
 
         {/* Active-state marker — small check in the bottom-right
