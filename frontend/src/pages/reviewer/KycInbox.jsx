@@ -1,16 +1,29 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
+import { motion } from 'framer-motion'
 import ReviewerShell, { ReviewerPageHead } from '../../components/reviewer/ReviewerShell.jsx'
 import { Button, Card, CardBody, Input, Label } from '../../components/ui/ui.jsx'
-import { Icon, Pill } from '../../components/ui/extras.jsx'
-import { FadeIn } from '../../components/ui/motion.jsx'
+import { Icon, Pill, Skeleton, StatTile } from '../../components/ui/extras.jsx'
+import { FadeIn, StaggerItem, StaggerList } from '../../components/ui/motion.jsx'
+import { CountUp } from '../../components/shell/SuperUI.jsx'
+import { Band, Rule } from '../../components/reviewer/BoardBand.jsx'
 import {
   listReviewerApplications,
+  listReviewerExams,
   bulkApproveReviewerApplications,
   bulkRejectReviewerApplications,
   revokeReviewerApplication,
   reviewerMe,
 } from '../../lib/reviewer/api.js'
+
+// The three slices of the inbox. Held as data so the tab row can be a
+// single map — which is what lets one shared pill slide between tabs.
+const TABS = [
+  { key: 'all',      label: 'All',      badge: 'bg-slate-200 text-slate-800' },
+  { key: 'pending',  label: 'Pending',  badge: 'bg-amber-100 text-amber-800' },
+  { key: 'approved', label: 'Approved', badge: 'bg-emerald-100 text-emerald-800' },
+  { key: 'rejected', label: 'Rejected', badge: 'bg-rose-100 text-rose-800' },
+]
 
 // Reviewer > KYC applications.
 //
@@ -21,11 +34,12 @@ import {
 // least one pending row is checked.
 
 export default function ReviewerKycInbox() {
-  const [status, setStatus] = useState('pending') // 'pending' | 'approved' | 'rejected'
+  const [status, setStatus] = useState('pending') // 'all' | 'pending' | 'approved' | 'rejected'
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
   const [counts, setCounts] = useState(null)
   const [client, setClient] = useState(null)
+  const [exams, setExams] = useState([])
   const [loading, setLoading] = useState(true)
   const [err, setErr] = useState('')
   const [search, setSearch] = useState('')
@@ -51,14 +65,28 @@ export default function ReviewerKycInbox() {
     setLoading(true)
     setErr('')
     try {
-      const [appRes, meRes] = await Promise.all([
-        listReviewerApplications({ status, limit: 100, offset: 0 }),
+      // Exams ride along with the queue: the windows panel is part of
+      // the same card, and a second spinner for it would make the head
+      // of the page flicker in two stages.
+      // "All" has no status of its own on the server — each list is
+      // scoped to this desk differently (pending by whose queue it is in,
+      // approved and rejected by which desk decided). Asking for the
+      // three and merging keeps those rules exactly as the individual
+      // tabs apply them, rather than inventing a fourth on the server.
+      const statuses = status === 'all' ? ['pending', 'approved', 'rejected'] : [status]
+      const [appResults, meRes, examRes] = await Promise.all([
+        Promise.all(statuses.map((st) => listReviewerApplications({ status: st, limit: 100, offset: 0 }))),
         reviewerMe(),
+        listReviewerExams().catch(() => []),
       ])
-      setItems(appRes.items || [])
-      setTotal(appRes.total || 0)
-      setCounts(appRes.counts || null)
+      const merged = appResults
+        .flatMap((r) => r.items || [])
+        .sort((a, b) => new Date(b.created_at) - new Date(a.created_at))
+      setItems(merged)
+      setTotal(appResults.reduce((n, r) => n + (r.total || 0), 0))
+      setCounts(appResults[0]?.counts || null)
       setClient(meRes)
+      setExams(Array.isArray(examRes) ? examRes : (examRes?.items || []))
     } catch (e) {
       setErr(e?.body?.error || e?.message || 'Could not load applications')
     } finally {
@@ -92,6 +120,68 @@ export default function ReviewerKycInbox() {
       universities: approved,
     }
   }, [counts, total, status])
+
+  // Null until /me lands, so the generic icon never flashes under a
+  // board that has its own artwork.
+
+  // Windows that are open right now, soonest to close first. A
+  // reviewer's day is governed by these: an exam whose window shuts
+  // tonight is the reason the queue has to be cleared today.
+  const liveExams = useMemo(() => {
+    const now = Date.now()
+    return (exams || [])
+      .filter((e) => !e.closed && e.verification_from && e.verification_to)
+      .map((e) => ({
+        ...e,
+        from: new Date(e.verification_from).getTime(),
+        to: new Date(e.verification_to).getTime(),
+      }))
+      .filter((e) => e.from <= now && now <= e.to)
+      .sort((a, b) => a.to - b.to)
+  }, [exams])
+
+  const outcome = useMemo(() => {
+    const total = client?.stats?.verifications_total ?? 0
+    const passed = client?.stats?.verified_total ?? 0
+    const denied = client?.stats?.denied_total ?? 0
+    return { total, passed, denied, rate: total > 0 ? (passed / total) * 100 : 0 }
+  }, [client])
+
+  // A tile click switches the list to that slice and brings the list
+  // into view — the same move the superadmin tile makes to its table.
+  //
+  // The scroll waits for the new slice to finish loading. Scrolling at
+  // the moment of the click measured the page while it still held the
+  // previous slice (or the loading placeholders), so on a short list
+  // the scroll ran out of page and stopped halfway.
+  //
+  // Two steps, because the render straight after the click still has
+  // loading === false — the fetch starts in an effect a moment later. A
+  // single flag scrolled in that render, against the old list. So the
+  // click arms the scroll, the fetch starting moves it on, and only the
+  // fetch finishing fires it.
+  const listRef = useRef(null)
+  const scrollPhase = useRef('idle') // 'idle' | 'armed' | 'loading'
+  function openSlice(next) {
+    if (next === status) {
+      listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' })
+      return
+    }
+    scrollPhase.current = 'armed'
+    setStatus(next)
+  }
+  useEffect(() => {
+    if (loading && scrollPhase.current === 'armed') {
+      scrollPhase.current = 'loading'
+      return
+    }
+    if (!loading && scrollPhase.current === 'loading') {
+      scrollPhase.current = 'idle'
+      // One frame for the rows to be laid out before measuring.
+      requestAnimationFrame(() =>
+        listRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }))
+    }
+  }, [loading])
 
   const isPendingTab = status === 'pending'
   const selectionCount = selectedIds.size
@@ -174,71 +264,49 @@ export default function ReviewerKycInbox() {
   return (
     <ReviewerShell>
       <FadeIn>
-        {/* Hero card — client identity + at-a-glance stats strip. From
-            rahul-FE. Replaces the earlier StatsRow + ReviewerPageHead
-            pair; keeps the "count + interactive tab-swap" idea via the
-            tab strip that follows below. */}
-        <div className="mb-6 rounded-xl bg-warm-surface ring-1 ring-warm overflow-hidden shadow-sm">
-          <div className="h-[3px] rule-gold" />
-          <div className="p-5 sm:p-6">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="flex items-start gap-4 min-w-0">
-                <div className="h-12 w-12 rounded-xl bg-stone-100 text-stone-800 flex items-center justify-center shrink-0">
-                  <Icon.Building className="h-6 w-6" />
-                </div>
-                <div className="min-w-0">
-                  <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
-                    {client?.name || 'Board KYC & Institutional Approvals'}
-                  </h1>
-                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                    {client?.visible ? <Pill tone="emerald" dot>Visible</Pill> : <Pill tone="slate" dot>Hidden</Pill>}
-                    {client?.closed && <Pill tone="amber" dot>Closed</Pill>}
-                    <span className="text-slate-300">·</span>
-                    <span className="text-slate-600">KYC & University Verification Portal</span>
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button variant="secondary" size="sm" onClick={load} disabled={loading}>
-                  <Icon.RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
-                  <span className="ml-1.5">{loading ? 'Refreshing…' : 'Refresh'}</span>
-                </Button>
-              </div>
-            </div>
+        {/* The board's identity lives in the chrome, so the page opens
+            straight on the numbers. */}
+        <h1 className="sr-only">{client?.name || 'Board KYC & Institutional Approvals'}</h1>
 
-            {/* Statistics strip */}
-            <div className="mt-5 pt-5 border-t border-slate-100 grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-5 gap-6 text-sm">
-              <div>
-                <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Total Applications</p>
-                <p className="text-lg font-semibold text-slate-900 mt-0.5 tabular-nums">{stats?.total ?? 0}</p>
-              </div>
-              <div>
-                <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Requested / Pending</p>
-                <p className="text-lg font-semibold text-amber-700 mt-0.5 tabular-nums">{stats?.pending ?? 0}</p>
-              </div>
-              <div>
-                <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Approved</p>
-                <p className="text-lg font-semibold text-emerald-700 mt-0.5 tabular-nums">{stats?.approved ?? 0}</p>
-              </div>
-              <div>
-                <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Universities / Colleges</p>
-                <p className="text-lg font-semibold text-slate-900 mt-0.5 tabular-nums">{stats?.universities ?? 0}</p>
-              </div>
-              <div>
-                <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Candidates Verified</p>
-                <p className="text-lg font-semibold text-slate-900 mt-0.5 tabular-nums">
-                  {(client?.stats?.verifications_total ?? 0).toLocaleString()}
-                </p>
-                {(client?.stats?.verifications_total ?? 0) > 0 && (
-                  <p className="text-[11px] text-slate-500 mt-0.5 tabular-nums">
-                    <span className="text-emerald-700">{client?.stats?.verified_total ?? 0} passed</span>
-                    <span className="mx-1">·</span>
-                    <span className="text-rose-700">{client?.stats?.denied_total ?? 0} denied</span>
-                  </p>
-                )}
-              </div>
-            </div>
+        {/* The superadmin Applications page's own tiles — the same
+            StatTile component, same order, accents, icons and captions —
+            so a reviewer and the platform team filter an application
+            queue the same way. Each tile switches the list below to its
+            slice and brings the list into view; the active one takes its
+            accent border. */}
+        <div className="mb-6 grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-stretch">
+        <StaggerList className="grid gap-4 grid-cols-2 lg:grid-cols-4">
+          <StaggerItem>
+            <StatTile label="Pending" value={stats.pending} accent="pending" icon={Icon.Clock}
+                      hint="Awaiting your review"
+                      onClick={() => openSlice('pending')} active={status === 'pending'} />
+          </StaggerItem>
+          <StaggerItem>
+            <StatTile label="Approved" value={stats.approved} accent="approved" icon={Icon.Check}
+                      hint="Active institutions"
+                      onClick={() => openSlice('approved')} active={status === 'approved'} />
+          </StaggerItem>
+          <StaggerItem>
+            <StatTile label="Rejected" value={stats.rejected} accent="rejected" icon={Icon.X}
+                      hint="Returned for changes"
+                      onClick={() => openSlice('rejected')} active={status === 'rejected'} />
+          </StaggerItem>
+          <StaggerItem>
+            <StatTile label="Total" value={stats.total} accent="total" icon={Icon.File}
+                      hint="All submissions"
+                      onClick={() => openSlice('all')} active={status === 'all'} />
+          </StaggerItem>
+        </StaggerList>
+
+        <Band>
+          <div className="shrink-0">
+            <OutcomeDial {...outcome} />
           </div>
+          <Rule />
+          <div className="shrink-0 xl:w-[220px]">
+            <LiveWindows exams={liveExams} />
+          </div>
+        </Band>
         </div>
 
         {err && (
@@ -268,68 +336,55 @@ export default function ReviewerKycInbox() {
         )}
 
         {/* Tab Controls and Search Bar */}
-        <div className="flex flex-wrap items-center justify-between gap-4 mb-4">
+        <div ref={listRef} className="scroll-mt-28 flex flex-wrap items-center justify-between gap-4 mb-4">
           <div className="inline-flex rounded-xl bg-slate-100 p-1 text-sm font-medium">
-            <button
-              type="button"
-              onClick={() => setStatus('pending')}
-              className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-all ${
-                status === 'pending'
-                  ? 'bg-white text-slate-900 shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <span>Pending</span>
-              <span className={`rounded-full px-2 py-0.5 text-[10px] ${
-                status === 'pending' ? 'bg-amber-100 text-amber-800' : 'bg-slate-200 text-slate-700'
-              }`}>
-                {stats.pending}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setStatus('approved')}
-              className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-all ${
-                status === 'approved'
-                  ? 'bg-white text-slate-900 shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <span>Approved</span>
-              <span className={`rounded-full px-2 py-0.5 text-[10px] ${
-                status === 'approved' ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-200 text-slate-700'
-              }`}>
-                {stats.approved}
-              </span>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => setStatus('rejected')}
-              className={`flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold transition-all ${
-                status === 'rejected'
-                  ? 'bg-white text-slate-900 shadow-sm'
-                  : 'text-slate-600 hover:text-slate-900'
-              }`}
-            >
-              <span>Rejected</span>
-              <span className={`rounded-full px-2 py-0.5 text-[10px] ${
-                status === 'rejected' ? 'bg-rose-100 text-rose-800' : 'bg-slate-200 text-slate-700'
-              }`}>
-                {stats.rejected}
-              </span>
-            </button>
+            {TABS.map((t) => {
+              const active = status === t.key
+              return (
+                <button
+                  key={t.key}
+                  type="button"
+                  onClick={() => setStatus(t.key)}
+                  aria-pressed={active}
+                  className="relative flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold"
+                >
+                  {/* The white pill is one element shared by all three
+                      tabs — framer moves it to whichever tab is active
+                      rather than fading one out and another in. */}
+                  {active && (
+                    <motion.span
+                      layoutId="reviewer-tab-pill"
+                      className="absolute inset-0 rounded-lg bg-white shadow-sm"
+                      transition={{ type: 'spring', stiffness: 420, damping: 34 }}
+                    />
+                  )}
+                  <span className={`relative transition-colors ${
+                    active ? 'text-slate-900' : 'text-slate-600 hover:text-slate-900'}`}>
+                    {t.label}
+                  </span>
+                  <span className={`relative rounded-full px-2 py-0.5 text-[10px] tabular-nums transition-colors ${
+                    active ? t.badge : 'bg-slate-200 text-slate-700'}`}>
+                    {t.key === 'all' ? stats.total : stats[t.key]}
+                  </span>
+                </button>
+              )
+            })}
           </div>
 
-          <div className="w-full sm:w-64">
-            <Input
-              type="search"
-              placeholder="Search by university, city, head…"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              className="bg-white text-xs"
-            />
+          <div className="flex items-center gap-3 w-full sm:w-auto">
+            <Button variant="secondary" size="sm" onClick={load} disabled={loading}>
+              <Icon.RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
+              <span className="ml-1.5">{loading ? 'Refreshing…' : 'Refresh'}</span>
+            </Button>
+            <div className="flex-1 sm:w-64">
+              <Input
+                type="search"
+                placeholder="Search by university, city, head…"
+                value={search}
+                onChange={(e) => setSearch(e.target.value)}
+                className="bg-white text-xs"
+              />
+            </div>
           </div>
         </div>
 
@@ -364,7 +419,7 @@ export default function ReviewerKycInbox() {
         <Card>
           <CardBody className="p-0">
             {loading ? (
-              <div className="p-10 text-center text-sm text-stone-500">Loading applications…</div>
+              <RowSkeletons />
             ) : filteredItems.length === 0 ? (
               <EmptyState status={status} />
             ) : (
@@ -381,11 +436,16 @@ export default function ReviewerKycInbox() {
                     <span className="font-medium">{allSelected ? 'All visible selected' : 'Select all visible'}</span>
                   </div>
                 )}
-                <ul className="divide-y divide-warm">
-                  {filteredItems.map((it) => (
+                {/* Keyed on the tab so switching tabs replays the
+                    entrance. Only the first rows are staggered — past
+                    the fold nobody sees it, and a 100-row cascade
+                    would just delay the list. */}
+                <ul key={status} className="divide-y divide-warm">
+                  {filteredItems.map((it, i) => (
                     <Row
                       key={it.id}
                       it={it}
+                      index={i}
                       selectable={isPendingTab}
                       selected={selectedIds.has(it.id)}
                       onToggle={() => toggleOne(it.id)}
@@ -422,15 +482,143 @@ export default function ReviewerKycInbox() {
   )
 }
 
+
+
+// OutcomeDial — the pass rate as a ring, because it is the number the
+// board is judged on and it was previously the smallest text on the
+// page. The ring is drawn from one scale: the emerald arc is the pass
+// share of the whole, the rose remainder is the denials, and the figure
+// in the middle names the same quantity. Both counts are printed beside
+// it, so nothing has to be read off the geometry.
+function OutcomeDial({ total, passed, denied, rate }) {
+  const R = 30
+  const C = 2 * Math.PI * R
+  const share = total > 0 ? passed / total : 0
+  return (
+    <div className="flex items-center gap-4">
+      <div className="relative shrink-0">
+        <svg width="76" height="76" viewBox="0 0 76 76" aria-hidden="true" className="-rotate-90">
+          <circle cx="38" cy="38" r={R} fill="none" stroke="#FECDD3" strokeWidth="8" />
+          <motion.circle
+            cx="38" cy="38" r={R} fill="none"
+            stroke="#059669" strokeWidth="8" strokeLinecap="round"
+            strokeDasharray={C}
+            initial={{ strokeDashoffset: C }}
+            animate={{ strokeDashoffset: C * (1 - share) }}
+            transition={{ duration: 0.9, ease: [0.22, 1, 0.36, 1] }}
+          />
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="text-[15px] font-semibold text-slate-900 tabular-nums leading-none">
+            <CountUp value={rate} format="pct" />
+          </span>
+          <span className="text-[9.5px] font-semibold uppercase tracking-[0.1em] text-slate-400 mt-1">
+            Pass
+          </span>
+        </div>
+      </div>
+      <dl className="min-w-0 space-y-1.5 text-[12.5px]">
+        <div className="flex items-center gap-2">
+          <span aria-hidden="true" className="h-2 w-2 rounded-full bg-emerald-600 shrink-0" />
+          <dt className="text-slate-500">Passed</dt>
+          <dd className="font-semibold text-slate-900 tabular-nums ml-auto">{passed}</dd>
+        </div>
+        <div className="flex items-center gap-2">
+          <span aria-hidden="true" className="h-2 w-2 rounded-full bg-rose-300 shrink-0" />
+          <dt className="text-slate-500">Denied</dt>
+          <dd className="font-semibold text-slate-900 tabular-nums ml-auto">{denied}</dd>
+        </div>
+        <div className="flex items-center gap-2 pt-1.5 border-t border-slate-100">
+          <dt className="text-slate-500">Verifications</dt>
+          <dd className="font-semibold text-slate-900 tabular-nums ml-auto">{total}</dd>
+        </div>
+      </dl>
+    </div>
+  )
+}
+
+// LiveWindows — the exams whose verification window is open right now.
+// The bar is elapsed time, not progress through the candidates: what a
+// reviewer needs to see is how much of the window is left, because an
+// institution approved after it shuts cannot verify anyone for that
+// exam. Soonest to close sits first; two is enough for the card.
+function LiveWindows({ exams }) {
+  const now = Date.now()
+  return (
+    <div>
+      <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">
+        Verification windows open
+      </p>
+      {exams.length === 0 ? (
+        <p className="mt-2 text-[12.5px] text-slate-400">None open right now.</p>
+      ) : (
+        <ul className="mt-2 space-y-2">
+          {exams.slice(0, 2).map((e) => {
+            const span = Math.max(1, e.to - e.from)
+            const elapsed = Math.min(1, Math.max(0, (now - e.from) / span))
+            const daysLeft = Math.ceil((e.to - now) / 86400000)
+            const closing = daysLeft <= 2
+            return (
+              <li key={e.id}>
+                <div className="flex items-baseline justify-between gap-3">
+                  <span className="min-w-0 truncate text-[12.5px] font-semibold text-slate-800"
+                        title={`${e.exam_code || e.name} · ${e.candidate_count ?? 0} candidates`}>
+                    {e.exam_code || e.name}
+                    <span className="ml-1.5 font-normal text-slate-400 tabular-nums">{e.candidate_count ?? 0}</span>
+                  </span>
+                  <span className={`text-[11.5px] font-semibold tabular-nums shrink-0 ${
+                    closing ? 'text-amber-700' : 'text-slate-500'}`}>
+                    {daysLeft <= 1 ? 'closes today' : `${daysLeft} days left`}
+                  </span>
+                </div>
+                <div className="mt-1.5 h-1.5 rounded-full bg-slate-100 overflow-hidden">
+                  <motion.div
+                    initial={{ width: 0 }}
+                    animate={{ width: `${elapsed * 100}%` }}
+                    transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
+                    className={`h-full rounded-full ${closing ? 'bg-amber-500' : 'bg-brand-500'}`}
+                  />
+                </div>
+              </li>
+            )
+          })}
+        </ul>
+      )}
+    </div>
+  )
+}
+
+// RowSkeletons — what the list shows while a fetch is in flight.
+// Shaped like the rows that replace them, so the card doesn't collapse
+// to a single line of text and then jump back open.
+function RowSkeletons({ rows = 4 }) {
+  return (
+    <ul className="divide-y divide-warm">
+      {Array.from({ length: rows }, (_, i) => (
+        <li key={i} className="flex items-start gap-3 p-4 sm:p-5">
+          <div className="min-w-0 flex-1 space-y-2.5">
+            <Skeleton className="h-4 w-56 max-w-[70%]" />
+            <Skeleton className="h-3 w-80 max-w-[90%]" />
+            <Skeleton className="h-3 w-40" />
+          </div>
+          <Skeleton className="h-8 w-20 rounded-lg shrink-0" />
+        </li>
+      ))}
+    </ul>
+  )
+}
+
 function EmptyState({ status }) {
   const label =
-    status === 'pending'
+    status === 'all'
+      ? 'No applications yet'
+      : status === 'pending'
       ? 'No pending applications'
       : status === 'approved'
       ? 'No approved applications'
       : 'No rejected applications'
   const sub =
-    status === 'pending'
+    status === 'all' || status === 'pending'
       ? 'When institutions register and select your exam board, their applications will appear here for verification.'
       : status === 'approved'
       ? 'Applications you approve will be listed here with their assigned credentials.'
@@ -456,9 +644,13 @@ function isRecruiterType(t) {
   return !ACADEMIC_TYPES.includes(String(t || '').trim().toLowerCase())
 }
 
-function Row({ it, selectable, selected, onToggle, onRevoke, revoking }) {
+function Row({ it, index = 0, selectable, selected, onToggle, onRevoke, revoking }) {
   return (
-    <li className="flex items-start gap-3 p-4 sm:p-5 hover:bg-stone-50/70 transition-colors">
+    <motion.li
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.22, delay: Math.min(index, 7) * 0.035, ease: [0.22, 1, 0.36, 1] }}
+      className="flex items-start gap-3 p-4 sm:p-5 hover:bg-stone-50/70 transition-colors">
       {selectable && (
         <div className="pt-1">
           <input
@@ -523,7 +715,7 @@ function Row({ it, selectable, selected, onToggle, onRevoke, revoking }) {
           Review
         </Link>
       </div>
-    </li>
+    </motion.li>
   )
 }
 

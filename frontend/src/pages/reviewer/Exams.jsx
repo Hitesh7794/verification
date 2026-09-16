@@ -2,10 +2,11 @@ import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
 import ReviewerShell, { ReviewerPageHead } from '../../components/reviewer/ReviewerShell.jsx'
+import { Band, Rule } from '../../components/reviewer/BoardBand.jsx'
 import ConfirmDialog from '../../components/shell/ConfirmDialog.jsx'
 import { Button, Card, CardBody, Input, Label } from '../../components/ui/ui.jsx'
-import { Icon, Pill } from '../../components/ui/extras.jsx'
-import { FadeIn } from '../../components/ui/motion.jsx'
+import { Icon, Pill, StatTile } from '../../components/ui/extras.jsx'
+import { FadeIn, StaggerItem, StaggerList } from '../../components/ui/motion.jsx'
 import {
   listReviewerExams,
   createReviewerExam,
@@ -358,6 +359,122 @@ function NewExamForm({ onCancel, onCreated, onBulkCreated }) {
   )
 }
 
+// Candidates by exam, as a ring.
+//
+// Part-to-whole with a handful of categories, and the whole — every
+// candidate this board has enrolled — is worth naming, so the middle of
+// the ring carries the total the figures used to state on their own.
+//
+// Colour: fixed categorical slots assigned in exam order, so a hue
+// belongs to an exam and does not move when another exam's numbers
+// change. Two of these slots sit under 3:1 against white, so identity
+// is never left to colour: every arc is direct-labelled in the legend
+// beside it, and the table below the band lists the same numbers.
+//
+// Slots are the validated default categorical order — blue, orange,
+// aqua, yellow, violet — which clears the CVD separation check at
+// ΔE 9.1 on its worst adjacent pair.
+const SPLIT_SLOTS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#4a3aa7']
+const SPLIT_OTHER = '#66768C'
+
+function CandidateSplit({ exams, total }) {
+  // Which five get a slice: the five largest. A board running fifty
+  // exams would otherwise see whichever five happened to be created
+  // first, which says nothing about where its candidates are.
+  const withCandidates = [...(exams || [])]
+    .filter((e) => (e.candidate_count ?? 0) > 0)
+    .sort((a, b) => (b.candidate_count ?? 0) - (a.candidate_count ?? 0) || a.id - b.id)
+  const head = withCandidates.slice(0, 5)
+  const tail = withCandidates.slice(5)
+
+  // Which hue each gets: derived from the exam's id, not from its
+  // position in the list, so an exam keeps its colour as counts move it
+  // up and down the ranking. Collisions fall through to the next free
+  // slot, which keeps every visible arc a different hue.
+  const taken = new Set()
+  const slices = head.map((e) => {
+    let slot = Number(e.id) % SPLIT_SLOTS.length
+    while (taken.has(slot)) slot = (slot + 1) % SPLIT_SLOTS.length
+    taken.add(slot)
+    return {
+      key: e.id,
+      label: e.exam_code || e.name,
+      value: e.candidate_count ?? 0,
+      color: SPLIT_SLOTS[slot],
+    }
+  })
+  if (tail.length) {
+    slices.push({
+      key: 'other',
+      label: `${tail.length} more`,
+      value: tail.reduce((n, e) => n + (e.candidate_count ?? 0), 0),
+      color: SPLIT_OTHER,
+    })
+  }
+  const sum = slices.reduce((n, s) => n + s.value, 0)
+
+  if (sum === 0) {
+    return (
+      <div className="shrink-0 xl:w-[250px]">
+        <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">
+          Candidates by exam
+        </p>
+        <p className="mt-2 text-[12.5px] text-slate-400">No candidates uploaded yet.</p>
+      </div>
+    )
+  }
+
+  const R = 30
+  const C = 2 * Math.PI * R
+  const GAP = 2            // surface gap between segments
+  let cursor = 0
+
+  return (
+    <div className="shrink-0 flex items-center gap-4">
+      <div className="relative shrink-0">
+        <svg width="76" height="76" viewBox="0 0 76 76" className="-rotate-90" role="img"
+             aria-label={`Candidates by exam, ${total} in total`}>
+          {slices.map((sl) => {
+            const share = sl.value / sum
+            const len = Math.max(0, share * C - GAP)
+            const dash = `${len} ${C - len}`
+            const offset = -cursor * C
+            cursor += share
+            return (
+              <circle
+                key={sl.key}
+                cx="38" cy="38" r={R} fill="none"
+                stroke={sl.color} strokeWidth="9"
+                strokeDasharray={dash} strokeDashoffset={offset}
+              >
+                <title>{`${sl.label}: ${sl.value} candidates`}</title>
+              </circle>
+            )
+          })}
+        </svg>
+        <div className="absolute inset-0 flex flex-col items-center justify-center">
+          <span className="text-[13px] font-semibold text-slate-700 tabular-nums leading-none">
+            {withCandidates.length}
+          </span>
+          <span className="text-[9px] font-semibold uppercase tracking-[0.1em] text-slate-400 mt-0.5">
+            Exams
+          </span>
+        </div>
+      </div>
+      <dl className="min-w-0 space-y-1 text-[12px]">
+        {slices.map((sl) => (
+          <div key={sl.key} className="flex items-center gap-2">
+            <span aria-hidden="true" className="h-2 w-2 rounded-full shrink-0"
+                  style={{ backgroundColor: sl.color }} />
+            <dt className="text-slate-600 truncate max-w-[112px]">{sl.label}</dt>
+            <dd className="font-semibold text-slate-900 tabular-nums ml-auto">{sl.value}</dd>
+          </div>
+        ))}
+      </dl>
+    </div>
+  )
+}
+
 function EmptyExams({ onCreate }) {
   return (
     <div className="p-16 text-center">
@@ -474,50 +591,36 @@ export default function ReviewerExams() {
   return (
     <ReviewerShell>
       <FadeIn>
-        {/* Client board hero banner matching superadmin ClientDetail */}
-        <div className="mb-8 rounded-xl bg-warm-surface ring-1 ring-warm overflow-hidden shadow-sm">
-          <div className="h-[3px] rule-gold" />
-          <div className="p-5 sm:p-6">
-            <div className="flex flex-wrap items-start justify-between gap-4">
-              <div className="flex items-start gap-4 min-w-0">
-                <div className="h-12 w-12 rounded-xl bg-stone-100 text-stone-800 flex items-center justify-center shrink-0">
-                  <Icon.Building className="h-6 w-6" />
-                </div>
-                <div className="min-w-0">
-                  <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
-                    {client?.name || 'Board Examinations'}
-                  </h1>
-                  <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-slate-500">
-                    {client?.visible ? <Pill tone="emerald" dot>Visible</Pill> : <Pill tone="slate" dot>Hidden</Pill>}
-                    {client?.closed && <Pill tone="amber" dot>Closed</Pill>}
-                    <span className="text-slate-300">·</span>
-                    <span className="text-slate-600">Exam Controller Portal</span>
-                  </div>
-                </div>
-              </div>
-              <div className="flex items-center gap-2">
-                <Button onClick={() => setCreating((v) => !v)}>
-                  <Icon.Plus className="h-4 w-4 mr-1.5" />
-                  {creating ? 'Cancel' : 'New exam'}
-                </Button>
-              </div>
-            </div>
+        <h1 className="sr-only">{client?.name || 'Board Examinations'}</h1>
 
-            <div className="mt-5 pt-5 border-t border-slate-100 grid grid-cols-3 gap-6 text-sm">
-              <div>
-                <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Total Exams</p>
-                <p className="text-lg font-semibold text-slate-900 mt-0.5 tabular-nums">{exams.length}</p>
-              </div>
-              <div>
-                <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Open / Live</p>
-                <p className="text-lg font-semibold text-emerald-700 mt-0.5 tabular-nums">{openExams}</p>
-              </div>
-              <div>
-                <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">Enrolled Candidates</p>
-                <p className="text-lg font-semibold text-slate-900 mt-0.5 tabular-nums">{totalCandidates.toLocaleString()}</p>
-              </div>
+        {/* Same tiles as the KYC desk and the superadmin Applications
+            page. Inert here: this page has no list slice that maps one to
+            one onto each figure, so they carry no click. */}
+        <div className="mb-6 grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-stretch">
+          <StaggerList className="grid gap-4 grid-cols-1 sm:grid-cols-3">
+            <StaggerItem>
+              <StatTile label="Total exams" value={exams.length} accent="total"
+                        icon={Icon.File} hint="Across every status" />
+            </StaggerItem>
+            <StaggerItem>
+              <StatTile label="Open / Live" value={openExams} accent="approved"
+                        icon={Icon.Calendar} hint="Window open now" />
+            </StaggerItem>
+            <StaggerItem>
+              <StatTile label="Enrolled candidates" value={totalCandidates} accent="total"
+                        icon={Icon.User} hint="Uploaded to these exams" />
+            </StaggerItem>
+          </StaggerList>
+          <Band>
+            <CandidateSplit exams={exams} total={totalCandidates} />
+            <Rule />
+            <div className="shrink-0">
+              <Button onClick={() => setCreating((v) => !v)}>
+                <Icon.Plus className="h-4 w-4 mr-1.5" />
+                {creating ? 'Cancel' : 'New exam'}
+              </Button>
             </div>
-          </div>
+          </Band>
         </div>
 
         {err && (
