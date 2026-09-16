@@ -87,16 +87,20 @@ func (s *Server) supportReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Resolve human-readable names for org + client so the support
+	// mailbox doesn't need to sprint back to a DB every time. Falls
+	// back gracefully to "—" if either lookup misses.
 	org := "—"
 	if claims.OrgID != nil {
-		org = fmt.Sprintf("%d", *claims.OrgID)
 		if name, err := s.orgName(r.Context(), *claims.OrgID); err == nil && name != "" {
-			org = fmt.Sprintf("%s (id %d)", name, *claims.OrgID)
+			org = name
 		}
 	}
-	client := "—"
+	board := "—"
 	if claims.ClientID != nil {
-		client = fmt.Sprintf("%d", *claims.ClientID)
+		if name, err := s.clientName(r.Context(), *claims.ClientID); err == nil && name != "" {
+			board = name
+		}
 	}
 
 	page := strings.TrimSpace(req.Page)
@@ -108,20 +112,30 @@ func (s *Server) supportReport(w http.ResponseWriter, r *http.Request) {
 	}
 
 	ist := time.FixedZone("IST", 5*3600+1800)
-	body := strings.Join([]string{
-		msg,
-		"",
-		strings.Repeat("─", 46),
-		"Sent from the Verification Portal",
-		"",
-		"Role:          " + roleLabel(claims.Role),
-		"User:          " + claims.Username,
-		"Organisation:  " + org,
-		"Client:        " + client,
-		"Page:          " + page,
-		"Time:          " + time.Now().In(ist).Format("2 Jan 2006, 15:04 IST"),
-		"Browser:       " + clipStr(r.UserAgent(), 160),
-	}, "\n")
+
+	// Compose the plaintext body. Two blank lines separate the user's
+	// message from the context block so we don't need a horizontal
+	// rule — reads more like an email, less like a system dump.
+	// Right-padded labels keep the values in a visual column across
+	// every email client (Gmail, Outlook, Apple Mail all render
+	// space-padded plaintext the same way).
+	rows := []struct{ label, value string }{
+		{"Reporter", roleLabel(claims.Role) + " · " + claims.Username},
+		{"Institute", org},
+	}
+	if board != "—" {
+		rows = append(rows, struct{ label, value string }{"Board", board})
+	}
+	rows = append(rows,
+		struct{ label, value string }{"Page", page},
+		struct{ label, value string }{"When", time.Now().In(ist).Format("2 Jan 2006, 15:04 IST")},
+		struct{ label, value string }{"Browser", friendlyBrowser(r.UserAgent())},
+	)
+	lines := []string{msg, "", ""}
+	for _, row := range rows {
+		lines = append(lines, fmt.Sprintf("%-9s  %s", row.label, row.value))
+	}
+	body := strings.Join(lines, "\n")
 
 	// Rate limit here rather than at the top of the handler: a message
 	// rejected for being too short never sends mail, so it must not cost
@@ -133,7 +147,8 @@ func (s *Server) supportReport(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	subject := fmt.Sprintf("[Portal] %s reported a problem", roleLabel(claims.Role))
+	subject := fmt.Sprintf("[Verification Portal] %s %s reported a problem",
+		roleLabel(claims.Role), claims.Username)
 
 	// Synchronous, unlike the fire-and-forget welcome mails: the user is
 	// watching a spinner and needs to be told whether it actually went.
@@ -191,4 +206,81 @@ func (s *Server) orgName(ctx context.Context, orgID int64) (string, error) {
 	err := s.deps.DB.QueryRowContext(ctx,
 		db.Q(`SELECT name FROM organizations WHERE id = ?`), orgID).Scan(&name)
 	return name, err
+}
+
+func (s *Server) clientName(ctx context.Context, clientID int64) (string, error) {
+	var name string
+	err := s.deps.DB.QueryRowContext(ctx,
+		db.Q(`SELECT name FROM clients WHERE id = ?`), clientID).Scan(&name)
+	return name, err
+}
+
+// friendlyBrowser condenses a full User-Agent string into a short,
+// readable line — "Chrome 152 on macOS" instead of the 130-character
+// wall the raw UA sends. Not exhaustive; a UA we don't recognise
+// falls back to the first ~80 characters of the original so nothing
+// is silently lost.
+func friendlyBrowser(ua string) string {
+	ua = strings.TrimSpace(ua)
+	if ua == "" {
+		return "—"
+	}
+
+	// Browser + major version. Order matters — Edge and Opera both
+	// masquerade as Chrome, so their own tokens must be picked first.
+	browser := ""
+	switch {
+	case strings.Contains(ua, "Edg/"):
+		browser = "Edge " + majorVersion(ua, "Edg/")
+	case strings.Contains(ua, "OPR/"):
+		browser = "Opera " + majorVersion(ua, "OPR/")
+	case strings.Contains(ua, "Firefox/"):
+		browser = "Firefox " + majorVersion(ua, "Firefox/")
+	case strings.Contains(ua, "Chrome/"):
+		browser = "Chrome " + majorVersion(ua, "Chrome/")
+	case strings.Contains(ua, "Safari/") && strings.Contains(ua, "Version/"):
+		browser = "Safari " + majorVersion(ua, "Version/")
+	default:
+		return clipStr(ua, 80)
+	}
+
+	// Operating system, softened to the label a normal person would use.
+	os := ""
+	switch {
+	case strings.Contains(ua, "Windows NT 10"):
+		os = "Windows 10/11"
+	case strings.Contains(ua, "Windows NT 6.3"):
+		os = "Windows 8.1"
+	case strings.Contains(ua, "Windows NT"):
+		os = "Windows"
+	case strings.Contains(ua, "Mac OS X"), strings.Contains(ua, "Macintosh"):
+		os = "macOS"
+	case strings.Contains(ua, "iPhone"), strings.Contains(ua, "iPad"):
+		os = "iOS"
+	case strings.Contains(ua, "Android"):
+		os = "Android"
+	case strings.Contains(ua, "Linux"):
+		os = "Linux"
+	}
+
+	if os == "" {
+		return strings.TrimSpace(browser)
+	}
+	return strings.TrimSpace(browser) + " on " + os
+}
+
+// majorVersion pulls the major (before the first dot) out of a
+// "Product/x.y.z" token in a user-agent string.
+func majorVersion(ua, token string) string {
+	i := strings.Index(ua, token)
+	if i < 0 {
+		return ""
+	}
+	rest := ua[i+len(token):]
+	// End of the version substring is the first non-numeric char.
+	j := 0
+	for j < len(rest) && (rest[j] >= '0' && rest[j] <= '9') {
+		j++
+	}
+	return rest[:j]
 }

@@ -42,24 +42,6 @@ export function AuthProvider({ children }) {
     if (!scope) return
     const token = getStoredToken(scope)
     if (token && !getStoredUser(scope)) {
-      if (token.startsWith('mock-dev-token-')) {
-        const u = token.replace('mock-dev-token-', '')
-        const role = u === 'reviewer' ? 'client_reviewer' : u
-        const displayName =
-          role === 'client' ? 'Verification Officer #DEL-04B' :
-          role === 'admin' ? 'Delhi Exam Authority' :
-          role === 'superadmin' ? 'Central Superadmin' : 'Review Board Member'
-        const mockUser = {
-          id: u === 'client' ? 101 : 1,
-          username: u,
-          role,
-          display_name: displayName,
-          password_change_required: false,
-        }
-        setStoredSession(scope, token, mockUser)
-        setTick((t) => t + 1)
-        return
-      }
       api('/me')
         .then((u) => {
           setStoredSession(scope, token, u)
@@ -102,42 +84,11 @@ export function AuthProvider({ children }) {
   const login = useCallback(async (username, password) => {
     setLoading(true)
     try {
-      let res
-      try {
-        res = await api('/auth/login', {
-          method: 'POST',
-          body: { username, password },
-          auth: false,
-        })
-      } catch (err) {
-        // Offline / dev demo credentials fallback
-        const u = (username || '').trim().toLowerCase()
-        const p = (password || '').trim()
-        if (
-          (u === 'client' && (p === 'client123' || p === 'client' || !p)) ||
-          (u === 'admin' && (p === 'admin123' || p === 'admin' || !p)) ||
-          (u === 'superadmin' && (p === 'super123' || p === 'superadmin' || !p)) ||
-          (u === 'reviewer' && (p === 'review123' || p === 'reviewer' || !p))
-        ) {
-          const role = u === 'reviewer' ? 'client_reviewer' : u
-          const displayName =
-            role === 'client' ? 'Verification Officer #DEL-04B' :
-            role === 'admin' ? 'Delhi Exam Authority' :
-            role === 'superadmin' ? 'Central Superadmin' : 'Review Board Member'
-          res = {
-            token: 'mock-dev-token-' + u,
-            user: {
-              id: u === 'client' ? 101 : 1,
-              username: u,
-              role,
-              display_name: displayName,
-              password_change_required: false,
-            },
-          }
-        } else {
-          throw err
-        }
-      }
+      const res = await api('/auth/login', {
+        method: 'POST',
+        body: { username, password },
+        auth: false,
+      })
 
       // Map backend role → URL scope. `client_reviewer` gets its own
       // scope (`reviewer`) so its session doesn't collide with the

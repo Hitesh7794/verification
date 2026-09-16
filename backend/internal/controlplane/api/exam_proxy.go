@@ -27,12 +27,14 @@ package api
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -367,9 +369,62 @@ func (s *Server) proxyExamBulkModality(w http.ResponseWriter, r *http.Request) {
 	modality := chi.URLParam(r, "modality")
 	s.proxyToDPSuperadmin(w, r, "/api/superadmin/exams/"+id+"/bulk/"+modality)
 }
+// proxyClientExamsCSV forwards a bulk-exam CSV upload to the DP's
+// superadmin endpoint. IMPORTANT: the URL {id} arriving here is the
+// CP-side client id (e.g. NTA=9), but the DP's superadmin endpoint
+// looks up its OWN clients table with that id and 404s with
+// "client not found" if the numeric ids don't line up (they never do
+// on a multi-tenant deploy — CP id 9 maps to DP id 44 for NTA).
+//
+// The fix is the same translation `fetchExamsFromDP` already does:
+// resolve the DP-side numeric client id from institution_applications
+// (with probe fallback), then rewrite the URL before proxying. Single-
+// exam create doesn't hit this bug because it uses /api/internal/exams
+// (api-key auth, no id in URL) — bulk-CSV goes through the
+// superadmin path, so the translation matters.
 func (s *Server) proxyClientExamsCSV(w http.ResponseWriter, r *http.Request) {
-	id := chi.URLParam(r, "id")
-	s.proxyToDPSuperadmin(w, r, "/api/superadmin/clients/"+id+"/exams/csv")
+	cpID, err := strconv.ParseInt(chi.URLParam(r, "id"), 10, 64)
+	if err != nil || cpID <= 0 {
+		writeErr(w, http.StatusBadRequest, "bad client id")
+		return
+	}
+	dpID, ok := s.resolveDPClientID(r.Context(), cpID)
+	if !ok {
+		writeErr(w, http.StatusNotFound,
+			"could not resolve this client on the data plane (no dp_client_id mapping yet — has any institution been registered under this client?)")
+		return
+	}
+	s.proxyToDPSuperadmin(w, r,
+		fmt.Sprintf("/api/superadmin/clients/%d/exams/csv", dpID))
+}
+
+// resolveDPClientID translates a CP-side numeric client id into its
+// DP-side counterpart, so proxy handlers can rewrite {id} in URLs
+// before forwarding. Same two-tier lookup pattern `fetchExamsFromDP`
+// uses inline: institution_applications first (fast, exact), then a
+// probe against the DP's internal API for the fallback case where no
+// institution has been provisioned under this client yet.
+func (s *Server) resolveDPClientID(ctx context.Context, cpClientID int64) (int64, bool) {
+	var dp sql.NullInt64
+	_ = s.deps.DB.QueryRowContext(ctx, `
+		SELECT dp_client_id
+		  FROM institution_applications
+		 WHERE target_client_id = $1 AND dp_client_id IS NOT NULL
+		 GROUP BY dp_client_id
+		 ORDER BY COUNT(*) DESC
+		 LIMIT 1`, cpClientID,
+	).Scan(&dp)
+	if dp.Valid && dp.Int64 > 0 {
+		return dp.Int64, true
+	}
+	apiURL, apiKey, status, ok := s.loadClientForInternalCall(ctx, cpClientID)
+	if !ok || (status != "active" && status != "ready") {
+		return 0, false
+	}
+	if probe := probeDpClientID(ctx, apiURL, apiKey); probe.Valid && probe.Int64 > 0 {
+		return probe.Int64, true
+	}
+	return 0, false
 }
 
 // ── /me/change-password ─────────────────────────────────────────

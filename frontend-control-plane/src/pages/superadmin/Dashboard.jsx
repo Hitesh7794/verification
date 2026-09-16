@@ -38,6 +38,13 @@ export default function SuperDashboard() {
   const [err, setErr] = useState('')
   const [loaded, setLoaded] = useState(false)
 
+  // 30s cadence — /super/stats + /super/organizations are dashboard
+  // overview data that changes on the minutes-to-hours timescale (org
+  // signups, verification totals). Polling every 4s was overkill AND
+  // dangerous: if either endpoint responded slower than 4s, requests
+  // stacked and saturated Chrome's per-host connection pool, freezing
+  // every other request on the page for seconds. usePolling now also
+  // gates re-entry with an in-flight guard as a second line of defense.
   usePolling(async () => {
     try {
       const [s, o] = await Promise.all([
@@ -51,7 +58,7 @@ export default function SuperDashboard() {
     } catch (e) {
       setErr(e.message)
     }
-  }, 4000)
+  }, 30000)
 
   const total      = stats?.total ?? 0
   const verified   = stats?.verified ?? 0

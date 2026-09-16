@@ -275,12 +275,30 @@ func (s *Server) superadminApplicationGet(w http.ResponseWriter, r *http.Request
 	).Scan(&pendingReviewer)
 	canAct := status == "pending" && (!pendingReviewer.Valid || pendingReviewer.String == "admin")
 
-	// Docs visibility gate (mirrors DP V15 rule): if the target
-	// client is 'client'-only mode, superadmin sees the row for
-	// oversight but the doc bytes are sealed. Strip docs from the
-	// response so nothing leaks + so the FE's document panel renders
-	// "sealed" instead of a broken list.
-	if clientKycMode == "client" {
+	// Docs visibility gate. Reads `initial_reviewer` — the routing
+	// captured at INSERT that never gets modified — so the decision
+	// of who could see the docs is locked at the moment of
+	// registration and doesn't drift when the client's mode is
+	// flipped later.
+	//
+	//   initial_reviewer = 'client' → registered under a client-only
+	//     board; superadmin never sees docs, even after the client
+	//     reviewer decides. This closes the "new application under
+	//     nta-only client gets its docs shown to superadmin after
+	//     approval" hole.
+	//   initial_reviewer = 'admin' → registered under superadmin
+	//     oversight (mode was admin or both at INSERT time);
+	//     superadmin always sees docs, even if the client's mode is
+	//     later switched to client-only. Preserves the audit trail on
+	//     past superadmin decisions like SSC.
+	//
+	// Older-code assumption safety: initial_reviewer is backfilled
+	// by the v10 migration for every existing row.
+	var initialReviewer sql.NullString
+	_ = s.deps.DB.QueryRowContext(r.Context(),
+		`SELECT initial_reviewer FROM institution_applications WHERE id = $1`, id,
+	).Scan(&initialReviewer)
+	if initialReviewer.String == "client" {
 		docs = []map[string]any{}
 	}
 

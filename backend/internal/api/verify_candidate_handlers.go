@@ -415,6 +415,25 @@ func (s *Server) createVerification(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// V30 (2026-09-14): operator streak → auto-disable on 3 consecutive
+	// denies. Only fires for the operator role (agents): admins verifying
+	// through a supervisor override and reviewers don't accrue a streak.
+	//   verified → reset the counter to 0.
+	//   denied   → increment, and if it now reads ≥3 stamp disabled_at
+	//              + disable_reason='auto_streak' so the admin-side
+	//              enable can distinguish it from a manual disable.
+	// The auth middleware already refuses every subsequent request from
+	// a user whose disabled_at is set, so the operator is booted on
+	// their next call. Superadmin + client_reviewer lift the disable
+	// through the enable-agent endpoints; admins can only lift their
+	// own manual disables.
+	//
+	// Best-effort: any DB hiccup here is logged but doesn't fail the
+	// verification response, which is already committed.
+	if claims.Role == "client" && id > 0 {
+		s.bumpOperatorStreak(r.Context(), claims.UserID, req.Status == "verified")
+	}
+
 	// Promote the probe photo, if the face-match endpoint stashed one
 	// under the same idempotency key. Best-effort: a missing temp file
 	// (fingerprint-only flow, or a legacy client that didn't send the
@@ -994,10 +1013,15 @@ func (s *Server) lookupExamCandidate(r *http.Request, claims *authClaims, roll s
 		if claims.OrgID == nil {
 			return nil, nil
 		}
+		// V16 (2026-09-10): only APPROVED subscriptions unlock candidate
+		// lookup. Previously any status counted, which meant an admin
+		// could preview candidate metadata for an exam still pending
+		// the reviewer's approval — leaked data ahead of the decision.
 		query = base + `
 		  AND EXISTS (
 		    SELECT 1 FROM organization_exam_subscriptions s
 		     WHERE s.exam_id = ec.exam_id AND s.org_id = $2
+		       AND s.status = 'approved'
 		  )
 		LIMIT 1`
 		args = []any{roll, *claims.OrgID}

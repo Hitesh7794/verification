@@ -6,14 +6,32 @@ import { FadeIn } from '../../components/ui/motion.jsx'
 import { getCatalog, subscribeExam, unsubscribeExam } from '../../lib/admin/examSubscriptions.js'
 import { dateRange } from '../../lib/dates.js'
 
-// Admin > Exam catalog — read-only browse of every visible client and
-// their open exams. Access to specific exams is granted automatically
-// when the org's KYC is approved (V15 fan-out); the admin can't
-// subscribe or unsubscribe from here. This page exists for context —
-// "here's what the platform offers" — not as an action surface.
+// Admin > Exam catalog.
 //
-// Any exam the org already has an approved subscription for is tagged
-// with a "Subscribed" pill; everything else reads as available.
+// V16 flow (2026-09-10): KYC approval no longer auto-subscribes an
+// institute to every exam under a client. The institute admin browses
+// this catalog and clicks "Request access" per exam; the client's
+// reviewer approves or rejects each request individually.
+//
+// Per-exam states rendered on this page:
+//
+//   • Subscribed        — green pill + Unsubscribe. Real
+//                          organization_exam_subscriptions row with
+//                          status='approved'. Includes both the new
+//                          per-exam approvals and the grandfathered
+//                          blanket_client rows from before V16.
+//
+//   • Pending approval  — amber pill. Row status='pending'. Reviewer
+//                          got an email; nothing for the admin to do
+//                          except wait.
+//
+//   • Rejected + note   — red banner with the reviewer's reason and
+//                          a "Request again" button. Row status=
+//                          'rejected'. Re-request overwrites the row
+//                          back to 'pending' and re-emails the
+//                          reviewer.
+//
+//   • Request access    — primary button. No row exists yet.
 export default function Catalog() {
   const [clients, setClients] = useState([])
   const [initialLoading, setInitialLoading] = useState(true)
@@ -84,7 +102,7 @@ export default function Catalog() {
         <PageHead
           eyebrow="Catalog"
           title="Exam catalog"
-          subtitle="Every open exam on the platform. Click Subscribe to add an exam your organisation isn't already granted access to. Exams from your approved KYC show as Subscribed automatically."
+          subtitle="Every open exam on the platform. Click Request access to ask the client's reviewer to add an exam to your subscriptions. They'll approve or reject the request; you'll get an email either way."
         />
         {err && (
           <div role="alert" className="mb-4 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">
@@ -129,11 +147,10 @@ export default function Catalog() {
                           // NOT the blanket-coa flag from the client. If
                           // the admin unsubscribed from a blanket-approved
                           // exam, the row is gone and the button should
-                          // read "Subscribe" so they can re-opt-in. Using
-                          // the blanket flag here made a stale Unsubscribe
-                          // button 404 the DELETE.
+                          // read "Request access" so they can re-opt-in.
                           const isSubscribed = e.subscription_status === 'approved'
                           const isPending    = e.subscription_status === 'pending'
+                          const isRejected   = e.subscription_status === 'rejected'
                           const rowBusy      = busyExamId === e.id
                           return (
                             <tr key={e.id} className="border-b border-slate-100 last:border-none hover:bg-slate-50/40">
@@ -143,7 +160,7 @@ export default function Catalog() {
                                 {dateRange(e.verification_from, e.verification_to)}
                               </td>
                               <td className="px-5 py-3 text-slate-700 tabular-nums">{e.candidate_count}</td>
-                              <td className="px-5 py-3 text-right">
+                              <td className="px-5 py-3 text-right align-top">
                                 {isSubscribed ? (
                                   <div className="inline-flex items-center gap-2">
                                     <Pill tone="emerald" dot>Subscribed</Pill>
@@ -158,14 +175,38 @@ export default function Catalog() {
                                     </Button>
                                   </div>
                                 ) : isPending ? (
-                                  <Pill tone="amber" dot>Pending review</Pill>
+                                  <Pill tone="amber" dot>Pending approval</Pill>
+                                ) : isRejected ? (
+                                  // Rejection panel — reviewer's note is
+                                  // load-bearing UX: the whole point of
+                                  // the reject flow is to tell the
+                                  // institute why so they can fix and
+                                  // re-request. Note goes above the
+                                  // button, not tucked into a tooltip.
+                                  <div className="inline-flex flex-col items-end gap-1.5 max-w-xs">
+                                    <div className="inline-flex items-center gap-2">
+                                      <Pill tone="rose" dot>Rejected</Pill>
+                                      <Button
+                                        size="sm"
+                                        disabled={rowBusy}
+                                        onClick={() => onSubscribe(e.id)}
+                                      >
+                                        {rowBusy ? 'Requesting…' : 'Request again'}
+                                      </Button>
+                                    </div>
+                                    {e.review_note && (
+                                      <p className="text-[11px] leading-snug text-rose-700 text-right">
+                                        “{e.review_note}”
+                                      </p>
+                                    )}
+                                  </div>
                                 ) : (
                                   <Button
                                     size="sm"
                                     disabled={rowBusy}
                                     onClick={() => onSubscribe(e.id)}
                                   >
-                                    {rowBusy ? 'Subscribing…' : 'Subscribe'}
+                                    {rowBusy ? 'Requesting…' : 'Request access'}
                                   </Button>
                                 )}
                               </td>

@@ -77,6 +77,8 @@ public final class StubFaceProvider implements FaceProvider {
                      ? 0.10f : 0.90f;
             yaw[i] = 0.0f;
         }
-        return new LivenessSignals(passive, eyes, yaw, n);
+        // maxFacesInFrame added to LivenessSignals when multi-face
+        // rejection landed; stub always reports 1 face per frame.
+        return new LivenessSignals(passive, eyes, yaw, n, 1);
     }
 }

@@ -201,7 +201,7 @@ public final class LuxandFaceProvider implements FaceProvider {
     public synchronized LivenessSignals livenessSequence(byte[][] frames, String mime)
             throws FaceException {
         if (frames == null || frames.length == 0) {
-            return new LivenessSignals(new float[0], new float[0], new float[0], 0);
+            return new LivenessSignals(new float[0], new float[0], new float[0], 0, 0);
         }
 
         Object tracker = newHTracker();
@@ -243,6 +243,7 @@ public final class LuxandFaceProvider implements FaceProvider {
             float[] eyes = new float[n];
             float[] yaw = new float[n];
             int found = 0;
+            int maxFacesInFrame = 0;
 
             for (int i = 0; i < n; i++) {
                 java.util.Arrays.fill(passive, i, i + 1, Float.NaN);
@@ -264,6 +265,13 @@ public final class LuxandFaceProvider implements FaceProvider {
                     long[] ids = new long[8]; // up to 8 IDs per frame — plenty
                     int rc = feedFrame(tracker, 0, himage, faceCount, ids);
                     if (rc != FSDKE_OK || faceCount[0] == 0) continue;
+
+                    // Track the peak per-frame face count so the handler
+                    // can reject bursts where a bystander / accomplice
+                    // was ever in the frame. Cast to int is safe — 8 max
+                    // via the ids[] buffer.
+                    int fc = (int) faceCount[0];
+                    if (fc > maxFacesInFrame) maxFacesInFrame = fc;
 
                     long id = ids[0];
                     Float p = readAttributeFloat(tracker, id, "Liveness");
@@ -295,12 +303,12 @@ public final class LuxandFaceProvider implements FaceProvider {
             float pMean = mean(passive), pMin = min(passive), pMax = max(passive);
             float eMean = mean(eyes),    eMin = min(eyes),    eMax = max(eyes);
             LOG_LIVENESS.info(
-                "liveness done: frames={} faces={} passive[mean={},min={},max={}] eyes[mean={},min={},max={}] eyes_series={}",
-                n, found,
+                "liveness done: frames={} faces={} maxPerFrame={} passive[mean={},min={},max={}] eyes[mean={},min={},max={}] eyes_series={}",
+                n, found, maxFacesInFrame,
                 fmt(pMean), fmt(pMin), fmt(pMax),
                 fmt(eMean), fmt(eMin), fmt(eMax),
                 compactSeries(eyes));
-            return new LivenessSignals(passive, eyes, yaw, found);
+            return new LivenessSignals(passive, eyes, yaw, found, maxFacesInFrame);
         } finally {
             try {
                 invokeStaticInt("FreeTracker",

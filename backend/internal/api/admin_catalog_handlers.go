@@ -131,9 +131,17 @@ func (s *Server) adminCatalog(w http.ResponseWriter, r *http.Request) {
 			order = append(order, cID)
 		}
 		if eID.Valid {
-			// Subscribed iff an approved subscription row exists OR the
-			// client has blanket approval.
-			isApproved := subStatus == "approved" || blanketApproved == 1
+			// Subscribed iff an approved subscription ROW exists for
+			// this (org, exam). Removed the OR blanketApproved == 1
+			// branch (2026-09-10) — COA now means only "you can see
+			// this client's catalog," not "you're auto-subscribed to
+			// every exam under it." Institutes must request each exam
+			// individually; the reviewer approves per-exam.
+			//
+			// Grandfather safe: rows created by the old KYC auto-grant
+			// path have status='approved' already, so they still light
+			// up as subscribed here without any DB migration.
+			isApproved := subStatus == "approved"
 			var reqAtStr string
 			if reqAt.Valid {
 				reqAtStr = reqAt.Time.UTC().Format("2006-01-02T15:04:05Z")
@@ -263,43 +271,77 @@ func (s *Server) adminSubscribe(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// V15 flow (2026-08-25): admin subscribe is immediate — no review
-	// step, no pending status. The previous pending → reviewer inbox
-	// path is retired (the reviewer's subscription-request page is
-	// gone), and the KYC review already covers the "does this org
-	// deserve access to this client's exams" question. So a click on
-	// the admin's Subscribe button flips the row straight to approved.
+	// V16 flow (2026-09-10): admin subscribe is a REQUEST, not an
+	// immediate grant. Rewinds V15's "click = approved" behaviour.
+	// The row lands as status='pending' with approval_type=
+	// 'institute_request' and the client's reviewer(s) get an email;
+	// the reviewer then approves/rejects via the existing
+	// /api/client/subscription-requests/*/approve|reject endpoints.
+	//
+	// Idempotency rules:
+	//   * existing row is 'approved'   → return 200 unchanged (already subscribed)
+	//   * existing row is 'pending'    → return 200 unchanged (don't re-email)
+	//   * existing row is 'rejected' / 'revoked' / absent → upsert to 'pending' and email
+	var existingStatus string
+	err = s.deps.DB.QueryRowContext(r.Context(),
+		`SELECT status FROM organization_exam_subscriptions
+		 WHERE org_id = $1 AND exam_id = $2`,
+		orgID, req.ExamID,
+	).Scan(&existingStatus)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
+		return
+	}
+	switch existingStatus {
+	case "approved":
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": true, "exam_id": req.ExamID, "status": "approved",
+			"message": "You are already subscribed to this exam.",
+		})
+		return
+	case "pending":
+		writeJSON(w, http.StatusOK, map[string]any{
+			"ok": true, "exam_id": req.ExamID, "status": "pending",
+			"message": "Your request is already pending approval.",
+		})
+		return
+	}
+
+	// Insert (or overwrite from rejected/revoked) as pending.
 	if _, err := s.deps.DB.ExecContext(r.Context(), `
 		INSERT INTO organization_exam_subscriptions(
 			org_id, exam_id, status, approval_type,
-			requested_at, subscribed_at, subscribed_by,
+			requested_at, subscribed_by,
 			reviewed_at, reviewed_by, review_note
 		) VALUES(
-			$1, $2, 'approved', 'blanket_client',
-			NOW(), NOW(), $3,
-			NOW(), $3, 'Admin self-subscribe (V15)'
+			$1, $2, 'pending', 'institute_request',
+			NOW(), $3,
+			NULL, NULL, ''
 		)
 		ON CONFLICT (org_id, exam_id) DO UPDATE SET
-			status = 'approved',
-			approval_type = 'blanket_client',
+			status = 'pending',
+			approval_type = 'institute_request',
 			requested_at = NOW(),
-			subscribed_at = NOW(),
 			subscribed_by = EXCLUDED.subscribed_by,
-			reviewed_at = NOW(),
-			reviewed_by = EXCLUDED.reviewed_by,
-			review_note = EXCLUDED.review_note`,
+			reviewed_at = NULL,
+			reviewed_by = NULL,
+			review_note = ''`,
 		orgID, req.ExamID, claims.UserID,
 	); err != nil {
 		writeErr(w, http.StatusInternalServerError, "db insert: "+err.Error())
 		return
 	}
-	// clientID captured earlier for future audit / rules but currently
-	// unused now that blanket-approval branching is gone.
-	_ = clientID
+
+	// Fire-and-forget email to the client's active reviewer(s). Never
+	// blocks the response — a slow SMTP shouldn't punish the operator
+	// clicking "Request access."
+	go s.notifyReviewersOfSubscriptionRequest(clientID, orgID, req.ExamID)
+
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"ok":      true,
 		"exam_id": req.ExamID,
-		"status":  "approved",
+		"status":  "pending",
+		"message": "Request sent for reviewer approval.",
 	})
 }
 
@@ -387,7 +429,13 @@ func (s *Server) setOperatorExams(tx *sql.Tx, orgID, userID int64, examIDs []int
 		return errors.New("verification agent does not belong to your organisation")
 	}
 
-	// Every exam in the incoming list must be subscribed by this org.
+	// Every exam in the incoming list must be APPROVED-subscribed by
+	// this org. V16 (2026-09-10) added the status='approved' gate —
+	// previously the check accepted any row regardless of status,
+	// which meant that once the admin clicked "Request access" and
+	// the row landed as 'pending', they could immediately assign
+	// agents to that exam, bypassing the whole reviewer approval
+	// flow. Now only approved subscriptions count.
 	if len(examIDs) > 0 {
 		// Build (?, ?, …) placeholders.
 		placeholders := make([]string, len(examIDs))
@@ -398,13 +446,13 @@ func (s *Server) setOperatorExams(tx *sql.Tx, orgID, userID int64, examIDs []int
 			args = append(args, id)
 		}
 		q := "SELECT COUNT(*) FROM organization_exam_subscriptions " +
-			"WHERE org_id = ? AND exam_id IN (" + strings.Join(placeholders, ",") + ")"
+			"WHERE org_id = ? AND status = 'approved' AND exam_id IN (" + strings.Join(placeholders, ",") + ")"
 		var subCount int
 		if err := tx.QueryRow(db.Q(q), args...).Scan(&subCount); err != nil {
 			return err
 		}
 		if subCount != len(examIDs) {
-			return errors.New("one or more of the selected exams is not subscribed by your organisation")
+			return errors.New("one or more of the selected exams is not yet approved by the reviewer. Request access from the catalog and wait for approval before assigning agents.")
 		}
 	}
 

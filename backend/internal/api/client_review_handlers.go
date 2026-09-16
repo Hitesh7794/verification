@@ -832,6 +832,11 @@ func (s *Server) clientListSubscriptionRequests(w http.ResponseWriter, r *http.R
 		statusFilter = "pending"
 	}
 	examIDStr := strings.TrimSpace(q.Get("exam_id"))
+	// V16 (2026-09-10): org_id filter so the reviewer's institute-
+	// detail page can request just this institute's requests inline
+	// (instead of a separate dashboard). No filter → all orgs, as
+	// before.
+	orgIDStr := strings.TrimSpace(q.Get("org_id"))
 
 	where := []string{"e.client_id = $1"}
 	args := []any{clientID}
@@ -846,6 +851,27 @@ func (s *Server) clientListSubscriptionRequests(w http.ResponseWriter, r *http.R
 			where = append(where, fmt.Sprintf("e.id = $%d", len(args)+1))
 			args = append(args, eid)
 		}
+	}
+
+	if orgIDStr != "" && orgIDStr != "all" {
+		if oid, err := strconv.ParseInt(orgIDStr, 10, 64); err == nil && oid > 0 {
+			where = append(where, fmt.Sprintf("s.org_id = $%d", len(args)+1))
+			args = append(args, oid)
+		}
+	}
+
+	// institution_name filter — the reviewer's KYC application-detail
+	// page carries institution_name from the CP (which owns KYC
+	// records) but does NOT know the DP-side org_id. This filter lets
+	// the frontend pass the name it already has, and we resolve to
+	// org via the same LOWER-TRIM match used for the
+	// institution_applications ↔ organizations join elsewhere.
+	instName := strings.TrimSpace(q.Get("institution_name"))
+	if instName != "" {
+		where = append(where, fmt.Sprintf(
+			"s.org_id IN (SELECT id FROM organizations WHERE LOWER(TRIM(name)) = LOWER(TRIM($%d)))",
+			len(args)+1))
+		args = append(args, instName)
 	}
 
 	whereClause := strings.Join(where, " AND ")
@@ -1165,6 +1191,14 @@ func (s *Server) clientApproveSubscriptionRequest(w http.ResponseWriter, r *http
 		"note":      req.Note,
 	})
 
+	// V16 (2026-09-10): notify institute admin their access request
+	// was approved. Fire-and-forget — SMTP delay shouldn't hold up the
+	// reviewer's UI. Notifies for the clicked exam only; blanket-mode
+	// still only mails about the specific exam the reviewer decided
+	// on (siblings covered via the same UI on the institute's next
+	// catalog load).
+	go s.notifyInstituteOfSubscriptionDecision(orgID, examID, true, req.Note)
+
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":      true,
 		"status":  "approved",
@@ -1237,6 +1271,10 @@ func (s *Server) clientRejectSubscriptionRequest(w http.ResponseWriter, r *http.
 		"client_id": clientID,
 		"note":      req.Note,
 	})
+
+	// V16 (2026-09-10): notify institute admin their access request
+	// was rejected, with the reviewer's note. Fire-and-forget.
+	go s.notifyInstituteOfSubscriptionDecision(orgID, examID, false, req.Note)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":      true,
@@ -2115,4 +2153,112 @@ func sniffCSVDelimiter(sample []byte) rune {
 		best = ';'
 	}
 	return best
+}
+
+// ---------- GET /api/client/verifications/pending ----------
+//
+// Reviewer-scoped equivalent of /api/admin/verifications/pending —
+// returns liveness_checks rows whose session_id never became a
+// verifications.idempotency_key, so the reviewer sees which flows
+// under their exam board were abandoned after wallet-debit on
+// liveness pass. Same schema, same "abandoned" status label.
+//
+// Scope: joins through organizations → institution_applications →
+// clients so the reviewer only sees rows for orgs approved under
+// their board.
+//
+// Filters (all optional): ?roll, ?org (org name substring), ?exam_id,
+// ?from, ?to. No pagination — capped at 100 rows.
+func (s *Server) clientReviewerVerificationsPending(w http.ResponseWriter, r *http.Request) {
+	clientID, ok := s.clientReviewerScope(r)
+	if !ok {
+		writeErr(w, http.StatusForbidden, "client reviewer context required")
+		return
+	}
+
+	// The join must go through org → institution_applications to scope
+	// on client_id. liveness_checks has org_id, so the join is direct.
+	where := " WHERE v.id IS NULL AND a.client_id = $1"
+	args := []any{clientID}
+	nextParam := 2
+
+	q := r.URL.Query()
+	if roll := strings.TrimSpace(q.Get("roll")); roll != "" {
+		where += fmt.Sprintf(" AND lc.roll_no = $%d", nextParam)
+		args = append(args, roll)
+		nextParam++
+	}
+	if org := strings.TrimSpace(q.Get("org")); org != "" {
+		where += fmt.Sprintf(" AND lower(o.name) LIKE '%%' || lower($%d) || '%%'", nextParam)
+		args = append(args, org)
+		nextParam++
+	}
+	if examID := strings.TrimSpace(q.Get("exam_id")); examID != "" {
+		if n, err := strconv.ParseInt(examID, 10, 64); err == nil && n > 0 {
+			where += fmt.Sprintf(" AND ec.exam_id = $%d", nextParam)
+			args = append(args, n)
+			nextParam++
+		}
+	}
+	if from := q.Get("from"); from != "" {
+		if t, err := time.Parse("2006-01-02", from); err == nil {
+			where += fmt.Sprintf(" AND lc.created_at >= $%d", nextParam)
+			args = append(args, t)
+			nextParam++
+		}
+	}
+	if to := q.Get("to"); to != "" {
+		if t, err := time.Parse("2006-01-02", to); err == nil {
+			where += fmt.Sprintf(" AND lc.created_at < $%d", nextParam)
+			args = append(args, t.Add(24*time.Hour))
+			nextParam++
+		}
+	}
+	args = append(args, 100)
+
+	rows, err := s.deps.DB.QueryContext(r.Context(),
+		`SELECT lc.id, lc.roll_no, lc.session_id, lc.created_at,
+		        COALESCE(e.name || ' (' || e.exam_code || ')', ''),
+		        o.name,
+		        COALESCE(u.display_name, '')
+		   FROM liveness_checks lc
+		   JOIN organizations o             ON o.id = lc.org_id
+		   JOIN institution_applications a  ON a.id = o.application_id
+		   LEFT JOIN verifications v        ON v.idempotency_key = lc.session_id
+		   LEFT JOIN exam_candidates ec     ON ec.roll_no = lc.roll_no
+		   LEFT JOIN exams e                ON e.id = ec.exam_id
+		   LEFT JOIN users u                ON u.id = lc.operator_id`+
+			where+fmt.Sprintf(" ORDER BY lc.created_at DESC LIMIT $%d", nextParam),
+		args...,
+	)
+	if err != nil {
+		writeErr(w, http.StatusInternalServerError, "db error: "+err.Error())
+		return
+	}
+	defer rows.Close()
+
+	// Uses the same shape as the reviewer's regular row where possible
+	// so the frontend can render both with one code path — extra
+	// `org_name` field mirrors what the standard reviewer row carries.
+	type reviewerPendingRow struct {
+		ID           int64  `json:"id"`
+		RollNo       string `json:"roll_no"`
+		Status       string `json:"status"`
+		CenterName   string `json:"center_name"`
+		OrgName      string `json:"org_name"`
+		CreatedAt    string `json:"created_at"`
+		SessionID    string `json:"session_id"`
+		OperatorName string `json:"operator_name,omitempty"`
+	}
+	out := make([]reviewerPendingRow, 0, 64)
+	for rows.Next() {
+		var r reviewerPendingRow
+		if err := rows.Scan(&r.ID, &r.RollNo, &r.SessionID, &r.CreatedAt, &r.CenterName, &r.OrgName, &r.OperatorName); err != nil {
+			writeErr(w, http.StatusInternalServerError, "scan: "+err.Error())
+			return
+		}
+		r.Status = "abandoned"
+		out = append(out, r)
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"rows": out})
 }

@@ -54,9 +54,20 @@ public final class LivenessHandlers {
     /** Below this the sequence is too short to trust; policy rejects it. */
     private static final int MIN_FRAMES = 15;
 
+    // Passive-score policy — history:
+    //   * Original (pre-2026-09-07): mean 0.50 / worst 0.20 — too
+    //     permissive, static print photos passed the gate.
+    //   * Tightened 2026-09-07: mean 0.65 / worst 0.40 — closed the
+    //     print/screen spoof but rejected too many real people on
+    //     poor lighting / low-quality webcams.
+    //   * Loosened 2026-09-09 to mean 0.55 / worst 0.30 — a middle
+    //     ground: still well above where print/screen spoofs commonly
+    //     score (0.35-0.65 on prints), but leaves headroom for real
+    //     faces on office-cam lighting that were getting rejected at
+    //     0.65.
     /** Passive-score policy. Both must hold to say "passive passed". */
-    private static final float PASSIVE_MEAN_MIN = 0.50f;   // mean across frames
-    private static final float PASSIVE_PER_FRAME_FLOOR = 0.20f; // worst frame
+    private static final float PASSIVE_MEAN_MIN = 0.55f;   // mean across frames
+    private static final float PASSIVE_PER_FRAME_FLOOR = 0.30f; // worst frame
 
     /**
      * Eye-close threshold. FSDK's EyesOpen (with per-frame smoothing
@@ -113,14 +124,26 @@ public final class LivenessHandlers {
                 // we implement the detector.
             }
 
+            // Multi-face rejection — if Luxand ever saw more than one
+            // person in a single frame of the burst, refuse the whole
+            // sequence. An accomplice next to the candidate could
+            // otherwise perform the blink challenge for them. The
+            // handler still returns 200 with rich per-frame telemetry
+            // so the caller can render a specific "only one person in
+            // frame" message rather than a generic failure.
+            boolean multiFace = sig.maxFacesInFrame > 1;
+
             boolean allPassed =
-                sig.facesFound >= MIN_FRAMES / 2
+                !multiFace
+                && sig.facesFound >= MIN_FRAMES / 2
                 && passive
                 && challengesPassed.size() == requested.size()
                 && !requested.isEmpty();
 
             LinkedHashMap<String, Object> r = Envelope.ok("OK");
             r.put("FacesFound",       sig.facesFound);
+            r.put("MaxFacesInFrame",  sig.maxFacesInFrame);
+            r.put("MultiFaceRejected", multiFace);
             r.put("PassiveMean",      round(passiveMean, 3));
             r.put("PassivePassed",    passive);
             r.put("BlinksDetected",   blinks);

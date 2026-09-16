@@ -97,7 +97,7 @@ h2{font-size:var(--t-h2);font-weight:700;color:var(--navy);
   text-transform:uppercase;letter-spacing:.04em;color:var(--muted);
   padding-top:var(--s2);text-align:center;vertical-align:top}
 .photos td{width:30mm;height:34mm;border:var(--r-hair);padding:0;
-  background:var(--white)}
+  background:transparent}
 .photos td + td{border-left:0}
 .photos img{width:100%;height:34mm;object-fit:cover;display:block}
 
@@ -151,9 +151,19 @@ h3 span{color:var(--fail)}
 .sg-c{padding-top:var(--s3)}
 
 @media print{
-  html{background:#fff}
-  .sheet{width:auto!important;min-height:0!important;height:auto!important;
-    margin:0!important;padding:0!important;background:#fff;display:block}
+  html{background:var(--paper)}
+  /* Keep min-height at 297mm (full A4) — was 0!important, which meant
+     a sheet with less content than a full page ended early and Chrome
+     filled the remainder with white. And keep display:flex from the
+     base so `docfoot`'s `margin-top:auto` still pushes the footer to
+     the bottom of the sheet. Width auto stretches to the @page area,
+     which is the whole physical A4 now that @page margin is 0. */
+  .sheet{width:auto!important;min-height:297mm!important;
+    margin:0!important;background-color:var(--paper)!important}
   .block,.result,.sigs,.mods{break-inside:avoid}
 }
-@page{size:A4;margin:10mm 15mm 8mm}
+/* margin:0 hands the whole A4 to the sheet so paper texture reaches the
+   physical edge. The sheet's own padding (12mm 18mm 8mm) still insets
+   the content — that padding was previously zeroed out in print, which
+   was fine only because @page's margin acted as the inset. */
+@page{size:A4;margin:0}

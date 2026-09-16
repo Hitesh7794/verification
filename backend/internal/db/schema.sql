@@ -48,7 +48,16 @@ CREATE TABLE users (
     spending_cap_paise       INTEGER,
     spent_paise              INTEGER NOT NULL DEFAULT 0,
     valid_from               TIMESTAMPTZ,
-    valid_to                 TIMESTAMPTZ
+    valid_to                 TIMESTAMPTZ,
+    -- Running count of DENY verdicts the operator has submitted with
+    -- no APPROVE since. Three in a row → auto-disable (V30, 2026-09-14).
+    consecutive_denials      INT NOT NULL DEFAULT 0,
+    -- Why the account was disabled. NULL when the account is enabled.
+    -- 'manual' — a superadmin/admin/reviewer flipped the switch.
+    -- 'auto_streak' — the operator hit 3 consecutive denies (V30).
+    -- Purpose: an admin can lift a 'manual' disable on their own agent,
+    -- but only superadmin + client_reviewer can lift 'auto_streak'.
+    disable_reason           TEXT
 );
 CREATE INDEX idx_users_org_role ON users(org_id, role);
 -- Email uniqueness scoped per organisation (V6, 2026-08-20) — same

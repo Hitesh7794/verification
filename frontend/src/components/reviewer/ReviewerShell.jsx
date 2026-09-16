@@ -4,9 +4,21 @@ import { motion } from 'framer-motion'
 import { useAuth } from '../../lib/auth.jsx'
 import { reviewerMe } from '../../lib/reviewer/api.js'
 import ReportProblem from '../support/ReportProblem.jsx'
+import SignOutConfirm from '../shell/SignOutConfirm.jsx'
 
 const tabs = [
   { to: '/reviewer', label: 'KYC Applications', end: true },
+  // V16 (2026-09-10) exam-approval surface: dedicated tab for the
+  // subscription-request queue. Same data the inline panel on the
+  // KYC application detail shows, but grouped by institute so a
+  // reviewer with 40 institutes doesn't have to open every KYC row
+  // to notice one has a pending request.
+  { to: '/reviewer/exam-approval', label: 'Exam approval', end: false },
+  // V30 (2026-09-14): auto-disable enforcement surface. Shows every
+  // agent under the reviewer's client scope, floats auto-disabled
+  // agents to the top, and gives the reviewer the button to lift a
+  // lockout.
+  { to: '/reviewer/agents', label: 'Agents', end: false },
   { to: '/reviewer/exams', label: 'Exams', end: false },
   { to: '/reviewer/history', label: 'Verification history', end: false },
 ]
@@ -49,6 +61,7 @@ function ReviewerHeader({ meOverride }) {
   const { user, logout } = useAuth()
   const [me, setMe] = useState(meOverride || null)
   const [now, setNow] = useState(() => new Date())
+  const [confirmingSignOut, setConfirmingSignOut] = useState(false)
 
   // Poll /me periodically so the moment the superadmin turns the
   // portal off — or the session is otherwise revoked (JWT expiry,
@@ -178,7 +191,7 @@ function ReviewerHeader({ meOverride }) {
           </span>
           <ReportProblem />
           <button
-            onClick={onLogout}
+            onClick={() => setConfirmingSignOut(true)}
             className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-slate-200 hover:text-white bg-white/8 hover:bg-white/16 ring-1 ring-inset ring-white/15 px-3 py-1.5 rounded-lg transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-300"
             title="Sign out"
           >
@@ -193,6 +206,12 @@ function ReviewerHeader({ meOverride }) {
       </div>
       {/* Gold authority rule */}
       <div className="h-[2px] rule-gold" />
+
+      <SignOutConfirm
+        open={confirmingSignOut}
+        onCancel={() => setConfirmingSignOut(false)}
+        onConfirm={() => { setConfirmingSignOut(false); onLogout() }}
+      />
     </header>
   )
 }

@@ -339,7 +339,13 @@ func (s *Server) cpRegisterSubmit(w http.ResponseWriter, r *http.Request) {
 			submitter_ip,
 			external_application_id, dp_submitted_at,
 			dp_client_id,
-			pending_reviewer
+			pending_reviewer,
+			-- initial_reviewer mirrors pending_reviewer at INSERT and
+			-- is NEVER updated afterwards. Docs-visibility policy for
+			-- superadmin reads this so a client-mode flip after the
+			-- app was decided doesn't retroactively grant or revoke
+			-- doc access.
+			initial_reviewer
 		) VALUES ('pending', $1,
 			$2, $3, $4, $5,
 			$6, $7, $8,
@@ -348,6 +354,7 @@ func (s *Server) cpRegisterSubmit(w http.ResponseWriter, r *http.Request) {
 			$19,
 			$20, $21,
 			$22,
+			$23,
 			$23)
 		RETURNING id`,
 		nullableInt64(targetClientID),

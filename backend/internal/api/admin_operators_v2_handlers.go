@@ -56,6 +56,12 @@ type operatorRow struct {
 	AssignedExamIDs  []int64    `json:"assigned_exam_ids"`
 	CreatedAt        time.Time  `json:"created_at"`
 	DisabledAt       *time.Time `json:"disabled_at,omitempty"`
+	// V30 (2026-09-14) auto-disable metadata.
+	// DisableReason: 'manual' | 'auto_streak' — empty when active.
+	// ConsecutiveDenials: current streak. FE renders a soft "2/3
+	// denies in a row" hint when >0 and the account is still active.
+	DisableReason      string `json:"disable_reason,omitempty"`
+	ConsecutiveDenials int    `json:"consecutive_denials"`
 }
 
 // ── LIST ──────────────────────────────────────────────────────────────
@@ -71,7 +77,8 @@ func (s *Server) adminListOperators(w http.ResponseWriter, r *http.Request) {
 		SELECT id, username, COALESCE(password_plaintext,''), display_name,
 		       COALESCE(email,''), COALESCE(phone,''), disabled_at,
 		       spending_cap_paise, spent_paise,
-		       valid_from, valid_to, created_at
+		       valid_from, valid_to, created_at,
+		       COALESCE(disable_reason,''), COALESCE(consecutive_denials, 0)
 		FROM users
 		WHERE org_id = ? AND role = 'client'
 		ORDER BY created_at DESC, id DESC`), orgID)
@@ -87,7 +94,8 @@ func (s *Server) adminListOperators(w http.ResponseWriter, r *http.Request) {
 		var cap sql.NullInt64
 		var vFrom, vTo sql.NullString
 		if err := rows.Scan(&o.ID, &o.Username, &o.Password, &o.DisplayName,
-			&o.Email, &o.Phone, &disabledAt, &cap, &o.SpentPaise, &vFrom, &vTo, &o.CreatedAt); err != nil {
+			&o.Email, &o.Phone, &disabledAt, &cap, &o.SpentPaise, &vFrom, &vTo, &o.CreatedAt,
+			&o.DisableReason, &o.ConsecutiveDenials); err != nil {
 			writeErr(w, http.StatusInternalServerError, "row scan: "+err.Error())
 			return
 		}
@@ -187,11 +195,13 @@ func (s *Server) loadOperatorForOrg(r *http.Request, orgID, id int64) (*operator
 		SELECT id, username, COALESCE(password_plaintext,''), display_name,
 		       COALESCE(email,''), COALESCE(phone,''), disabled_at,
 		       spending_cap_paise, spent_paise,
-		       valid_from, valid_to, created_at
+		       valid_from, valid_to, created_at,
+		       COALESCE(disable_reason,''), COALESCE(consecutive_denials, 0)
 		  FROM users
 		 WHERE id = ? AND org_id = ? AND role = 'client'`), id, orgID,
 	).Scan(&o.ID, &o.Username, &o.Password, &o.DisplayName,
-		&o.Email, &o.Phone, &disabledAt, &cap, &o.SpentPaise, &vFrom, &vTo, &o.CreatedAt)
+		&o.Email, &o.Phone, &disabledAt, &cap, &o.SpentPaise, &vFrom, &vTo, &o.CreatedAt,
+		&o.DisableReason, &o.ConsecutiveDenials)
 	if err != nil {
 		return nil, err
 	}
@@ -1316,11 +1326,24 @@ func (s *Server) setOperatorDisabled(w http.ResponseWriter, r *http.Request, dis
 	}
 	var q string
 	if disabled {
-		q = `UPDATE users SET disabled_at = CURRENT_TIMESTAMP
+		// Manual disable — stamp disable_reason='manual' so the admin's
+		// own enable can distinguish it from an auto_streak lockout,
+		// which V30 reserves for the reviewer / superadmin to lift.
+		q = `UPDATE users SET disabled_at = CURRENT_TIMESTAMP,
+		                       disable_reason = 'manual'
 		     WHERE id = $1 AND org_id = $2 AND role = 'client'`
 	} else {
-		q = `UPDATE users SET disabled_at = NULL
-		     WHERE id = $1 AND org_id = $2 AND role = 'client'`
+		// Enable — but refuse to lift an auto_streak lockout. If we
+		// let the org's own admin flip this off, an admin whose agent
+		// went rogue could immediately un-disable them and defeat the
+		// point of the auto-lockout. The row-count is 0 in that case,
+		// which the not-found branch below converts to a clear
+		// 404-with-message that the FE special-cases.
+		q = `UPDATE users SET disabled_at    = NULL,
+		                       disable_reason = NULL,
+		                       consecutive_denials = 0
+		     WHERE id = $1 AND org_id = $2 AND role = 'client'
+		       AND (disable_reason IS NULL OR disable_reason <> 'auto_streak')`
 	}
 	res, err := s.deps.DB.ExecContext(r.Context(), q, id, orgID)
 	if err != nil {
@@ -1329,6 +1352,22 @@ func (s *Server) setOperatorDisabled(w http.ResponseWriter, r *http.Request, dis
 	}
 	n, _ := res.RowsAffected()
 	if n == 0 {
+		// For an enable that hit zero rows, check whether this is the
+		// "auto_streak, please ask a reviewer" case so the FE can show
+		// a proper explanation instead of a bare 404.
+		if !disabled {
+			var reason sql.NullString
+			_ = s.deps.DB.QueryRowContext(r.Context(),
+				`SELECT disable_reason FROM users
+				  WHERE id = $1 AND org_id = $2 AND role = 'client'`,
+				id, orgID,
+			).Scan(&reason)
+			if reason.Valid && reason.String == "auto_streak" {
+				writeErr(w, http.StatusForbidden,
+					"This agent was auto-disabled after 3 consecutive denies. Contact your reviewer or a superadmin to re-enable them.")
+				return
+			}
+		}
 		writeErr(w, http.StatusNotFound, "verification agent not found")
 		return
 	}

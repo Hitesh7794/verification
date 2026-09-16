@@ -295,9 +295,20 @@ func (s *Server) approveApplication(
 		return nil, errAppNotPending
 	}
 
-	// Record client approvals and exam subscriptions according to scope and kyc_review_mode:
+	// KYC approval flow (2026-09-10): grant "you can see this client's
+	// catalog" via client_organization_approvals (COA), but DO NOT
+	// auto-subscribe to any exam. The institute admin must now open
+	// the catalog and click "Request access" on each exam they need;
+	// the reviewer approves each request individually.
+	//
+	// Grandfather: existing organization_exam_subscriptions rows
+	// (status='approved', approval_type='blanket_client') from the old
+	// auto-subscribe path stay untouched — every institute currently
+	// running verifications keeps working. Only NEW KYC approvals from
+	// this deploy onward land with an empty subscription set, which
+	// forces the admin through the new request flow.
 	if scope != nil {
-		// Client Reviewer approving for their specific board:
+		// Client Reviewer approving for their specific board.
 		_, _ = s.deps.DB.ExecContext(ctx, `
 			INSERT INTO client_organization_approvals(client_id, org_id, status, approved_by, approved_at, note)
 			VALUES($1, $2, 'approved', $3, NOW(), $4)
@@ -308,26 +319,8 @@ func (s *Server) approveApplication(
 				note = EXCLUDED.note`,
 			*scope, prov.OrgID, reviewerUserID, note,
 		)
-		_, _ = s.deps.DB.ExecContext(ctx, `
-			INSERT INTO organization_exam_subscriptions(
-			    org_id, exam_id, status, approval_type,
-			    subscribed_by, requested_at,
-			    reviewed_at, reviewed_by, review_note)
-			SELECT $1, e.id, 'approved', 'blanket_client',
-			       $2, NOW(),
-			       NOW(), $2, 'Auto-granted on Client KYC approval'
-			  FROM exams e
-			 WHERE e.client_id = $3 AND e.visible = 1 AND e.closed = 0
-			ON CONFLICT (org_id, exam_id) DO UPDATE SET
-			    status = 'approved',
-			    approval_type = EXCLUDED.approval_type,
-			    reviewed_at = EXCLUDED.reviewed_at,
-			    reviewed_by = EXCLUDED.reviewed_by,
-			    review_note = EXCLUDED.review_note`,
-			prov.OrgID, reviewerUserID, *scope,
-		)
 	} else if appClientID.Valid {
-		// Superadmin approving an application routed to a specific board:
+		// Superadmin approving an application routed to a specific board.
 		_, _ = s.deps.DB.ExecContext(ctx, `
 			INSERT INTO client_organization_approvals(client_id, org_id, status, approved_by, approved_at, note)
 			VALUES($1, $2, 'approved', $3, NOW(), $4)
@@ -338,27 +331,11 @@ func (s *Server) approveApplication(
 				note = EXCLUDED.note`,
 			appClientID.Int64, prov.OrgID, reviewerUserID, note,
 		)
-		_, _ = s.deps.DB.ExecContext(ctx, `
-			INSERT INTO organization_exam_subscriptions(
-			    org_id, exam_id, status, approval_type,
-			    subscribed_by, requested_at,
-			    reviewed_at, reviewed_by, review_note)
-			SELECT $1, e.id, 'approved', 'blanket_client',
-			       $2, NOW(),
-			       NOW(), $2, 'Auto-granted on KYC approval'
-			  FROM exams e
-			 WHERE e.client_id = $3 AND e.visible = 1 AND e.closed = 0
-			ON CONFLICT (org_id, exam_id) DO UPDATE SET
-			    status = 'approved',
-			    approval_type = EXCLUDED.approval_type,
-			    reviewed_at = EXCLUDED.reviewed_at,
-			    reviewed_by = EXCLUDED.reviewed_by,
-			    review_note = EXCLUDED.review_note`,
-			prov.OrgID, reviewerUserID, appClientID.Int64,
-		)
 	} else {
-		// Superadmin approving generic registration across multiple clients:
-		// Auto-grant for clients with kyc_review_mode = 'admin'
+		// Superadmin approving generic registration across multiple
+		// clients — grants COA on every admin-mode client the org can
+		// touch. Still no auto-subscription: admin lands in each
+		// client's catalog with everything showing "Request access".
 		_, _ = s.deps.DB.ExecContext(ctx, `
 			INSERT INTO client_organization_approvals(client_id, org_id, status, approved_by, approved_at, note)
 			SELECT c.id, $1, 'approved', $2, NOW(), 'Approved via Superadmin KYC'
@@ -369,26 +346,6 @@ func (s *Server) approveApplication(
 				approved_by = EXCLUDED.approved_by,
 				approved_at = NOW(),
 				note = EXCLUDED.note`,
-			prov.OrgID, reviewerUserID,
-		)
-		_, _ = s.deps.DB.ExecContext(ctx, `
-			INSERT INTO organization_exam_subscriptions(
-			    org_id, exam_id, status, approval_type,
-			    subscribed_by, requested_at,
-			    reviewed_at, reviewed_by, review_note)
-			SELECT $1, e.id, 'approved', 'blanket_client',
-			       $2, NOW(),
-			       NOW(), $2, 'Auto-granted on Superadmin KYC'
-			  FROM exams e
-			  JOIN clients c ON c.id = e.client_id
-			 WHERE c.visible = 1 AND c.closed = 0 AND c.kyc_review_mode = 'admin'
-			   AND e.visible = 1 AND e.closed = 0
-			ON CONFLICT (org_id, exam_id) DO UPDATE SET
-			    status = 'approved',
-			    approval_type = EXCLUDED.approval_type,
-			    reviewed_at = EXCLUDED.reviewed_at,
-			    reviewed_by = EXCLUDED.reviewed_by,
-			    review_note = EXCLUDED.review_note`,
 			prov.OrgID, reviewerUserID,
 		)
 	}

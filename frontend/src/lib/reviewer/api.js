@@ -94,10 +94,15 @@ export async function bulkRejectReviewerApplications(applicationIds, note) {
 // ── Exam Subscription Requests ─────────────────────────────────────────
 
 // GET /api/client/subscription-requests
-export async function listSubscriptionRequests({ status = 'pending', examId = '' } = {}) {
+// V16 (2026-09-10): institutionName / orgId scoping so the reviewer's
+// per-institute ApplicationDetail page can render requests inline
+// instead of forcing the reviewer to a separate dashboard.
+export async function listSubscriptionRequests({ status = 'pending', examId = '', institutionName = '', orgId = '' } = {}) {
   const qs = new URLSearchParams()
   if (status) qs.set('status', status)
   if (examId && examId !== 'all') qs.set('exam_id', examId)
+  if (institutionName) qs.set('institution_name', institutionName)
+  if (orgId) qs.set('org_id', orgId)
   return api(`/client/subscription-requests?${qs}`)
 }
 
@@ -266,3 +271,17 @@ export async function bulkCreateReviewerExamsCSV(file) {
   })
 }
 
+
+// V30 (2026-09-14) auto-disable enforcement.
+//
+// listAgents — every operator (role='client') under an org that this
+// reviewer's client owns via COA. Auto-disabled agents surface first.
+// enableAgent — lift a manual OR auto_streak disable and reset the
+// streak counter. Server-side scope: reviewer must own the agent's
+// org through an approved COA; otherwise 404.
+export async function listAgents() {
+  return api('/client/agents')
+}
+export async function enableAgent(id) {
+  return api(`/client/agents/${id}/enable`, { method: 'POST' })
+}

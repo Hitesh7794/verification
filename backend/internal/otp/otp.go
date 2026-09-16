@@ -125,7 +125,7 @@ func (s *Store) Verify(purpose, target, code string) (string, error) {
 	k := s.key(purpose, target)
 	entry, exists := s.entries[k]
 	if !exists {
-		return "", errors.New("no OTP requested or code expired. Please request a new code")
+		return "", errors.New("No OTP requested or code expired. Please request a new code")
 	}
 
 	if time.Now().After(entry.expiresAt) {

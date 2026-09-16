@@ -49,6 +49,7 @@ export default function ReviewerHistory() {
   })
   const [appliedFilters, setAppliedFilters] = useState({})
   const [rows, setRows] = useState([])
+  const [pendingRows, setPendingRows] = useState([])   // abandoned liveness-charged flows scoped to this reviewer's board
   const [nextCursor, setNextCursor] = useState(0)
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState('')
@@ -99,9 +100,28 @@ export default function ReviewerHistory() {
     setErr('')
     try {
       const qs = buildQuery(extra)
-      const res = await api('/client/verifications' + (qs ? '?' + qs : ''))
+      // Fetch verified/denied and abandoned in parallel, per the same
+      // logic on the admin History page:
+      //   Status "" (Any)   → both endpoints, merged chronologically
+      //   verified / denied → completed only, no pending
+      //   pending           → pending only (abandoned flows)
+      const wantCompleted = appliedFilters.status !== 'pending'
+      const wantPending   = !appliedFilters.status || appliedFilters.status === 'pending'
+      const compP = wantCompleted
+        ? api('/client/verifications' + (qs ? '?' + qs : ''))
+        : Promise.resolve({ rows: [], next_cursor: 0 })
+      const pendingQs = new URLSearchParams()
+      for (const [k, v] of Object.entries({ ...appliedFilters, ...extra })) {
+        if (v && k !== 'status') pendingQs.append(k, v)
+      }
+      const pendP = wantPending
+        ? api('/client/verifications/pending' + (pendingQs.toString() ? '?' + pendingQs.toString() : ''))
+            .catch(() => ({ rows: [] }))
+        : Promise.resolve({ rows: [] })
+      const [res, pRes] = await Promise.all([compP, pendP])
       setRows((prev) => append ? [...prev, ...(res.rows || [])] : (res.rows || []))
       setNextCursor(res.next_cursor || 0)
+      if (!append) setPendingRows(pRes.rows || [])
     } catch (e) {
       setErr(e.message || 'failed to load history')
     } finally {
@@ -222,6 +242,7 @@ export default function ReviewerHistory() {
                 <option value="">Any</option>
                 <option value="verified">Verified</option>
                 <option value="denied">Denied</option>
+                <option value="pending">Abandoned</option>
               </select>
             </div>
             <div>
@@ -306,29 +327,72 @@ export default function ReviewerHistory() {
                 </tr>
               </thead>
               <tbody>
-                {rows.map((r) => (
-                  <tr key={r.id} className="border-t border-slate-100">
-                    <td className="px-4 py-2 text-slate-500 whitespace-nowrap">{fmtDateTime(r.created_at)}</td>
-                    <td className="px-4 py-2 font-medium text-slate-900">{r.roll_no}</td>
-                    <td className="px-4 py-2">
-                      <Badge tone={r.status === 'verified' ? 'green' : 'red'}>{r.status}</Badge>
-                    </td>
-                    <td className="px-4 py-2 text-slate-600">{r.via || '—'}</td>
-                    <td className="px-4 py-2 text-slate-600 truncate max-w-[180px]">{r.org_name || '—'}</td>
-                    <td className="px-4 py-2 text-slate-600 truncate max-w-[180px]">{r.center_name || '—'}</td>
-                    <td className="px-4 py-2 text-slate-600 truncate max-w-[200px]">{r.operator_name}</td>
-                  </tr>
-                ))}
-                {rows.length === 0 && !loading && (
-                  <tr>
-                    <td colSpan={7} className="py-10">
-                      <EmptyState
-                        title="No verifications match"
-                        body="Try widening the date range or clearing filters."
-                      />
-                    </td>
-                  </tr>
-                )}
+                {/* Interleaved chronological view. Completed +
+                    abandoned merged into one sequence sorted by
+                    created_at DESC so the reviewer sees the timeline
+                    in the exact order events happened. Marker
+                    `_kind` on each row picks the right cells. */}
+                {(() => {
+                  const merged = [
+                    ...rows.map((r) => ({ ...r, _kind: 'completed' })),
+                    ...pendingRows.map((r) => ({ ...r, _kind: 'pending' })),
+                  ]
+                  merged.sort((a, b) => {
+                    const ta = a.created_at ? new Date(a.created_at).getTime() : 0
+                    const tb = b.created_at ? new Date(b.created_at).getTime() : 0
+                    return tb - ta
+                  })
+                  if (merged.length === 0 && !loading) {
+                    return (
+                      <tr>
+                        <td colSpan={7} className="py-10">
+                          <EmptyState
+                            title="No verifications match"
+                            body="Try widening the date range or clearing filters."
+                          />
+                        </td>
+                      </tr>
+                    )
+                  }
+                  return merged.map((r) => {
+                    if (r._kind === 'pending') {
+                      return (
+                        <tr
+                          key={'pending-' + r.id}
+                          className="border-t border-slate-100"
+                          title="This flow started (wallet debited on liveness pass) but was abandoned before the verification finished."
+                        >
+                          <td className="px-4 py-2 text-slate-500 whitespace-nowrap">{fmtDateTime(r.created_at)}</td>
+                          <td className="px-4 py-2 font-medium text-slate-900">{r.roll_no}</td>
+                          <td className="px-4 py-2">
+                            <Badge tone="amber">abandoned</Badge>
+                          </td>
+                          <td className="px-4 py-2 text-slate-500">—</td>
+                          <td className="px-4 py-2 text-slate-600 truncate max-w-[180px]">{r.org_name || '—'}</td>
+                          <td className="px-4 py-2 text-slate-600 truncate max-w-[180px]">{r.center_name || '—'}</td>
+                          <td className="px-4 py-2 text-slate-600 truncate max-w-[200px]">
+                            {r.operator_name
+                              ? r.operator_name
+                              : <span className="italic text-slate-400">not recorded</span>}
+                          </td>
+                        </tr>
+                      )
+                    }
+                    return (
+                      <tr key={r.id} className="border-t border-slate-100">
+                        <td className="px-4 py-2 text-slate-500 whitespace-nowrap">{fmtDateTime(r.created_at)}</td>
+                        <td className="px-4 py-2 font-medium text-slate-900">{r.roll_no}</td>
+                        <td className="px-4 py-2">
+                          <Badge tone={r.status === 'verified' ? 'green' : 'red'}>{r.status}</Badge>
+                        </td>
+                        <td className="px-4 py-2 text-slate-600">{r.via || '—'}</td>
+                        <td className="px-4 py-2 text-slate-600 truncate max-w-[180px]">{r.org_name || '—'}</td>
+                        <td className="px-4 py-2 text-slate-600 truncate max-w-[180px]">{r.center_name || '—'}</td>
+                        <td className="px-4 py-2 text-slate-600 truncate max-w-[200px]">{r.operator_name}</td>
+                      </tr>
+                    )
+                  })
+                })()}
               </tbody>
             </table>
           </div>

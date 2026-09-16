@@ -13,6 +13,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"github.com/veni/neet-verification/internal/data"
+	"github.com/veni/neet-verification/internal/iris"
 	"github.com/veni/neet-verification/internal/storage"
 	"github.com/veni/neet-verification/internal/trustview"
 )
@@ -165,6 +166,27 @@ func (s *Server) irisMatch(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusServiceUnavailable, "trustview client not configured")
 		return
 	}
+
+	// Iris-format normalization (2026-09-10). TrustView's OpenIris
+	// engine only scores raw BMP iris images; ISO/IEC 19794-6 IIR
+	// wrappers containing JPEG2000 data (K7, produced by Mantra's
+	// Marvis SDK on Android) score 0 across the board — including
+	// self-matches. `iris.MaybeToBMP` transcodes K7→BMP via
+	// opj_decompress ONLY when it detects the IIR magic + a JP2
+	// sub-file; anything else (already-BMP from web operators, PNG,
+	// JPEG, K3) passes through untouched. Applied to BOTH probe and
+	// gallery so the same fix covers mixed enrollment histories.
+	if b, err := iris.MaybeToBMP(r.Context(), probeBytes); err != nil {
+		log.Printf("iris probe transcode failed for roll=%s (forwarding original bytes): %v", roll, err)
+	} else {
+		probeBytes = b
+	}
+	if b, err := iris.MaybeToBMP(r.Context(), galleryBytes); err != nil {
+		log.Printf("iris gallery transcode failed for roll=%s (forwarding original bytes): %v", roll, err)
+	} else {
+		galleryBytes = b
+	}
+
 	res, err := s.trustview.Compare(r.Context(),
 		trustview.Iris, probeBytes, nil, galleryBytes, nil, nil)
 	if err != nil {

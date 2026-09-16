@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
-import { INDIAN_STATES, CITIES_BY_STATE } from '../../lib/india-locations.js'
+import { INDIAN_STATES, CITIES_BY_STATE, PIN_ZONE_BY_STATE } from '../../lib/india-locations.js'
 import {
   Button,
   Input,
@@ -226,10 +226,37 @@ const FIELD_RULES = {
     if (!v || !n) return 'Required'
     return n < 1 || n > 10_000_000 ? 'Must be a positive number' : undefined
   },
-  address_line1: (v) => (!v.trim() ? 'Required' : undefined),
+  address_line1: (v) => {
+    const s = (v || '').trim()
+    if (!s) return 'Required'
+    if (s.length > 255) return 'Maximum 255 characters allowed'
+    return undefined
+  },
+  address_line2: (v) => {
+    // Optional field, but still cap length to keep the address block
+    // renderable in downstream PDFs / DB / reports.
+    if ((v || '').trim().length > 255) return 'Maximum 255 characters allowed'
+    return undefined
+  },
+  city: (v) => {
+    // Optional; if provided, keep it short enough to fit next to the
+    // district on the same line.
+    if ((v || '').trim().length > 100) return 'Maximum 100 characters allowed'
+    return undefined
+  },
   district: (v) => (!v.trim() ? 'Required' : undefined),
   state: (v) => (!v.trim() ? 'Required' : undefined),
-  pin_code: (v) => (/^[0-9]{6}$/.test(v.trim()) ? undefined : 'PIN must be 6 digits'),
+  pin_code: (v, form) => {
+    const s = v.trim()
+    if (!/^[0-9]{6}$/.test(s)) return 'PIN must be 6 digits'
+    // Coarse offline check: the first digit of the PIN must belong to
+    // India Post's zone for the selected state. Deliberately vague on
+    // the error text — do not leak which state the PIN actually maps
+    // to, per product decision.
+    const zone = PIN_ZONE_BY_STATE[form?.state]
+    if (zone && s[0] !== zone) return 'Invalid PIN code'
+    return undefined
+  },
   head_name: (v, form) =>
     v.trim().length < 2 ? (form?.institution_type === 'other' ? 'Nodal officer name required' : 'Required') : undefined,
   head_email: (v) =>
@@ -242,6 +269,20 @@ const FIELD_RULES = {
       ? undefined
       : 'Enter a 10-digit Indian mobile starting with 6, 7, 8 or 9'
   },
+}
+
+// formatFileSize matches the unit on the "up to 10 MB per file" upload
+// hint so a 3.17 MB file reads "3.17 MB" instead of "3171 KB" — same
+// screen, same units. Sub-MB shows KB with no decimals to stay tidy,
+// sub-KB shows raw bytes for completeness. Uses binary base 1024 to
+// match how the 10 MB ceiling is enforced upstream (10 * 1024 * 1024).
+function formatFileSize(bytes) {
+  if (typeof bytes !== 'number' || !Number.isFinite(bytes) || bytes < 0) return ''
+  const KB = 1024
+  const MB = KB * 1024
+  if (bytes >= MB) return `${(bytes / MB).toFixed(2)} MB`
+  if (bytes >= KB) return `${Math.round(bytes / KB)} KB`
+  return `${bytes} B`
 }
 
 // normaliseIndianMobile accepts anything the user might paste — with
@@ -269,7 +310,7 @@ const STEP_FIELDS = [
     'year_established', 'affiliation_body', 'affiliation_body_other',
     'approx_student_count',
   ],
-  ['address_line1', 'district', 'state', 'pin_code', 'head_name', 'head_email', 'head_mobile'],
+  ['address_line1', 'address_line2', 'city', 'district', 'state', 'pin_code', 'head_name', 'head_email', 'head_mobile'],
 ]
 
 const EMPTY_FORM = {
@@ -1052,6 +1093,8 @@ function Step0({ form, errors, update, onBlurField, onNext, onTypeSelect, checki
               value={form.year_established}
               onChange={(y) => update('year_established', y)}
               placeholder="Pick year"
+              min={1800}
+              max={new Date().getFullYear()}
             />
           </Field>
           <Field
@@ -1353,15 +1396,29 @@ function InputWithIcon({ icon: IconComp, className = '', ...rest }) {
   )
 }
 
-function YearPicker({ value, onChange, placeholder = 'Pick year' }) {
+function YearPicker({ value, onChange, placeholder = 'Pick year', min = 1800, max }) {
   const currentYear = new Date().getFullYear()
+  const upper = typeof max === 'number' ? max : currentYear
+  const lower = typeof min === 'number' ? min : 1800
   const [open, setOpen] = useState(false)
-  const [viewYear, setViewYear] = useState(() => Number(value) || currentYear)
+  const [viewYear, setViewYear] = useState(() => {
+    // Seed the decade view from the selected value if it's in range,
+    // otherwise clamp so the picker opens on a legal decade.
+    const n = Number(value)
+    if (n && n >= lower && n <= upper) return n
+    return Math.min(upper, Math.max(lower, currentYear))
+  })
   const containerRef = useRef(null)
 
   useEffect(() => {
-    if (value) setViewYear(Number(value))
-  }, [value])
+    if (value) {
+      const n = Number(value)
+      // Clamp so a persisted or externally-supplied value that's outside
+      // [lower, upper] can never drag viewYear into a decade the picker
+      // isn't allowed to display.
+      setViewYear(Math.min(upper, Math.max(lower, n)))
+    }
+  }, [value, lower, upper])
 
   useEffect(() => {
     if (!open) return
@@ -1385,7 +1442,13 @@ function YearPicker({ value, onChange, placeholder = 'Pick year' }) {
 
   const decadeStart = Math.floor(viewYear / 10) * 10
   const years = Array.from({ length: 10 }, (_, i) => decadeStart + i)
-  const canGoForward = decadeStart + 10 <= currentYear
+  // Forward is allowed as long as the NEXT decade contains at least one
+  // year <= upper. Backward is allowed as long as the PREVIOUS decade
+  // contains at least one year >= lower. Prevents the picker from ever
+  // navigating into years outside the configured range (used to walk
+  // into 0–9 and negative decades unchecked).
+  const canGoForward = decadeStart + 10 <= upper
+  const canGoBackward = decadeStart - 1 >= lower
 
   return (
     <div className="relative" ref={containerRef}>
@@ -1414,8 +1477,16 @@ function YearPicker({ value, onChange, placeholder = 'Pick year' }) {
             <div className="flex items-center justify-between mb-3">
               <button
                 type="button"
-                onClick={() => setViewYear(viewYear - 10)}
-                className="rounded-md p-1 text-stone-500 hover:bg-[#ECF0F5] hover:text-ink-900 transition-colors"
+                onClick={() => {
+                  // Hard clamp so a click that slips past the disabled
+                  // attribute (rapid double-click, keyboard focus quirk)
+                  // still can't slide the view into an out-of-range
+                  // decade. Redundant with `disabled` — deliberately so.
+                  const next = Math.max(lower, viewYear - 10)
+                  if (next !== viewYear) setViewYear(next)
+                }}
+                disabled={!canGoBackward}
+                className="rounded-md p-1 text-stone-500 hover:bg-[#ECF0F5] hover:text-ink-900 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                 aria-label="Previous decade"
               >
                 <Icon.ChevronLeft className="h-4 w-4" />
@@ -1425,7 +1496,13 @@ function YearPicker({ value, onChange, placeholder = 'Pick year' }) {
               </span>
               <button
                 type="button"
-                onClick={() => setViewYear(viewYear + 10)}
+                onClick={() => {
+                  // Symmetric clamp on the forward chevron so a
+                  // slipped-through click can't push the view past
+                  // `upper` either.
+                  const next = Math.min(upper, viewYear + 10)
+                  if (next !== viewYear) setViewYear(next)
+                }}
                 disabled={!canGoForward}
                 className="rounded-md p-1 text-stone-500 hover:bg-[#ECF0F5] hover:text-ink-900 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                 aria-label="Next decade"
@@ -1436,15 +1513,15 @@ function YearPicker({ value, onChange, placeholder = 'Pick year' }) {
 
             <div className="grid grid-cols-4 gap-1.5">
               {years.map((y) => {
-                const future = y > currentYear
+                const outOfRange = y > upper || y < lower
                 const selected = String(y) === String(value)
                 const isCurrent = y === currentYear
                 return (
                   <motion.button
                     key={y}
                     type="button"
-                    disabled={future}
-                    whileTap={!future ? { scale: 0.95 } : undefined}
+                    disabled={outOfRange}
+                    whileTap={!outOfRange ? { scale: 0.95 } : undefined}
                     onClick={() => {
                       onChange(y)
                       setOpen(false)
@@ -1452,7 +1529,7 @@ function YearPicker({ value, onChange, placeholder = 'Pick year' }) {
                     className={`rounded-lg px-2 py-2 text-sm font-medium tabular-nums transition-colors ${
                       selected
                         ? 'bg-ink-900 text-white shadow-xs'
-                        : future
+                        : outOfRange
                         ? 'text-stone-300 cursor-not-allowed'
                         : isCurrent
                         ? 'text-ink-900 ring-1 ring-warm-strong bg-warm-surface hover:bg-[#ECF0F5]'
@@ -1499,13 +1576,17 @@ function Step1({
             icon={Icon.MapPin}
             value={form.address_line1}
             onChange={(e) => update('address_line1', e.target.value)}
+            onBlur={() => onBlurField('address_line1')}
+            maxLength={255}
             placeholder="Building, street, area"
           />
         </Field>
-        <Field label="Address line 2">
+        <Field label="Address line 2" error={errors.address_line2}>
           <Input
             value={form.address_line2}
             onChange={(e) => update('address_line2', e.target.value)}
+            onBlur={() => onBlurField('address_line2')}
+            maxLength={255}
             placeholder="Landmark or extra info (optional)"
           />
         </Field>
@@ -1542,10 +1623,12 @@ function Step1({
               ]}
             />
           </Field>
-          <Field label="City">
+          <Field label="City" error={errors.city}>
             <Input
               value={form.city}
               onChange={(e) => update('city', e.target.value)}
+              onBlur={() => onBlurField('city')}
+              maxLength={100}
               placeholder="e.g. City / Town (Optional)"
             />
           </Field>
@@ -1635,10 +1718,6 @@ function Step1({
             <Icon.ChevronLeft className="mr-1.5 h-4 w-4" />
             Back
           </Button>
-          <span className="text-xs text-stone-500 inline-flex items-center gap-1.5">
-            <span className="h-1.5 w-1.5 rounded-full bg-emerald-600 animate-pulse" />
-            Draft saved automatically
-          </span>
           <Button onClick={onNext} disabled={submitting} size="lg">
             {submitting ? 'Saving…' : (
               <>Continue<Icon.ChevronRight className="ml-1.5 h-4 w-4" /></>
@@ -1772,7 +1851,7 @@ function DocUploadRow({ kind, label, hint, required, state, error, onFile, onRem
           {state?.original_name && (
             <p className="mt-2 text-xs text-stone-700 truncate">
               <span className="font-mono font-medium">{state.original_name}</span>
-              {state.size_bytes ? ` · ${(state.size_bytes / 1024).toFixed(0)} KB` : ''}
+              {state.size_bytes ? ` · ${formatFileSize(state.size_bytes)}` : ''}
             </p>
           )}
           {uploading && (

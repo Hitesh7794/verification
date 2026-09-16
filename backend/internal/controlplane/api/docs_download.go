@@ -85,13 +85,14 @@ func (s *Server) streamKycDoc(w http.ResponseWriter, r *http.Request, appID, doc
 	var (
 		storagePath, mime, original string
 		targetClientID              sql.NullInt64
+		initialReviewer             sql.NullString
 	)
 	err := s.deps.DB.QueryRowContext(r.Context(), `
-		SELECT d.storage_path, d.mime, d.original_name, a.target_client_id
+		SELECT d.storage_path, d.mime, d.original_name, a.target_client_id, a.initial_reviewer
 		  FROM institution_application_documents d
 		  JOIN institution_applications a ON a.id = d.application_id
 		 WHERE d.id = $1 AND d.application_id = $2`, docID, appID,
-	).Scan(&storagePath, &mime, &original, &targetClientID)
+	).Scan(&storagePath, &mime, &original, &targetClientID, &initialReviewer)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeErr(w, http.StatusNotFound, "document not found")
 		return
@@ -105,19 +106,20 @@ func (s *Server) streamKycDoc(w http.ResponseWriter, r *http.Request, appID, doc
 		return
 	}
 
-	// Mode gate: only enforced for superadmin path. In 'client' mode
-	// the superadmin gets sealed docs (403).
-	if enforceModeGate {
-		var mode string
-		_ = s.deps.DB.QueryRowContext(r.Context(),
-			`SELECT kyc_review_mode FROM clients_registry WHERE id = $1`,
-			targetClientID.Int64,
-		).Scan(&mode)
-		if mode == "client" {
-			writeErr(w, http.StatusForbidden,
-				"documents for a client-only board are only visible to that client's reviewer")
-			return
-		}
+	// Docs visibility gate — mirrors the list endpoint's fix
+	// (2026-09-08). Reads `initial_reviewer`, the routing captured
+	// at INSERT, which never gets modified. So:
+	//   * Rows registered under superadmin oversight (admin/both mode
+	//     at INSERT) — superadmin can always download, regardless of
+	//     later client-mode flips (SSC-style audit trail).
+	//   * Rows registered under a client-only board — superadmin
+	//     never gets the bytes, even after the client reviewer has
+	//     approved (closes the new-registration-under-client-mode
+	//     hole).
+	if enforceModeGate && initialReviewer.String == "client" {
+		writeErr(w, http.StatusForbidden,
+			"documents for a client-only board are only visible to that client's reviewer")
+		return
 	}
 
 	// Look up DP api_url + api_key.

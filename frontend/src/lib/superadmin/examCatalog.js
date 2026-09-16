@@ -2,7 +2,7 @@
 // exams, candidate CSV upload). One thin wrapper per endpoint so the
 // pages stay UI-only.
 import { api, ApiError } from '../api.js'
-import { getStoredToken } from '../authStorage.js'
+import { getRoleScope, getStoredToken } from '../authStorage.js'
 import { toFriendlyError } from '../errors.js'
 
 // ── Clients ───────────────────────────────────────────────────────────

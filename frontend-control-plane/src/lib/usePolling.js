@@ -26,6 +26,14 @@ import { useEffect, useRef } from 'react'
 export function usePolling(fn, ms, { enabled = true } = {}) {
   const fnRef = useRef(fn)
   fnRef.current = fn
+  // In-flight guard: if a previous tick's fetch hasn't resolved when
+  // the next interval fires, skip that tick instead of stacking. Without
+  // this a slow endpoint at a short cadence saturates Chrome's ~6
+  // per-host HTTP/1.1 connection pool — every request queues in
+  // `(pending)`, blocking unrelated fetches (an Applications tab-click
+  // waiting behind stuck /super/stats polls, for example). A slow
+  // backend can now no longer create a request storm.
+  const busyRef = useRef(false)
 
   // Single lifecycle effect — owns the immediate first-run, the
   // interval, AND the visibility lifecycle. Depends only on (ms,
@@ -42,10 +50,23 @@ export function usePolling(fn, ms, { enabled = true } = {}) {
   useEffect(() => {
     if (!enabled || !ms || ms <= 0) return
 
+    // Wraps the caller's fn so exactly one tick can be in flight.
+    // Sync/void callbacks that don't return a promise flip the flag
+    // back immediately.
+    async function tick() {
+      if (busyRef.current) return
+      busyRef.current = true
+      try {
+        await fnRef.current?.()
+      } finally {
+        busyRef.current = false
+      }
+    }
+
     let timer = null
     function start() {
       if (timer !== null) return
-      timer = setInterval(() => fnRef.current?.(), ms)
+      timer = setInterval(tick, ms)
     }
     function stop() {
       if (timer !== null) {
@@ -58,7 +79,7 @@ export function usePolling(fn, ms, { enabled = true } = {}) {
         stop()
       } else {
         // Catch up immediately on re-show, then resume the cadence.
-        fnRef.current?.()
+        tick()
         start()
       }
     }
@@ -66,7 +87,7 @@ export function usePolling(fn, ms, { enabled = true } = {}) {
     if (!document.hidden) {
       // Fire once on mount so the UI doesn't wait up to `ms` for the
       // first tick.
-      fnRef.current?.()
+      tick()
       start()
     }
     document.addEventListener('visibilitychange', onVisibility)

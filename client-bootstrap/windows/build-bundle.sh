@@ -20,7 +20,7 @@ set -euo pipefail
 cd "$(dirname "$0")"
 ROOT="$(cd ../.. && pwd)"
 
-VERSION="1.1.0"
+VERSION="1.1.1"
 BUNDLE_NAME="VerificationPortalClient-${VERSION}-windows"
 
 # --- inputs ---------------------------------------------------------------

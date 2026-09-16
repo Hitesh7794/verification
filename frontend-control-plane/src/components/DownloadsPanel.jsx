@@ -112,10 +112,9 @@ export default function DownloadsPanel({ heading = 'Verification agent client (W
               </CardTitle>
             </CardHeader>
             <CardBody>
-              <div className="grid gap-5 sm:grid-cols-3">
+              <div className="grid gap-5 sm:grid-cols-2">
                 <FactRow label="Filename" value={item.filename} mono onCopy={() => copy('filename', item.filename)} copied={copiedField === 'filename'} />
                 <FactRow label="Size" value={formatBytes(item.size_bytes)} />
-                <FactRow label="Last updated" value={formatDate(item.updated_at)} />
               </div>
 
               <div className="mt-6 flex flex-wrap items-center gap-3">
@@ -127,12 +126,6 @@ export default function DownloadsPanel({ heading = 'Verification agent client (W
                   <Button onClick={onDownload} size="lg">
                     Download {item.filename}
                   </Button>
-                )}
-                {!busy && data?.last_download && (
-                  <span className="text-xs text-slate-500">
-                    Last downloaded {formatRelativeOrAbsolute(data.last_download.at)}
-                    {data.last_download.username ? ` by ${data.last_download.username}` : ''}.
-                  </span>
                 )}
               </div>
 

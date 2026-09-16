@@ -1,9 +1,11 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../lib/auth.jsx'
 import WalletWidget from '../wallet/WalletWidget.jsx'
 import AvatarMenu from './AvatarMenu.jsx'
 import { Brand, PRODUCT_NAME } from '../ui/brand.jsx'
 import ReportProblem from '../support/ReportProblem.jsx'
+import SignOutConfirm from './SignOutConfirm.jsx'
 
 // AppShell — page chrome shared across client / admin / superadmin pages.
 //
@@ -17,6 +19,12 @@ import ReportProblem from '../support/ReportProblem.jsx'
 // with existing callers (client, admin, superadmin dashboards still pass
 // them) but are no longer rendered in the chrome — page-level titles
 // live in the PageHeader component inside each page's body.
+//
+// V30 (2026-09-14): every sign-out affordance runs through
+// <SignOutConfirm>. Callers passing a `customHeader` get a
+// `requestSignOut` in the render slot — invoking it opens the same
+// confirmation dialog the default header uses, so no header variant
+// can accidentally sign a user out without asking.
 export default function AppShell({
   children,
   walletRefreshKey,
@@ -27,6 +35,7 @@ export default function AppShell({
 }) {
   const { user, logout } = useAuth()
   const nav = useNavigate()
+  const [confirmingSignOut, setConfirmingSignOut] = useState(false)
 
   function handleLogout() {
     const role = user?.role
@@ -43,6 +52,8 @@ export default function AppShell({
     logout()
     nav(`/${role || ''}/login`)
   }
+
+  const requestSignOut = () => setConfirmingSignOut(true)
 
   // Browser-back guard for verification-agent sessions lives in
   // <ClientBackGuard /> at App root (see App.jsx) — that survives
@@ -63,7 +74,7 @@ export default function AppShell({
     <div className="min-h-screen flex flex-col justify-between bg-[#F1F4F8] text-[#0B1F3A]">
       {customHeader ? (
         typeof customHeader === 'function' ? (
-          customHeader({ user, handleLogout, ReportProblem, AvatarMenu })
+          customHeader({ user, handleLogout: requestSignOut, ReportProblem, AvatarMenu })
         ) : (
           customHeader
         )
@@ -79,7 +90,7 @@ export default function AppShell({
                 />
               )}
               <ReportProblem />
-              <AvatarMenu user={user} onLogout={handleLogout} />
+              <AvatarMenu user={user} onLogout={requestSignOut} />
             </div>
           </div>
           <div className="h-[2px] rule-gold" />
@@ -94,7 +105,7 @@ export default function AppShell({
 
       {customFooter ? (
         typeof customFooter === 'function' ? (
-          customFooter({ user, handleLogout, ReportProblem, AvatarMenu })
+          customFooter({ user, handleLogout: requestSignOut, ReportProblem, AvatarMenu })
         ) : (
           customFooter
         )
@@ -108,6 +119,12 @@ export default function AppShell({
           </div>
         </footer>
       )}
+
+      <SignOutConfirm
+        open={confirmingSignOut}
+        onCancel={() => setConfirmingSignOut(false)}
+        onConfirm={() => { setConfirmingSignOut(false); handleLogout() }}
+      />
     </div>
   )
 }

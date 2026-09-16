@@ -279,9 +279,12 @@ function FaceFrame({ phase, hintTone, videoRef }) {
         style={{ width: '86%', height: '86%' }}
         aria-hidden
       />
-      {/* Circle-clipped video preview */}
+      {/* Circle-clipped video preview — user's own reflection sits
+          inside the ring so they can self-centre without a mirror.
+          object-cover means their face fills the circle regardless of
+          camera aspect. scaleX(-1) mirrors so left/right feels natural. */}
       <div
-        className="rounded-full overflow-hidden bg-slate-900 relative"
+        className="rounded-full overflow-hidden bg-slate-900"
         style={{ width: '82%', height: '82%' }}
       >
         <video
@@ -292,28 +295,25 @@ function FaceFrame({ phase, hintTone, videoRef }) {
           className="w-full h-full object-cover"
           style={{ transform: 'scaleX(-1)' }}
         />
-        {phase === 'guiding' && (
-          <div className="laser-hud-beam absolute left-2 right-2 h-[2px] bg-cyan-400 z-20 pointer-events-none" />
-        )}
       </div>
 
       {phase === 'guiding' && (
-        <div className="absolute top-2 left-2 inline-flex items-center gap-1.5 rounded-md bg-emerald-600 text-white px-2 py-0.5 text-[11px] font-semibold font-mono">
+        <div className="absolute top-2 left-2 inline-flex items-center gap-1.5 rounded-md bg-emerald-600 text-white px-2 py-0.5 text-[11px] font-semibold">
           <span className="h-1.5 w-1.5 rounded-full bg-white animate-pulse" />
-          MEDIAPIPE ACTIVE
+          LIVE
         </div>
       )}
 
       {phase === 'pass' && (
-        <div className="absolute inset-0 flex items-center justify-center bg-emerald-600/80 font-mono">
+        <div className="absolute inset-0 flex items-center justify-center bg-emerald-600/70">
           <div className="text-white text-center">
-            <div className="mx-auto h-16 w-16 rounded-full bg-white text-[#0F6B45] flex items-center justify-center shadow-lg">
-              <svg className="h-8 w-8 text-[#0F6B45]" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+            <div className="mx-auto h-20 w-20 rounded-full bg-white/20 ring-4 ring-white/40 flex items-center justify-center animate-[ping_1.2s_ease-out_1]">
+              <svg className="h-12 w-12 text-white" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
                 <polyline points="5 12 10 17 20 7" />
               </svg>
             </div>
-            <p className="mt-2 text-base font-bold tracking-tight uppercase">Liveness Verified</p>
-            <p className="text-xs opacity-90 mt-0.5">Face Match: 0.998 (Pass)</p>
+            <p className="mt-3 text-lg font-bold tracking-tight">Liveness verified</p>
+            <p className="text-xs opacity-90 mt-0.5">Opening face capture…</p>
           </div>
         </div>
       )}

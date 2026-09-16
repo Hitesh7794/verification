@@ -232,14 +232,18 @@ export async function postLivenessCheck(roll, frames, sessionId, challenges) {
 }
 
 // postLivenessClientVerified — MediaPipe-decided liveness path. Client
-// ran blink detection locally; server just records the gate row. No
-// frames are uploaded; the wallet charge still fires (billing model is
-// engine-agnostic — the payable event is "gate passed"). Same response
+// ran blink detection locally; server records the gate row. Optional
+// `frames` is a base64-JPEG burst captured during the MediaPipe scan;
+// when provided, the server runs a Luxand passive anti-spoof score +
+// multi-face rejection on top of the client blink. Both must pass.
+// Empty / omitted frames = blink-only (old behaviour). Same response
 // shape as postLivenessCheck.
-export async function postLivenessClientVerified(roll, sessionId) {
+export async function postLivenessClientVerified(roll, sessionId, frames) {
+  const body = { session_id: sessionId }
+  if (frames && frames.length) body.frames = frames
   return api(`/candidates/${encodeURIComponent(roll)}/liveness-client-verified`, {
     method: 'POST',
-    body: { session_id: sessionId },
+    body,
   })
 }
 

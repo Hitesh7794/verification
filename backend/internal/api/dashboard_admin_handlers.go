@@ -38,24 +38,43 @@ func (s *Server) adminStats(w http.ResponseWriter, r *http.Request) {
 	// exams the caller's org has subscribed to (admin) or all rows
 	// (superadmin). Replaces the old filesystem-index count that
 	// wasn't org-scoped.
+	// V16 (2026-09-10): dashboard counts only cover APPROVED
+	// subscriptions. A pending request isn't yet access, and
+	// counting it as such would inflate the dashboard's "enrolled
+	// candidates" and "exams" numbers with data the admin can't
+	// actually reach.
 	var enrolled int
 	if c := claimsFrom(r); c.Role == "admin" && c.OrgID != nil {
 		_ = s.deps.DB.QueryRowContext(r.Context(),
 			`SELECT COUNT(DISTINCT ec.id)
 			   FROM exam_candidates ec
 			   JOIN organization_exam_subscriptions s ON s.exam_id = ec.exam_id
-			  WHERE s.org_id = $1`, *c.OrgID).Scan(&enrolled)
+			  WHERE s.org_id = $1 AND s.status = 'approved'`, *c.OrgID).Scan(&enrolled)
 	} else {
 		_ = s.deps.DB.QueryRowContext(r.Context(),
 			`SELECT COUNT(*) FROM exam_candidates`).Scan(&enrolled)
 	}
 
-	// Number of exams the caller can see — replaces the legacy
-	// "centres" count now that the centres table is gone.
+	// Number of exams the caller can currently act on. Mirrors the
+	// catalog view's own filter (admin_catalog_handlers.go) so the
+	// dashboard tile and the catalog list never disagree:
+	//   • must be an approved subscription for this org,
+	//   • the exam must still be visible + open,
+	//   • the exam's verification_to must not be in the past.
+	// Without the window filter the tile counted historic
+	// subscriptions the admin can't do anything with any more, which
+	// read as "6 exams" while the catalog showed only 4.
 	var examCount int
 	if c := claimsFrom(r); c.Role == "admin" && c.OrgID != nil {
 		_ = s.deps.DB.QueryRowContext(r.Context(),
-			`SELECT COUNT(*) FROM organization_exam_subscriptions WHERE org_id=$1`,
+			`SELECT COUNT(*)
+			   FROM organization_exam_subscriptions s
+			   JOIN exams e ON e.id = s.exam_id
+			  WHERE s.org_id = $1
+			    AND s.status = 'approved'
+			    AND e.visible = 1
+			    AND e.closed = 0
+			    AND (e.verification_to IS NULL OR e.verification_to >= NOW())`,
 			*c.OrgID).Scan(&examCount)
 	} else {
 		_ = s.deps.DB.QueryRowContext(r.Context(),

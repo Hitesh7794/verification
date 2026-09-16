@@ -266,23 +266,51 @@ export default function Operators() {
                           </td>
                           <td className="px-4 py-3 text-slate-700 tabular-nums">{(o.assigned_exam_ids || []).length}</td>
                           <td className="px-4 py-3">
-                            {o.status === 'active' ? <Pill tone="emerald" dot>Active</Pill> : <Pill tone="slate" dot>Disabled</Pill>}
+                            {/* V30 (2026-09-14): distinguish the auto-lockout
+                                from a plain manual disable. Auto-lockout uses
+                                a rose pill + a short reason so the admin sees
+                                immediately why the agent can't sign in. A
+                                still-active agent with 1 or 2 denies in a row
+                                gets a soft warning under the Active pill.  */}
+                            {o.status === 'active' ? (
+                              <div className="flex flex-col items-start gap-1">
+                                <Pill tone="emerald" dot>Active</Pill>
+                                {o.consecutive_denials > 0 && (
+                                  <span className="text-[10px] font-semibold text-amber-700">
+                                    {o.consecutive_denials}/3 denies in a row
+                                  </span>
+                                )}
+                              </div>
+                            ) : o.disable_reason === 'auto_streak' ? (
+                              <div className="flex flex-col items-start gap-1">
+                                <Pill tone="rose" dot>Auto-disabled</Pill>
+                                <span className="text-[10px] text-slate-500">3 denies in a row</span>
+                              </div>
+                            ) : (
+                              <Pill tone="slate" dot>Disabled</Pill>
+                            )}
                           </td>
                           <td className="px-4 py-3 text-right">
                             <div className="inline-flex gap-2">
                               <Button variant="secondary" size="sm" onClick={() => setEditing(editing === o.id ? null : o.id)}>
                                 {editing === o.id ? 'Close' : 'Edit'}
                               </Button>
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                onClick={() => onToggle(o.id, o.status === 'disabled')}
-                                className={o.status === 'disabled'
-                                  ? ''
-                                  : '!text-rose-700 !border-rose-200 hover:!bg-rose-50 hover:!border-rose-300'}
-                              >
-                                {o.status === 'disabled' ? 'Enable' : 'Disable'}
-                              </Button>
+                              {/* Auto-streak lockouts can only be lifted by the
+                                  client's reviewer or a superadmin (V30), so
+                                  the Enable button is hidden here — hovering
+                                  the pill explains why. */}
+                              {!(o.status === 'disabled' && o.disable_reason === 'auto_streak') && (
+                                <Button
+                                  variant="secondary"
+                                  size="sm"
+                                  onClick={() => onToggle(o.id, o.status === 'disabled')}
+                                  className={o.status === 'disabled'
+                                    ? ''
+                                    : '!text-rose-700 !border-rose-200 hover:!bg-rose-50 hover:!border-rose-300'}
+                                >
+                                  {o.status === 'disabled' ? 'Enable' : 'Disable'}
+                                </Button>
+                              )}
                               <Button
                                 variant="secondary"
                                 size="sm"
@@ -530,6 +558,46 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
   const [saving, setSaving] = useState(false)
   const [err, setErr] = useState('')
 
+  // Auto-fill the Valid-from/Valid-to fields to sensible defaults the
+  // moment the operator picks an exam, so an admin creating a new
+  // agent doesn't have to type dates that pass both "in the past"
+  // and "before exam start" checks by hand. Only fires when the
+  // field is currently empty — never overwrites a value the admin
+  // typed. Only fires on the create flow (no operator prop).
+  //
+  //   from → max(now + 1min, exam.verification_from)
+  //   to   → exam.verification_to
+  //
+  // If multiple exams are selected, uses the LATEST start and the
+  // EARLIEST end — the intersection of their windows, i.e. the widest
+  // range that's inside all of them. Same math the exam-window
+  // validation uses in the other direction.
+  useEffect(() => {
+    if (isEdit) return
+    if (examIds.length === 0) return
+    const picked = (subs || []).filter((s) => examIds.includes(s.exam_id))
+    if (picked.length === 0) return
+    if (!validFrom) {
+      const starts = picked
+        .map((s) => s.verification_from && new Date(s.verification_from))
+        .filter((d) => d && !isNaN(d.getTime()))
+        .map((d) => d.getTime())
+      const nowMs = Date.now() + 60_000
+      const floor = Math.max(nowMs, ...starts)
+      setValidFrom(toDatetimeLocal(new Date(floor).toISOString(), '00:00'))
+    }
+    if (!validTo) {
+      const ends = picked
+        .map((s) => s.verification_to && new Date(s.verification_to))
+        .filter((d) => d && !isNaN(d.getTime()))
+        .map((d) => d.getTime())
+      if (ends.length > 0) {
+        const cap = Math.min(...ends)
+        setValidTo(toDatetimeLocal(new Date(cap).toISOString(), '23:59'))
+      }
+    }
+  }, [examIds, subs, isEdit])
+
   // Indian mobile — exactly 10 digits starting 6/7/8/9. The input
   // strips non-digits and caps at 10 chars on every keystroke, so
   // the stored value is always in that shape and this regex is a
@@ -561,12 +629,32 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
     : fromAfterTo ? 'Valid from must be strictly before Valid to.'
     : ''
 
-  // Exam window validation — operator's window must be inside the superadmin-defined window for all assigned exams
+  // Exam window validation — operator's window must be inside the superadmin-defined window for all assigned exams.
+  //
+  // Bug fix (2026-09-07): the "before exam start" check used to compare
+  // against the raw exam.verification_from, which for an exam that has
+  // already started is in the past. That meant assigning an operator
+  // mid-exam produced two contradictory errors depending on the exact
+  // value — "before exam start" for anything before now, "in the past"
+  // for anything after exam start but still before now. Since the
+  // "in the past" check already prevents backdating, this check now
+  // uses max(now, exam.verification_from) as the effective floor: for
+  // an exam that hasn't started yet, "before exam start" fires as
+  // before; for an exam already running, this check is a no-op and
+  // the "in the past" check handles the constraint alone.
   const selectedExams = (subs || []).filter((s) => (examIds || []).includes(s.exam_id))
   const beforeExam = selectedExams.find((s) => {
     if (!s.verification_from || !fromDate || isNaN(fromDate.getTime())) return false
     const ef = new Date(s.verification_from)
-    return !isNaN(ef.getTime()) && fromDate < ef
+    if (isNaN(ef.getTime())) return false
+    // Only enforce "before exam start" when the exam hasn't started
+    // yet. If the exam is already running, `fromInPast` (with its
+    // 2-minute clock-skew grace) is the correct check to fire; this
+    // one would double-report AND use the wrong error text — a
+    // valid_from a minute before `now` isn't "before exam start,"
+    // it's "in the past."
+    if (ef.getTime() <= now.getTime()) return false
+    return fromDate < ef
   })
   const afterExam = selectedExams.find((s) => {
     if (!s.verification_to || !toDate || isNaN(toDate.getTime())) return false

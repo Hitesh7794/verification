@@ -274,11 +274,15 @@ func (s *Server) listExamCentres(w http.ResponseWriter, r *http.Request) {
 // assertOrgSubscribed returns nil when the given org has an active
 // subscription to the given exam. Used by admin-facing endpoints so an
 // admin can't peek at centres for exams their org hasn't subscribed to.
+//
+// V16 (2026-09-10): requires status='approved' — a pending or rejected
+// subscription doesn't grant centre visibility. Prevents leaking
+// centre lists for exams still awaiting reviewer approval.
 func (s *Server) assertOrgSubscribed(ctx context.Context, orgID, examID int64) error {
 	var one int
 	err := s.deps.DB.QueryRowContext(ctx,
 		db.Q(`SELECT 1 FROM organization_exam_subscriptions
-		  WHERE org_id = $1 AND exam_id = $2 LIMIT 1`),
+		  WHERE org_id = $1 AND exam_id = $2 AND status = 'approved' LIMIT 1`),
 		orgID, examID).Scan(&one)
 	return err
 }

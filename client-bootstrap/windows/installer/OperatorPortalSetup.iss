@@ -35,7 +35,7 @@
 
 #define AppName        "Verification Portal Operator Client"
 #define AppShortName   "VerificationPortal"
-#define AppVersion     "1.1.0"
+#define AppVersion     "1.1.1"
 #define AppPublisher   "Verification Portal"
 
 ; Portal URL is baked in at build time -- this .exe knows exactly which
@@ -78,11 +78,20 @@ OutputDir=output
 Compression=lzma2/max
 SolidCompression=yes
 
-; Admin elevation: the install registers a Windows service (nssm) and
-; writes to HKLM. UAC prompt is automatic; without admin we fail fast
-; rather than producing a half-installed system.
+; Admin elevation: the install registers a Windows service (nssm),
+; installs kernel-mode fingerprint / iris drivers, and writes to HKLM.
+; None of those work without admin.
+;
+; 2026-09-10 v1.1.1 fix: dropped the earlier
+; `PrivilegesRequiredOverridesAllowed=dialog` directive. That option
+; surfaced the "Install for all users / Install for me" dialog in the
+; wizard — but picking "for me" skipped UAC and then install.ps1
+; immediately threw at line 59 ("Run from an elevated PowerShell
+; prompt…"), a silent-then-broken failure that read as a mystery to
+; operators. Omitting the directive entirely means Inno Setup always
+; UAC-elevates on launch; declining UAC aborts the wizard cleanly
+; with an "elevation required" message before any file is touched.
 PrivilegesRequired=admin
-PrivilegesRequiredOverridesAllowed=dialog
 
 ; 64-bit only -- the MorFin daemon's native DLLs are x64. The .NET-
 ; framework era 32-bit Windows world is irrelevant for Windows 10+

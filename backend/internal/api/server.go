@@ -408,6 +408,14 @@ func (s *Server) Router() http.Handler {
 		r.Post("/api/admin/operators/{id}/enable",     s.requireRole("admin")(s.adminEnableOperator))
 		r.Delete("/api/admin/operators/{id}",          s.requireRole("admin")(s.adminDeleteOperator))
 
+		// V30 (2026-09-14) auto-disable enable path. Superadmin and the
+		// client's reviewer can lift both manual and auto_streak
+		// lockouts; the institute admin can only lift their own manual
+		// disables (adminEnableOperator refuses auto_streak).
+		r.Post("/api/superadmin/agents/{id}/enable",   s.requireRole("superadmin")(s.superadminEnableAgent))
+		r.Get("/api/client/agents",                    s.requireRole("client_reviewer")(s.reviewerListAgents))
+		r.Post("/api/client/agents/{id}/enable",       s.requireRole("client_reviewer")(s.reviewerEnableAgent))
+
 		// Downloads — serves the operator-laptop install bundle. Open
 		// to admin (so an admin can grab + redistribute), to client
 		// (so an operator on a fresh laptop can self-serve when the
@@ -499,6 +507,9 @@ func (s *Server) Router() http.Handler {
 		// deliberately NOT exposed here — reviewers don't handle billing.
 		r.Get("/api/client/verifications",                                         s.requireRole("client_reviewer")(s.clientReviewerVerifications))
 		r.Get("/api/client/verifications.csv",                                     s.requireRole("client_reviewer")(s.clientReviewerVerificationsCSV))
+		// Abandoned flows for the reviewer's exam board — parallel of
+		// /api/admin/verifications/pending, joined through client_id.
+		r.Get("/api/client/verifications/pending",                                 s.requireRole("client_reviewer")(s.clientReviewerVerificationsPending))
 		r.Get("/api/client/institutes",                                            s.requireRole("client_reviewer")(s.clientReviewerInstitutes))
 		r.Post("/api/client/exams",                                                s.requireRole("client_reviewer")(s.superadminCreateExam))
 		r.Post("/api/client/exams/csv",                                            s.requireRole("client_reviewer")(s.superadminBulkCreateExamsCSV))

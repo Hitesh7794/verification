@@ -7,6 +7,7 @@ import { api } from '../../lib/api.js'
 import { getRoleScope, getStoredToken } from '../../lib/authStorage.js'
 import { useAuth } from '../../lib/auth.jsx'
 import { Icon, Pill } from '../ui/extras.jsx'
+import SignOutConfirm from './SignOutConfirm.jsx'
 
 // AdminShell — page chrome for every /admin/* surface.
 //
@@ -107,7 +108,19 @@ export default function AdminShell({ children, walletRefreshKey, onWalletBalance
   }
 
   return (
-    <div className="min-h-full bg-warm-page">
+    // overflow-x-clip here is the last line of defence: any admin page
+    // whose content is a hair wider than the viewport (a wide flex row,
+    // a table that forgot its own overflow-auto wrapper, etc.) still
+    // paints inside the viewport instead of unlocking page-level
+    // horizontal scroll. Tables/carts that DO need to scroll should
+    // wrap themselves in their own overflow-auto container.
+    //
+    // Uses `overflow-x-clip` (not -hidden) so it clips ONLY the X
+    // axis without turning this container into a Y-scroll container
+    // — that side-effect of `overflow-x-hidden` was cropping the
+    // AvatarMenu / ReportProblem popovers when they extended below
+    // the sticky header.
+    <div className="min-h-full bg-warm-page overflow-x-clip">
       <AdminTabs
         walletRefreshKey={walletRefreshKey}
         onWalletBalanceChange={onWalletBalanceChange}
@@ -116,7 +129,7 @@ export default function AdminShell({ children, walletRefreshKey, onWalletBalance
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-        className="mx-auto max-w-7xl px-6 py-8"
+        className="mx-auto max-w-7xl px-4 sm:px-6 py-6 sm:py-8"
       >
         {children}
       </motion.main>
@@ -132,6 +145,7 @@ export default function AdminShell({ children, walletRefreshKey, onWalletBalance
 function KYCLockScreen({ kyc }) {
   const { user, logout } = useAuth()
   const nav = useNavigate()
+  const [confirmingSignOut, setConfirmingSignOut] = useState(false)
   const isPending  = kyc?.state === 'pending'
   const isRejected = kyc?.state === 'rejected'
 
@@ -158,13 +172,18 @@ function KYCLockScreen({ kyc }) {
             </span>
           )}
           <button
-            onClick={onLogout}
+            onClick={() => setConfirmingSignOut(true)}
             className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-slate-200 hover:text-white bg-white/8 hover:bg-white/16 ring-1 ring-inset ring-white/15 px-3 py-1.5 rounded-lg transition-colors"
           >
             Sign out
           </button>
         </div>
       </header>
+      <SignOutConfirm
+        open={confirmingSignOut}
+        onCancel={() => setConfirmingSignOut(false)}
+        onConfirm={() => { setConfirmingSignOut(false); onLogout() }}
+      />
 
       <motion.main
         initial={{ opacity: 0, y: 12 }}

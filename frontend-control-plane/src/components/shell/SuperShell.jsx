@@ -21,7 +21,7 @@ export default function SuperShell({ children }) {
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-        className="mx-auto max-w-7xl px-6 py-8"
+        className="mx-auto max-w-7xl px-6 pt-4 pb-8"
       >
         {children}
       </motion.main>

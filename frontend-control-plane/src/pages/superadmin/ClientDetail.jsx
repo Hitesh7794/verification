@@ -137,10 +137,29 @@ export default function ClientDetail() {
   return (
     <SuperShell>
       <FadeIn>
-        <div className="mb-3">
-          <Link to="/superadmin/clients" className="inline-flex items-center gap-1 text-xs font-medium text-slate-500 hover:text-slate-800 transition-colors">
-            <Icon.ChevronLeft className="h-3.5 w-3.5" />
-            All clients
+        <div className="mb-4">
+          <Link
+            to="/superadmin/clients"
+            className="group relative inline-flex items-center gap-2 overflow-hidden rounded-xl border border-slate-300 bg-gradient-to-b from-white to-slate-50 px-4 py-2 text-sm font-semibold text-slate-700 shadow-sm transition-all duration-200 ease-out hover:-translate-y-0.5 hover:border-indigo-400 hover:text-indigo-700 hover:shadow-lg hover:shadow-indigo-500/20 active:translate-y-0 active:shadow-sm focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:ring-offset-2"
+          >
+            {/* Same animation stack as the ExamDetail back button — soft
+                indigo wash fades in behind the label, and a single skewed
+                white sheen sweeps left→right on hover. */}
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-0 bg-gradient-to-b from-indigo-50/0 to-indigo-100/0 opacity-0 transition-opacity duration-200 group-hover:from-indigo-50 group-hover:to-white group-hover:opacity-100"
+            />
+            <span
+              aria-hidden="true"
+              className="pointer-events-none absolute inset-y-0 -left-full w-1/2 skew-x-12 bg-gradient-to-r from-transparent via-white/70 to-transparent transition-transform duration-700 ease-out group-hover:translate-x-[300%]"
+            />
+            <span
+              aria-hidden="true"
+              className="relative text-base leading-none transition-transform duration-200 ease-out group-hover:-translate-x-1"
+            >
+              ←
+            </span>
+            <span className="relative">All clients</span>
           </Link>
         </div>
 

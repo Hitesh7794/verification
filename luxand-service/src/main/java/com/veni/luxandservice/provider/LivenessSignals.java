@@ -25,10 +25,18 @@ public final class LivenessSignals {
     /** Number of frames where a face was detected + tracked. */
     public final int facesFound;
 
-    public LivenessSignals(float[] passive, float[] eyesOpen, float[] yaw, int facesFound) {
+    /** Peak number of faces detected in any single frame across the
+     *  sequence. Populated from Luxand's per-frame {@code FeedFrame}
+     *  face count. Used by the handler to reject bursts where more
+     *  than one person is in the frame (accomplice liveness). */
+    public final int maxFacesInFrame;
+
+    public LivenessSignals(float[] passive, float[] eyesOpen, float[] yaw,
+                           int facesFound, int maxFacesInFrame) {
         this.passive = passive;
         this.eyesOpen = eyesOpen;
         this.yaw = yaw;
         this.facesFound = facesFound;
+        this.maxFacesInFrame = maxFacesInFrame;
     }
 }

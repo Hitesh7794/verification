@@ -18,10 +18,16 @@ import {
   postIrisMatch,
 } from '../../lib/api.js'
 import { getWalletSummary, formatRupees } from '../../lib/wallet/wallet.js'
-import { formatDateTime } from '../../lib/dates.js'
 import ntaLogo from '../../assets/nta-logo.png'
 import emblemSvg from '../../assets/emblem.svg'
 import ntaWatermark from '../../assets/nta-watermark.png'
+// Real biometric-vendor SDKs. The mock capture handlers below used to
+// fake progress bars and hardcode device serials; the SDKs plumb the
+// actual USB scanner + local daemon on the operator laptop and post
+// the captured probe to the backend's match orchestrator.
+import { pollConnected, DefaultThresholds } from '../../lib/verify/fingerprint/registry.js'
+import { tmpFormatFromString } from '../../lib/verify/morfin.js'
+import { iris as irisSdk, IrisError, isIrisServiceReachable } from '../../lib/verify/iris.js'
 
 function newIdempotencyKey() {
   if (typeof crypto !== 'undefined' && crypto.randomUUID) return crypto.randomUUID()
@@ -61,10 +67,6 @@ function clearPersistedState() {
     sessionStorage.removeItem(STATE_KEY)
   } catch {}
 }
-
-// Optional local dev fixtures (kept in gitignored local files)
-const mockModules = import.meta.glob('../../lib/mock/devCandidates.js', { eager: true })
-const devFixture = mockModules['../../lib/mock/devCandidates.js'] || null
 
 // Biometric glyphs sharing the login page's detection frames, loop ridges, and iris optics
 function InteractiveFingerprintGlyph({ status, size = 64 }) {
@@ -281,9 +283,70 @@ function InteractiveIrisGlyph({ status, size = 64 }) {
   )
 }
 
+// One row on the Stage-4 receipt for a single biometric modality.
+// Three states: matched (green), skipped (grey, "NOT CAPTURED"), or
+// failed (rose, "NOT MATCHED"). Keeps the certificate honest — a
+// hardcoded "VERIFIED (MATCHED)" was the previous bug that made a
+// clearly-failed face read as passing.
+function ModalityRow({ label, matched, skipped, error }) {
+  if (matched) {
+    return (
+      <div className="p-2.5 rounded-lg bg-[#E8F5EE] border border-[#B4DCC7] text-[#0F6B45] flex justify-between items-center font-semibold">
+        <span className="flex items-center gap-1.5">
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
+          </svg>
+          {label}:
+        </span>
+        <span>VERIFIED (MATCHED)</span>
+      </div>
+    )
+  }
+  if (skipped) {
+    return (
+      <div className="p-2.5 rounded-lg bg-slate-100 border border-slate-200 text-slate-600 flex justify-between items-center font-semibold">
+        <span className="flex items-center gap-1.5">
+          <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="9" strokeWidth="2" />
+            <path strokeLinecap="round" strokeWidth="2" d="M8 12h8" />
+          </svg>
+          {label}:
+        </span>
+        <span>NOT CAPTURED</span>
+      </div>
+    )
+  }
+  return (
+    <div className="p-2.5 rounded-lg bg-[#FBEAEC] border border-[#EFC0C7] text-[#DC2626] flex justify-between items-center font-semibold">
+      <span className="flex items-center gap-1.5">
+        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="9" strokeWidth="2" />
+          <path strokeLinecap="round" strokeWidth="2" d="M9 9l6 6M15 9l-6 6" />
+        </svg>
+        {label}:
+      </span>
+      <span>{error ? 'NOT MATCHED' : 'NOT MATCHED'}</span>
+    </div>
+  )
+}
+
 export default function ClientDashboard() {
-  const persisted = loadPersistedState()
-  
+  // Reload safety: `candidate` is never persisted (contains a photo
+  // blob among other bulky/session-bound fields), so if the operator
+  // reloads mid-flow we came back with `roll` + `currentStage`
+  // restored but no candidate object. That rendered the search card
+  // AND the Stage-2 canvas at the same time — the "glitchy" reload
+  // state. Simplest safe recovery: drop the persisted flow entirely
+  // when the persisted stage is beyond the search step, so the
+  // operator re-enters the roll and starts fresh. No wallet
+  // double-debit that way either.
+  const rawPersisted = loadPersistedState()
+  const staleReload  = (rawPersisted?.currentStage ?? 0) > 0
+  if (staleReload) {
+    clearPersistedState()
+  }
+  const persisted = staleReload ? null : rawPersisted
+
   // Stage state: 0 (Standby), 1 (Retrieved Record), 2 (Liveness/Face), 3 (Biometrics FP+Iris), 4 (Final Certificate)
   const [currentStage, setCurrentStage] = useState(persisted?.currentStage ?? 0)
   const [roll, setRoll] = useState(persisted?.roll ?? '')
@@ -300,6 +363,14 @@ export default function ClientDashboard() {
   const [livenessResult, setLivenessResult] = useState(null)
   const [livenessPassing, setLivenessPassing] = useState(false)
   const [livenessPassed, setLivenessPassed] = useState(false)
+  // Distinct from livenessPassed. `livenessOK` = the server-side liveness
+  // gate row was successfully written (blink + Luxand pass); it survives
+  // a face-match miss so the sidebar's "LIVENESS CHECK" reads PASS and
+  // the camera can shut off. `livenessPassed` on the other hand tracks
+  // the entire liveness+face stage and only flips true when face-match
+  // also clears — that's what gates the "Proceed to Biometric Scan"
+  // button and the stage-advance.
+  const [livenessOK, setLivenessOK] = useState(false)
   const [livenessConfidence, setLivenessConfidence] = useState('0%')
   const [faceDetected, setFaceDetected] = useState(false)
   const [faceOrientationStatus, setFaceOrientationStatus] = useState('LOOK AT CAMERA')
@@ -320,6 +391,14 @@ export default function ClientDashboard() {
   const videoRef = useRef(null)
   const streamRef = useRef(null)
   const [cameraActive, setCameraActive] = useState(false)
+  // livenessArmed = the operator has explicitly clicked "Capture &
+  // Verify Face". Before this the camera is open + streaming but
+  // MediaPipe (window.seqrFaceGuide) is NOT running — so the blink-
+  // detection status pills stay neutral instead of racing to
+  // "BLINK DETECTED — READY" the instant the operator glances at
+  // the lens. The MediaPipe detector starts here on click and
+  // fires the burst capture when it sees the first real blink.
+  const [livenessArmed, setLivenessArmed] = useState(false)
 
   // Submitting & Verification
   const [submitting, setSubmitting] = useState(false)
@@ -332,12 +411,19 @@ export default function ClientDashboard() {
 
   // Wallet
   const [wallet, setWallet] = useState(null)
-  useEffect(() => {
-    getWalletSummary().then(setWallet).catch(() => {})
-  }, [])
   const refreshWallet = () => {
     getWalletSummary().then(setWallet).catch(() => {})
   }
+  useEffect(() => {
+    // Initial pull, then a light heartbeat every 20s so the header
+    // pill catches any debit that happened outside this tab (another
+    // operator on the same wallet, an admin top-up, refund reversal
+    // from support tooling, etc.). 20s is far below face-match cadence
+    // yet cheap enough not to matter for a single-operator laptop.
+    refreshWallet()
+    const id = setInterval(refreshWallet, 20_000)
+    return () => clearInterval(id)
+  }, [])
 
   // Exams
   const [assignedExams, setAssignedExams] = useState([])
@@ -362,20 +448,8 @@ export default function ClientDashboard() {
       .catch(() => setAssignedExams([]))
   }, [])
 
-  // Exam Countdown Timer
-  const [countdownText, setCountdownText] = useState('03h 48m 12s LEFT')
-  useEffect(() => {
-    let seconds = 3 * 3600 + 48 * 60 + 12
-    const timer = setInterval(() => {
-      seconds--
-      if (seconds < 0) seconds = 0
-      const h = Math.floor(seconds / 3600).toString().padStart(2, '0')
-      const m = Math.floor((seconds % 3600) / 60).toString().padStart(2, '0')
-      const s = (seconds % 60).toString().padStart(2, '0')
-      setCountdownText(`${h}h ${m}s LEFT`.replace(`${h}h ${m}s`, `${h}h ${m}m ${s}s`))
-    }, 1000)
-    return () => clearInterval(timer)
-  }, [])
+  // Exam countdown timer was removed 2026-09-14 — the header pill is
+  // gone, so this state + heartbeat aren't wired to anything any more.
 
   // Persist State
   useEffect(() => {
@@ -395,14 +469,20 @@ export default function ClientDashboard() {
     })
   }, [currentStage, roll, faceResult, fpResult, irisResult, verificationStartedAt, idempotencyKey, candidate, snap])
 
-  // Camera Management & Live MediaPipe Blink Detection for Stage 2
-  // Camera Management & Live MediaPipe Blink Detection for Stage 2
+  // Camera stream — kept alive only while (currentStage === 2 &&
+  // !livenessOK). Deliberately does NOT start MediaPipe here: the
+  // client-side blink detector runs in the separate effect below
+  // that fires ONLY after the operator explicitly clicks
+  // "Capture & Verify Face" (see livenessArmed). Before that click
+  // the camera shows a raw preview with no blink guidance racing
+  // ahead — matches the "liveness runs after the button, not
+  // before" flow the operator asked for.
   useEffect(() => {
-    if (currentStage === 2) {
+    if (currentStage === 2 && !livenessOK) {
       let stream = null
       let isMounted = true
 
-      async function startCamAndDetector() {
+      async function startCam() {
         try {
           if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
             stream = await navigator.mediaDevices.getUserMedia({
@@ -436,88 +516,12 @@ export default function ClientDashboard() {
             setLivenessError('')
           }
         }
-
-        // Start MediaPipe Live Face Landmarker & Blink Guide
-        if (window.seqrFaceGuide && isMounted) {
-          try {
-            window.seqrFaceGuide.start(
-              // 1st param: onStatus(state, level)
-              (state, level) => {
-                if (!isMounted) return
-                if (state === '__error__') {
-                  setFaceDetected(true)
-                  setFaceOrientationStatus('OPTIMAL')
-                  setBlinkState('PLEASE BLINK ONCE')
-                  setLivenessConfidence('80%')
-                  return
-                }
-
-                if (state === 'blink') {
-                  setFaceDetected(true)
-                  setFaceOrientationStatus('OPTIMAL')
-                  setBlinkState('PLEASE BLINK ONCE')
-                  setLivenessConfidence('90%')
-                  setBlinkProgress(85)
-                  setLivenessError('')
-                } else if (state === 'hold') {
-                  setFaceDetected(true)
-                  setFaceOrientationStatus('OPTIMAL')
-                  setBlinkState('HOLD STILL')
-                  setLivenessConfidence('80%')
-                  setBlinkProgress(65)
-                  setLivenessError('')
-                } else if (state === 'closer') {
-                  setFaceDetected(true)
-                  setFaceOrientationStatus('MOVE CLOSER')
-                  setBlinkState('MOVE A BIT CLOSER')
-                  setLivenessConfidence('50%')
-                  setBlinkProgress(40)
-                  setLivenessError('')
-                } else if (state === 'back') {
-                  setFaceDetected(true)
-                  setFaceOrientationStatus('STEP BACK')
-                  setBlinkState('STEP A BIT BACK')
-                  setLivenessConfidence('50%')
-                  setBlinkProgress(40)
-                  setLivenessError('')
-                } else if (state === 'center') {
-                  if (level === 'none') {
-                    setFaceDetected(false)
-                    setFaceOrientationStatus('LOOK AT CAMERA')
-                    setBlinkState('LOOK AT CAMERA')
-                    setLivenessConfidence('30%')
-                    setBlinkProgress(20)
-                  } else {
-                    setFaceDetected(true)
-                    setFaceOrientationStatus('CENTER FACE')
-                    setBlinkState('KEEP HEAD CENTERED')
-                    setLivenessConfidence('60%')
-                    setBlinkProgress(50)
-                    setLivenessError('')
-                  }
-                }
-              },
-              // 2nd param: onBlink (automatically triggered by face_guide upon a real blink)
-              () => {
-                if (isMounted) {
-                  completeLivenessPass()
-                }
-              }
-            )
-          } catch (e) {
-            console.warn('Face guide error:', e)
-            setFaceDetected(true)
-          }
-        }
       }
 
-      startCamAndDetector()
+      startCam()
 
       return () => {
         isMounted = false
-        try {
-          window.seqrFaceGuide?.stop?.()
-        } catch (_) {}
         if (streamRef.current) {
           streamRef.current.getTracks().forEach((t) => t.stop())
           streamRef.current = null
@@ -525,12 +529,173 @@ export default function ClientDashboard() {
         setCameraActive(false)
       }
     }
-  }, [currentStage, idempotencyKey, candidate])
+  }, [currentStage, idempotencyKey, candidate, livenessOK])
+
+  // MediaPipe blink detector — starts ONLY once livenessArmed flips
+  // true (via the "Capture & Verify Face" click). Before that the
+  // detector is dormant and the "Blink Detection" pill stays neutral.
+  // On blink the callback grabs the burst + POSTs + runs face-match,
+  // then dis-arms so a second blink doesn't retrigger.
+  useEffect(() => {
+    if (!(currentStage === 2 && livenessArmed && !livenessOK)) return
+    let isMounted = true
+    if (!window.seqrFaceGuide) {
+      // No detector available — the manual button in handleCaptureLiveness
+      // still fires completeLivenessPass directly, so we don't need to
+      // block the flow here.
+      return
+    }
+    try {
+      window.seqrFaceGuide.start(
+        // 1st param: onStatus(state, level) — guidance HUD updates.
+        (state, level) => {
+          if (!isMounted) return
+          if (state === '__error__') {
+            setFaceDetected(true)
+            setFaceOrientationStatus('OPTIMAL')
+            setBlinkState('PLEASE BLINK ONCE')
+            setLivenessConfidence('80%')
+            return
+          }
+          if (state === 'blink') {
+            setFaceDetected(true)
+            setFaceOrientationStatus('OPTIMAL')
+            setBlinkState('PLEASE BLINK ONCE')
+            setLivenessConfidence('90%')
+            setBlinkProgress(85)
+            setLivenessError('')
+          } else if (state === 'hold') {
+            setFaceDetected(true)
+            setFaceOrientationStatus('OPTIMAL')
+            setBlinkState('HOLD STILL')
+            setLivenessConfidence('80%')
+            setBlinkProgress(65)
+            setLivenessError('')
+          } else if (state === 'closer') {
+            setFaceDetected(true)
+            setFaceOrientationStatus('MOVE CLOSER')
+            setBlinkState('MOVE A BIT CLOSER')
+            setLivenessConfidence('50%')
+            setBlinkProgress(40)
+            setLivenessError('')
+          } else if (state === 'back') {
+            setFaceDetected(true)
+            setFaceOrientationStatus('STEP BACK')
+            setBlinkState('STEP A BIT BACK')
+            setLivenessConfidence('50%')
+            setBlinkProgress(40)
+            setLivenessError('')
+          } else if (state === 'center') {
+            if (level === 'none') {
+              setFaceDetected(false)
+              setFaceOrientationStatus('LOOK AT CAMERA')
+              setBlinkState('LOOK AT CAMERA')
+              setLivenessConfidence('30%')
+              setBlinkProgress(20)
+            } else {
+              setFaceDetected(true)
+              setFaceOrientationStatus('CENTER FACE')
+              setBlinkState('KEEP HEAD CENTERED')
+              setLivenessConfidence('60%')
+              setBlinkProgress(50)
+              setLivenessError('')
+            }
+          }
+        },
+        // 2nd param: onBlink — fires when the detector sees a real
+        // blink. Since livenessArmed is what gated this effect, the
+        // operator has already clicked the button — so it's now safe
+        // to advance the flow. Stop the detector first so a second
+        // blink during the same burst doesn't retrigger, then run
+        // the burst POST + face-match.
+        () => {
+          if (!isMounted) return
+          setBlinkState('BLINK DETECTED — CAPTURING')
+          setBlinkProgress(90)
+          setLivenessConfidence('99%')
+          try { window.seqrFaceGuide?.stop?.() } catch (_) {}
+          completeLivenessPass()
+        }
+      )
+    } catch (e) {
+      console.warn('Face guide error:', e)
+      setFaceDetected(true)
+    }
+    return () => {
+      isMounted = false
+      try { window.seqrFaceGuide?.stop?.() } catch (_) {}
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentStage, livenessArmed, livenessOK])
 
   // Check if biometrics complete (either or both verified)
+  // Dynamic modality — a candidate is only required to clear the
+  // biometric checks that were actually enrolled for them. The backend
+  // returns has_photo / has_fp_image / has_iris_bytes on the candidate
+  // lookup so we can drive the UI off the same source of truth. If the
+  // enrolment CSV only carried a face photo, the operator never sees
+  // fingerprint or iris bays; if it carried face + fingerprint, iris
+  // stays hidden, and so on.
+  const hasEnrolledFace        = !!candidate?.has_photo
+  // Backend surfaces two fingerprint flags:
+  //   has_iso_template — the ISO 19794-2 / FMR template SourceAFIS
+  //                      matches against (the enrolment CSV upload).
+  //   has_fp_image     — a raw BMP fingerprint image (legacy path).
+  // Either one is enough to say the candidate has fingerprint on file,
+  // so accept both. This is what the pre-Rahul dashboard did.
+  const hasEnrolledFingerprint = !!candidate?.has_iso_template || !!candidate?.has_fp_image
+  const hasEnrolledIris        = !!candidate?.has_iris_bytes
+  const needsBiometric         = hasEnrolledFingerprint || hasEnrolledIris
+
   const isBiometricComplete = () => {
-    return fpStatus === 'pass' || irisStatus === 'pass'
+    // No fp/iris enrolled → nothing to prove at stage 3.
+    if (!needsBiometric) return true
+    // Every enrolled modality must PASS. Matches the pre-Rahul
+    // dashboard's strict-AND submit logic. Any enrolled modality
+    // still awaiting a capture (idle/scanning) keeps the biometric
+    // stage locked so the operator can't advance a half-done row.
+    const fpDone   = !hasEnrolledFingerprint || fpStatus   === 'pass'
+    const irisDone = !hasEnrolledIris        || irisStatus === 'pass'
+    return fpDone && irisDone
   }
+
+  // True if any enrolled biometric explicitly failed. Drives the
+  // Retake/Continue footer variant so the operator can either try
+  // the scan again or push through with a denied verdict — a fail
+  // must NEVER be a dead end that traps them on stage 3.
+  const anyEnrolledFailed = () => {
+    const fpFailed   = hasEnrolledFingerprint && fpStatus   === 'fail'
+    const irisFailed = hasEnrolledIris        && irisStatus === 'fail'
+    return fpFailed || irisFailed
+  }
+
+  // Reset the failed pods back to idle so the operator can rescan.
+  // Passed pods stay passed — retake only clears the failure, not
+  // the modalities that already matched.
+  function retakeFailedBiometrics() {
+    if (fpStatus === 'fail') {
+      setFpStatus('idle')
+      setFpScore(0)
+      setFpResult(null)
+    }
+    if (irisStatus === 'fail') {
+      setIrisStatus('idle')
+      setIrisResult(null)
+    }
+  }
+
+  // Auto-advance Stage 2 → Stage 3 once liveness + face-match have
+  // both passed. Previously the operator had to click a big "Proceed
+  // to Biometric Scan →" button that just moved the pipeline forward —
+  // no data was captured on that click. Redundant tap on every
+  // verification. A short 700 ms hold on the green "LIVENESS VERIFIED"
+  // confirmation gives visual acknowledgement, then we advance.
+  useEffect(() => {
+    if (currentStage !== 2 || !livenessPassed) return
+    const target = needsBiometric ? 3 : 4
+    const id = setTimeout(() => setCurrentStage(target), 700)
+    return () => clearTimeout(id)
+  }, [currentStage, livenessPassed, needsBiometric])
 
   // Grab Live Video Frame from Webcam Viewport
   function grabLiveVideoSnapshot() {
@@ -550,7 +715,33 @@ export default function ClientDashboard() {
     return null
   }
 
-  // Handle Candidate Roll Lookup (with seamless fallback to mock/demo candidates)
+  // Grab a burst of raw base64 JPEGs from the webcam so we can send it
+  // to /api/candidates/:roll/liveness-client-verified. The backend rejects
+  // an empty frames array (it wants Luxand to do a passive anti-spoof
+  // pass on top of the client's MediaPipe blink challenge), so we take
+  // ~15 frames at ~90ms intervals here — matches the burst size the
+  // web SPA used to send. Strips the data-URL prefix that
+  // grabLiveVideoSnapshot bakes in so the wire payload is a bare
+  // base64 body per frame, which is what the Luxand client expects.
+  async function grabLiveVideoBurst(count = 15, intervalMs = 90) {
+    const frames = []
+    for (let i = 0; i < count; i++) {
+      const dataUrl = grabLiveVideoSnapshot()
+      if (dataUrl && dataUrl.startsWith('data:image/')) {
+        const comma = dataUrl.indexOf(',')
+        if (comma > 0) frames.push(dataUrl.slice(comma + 1))
+      }
+      // Await between frames so the video element actually advances.
+      if (i < count - 1) {
+        await new Promise((r) => setTimeout(r, intervalMs))
+      }
+    }
+    return frames
+  }
+
+  // Handle Candidate Roll Lookup — real backend only. No local dev
+  // fixture fallback: if the exam manifest doesn't have this roll,
+  // we surface the real error instead of fabricating a fake candidate.
   async function handleRollSubmit(e, customRoll) {
     if (e) e.preventDefault()
     if (isSearching || (candidate && currentStage > 0)) return
@@ -559,66 +750,29 @@ export default function ClientDashboard() {
     if (customRoll && customRoll !== roll) {
       setRoll(customRoll)
     }
-    
+
     setLookupErr('')
     setWalletEmpty(false)
     setIsSearching(true)
 
     try {
-      let c = null
-      try {
-        c = await api(`/candidates/${encodeURIComponent(targetRoll)}`)
-      } catch (err) {
-        if (isWalletEmptyError(err)) {
-          throw err
-        }
-        // Fallback to local dev fixtures if available
-        const matchedDemo = devFixture?.DEMO_CANDIDATES?.find((d) => d.roll_no.toLowerCase() === targetRoll.toLowerCase())
-        if (matchedDemo) {
-          c = { ...matchedDemo }
-        } else if (devFixture) {
-          c = {
-            roll_no: targetRoll,
-            name: `Candidate ${targetRoll}`,
-            gender: 'M',
-            father_name: 'Parent / Guardian',
-            exam_name: wallet?.assigned_exam_name || 'NEET (UG) 2026',
-            center_name: 'Delhi Central Pod #04B',
-            registration_id: `REG-2026-${targetRoll}`,
-            has_photo: true,
-            has_iso_template: true,
-          }
-        } else {
-          throw new Error(err.message || `Candidate with roll number "${targetRoll}" not found in exam manifest.`)
-        }
+      const c = await api(`/candidates/${encodeURIComponent(targetRoll)}`)
+      if (!c || !c.roll_no) {
+        throw new Error(`Candidate with roll number "${targetRoll}" not found.`)
       }
 
-      if (!c || !c.roll_no) {
-        throw new Error(`Candidate with roll number "${targetRoll}" not found in exam manifest.`)
-      }
-      
       setCandidate(c)
       setVerificationStartedAt(Date.now())
       setIdempotencyKey(newIdempotencyKey())
 
       try {
         const url = await fetchPhotoBlob(targetRoll)
-        if (url) {
-          setPhotoBlob(url)
-        } else if (devFixture?.generateCandidatePortrait) {
-          setPhotoBlob(devFixture.generateCandidatePortrait(c))
-        } else {
-          setPhotoBlob(null)
-        }
+        setPhotoBlob(url || null)
       } catch {
-        if (devFixture?.generateCandidatePortrait) {
-          setPhotoBlob(devFixture.generateCandidatePortrait(c))
-        } else {
-          setPhotoBlob(null)
-        }
+        setPhotoBlob(null)
       }
 
-      if (c.has_iso_template) {
+      if (c.has_iso_template || c.has_fp_image) {
         try {
           const tpl = await fetchFPTemplate(targetRoll)
           setGallery(tpl)
@@ -646,8 +800,20 @@ export default function ClientDashboard() {
     }
   }
 
-  // Complete Liveness & Face Match upon real blink or manual trigger
-  async function completeLivenessPass(manualLiveSnap) {
+  // Complete Liveness & Face Match upon real blink or manual trigger.
+  //
+  // Order matters: liveness FIRST, then the still photo, then face-match.
+  // The previous version grabbed the photo before the liveness POST,
+  // which made the dossier tile show the "CAPTURED" candidate picture
+  // while the blink challenge was still in flight — visually reads as
+  // "photo taken before liveness verified", which the operator called
+  // out. Now we:
+  //   1. POST the liveness burst (Luxand anti-spoof on top of MediaPipe).
+  //   2. Wait for the gate to pass.
+  //   3. Grab a fresh snapshot — this is the shot that appears in the
+  //      dossier tile.
+  //   4. POST face-match against the enrolled gallery.
+  async function completeLivenessPass() {
     if (livenessPassed) return
     setLivenessPassing(true)
     setBlinkState('PASSED')
@@ -656,41 +822,91 @@ export default function ClientDashboard() {
     setFaceOrientationStatus('OPTIMAL')
     setFaceDetected(true)
     setLivenessError('')
+    // Clear any stale mismatch result so the retake path doesn't
+    // still render the "Retake / Continue anyway" dual buttons while
+    // the new capture is in flight.
+    setFaceResult(null)
+    // Clear the dossier "CAPTURED" tile so the operator sees a fresh
+    // capture happen at the right moment (after liveness), not the
+    // ghost of the previous shot.
+    setSnap(null)
 
-    let liveSnap = manualLiveSnap || grabLiveVideoSnapshot()
-    if (!liveSnap) {
-      liveSnap = photoBlob
+    // STEP 1 — server-side liveness gate. The face-match endpoint
+    // below refuses to run (412) unless a passing liveness_checks row
+    // exists for this (org, roll, session_id) tuple. The burst is
+    // rapid frames from the webcam so Luxand can do a passive anti-
+    // spoof pass on top of the client's MediaPipe blink verdict.
+    if (candidate) {
+      try {
+        const frames = await grabLiveVideoBurst()
+        if (!frames.length) throw new Error('Could not read camera frames')
+        await postLivenessClientVerified(candidate.roll_no, idempotencyKey, frames)
+        // Gate row is written server-side — liveness itself has cleared
+        // even if the face-match below misses. Refresh the wallet
+        // right away because the backend's wallet middleware debits
+        // on the liveness-verified endpoint, and the operator wants
+        // to see the pill drop in real time (this used to only fire
+        // at the very end of the whole flow, so the header showed a
+        // stale balance until the next reload).
+        setLivenessOK(true)
+        refreshWallet()
+      } catch (e) {
+        setLivenessError(e?.body?.error || e?.message || 'Liveness step failed — please retry.')
+        setLivenessPassing(false)
+        setLivenessPassed(false)
+        setLivenessOK(false)
+        // Dis-arm the detector so the operator can click again to
+        // re-run liveness; otherwise the effect thinks MediaPipe is
+        // still active and won't restart it.
+        setLivenessArmed(false)
+        return
+      }
     }
+
+    // STEP 2 — now that liveness is verified, take the still photo
+    // that will be sent for face-match AND shown in the dossier tile.
+    const liveSnap = grabLiveVideoSnapshot() || photoBlob
     if (liveSnap) setSnap(liveSnap)
 
-    try {
-      if (candidate) {
-        await postLivenessClientVerified(candidate.roll_no, idempotencyKey).catch(() => {})
-      }
-    } catch (_) {}
-
-    // Match face with enrolled photo if photo exists
+    // STEP 3 — real face-match against the enrolled photo. Backend
+    // returns {roll_no, face_found, score, threshold, status} where
+    // `status: true` means the score cleared the threshold. A miss
+    // (status: false) does NOT advance the stage — the operator
+    // decides via the Retake / Continue-anyway buttons below.
     if (candidate?.has_photo && liveSnap) {
       try {
         const resp = await postFaceMatch(candidate.roll_no, liveSnap, idempotencyKey)
-        setFaceResult(resp)
-      } catch (_) {
-        setFaceResult({
-          ok: true,
-          score: 0.998,
-          captured: true,
-          threshold: 0.85,
-          snapshot: liveSnap,
-        })
+        // Face-match POST is the wallet-chargeable event on the backend
+        // (see verify_face_handlers.go). Refresh even on a miss so the
+        // pill reflects the debit regardless of outcome.
+        refreshWallet()
+        const matched = resp?.status === true || resp?.matched === true || resp?.ok === true
+        setFaceResult({ ...resp, ok: matched, snapshot: liveSnap })
+        if (!matched) {
+          // Miss is surfaced only by the sidebar's FAILED pill and the
+          // Retake / Continue Anyway button pair — no verbose banner.
+          setLivenessError('')
+          setLivenessPassing(false)
+          setLivenessPassed(false)
+          return
+        }
+      } catch (e) {
+        setLivenessError(e?.body?.error || e?.message || 'Face-match failed. Please retry.')
+        setFaceResult({ ok: false, error: e?.message || 'face-match failed', snapshot: liveSnap })
+        setLivenessPassing(false)
+        setLivenessPassed(false)
+        return
       }
+    } else if (!candidate?.has_photo) {
+      // No enrolled photo — face isn't in scope for this candidate.
+      // Mark the face slot as "not required" so submit / verdict / UI
+      // don't wait on it. Also skip the face-match wallet debit.
+      setFaceResult({ ok: true, notRequired: true, snapshot: liveSnap })
     } else {
-      setFaceResult({
-        ok: true,
-        score: 0.998,
-        captured: true,
-        threshold: 0.85,
-        snapshot: liveSnap,
-      })
+      setLivenessError('No live snapshot captured — try again.')
+      setLivenessPassing(false)
+      setLivenessPassed(false)
+      return
     }
 
     setLivenessPassing(false)
@@ -699,96 +915,253 @@ export default function ClientDashboard() {
     refreshWallet()
   }
 
-  // Manual Trigger Button for Capture & Verify (takes picture from camera)
+  // Manual Trigger Button for Capture & Verify (takes picture from camera).
+  //
+  // Arms the MediaPipe detector (via livenessArmed) which — the moment
+  // the operator blinks — auto-fires completeLivenessPass. If the
+  // MediaPipe module isn't loaded (offline / self-hosted assets 404 /
+  // browser refused wasm) we fall back to running the burst capture
+  // immediately so the flow still works without the client-side blink
+  // gate. Backend Luxand path still gets a burst either way.
   async function handleCaptureLiveness() {
     if (livenessPassing || livenessPassed) return
     setLivenessError('')
-    const liveSnap = grabLiveVideoSnapshot()
-    await completeLivenessPass(liveSnap)
+    if (window.seqrFaceGuide) {
+      // Prime the guidance HUD copy while we wait for the operator to
+      // blink; the onStatus callback will overwrite it as soon as the
+      // detector produces its first frame.
+      setBlinkState('PLEASE BLINK ONCE')
+      setBlinkProgress(30)
+      setLivenessArmed(true)
+      return
+    }
+    // No MediaPipe — go straight to the burst POST.
+    await completeLivenessPass()
   }
 
-  // Optical Fingerprint Sensor Capture (L1 Hardware / ISO 19794-2)
-  function handleCaptureFingerprint() {
+  // Retake JUST the still photo after a face-match miss. Turns the
+  // camera back on (livenessOK → false makes the useEffect restart the
+  // stream) and clears the previous shot. The liveness gate row is
+  // already valid for this idempotency_key so we don't need another
+  // burst — the operator just clicks "Capture & Verify Face" again
+  // once they've repositioned the candidate, and completeLivenessPass
+  // will re-run face-match (backend's same-roll wallet cache absorbs
+  // the second POST so no double debit).
+  function handleRetakePhoto() {
+    setLivenessError('')
+    setSnap(null)
+    setFaceResult(null)
+    setLivenessOK(false)       // <-- restarts the camera effect
+    setLivenessPassing(false)
+    setLivenessPassed(false)
+    // Dis-arm the MediaPipe detector so the retake reads as a fresh
+    // pre-click state — the operator has to press the button again
+    // for blink detection to run.
+    setLivenessArmed(false)
+    setBlinkState('LOOK AT CAMERA')
+    setBlinkProgress(15)
+  }
+
+  // Real fingerprint capture. Talks to the vendor daemon on the operator
+  // laptop (Mantra MorFin or Startek ACPL — detected at capture time),
+  // triggers a scan on the USB device, and posts the resulting probe
+  // template to /api/candidates/:roll/fp-match. The backend runs the
+  // 1:1 SourceAFIS match and returns a score + threshold. All device
+  // metadata (model, serial, template format) comes from the SDK — no
+  // hardcoded strings any more.
+  async function handleCaptureFingerprint() {
     if (fpStatus === 'pass' || fpStatus === 'scanning') return
+    if (!candidate?.roll_no) return
+
     setFpStatus('scanning')
     setFpScore(0)
+    setFpResult(null)
 
-    let current = 0
-    const target = 373
-    const timer = setInterval(() => {
-      current += Math.floor(Math.random() * 32) + 20
-      if (current >= target) {
-        current = target
-        clearInterval(timer)
-        setFpScore(target)
-        setFpStatus('pass')
-        const res = {
-          ok: true,
-          score: target,
-          threshold: 40,
-          quality: 88,
-          nfiq: 1,
-          vendor: 'L1 Optical Platen',
-          deviceModel: 'STQC-L1-FP',
-          deviceSerial: 'FP-88901-DEL',
-        }
-        setFpResult(res)
-      } else {
-        setFpScore(current)
+    try {
+      // Detect an active vendor + device. pollConnected() returns
+      // { active, serviceErrors } — active is either null (no vendor
+      // daemon replied with a connected device) or a
+      // { vendor, name, client, threshold, label } record naming the
+      // first ready device. Object shape, not an array — the earlier
+      // `(probes || []).find(...)` crashed here because Objects have
+      // no `.find`.
+      const { active } = await pollConnected()
+      if (!active || !active.client) {
+        // No physical scanner present or the vendor daemon isn't
+        // running. Bounce fpStatus back to idle so the pod stays quiet
+        // (not a red "Verification Failed") and surface the reason on
+        // the score line.
+        setFpStatus('idle')
+        setFpResult({ ok: false, error: 'No fingerprint scanner detected. Please connect the device and try again.' })
+        return
       }
-    }, 45)
+
+      // Look up gallery format (Mantra needs the FMR/ANSI enum; Startek
+      // ignores it) so the vendor client can wire the match call.
+      let galleryFormat = 'FMR_V2005'
+      try {
+        const tpl = await fetchFPTemplate(candidate.roll_no)
+        if (tpl?.format) galleryFormat = tpl.format
+      } catch (_) { /* fall back to default */ }
+
+      // The client's match() handles capture + local match + backend POST
+      // in one round trip. Returns the vendor SDK envelope.
+      const r = await active.client.match({
+        rollNo: candidate.roll_no,
+        format: tmpFormatFromString(galleryFormat),
+      })
+      const score = typeof r.MatchScore === 'number' ? r.MatchScore : Number(r.MatchScore || 0)
+      const threshold = active.threshold ?? DefaultThresholds[active.vendor] ?? 50
+      const passed = !!r.Status && score >= threshold
+
+      const out = {
+        ok: passed,
+        score,
+        threshold,
+        vendor: active.vendor,
+        deviceModel:  r.DeviceModel  || active.name || '',
+        deviceSerial: r.DeviceSerial || '',
+        quality:  r.Quality ?? null,
+        nfiq:     r.Nfiq    ?? null,
+        liveness: typeof r.LiveNess_Result === 'number' ? r.LiveNess_Result : null,
+        templateFormat: galleryFormat,
+      }
+      setFpResult(out)
+      setFpScore(score)
+      setFpStatus(passed ? 'pass' : 'fail')
+    } catch (e) {
+      // Surface the reason on the pod so the operator can retry —
+      // fpResult stays null so submit still refuses to advance.
+      setFpStatus('fail')
+      setFpResult({ ok: false, error: e?.message || 'Fingerprint capture failed' })
+    }
   }
 
-  // Iris Scanner Capture (NIR 850nm / STQC L1)
-  function handleCaptureIris() {
+  // Real iris capture. Triggers a single-eye capture through the local
+  // Marvis daemon on the operator laptop, then posts the resulting BMP
+  // to /api/candidates/:roll/iris-match. The backend forwards the probe
+  // to TrustView's compare API and returns the match verdict. No
+  // hardcoded device strings — everything comes from the SDK response.
+  async function handleCaptureIris() {
     if (irisStatus === 'pass' || irisStatus === 'scanning') return
-    setIrisStatus('scanning')
+    if (!candidate?.roll_no) return
 
-    let progress = 0
-    const timer = setInterval(() => {
-      progress += 20
-      if (progress >= 100) {
-        clearInterval(timer)
-        setIrisStatus('pass')
-        const res = {
-          ok: true,
-          leftScore: 99.4,
-          leftQuality: 92,
-          deviceModel: 'STQC-L1-IRIS',
-          deviceSerial: 'IR-44021-DEL',
-        }
-        setIrisResult(res)
+    setIrisStatus('scanning')
+    setIrisResult(null)
+    try {
+      // Reachability probe so an operator whose Marvis service isn't
+      // running gets a specific message instead of a mysterious timeout.
+      const reachable = await isIrisServiceReachable()
+      if (!reachable) {
+        setIrisStatus('idle')
+        setIrisResult({ ok: false, error: 'Iris service unreachable. Start the Marvis daemon on this laptop and try again.' })
+        return
       }
-    }, 100)
+      const cap = await irisSdk.capture({ quality: 55, timeoutSec: 15 })
+      if (!cap?.BitmapData) {
+        throw new Error('Iris capture returned no image')
+      }
+      const resp = await postIrisMatch(candidate.roll_no, cap.BitmapData, {
+        serial: cap.DeviceSerial || '',
+        model:  cap.DeviceModel  || '',
+      })
+      const out = {
+        ok: !!resp?.matched,
+        leftScore:   typeof resp?.score     === 'number' ? resp.score     : null,
+        leftQuality: typeof cap?.Quality    === 'number' ? cap.Quality    : null,
+        threshold:   typeof resp?.threshold === 'number' ? resp.threshold : null,
+        engine:      resp?.engine || '',
+        galleryMissing: !!resp?.gallery_missing,
+        deviceModel:  resp?.device_model  || cap?.DeviceModel  || '',
+        deviceSerial: resp?.device_serial || cap?.DeviceSerial || '',
+      }
+      setIrisResult(out)
+      // Treat gallery-missing as a soft pass — the audit row still
+      // gets the capture but the match wasn't scoreable server-side.
+      setIrisStatus(out.ok || out.galleryMissing ? 'pass' : 'fail')
+    } catch (e) {
+      setIrisStatus('fail')
+      const msg = e instanceof IrisError ? `${e.code}: ${e.description}` : (e?.message || 'Iris capture failed')
+      setIrisResult({ ok: false, error: msg })
+    }
   }
 
-  // Submit Final Verification to Backend
-  async function submitFinalVerification() {
+  // Submit Final Verification to Backend.
+  //
+  // Builds a submit body that carries the ACTUAL captured scores and
+  // metadata for each modality — matches the shape the pre-Rahul
+  // dashboard sent, which is what the /verifications handler and the
+  // PDF-report generator both expect. No hardcoded fallbacks any more;
+  // if a modality wasn't captured, its columns stay unset and the
+  // backend records NULL. Optionally accepts a status override
+  // (e.g. 'denied' for an operator reject) — defaults to 'verified'.
+  async function submitFinalVerification(overrideStatus) {
     if (submitting) return
     setSubmitting(true)
+    setResult(null)
+
     const decisionMs = verificationStartedAt ? Date.now() - verificationStartedAt : 2400
     const fpMatched = fpStatus === 'pass'
     const irisMatched = irisStatus === 'pass'
     const faceMatched = faceResult?.ok === true
 
+    // Strict AND on every enrolled modality — matches the pre-Rahul
+    // dashboard's auto-decide logic. A candidate enrolled with
+    // face+fp+iris needs ALL THREE to pass to end up "verified"; if
+    // any required modality misses the verdict is "denied" so a
+    // partial match can never be spoofed into a pass. Face-mismatch
+    // Continue-anyway overrides show up here as faceMatched=false
+    // and correctly flip the verdict to denied.
+    const facePass   = !hasEnrolledFace        || faceMatched
+    const fpPass     = !hasEnrolledFingerprint || fpMatched
+    const irisPass   = !hasEnrolledIris        || irisMatched
+    const anyModality = hasEnrolledFace || hasEnrolledFingerprint || hasEnrolledIris
+    const status = overrideStatus ||
+      (anyModality && facePass && fpPass && irisPass ? 'verified' : 'denied')
+
     let via = 'manual'
-    if (fpMatched) via = 'fingerprint'
-    else if (irisMatched) via = 'iris'
-    else if (faceMatched) via = 'face'
+    if (status === 'verified') {
+      if (fpMatched) via = 'fingerprint'
+      else if (irisMatched) via = 'iris'
+      else if (faceMatched) via = 'face'
+    }
 
     const body = {
       roll_no: candidate?.roll_no || roll,
-      status: 'verified',
+      status,
       face_match: faceMatched,
       fp_match: fpMatched,
       via,
-      match_threshold: 40,
+      match_threshold: fpResult?.threshold ?? null,
       decision_ms: decisionMs,
       client_app_version: APP_VERSION,
       idempotency_key: idempotencyKey || newIdempotencyKey(),
-      fp_match_score: fpScore || 373,
-      iris_left_score: 99.4,
-      face_match_score: faceResult?.score || 0.998,
+    }
+    if (fpResult) {
+      Object.assign(body, {
+        fp_vendor:          fpResult.vendor || null,
+        device_serial:      fpResult.deviceSerial || null,
+        device_model:       fpResult.deviceModel  || null,
+        fp_template_format: fpResult.templateFormat || null,
+        fp_quality:         fpResult.quality,
+        fp_nfiq:            fpResult.nfiq,
+        // Backend column is INTEGER — Mantra returns ints, SourceAFIS
+        // returns doubles (215.09) that Go rejects against *int.
+        // Rounding costs ~0.5 in precision on a 0..300 scale, negligible.
+        fp_match_score:     typeof fpResult.score === 'number' ? Math.round(fpResult.score) : null,
+        fp_liveness:        fpResult.liveness,
+      })
+    }
+    if (irisResult) {
+      Object.assign(body, {
+        iris_left_score:    typeof irisResult.leftScore === 'number' ? irisResult.leftScore : null,
+        iris_right_score:   typeof irisResult.rightScore === 'number' ? irisResult.rightScore : null,
+        iris_left_quality:  typeof irisResult.leftQuality === 'number' ? irisResult.leftQuality : null,
+        iris_right_quality: typeof irisResult.rightQuality === 'number' ? irisResult.rightQuality : null,
+      })
+    }
+    if (faceResult && typeof faceResult.score === 'number') {
+      body.face_match_score = faceResult.score
     }
 
     try {
@@ -799,16 +1172,16 @@ export default function ClientDashboard() {
         saved = await api('/verifications', { method: 'POST', body })
         if (saved?.id) setVerificationId(saved.id)
       }
-      setResult('verified')
+      // Trust the server-computed status (PATCH may have flipped it
+      // based on the fresh biometric flags), not the frontend's guess.
+      setResult(saved?.status || status)
       setCurrentStage(4)
       clearPersistedState()
     } catch (e) {
-      // In demo/offline mode, fallback to generated verification
-      const genId = 'VRF-' + (new Date().getFullYear()) + '-' + Math.floor(1000 + Math.random() * 9000) + '-' + Math.floor(100 + Math.random() * 900)
-      setVerificationId(genId)
-      setResult('verified')
-      setCurrentStage(4)
-      clearPersistedState()
+      // Real error — surface it. Do NOT fabricate a fake verification
+      // ID or mark the row verified when it never left the client. The
+      // operator can retry; wallet was already charged at face-match.
+      setLookupErr(e?.body?.error || e?.message || 'Could not save the verification. Please retry.')
     } finally {
       setSubmitting(false)
     }
@@ -830,7 +1203,9 @@ export default function ClientDashboard() {
     setFaceResult(null)
     setLivenessResult(null)
     setLivenessPassed(false)
+    setLivenessOK(false)
     setLivenessPassing(false)
+    setLivenessArmed(false)
     setFaceDetected(false)
     setFaceOrientationStatus('LOOK AT CAMERA')
     setBlinkState('LOOK AT CAMERA')
@@ -865,9 +1240,18 @@ export default function ClientDashboard() {
     const fee = wallet?.fee_per_lookup_paise || 500
     const capPaise = wallet?.cap_paise
     const spent = wallet?.spent_paise || 0
-    const orgBal = wallet?.org_balance_paise ?? 72000
+    const orgBal = wallet?.org_balance_paise ?? 0
     const capped = typeof capPaise === 'number' && capPaise > 0
-    const allocated = capped ? capPaise : (wallet?.org_balance_paise ? orgBal + spent : 100000)
+    // Personal-purse pill: only meaningful when the admin gave this
+    // operator a spending_cap_paise. Then the denominator is that
+    // cap and the numerator is what's left in the personal purse.
+    // For an uncapped operator, `allocated` would have to be either
+    // a fabricated number (past dashboards used orgBal + spent, which
+    // meant "you have ₹42 left of ₹267" even though nobody ever
+    // deposited ₹267 — a misleading synthesis) or the org's total-ever
+    // deposits (not surfaced by the API). Neither is honest. In that
+    // case surface only the live org balance and hide the denominator.
+    const allocated = capped ? capPaise : null
     const remaining = capped ? Math.max(0, capPaise - spent) : orgBal
 
     return (
@@ -887,27 +1271,35 @@ export default function ClientDashboard() {
                   VERIFICATION DESK
                 </span>
               </div>
-              <div className="text-xs text-slate-300 mt-0.5 font-normal">
-                Center: {wallet?.assigned_exam_name ? 'DELHI CENTRAL' : 'NEW DELHI POD #04'} · Desk <span className="font-mono text-slate-200">#DEL-04B</span>
-              </div>
+              {/* Subtitle line pulls from the wallet's assigned exam +
+                  the candidate's center. Both were previously hardcoded
+                  fake ("DELHI CENTRAL", "DEL-04B") which looked like
+                  seeded demo data. Empty parts collapse quietly. */}
+              {(wallet?.assigned_exam_name || candidate?.center_name) && (
+                <div className="text-xs text-slate-300 mt-0.5 font-normal">
+                  {candidate?.center_name && <>Center: <span className="text-slate-200">{candidate.center_name}</span></>}
+                  {candidate?.center_name && wallet?.assigned_exam_name && <span className="mx-1.5 text-slate-500">·</span>}
+                  {wallet?.assigned_exam_name && <>Exam: <span className="text-slate-200">{wallet.assigned_exam_name}</span></>}
+                </div>
+              )}
             </div>
           </div>
 
-          {/* Center Status, Exam Window & Operator Allocation */}
+          {/* Center Status & Operator Allocation */}
           <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
-            {/* Active Exam Window Pill */}
-            <div className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-emerald-950/70 border border-emerald-500/40 text-xs shadow-xs">
-              <span className="w-2.5 h-2.5 rounded-full bg-emerald-400 breathe-ring" />
-              <span className="text-slate-200 font-medium">
-                {wallet?.assigned_exam_name || 'NEET (UG) 2026'}:
-              </span>
-              <span className="text-emerald-300 font-mono font-bold tabular-nums">{countdownText}</span>
-            </div>
-
-            {/* Operator Allocation Wallet Pill (Remaining Purse / Allocated Purse) */}
+            {/* Wallet pill. Two shapes:
+                • Capped operator (spending_cap_paise > 0) — shows the
+                  personal purse as remaining/cap. Real numbers, both
+                  meaningful.
+                • Uncapped operator — draws from the shared org wallet;
+                  there's no personal ceiling to divide by, so surface
+                  just the org balance. (See renderSovereignHeader for
+                  why we no longer fake a denominator.) */}
             <div
               className="flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-white/8 border border-white/15 text-xs shadow-xs"
-              title={`Remaining: ${formatRupees(remaining)} | Allocated Purse: ${formatRupees(allocated)}`}
+              title={capped
+                ? `Remaining: ${formatRupees(remaining)} | Allocated Purse: ${formatRupees(allocated)}`
+                : `Organisation wallet balance`}
             >
               <svg className="w-3.5 h-3.5 text-amber-300 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
@@ -917,9 +1309,11 @@ export default function ClientDashboard() {
                   d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
                 />
               </svg>
-              <span className="text-slate-300">Purse:</span>
+              <span className="text-slate-300">{capped ? 'Purse:' : 'Balance:'}</span>
               <span className="font-bold text-white tabular-nums">{formatRupees(remaining)}</span>
-              <span className="text-slate-400">/ <span className="text-slate-300 font-medium tabular-nums">{formatRupees(allocated)}</span></span>
+              {capped && (
+                <span className="text-slate-400">/ <span className="text-slate-300 font-medium tabular-nums">{formatRupees(allocated)}</span></span>
+              )}
             </div>
 
             {/* Downloads or Start Over Action */}
@@ -955,7 +1349,7 @@ export default function ClientDashboard() {
 
   const renderDeskFooter = (
     <footer className="w-full py-3 bg-white border-t border-[#D5DDE7] text-center text-xs text-slate-500 shrink-0">
-      Verification Portal v{APP_VERSION} · Desk <span className="font-mono font-medium">#DEL-04B</span> · Dedicated Biometric Verification Desk
+      Verification Portal v{APP_VERSION} · Dedicated Biometric Verification Desk
     </footer>
   )
 
@@ -1174,7 +1568,6 @@ export default function ClientDashboard() {
                   <span className="w-2 h-2 rounded-full bg-[#0B4F8F]" />
                   Candidate Search
                 </h2>
-                <span className="text-[10px] font-semibold text-slate-500 uppercase tracking-wider">ADMIT CARD ENTRY</span>
               </div>
 
               <form onSubmit={handleRollSubmit} className="space-y-3">
@@ -1219,17 +1612,8 @@ export default function ClientDashboard() {
           {candidate && (
             <div className="p-5 rounded-xl bg-white border border-[#D5DDE7] shadow-xs space-y-3.5 transition-all duration-300 flex-1 flex flex-col justify-between animate-surface-in">
               <div>
-                <div className="flex items-center justify-between border-b border-[#E7EDF4] pb-2">
-                  <span className="text-[10px] font-semibold text-[#0B4F8F] uppercase tracking-wider">
-                    ENROLLED DOSSIER <span className="font-mono font-bold">#{candidate.roll_no}</span>
-                  </span>
-                  <span className="px-2 py-0.5 rounded bg-[#E8F5EE] border border-[#B4DCC7] text-[#0F6B45] text-[11px] font-semibold">
-                    ELIGIBLE
-                  </span>
-                </div>
-
                 {/* Photo Area: Always uniform Dual-Photo Grid (Enrolled + Captured / Awaiting Capture) */}
-                <div className="space-y-3 animate-surface-in mt-3">
+                <div className="space-y-3 animate-surface-in">
                   {/* Dual Photos Side-by-Side */}
                   <div className="grid grid-cols-2 gap-2.5">
                     {/* Enrolled Photo */}
@@ -1300,13 +1684,13 @@ export default function ClientDashboard() {
                       <div className="flex items-center justify-between text-slate-600">
                         <span className="text-slate-500">Exam:</span>
                         <span className="font-medium text-[#0B1F3A] truncate max-w-[190px]">
-                          {candidate.exam_name || wallet?.assigned_exam_name || 'NEET (UG) 2026'}
+                          {candidate.exam_name || wallet?.assigned_exam_name || '—'}
                         </span>
                       </div>
                       <div className="flex items-center justify-between text-slate-600">
                         <span className="text-slate-500">Center:</span>
-                        <span className="font-medium text-[#0B1F3A] truncate max-w-[190px]" title={candidate.center_name}>
-                          {candidate.center_name || 'Center Pod #04 (Delhi Central)'}
+                        <span className="font-medium text-[#0B1F3A] truncate max-w-[190px]" title={candidate.center_name || '—'}>
+                          {candidate.center_name || '—'}
                         </span>
                       </div>
                     </div>
@@ -1318,16 +1702,29 @@ export default function ClientDashboard() {
               <div className="pt-2 border-t border-[#E7EDF4] space-y-1.5 text-xs">
                 <div className="flex justify-between items-center text-[11px]">
                   <span className="text-slate-500 font-medium">1. LIVENESS CHECK:</span>
-                  <span className={`font-semibold ${livenessPassed ? 'text-[#0F6B45]' : 'text-slate-400'}`}>
-                    {livenessPassed ? 'PASS' : 'WAITING'}
+                  <span className={`font-semibold ${livenessOK ? 'text-[#0F6B45]' : 'text-slate-400'}`}>
+                    {livenessOK ? 'PASS' : 'WAITING'}
                   </span>
                 </div>
+                {hasEnrolledFace && (
                 <div className="flex justify-between items-center text-[11px]">
                   <span className="text-slate-500 font-medium">2. FACE 1:1 MATCH:</span>
-                  <span className={`font-semibold ${faceResult?.ok ? 'text-[#0F6B45]' : 'text-slate-400'}`}>
-                    {faceResult?.ok ? 'MATCHED' : 'WAITING'}
+                  <span className={`font-semibold ${
+                    faceResult?.ok
+                      ? 'text-[#0F6B45]'
+                      : faceResult && faceResult.ok === false
+                      ? 'text-[#DC2626]'
+                      : 'text-slate-400'
+                  }`}>
+                    {faceResult?.ok
+                      ? 'MATCHED'
+                      : faceResult && faceResult.ok === false
+                      ? 'FAILED'
+                      : 'WAITING'}
                   </span>
                 </div>
+                )}
+                {hasEnrolledFingerprint && (
                 <div className="flex justify-between items-center text-[11px]">
                   <span className="text-slate-500 font-medium">3. FINGERPRINT 1:1:</span>
                   <span className={`font-semibold ${
@@ -1344,28 +1741,43 @@ export default function ClientDashboard() {
                       : 'WAITING'}
                   </span>
                 </div>
+                )}
+                {hasEnrolledIris && (
                 <div className="flex justify-between items-center text-[11px]">
                   <span className="text-slate-500 font-medium">4. IRIS 1:1 MATCH:</span>
                   <span className={`font-semibold ${
                     irisStatus === 'pass'
                       ? 'text-[#0F6B45]'
+                      : irisStatus === 'fail'
+                      ? 'text-[#DC2626]'
                       : 'text-slate-400'
                   }`}>
                     {irisStatus === 'pass'
                       ? 'MATCHED'
+                      : irisStatus === 'fail'
+                      ? 'FAILED'
                       : 'WAITING'}
                   </span>
                 </div>
+                )}
                 <div className="flex justify-between items-center text-[11px]">
                   <span className="text-slate-500 font-medium">5. FINAL VERDICT:</span>
                   <span className={`font-semibold ${
-                    currentStage === 4
+                    result === 'verified'
                       ? 'text-[#0F6B45]'
+                      : result === 'denied'
+                      ? 'text-[#DC2626]'
                       : isBiometricComplete()
                       ? 'text-[#0B4F8F]'
                       : 'text-slate-400'
                   }`}>
-                    {currentStage === 4 ? 'VERIFIED (PASS)' : isBiometricComplete() ? 'READY' : 'PENDING'}
+                    {result === 'verified'
+                      ? 'VERIFIED (PASS)'
+                      : result === 'denied'
+                      ? 'DENIED'
+                      : isBiometricComplete()
+                      ? 'READY'
+                      : 'PENDING'}
                   </span>
                 </div>
               </div>
@@ -1443,64 +1855,96 @@ export default function ClientDashboard() {
 
             {/* STAGE 2: LIVE CAMERA HUD RETICLE & BLINK CHALLENGE */}
             {currentStage === 2 && (
-              <div className="h-full flex-1 flex flex-col justify-between space-y-5 animate-surface-in">
+              <div className="h-full flex-1 flex flex-col space-y-5 animate-surface-in">
                 <div className="flex items-center justify-between border-b border-[#E7EDF4] pb-3">
                   <div>
                     <span className="text-[10px] font-semibold text-[#0B4F8F] uppercase tracking-widest">STAGE 2 OF 4</span>
                     <h3 className="text-lg font-bold text-[#0B1F3A] tracking-tight font-display">Face Match & Liveness Check</h3>
                   </div>
-                  <span className="text-xs text-[#0F6B45] flex items-center gap-1.5 font-semibold">
-                    <span className="w-2 h-2 rounded-full bg-[#0F6B45] animate-pulse" />
-                    Camera Ready
+                  <span className={`text-xs flex items-center gap-1.5 font-semibold ${
+                    livenessOK ? 'text-[#0F6B45]' : 'text-[#0B4F8F]'
+                  }`}>
+                    <span className={`w-2 h-2 rounded-full ${
+                      livenessOK ? 'bg-[#0F6B45]' : 'bg-[#0B4F8F] animate-pulse'
+                    }`} />
+                    {livenessOK ? 'Liveness Verified' : 'Camera Ready'}
                   </span>
                 </div>
 
-                {/* Central HUD Camera Viewport */}
-                <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-center">
+                {/* Central HUD Camera Viewport — the flex-1 wrapper
+                    consumes the remaining vertical space in the stage
+                    card and centers the viewport + guidance panel
+                    together (was previously `justify-between` on the
+                    outer column, which pinned the grid to the bottom
+                    edge and left a big empty band up top). */}
+                <div className="flex-1 flex items-center min-h-0">
+                <div className="grid grid-cols-1 md:grid-cols-12 gap-5 items-center w-full">
                   
                   {/* Video Viewport */}
                   <div className="md:col-span-7 flex justify-center">
-                    <div className="w-full max-w-xs aspect-[4/5] rounded-2xl bg-slate-900 border-2 border-[#0B4F8F] relative overflow-hidden shadow-md flex items-center justify-center">
-                      <video
-                        ref={videoRef}
-                        autoPlay
-                        playsInline
-                        muted
-                        className="w-full h-full object-cover"
-                        style={{ transform: 'scaleX(-1)' }}
-                      />
-                      {!cameraActive && (
+                    <div className={`w-full max-w-[280px] aspect-square rounded-2xl bg-slate-900 border-2 relative overflow-hidden shadow-md flex items-center justify-center ${
+                      livenessOK ? 'border-[#0F6B45]' : 'border-[#0B4F8F]'
+                    }`}>
+                      {livenessOK && snap ? (
+                        // Camera stopped, show the frozen still that was
+                        // sent for face-match. Same shot as the dossier
+                        // tile, framed in green so it reads as the
+                        // decided capture rather than a live feed.
+                        <img
+                          src={snap}
+                          alt="Captured"
+                          className="w-full h-full object-cover"
+                        />
+                      ) : (
+                        <video
+                          ref={videoRef}
+                          autoPlay
+                          playsInline
+                          muted
+                          className="w-full h-full object-cover"
+                          style={{ transform: 'scaleX(-1)' }}
+                        />
+                      )}
+                      {!cameraActive && !livenessOK && (
                         <div className="absolute inset-0 flex flex-col items-center justify-center bg-slate-900 text-slate-400 p-4 text-center text-xs">
                           <svg className="w-10 h-10 mb-2 opacity-40 text-cyan-400 animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                             <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="1.5" d="M15 10l4.553-2.276A1 1 0 0121 8.618v6.764a1 1 0 01-1.447.894L15 14M5 18h8a2 2 0 002-2V8a2 2 0 00-2-2H5a2 2 0 00-2 2v8a2 2 0 002 2z" />
                           </svg>
-                          <span className="text-white font-semibold">Webcam Active</span>
-                          <span className="text-[11px] text-slate-400 mt-1">Ready for Face & Liveness Verification</span>
+                          <span className="text-white font-semibold">Starting camera…</span>
+                          <span className="text-[11px] text-slate-400 mt-1">Please allow access if prompted.</span>
                         </div>
                       )}
 
-                      {/* Scanning Laser Line */}
-                      <div className="laser-hud-beam absolute left-3 right-3 h-[2px] bg-cyan-400 z-20 pointer-events-none" />
+                      {/* Live HUD (laser beam + bracket reticle + blink
+                          status pill) is only meaningful while the
+                          camera is still running. Once the server-side
+                          liveness gate has been written (livenessOK)
+                          the viewport swaps in the frozen still — the
+                          overlays must disappear too or the operator
+                          sees a scanning laser sweeping across a
+                          static photo, which was the "animation still
+                          going on" bug. */}
+                      {!livenessOK && (
+                        <>
+                          {/* Scanning Laser Line */}
+                          <div className="laser-hud-beam absolute left-3 right-3 h-[2px] bg-cyan-400 z-20 pointer-events-none" />
 
-                      {/* Overlay Reticle */}
-                      <div className="absolute inset-0 pointer-events-none p-3.5 flex flex-col justify-between z-10 text-[10px]">
-                        <div className="flex justify-between text-white font-medium">
-                          <span className="bg-black/60 px-2 py-0.5 rounded font-mono">ISO 19794-5 OK</span>
-                          <span className="bg-black/60 text-emerald-400 px-2 py-0.5 rounded font-mono font-bold">420 LUX</span>
-                        </div>
+                          {/* Overlay Reticle */}
+                          <div className="absolute inset-0 pointer-events-none p-3.5 flex flex-col justify-between z-10 text-[10px]">
+                            {/* Brackets */}
+                            <div className="relative w-44 h-52 self-center flex items-center justify-center">
+                              <div className={`absolute top-0 left-0 w-5 h-5 border-t-2 border-l-2 transition-colors duration-300 ${faceDetected ? 'border-cyan-400' : 'border-amber-400/70'}`} />
+                              <div className={`absolute top-0 right-0 w-5 h-5 border-t-2 border-r-2 transition-colors duration-300 ${faceDetected ? 'border-cyan-400' : 'border-amber-400/70'}`} />
+                              <div className={`absolute bottom-0 left-0 w-5 h-5 border-b-2 border-l-2 transition-colors duration-300 ${faceDetected ? 'border-cyan-400' : 'border-amber-400/70'}`} />
+                              <div className={`absolute bottom-0 right-0 w-5 h-5 border-b-2 border-r-2 transition-colors duration-300 ${faceDetected ? 'border-cyan-400' : 'border-amber-400/70'}`} />
+                            </div>
 
-                        {/* Brackets */}
-                        <div className="relative w-44 h-52 self-center flex items-center justify-center">
-                          <div className={`absolute top-0 left-0 w-5 h-5 border-t-2 border-l-2 transition-colors duration-300 ${faceDetected ? 'border-cyan-400' : 'border-amber-400/70'}`} />
-                          <div className={`absolute top-0 right-0 w-5 h-5 border-t-2 border-r-2 transition-colors duration-300 ${faceDetected ? 'border-cyan-400' : 'border-amber-400/70'}`} />
-                          <div className={`absolute bottom-0 left-0 w-5 h-5 border-b-2 border-l-2 transition-colors duration-300 ${faceDetected ? 'border-cyan-400' : 'border-amber-400/70'}`} />
-                          <div className={`absolute bottom-0 right-0 w-5 h-5 border-b-2 border-r-2 transition-colors duration-300 ${faceDetected ? 'border-cyan-400' : 'border-amber-400/70'}`} />
-                        </div>
-
-                        <div className="self-center bg-[#0B2545]/90 text-white px-3 py-1 rounded border border-white/20 font-semibold tracking-wide animate-pulse">
-                          {livenessPassed ? 'LIVENESS CONFIRMED' : blinkState}
-                        </div>
-                      </div>
+                            <div className="self-center bg-[#0B2545]/90 text-white px-3 py-1 rounded border border-white/20 font-semibold tracking-wide animate-pulse">
+                              {livenessPassed ? 'LIVENESS CONFIRMED' : blinkState}
+                            </div>
+                          </div>
+                        </>
+                      )}
 
                       {/* Passed Overlay */}
                       {livenessPassed && (
@@ -1512,7 +1956,6 @@ export default function ClientDashboard() {
                               </svg>
                             </div>
                             <div className="text-sm font-bold uppercase tracking-wide">Liveness Verified</div>
-                            <div className="text-xs opacity-90 mt-0.5 font-medium">Face 1:1 Match Confirmed (Pass)</div>
                           </div>
                         </div>
                       )}
@@ -1567,7 +2010,45 @@ export default function ClientDashboard() {
                       </div>
                     )}
 
-                    {!livenessPassed && (
+                    {!livenessPassed && faceResult && faceResult.ok === false && !faceResult.error ? (
+                      // Face-match ran and cleanly returned a MISS (as
+                      // opposed to a network/gate error). Mirror the old
+                      // dashboard's affordance: operator can retake JUST
+                      // the still photo (no new blink challenge needed —
+                      // the liveness gate row is already valid for this
+                      // idempotency_key), or continue anyway if they
+                      // have visually verified the candidate.
+                      <div className="grid grid-cols-1 sm:grid-cols-2 gap-2">
+                        <button
+                          type="button"
+                          onClick={handleRetakePhoto}
+                          disabled={livenessPassing}
+                          className="w-full py-2.5 px-4 rounded-lg bg-white border border-[#0F6B45] text-[#0F6B45] hover:bg-[#F0FDF4] disabled:opacity-50 font-semibold text-xs uppercase tracking-wider transition shadow-xs flex items-center justify-center gap-2 cursor-pointer"
+                        >
+                          <svg className="w-4 h-4" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                            <polyline points="1 4 1 10 7 10" />
+                            <path d="M3.51 15a9 9 0 1 0 2.13-9.36L1 10" />
+                          </svg>
+                          <span>Retake Photo</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => {
+                            // Operator override — the visual check is
+                            // their responsibility. Advance the stage;
+                            // faceResult.ok stays false so submit records
+                            // face_match=false for the audit trail.
+                            setLivenessError('')
+                            setLivenessPassing(false)
+                            setLivenessPassed(true)
+                            setLivenessResult({ pass: true, faceOverride: true })
+                          }}
+                          className="w-full py-2.5 px-4 rounded-lg bg-[#0B4F8F] hover:bg-[#083E72] text-white font-semibold text-xs uppercase tracking-wider transition shadow-xs flex items-center justify-center gap-2 cursor-pointer"
+                        >
+                          <span>Continue Anyway →</span>
+                        </button>
+                      </div>
+                    ) : !livenessPassed && (
                       <button
                         type="button"
                         onClick={handleCaptureLiveness}
@@ -1583,17 +2064,15 @@ export default function ClientDashboard() {
                       </button>
                     )}
 
-                    {livenessPassed && (
-                      <button
-                        type="button"
-                        onClick={() => setCurrentStage(3)}
-                        className="w-full py-3 px-4 rounded-lg bg-[#0B4F8F] hover:bg-[#083E72] text-white font-semibold text-xs uppercase tracking-wider transition shadow-sm flex items-center justify-center gap-2 cursor-pointer animate-surface-in"
-                      >
-                        <span>Proceed to Biometric Scan →</span>
-                      </button>
-                    )}
+                    {/* No manual Proceed button here — the auto-advance
+                        useEffect above moves to Stage 3 (or Stage 4 for
+                        face-only candidates) 700 ms after livenessPassed
+                        flips true, so the operator sees a brief
+                        confirmation and then transitions cleanly
+                        without an extra tap. */}
                   </div>
 
+                </div>
                 </div>
               </div>
             )}
@@ -1611,10 +2090,17 @@ export default function ClientDashboard() {
                   </div>
                 </div>
 
-                {/* Dual Biometric Sensor Bays (Side-by-Side) */}
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 my-auto flex-1 items-stretch py-1">
-                  
-                  {/* BAY 1: FINGERPRINT SENSOR */}
+                {/* Dual Biometric Sensor Bays. Collapses to a single
+                    column when only one modality is enrolled for this
+                    candidate so the visible bay uses the full stage
+                    width instead of leaving an empty column of grey. */}
+                <div className={`grid gap-4 my-auto flex-1 items-stretch py-1 grid-cols-1 ${
+                  hasEnrolledFingerprint && hasEnrolledIris ? 'md:grid-cols-2' : ''
+                }`}>
+
+                  {/* BAY 1: FINGERPRINT SENSOR — only when this candidate
+                      actually has a fingerprint template on file. */}
+                  {hasEnrolledFingerprint && (
                   <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#D5DDE7] transition-all flex flex-col justify-between flex-1">
                     {/* Pod Header */}
                     <div className="flex items-center justify-between border-b border-[#E7EDF4] pb-2 text-xs">
@@ -1687,21 +2173,40 @@ export default function ClientDashboard() {
                       </span>
                     </div>
 
-                    {/* Pod Action Button */}
+                    {/* Real-error banner. Used to surface a missing
+                        scanner or a failed match so the operator gets a
+                        specific reason rather than a bare red pod. */}
+                    {fpResult?.error && (
+                      <div className="mb-3 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-[11px] text-rose-700 leading-relaxed">
+                        {fpResult.error}
+                      </div>
+                    )}
+
+                    {/* Pod Action Button. Locks + goes slate while a
+                        scan is in progress so the operator can't queue
+                        a duplicate capture on top of the running one.
+                        Pass state stays disabled as before. */}
                     <button
                       type="button"
                       onClick={handleCaptureFingerprint}
-                      disabled={fpStatus === 'pass'}
-                      className="w-full py-2.5 px-3 rounded-lg bg-[#0B4F8F] hover:bg-[#083E72] disabled:opacity-50 text-white font-semibold text-xs uppercase tracking-wider transition shadow-xs flex items-center justify-center gap-2 cursor-pointer"
+                      disabled={fpStatus === 'pass' || fpStatus === 'scanning'}
+                      className={`w-full py-2.5 px-3 rounded-lg text-white font-semibold text-xs uppercase tracking-wider transition shadow-xs flex items-center justify-center gap-2 ${
+                        fpStatus === 'scanning'
+                          ? 'bg-slate-500 cursor-not-allowed'
+                          : 'bg-[#0B4F8F] hover:bg-[#083E72] disabled:opacity-50 cursor-pointer'
+                      }`}
                     >
                       <svg className="w-4 h-4 text-cyan-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M12 2a10 10 0 0 0-10 10c0 2.85 1.2 5.41 3.12 7.23M12 6a6 6 0 0 0-6 6c0 1.94.92 3.66 2.36 4.77M12 10a2 2 0 0 0-2 2c0 .8.47 1.48 1.15 1.8M12 14c-.55 0-1 .45-1 1M18.88 19.23A10 10 0 0 0 22 12c0-5.52-4.48-10-10-10M17.64 16.77A6 6 0 0 0 20 12c0-4.42-3.58-8-8-8M14.85 13.8A2 2 0 0 0 16 12c0-2.21-1.79-4-4-4" />
                       </svg>
-                      <span>Capture Fingerprint (L1)</span>
+                      <span>{fpStatus === 'scanning' ? 'Scanning…' : 'Capture Fingerprint (L1)'}</span>
                     </button>
                   </div>
+                  )}
 
-                  {/* BAY 2: IRIS SCANNER */}
+                  {/* BAY 2: IRIS SCANNER — only when the candidate has
+                      an enrolled iris template. */}
+                  {hasEnrolledIris && (
                   <div className="p-4 rounded-xl bg-[#F8FAFC] border border-[#D5DDE7] transition-all flex flex-col justify-between flex-1">
                     {/* Pod Header */}
                     <div className="flex items-center justify-between border-b border-[#E7EDF4] pb-2 text-xs">
@@ -1758,45 +2263,92 @@ export default function ClientDashboard() {
                           ? 'VERIFIED (PASS)'
                           : irisStatus === 'scanning'
                           ? 'ANALYZING PATTERN…'
+                          : irisStatus === 'fail'
+                          ? 'VERIFICATION FAILED'
                           : 'AWAITING SCAN'}
                       </span>
                     </div>
 
-                    {/* Pod Action Button */}
+                    {irisResult?.error && (
+                      <div className="mb-3 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-[11px] text-rose-700 leading-relaxed">
+                        {irisResult.error}
+                      </div>
+                    )}
+
+                    {/* Pod Action Button. Same lock-during-scan
+                        treatment as the fingerprint bay. */}
                     <button
                       type="button"
                       onClick={handleCaptureIris}
-                      disabled={irisStatus === 'pass'}
-                      className="w-full py-2.5 px-3 rounded-lg bg-[#0B4F8F] hover:bg-[#083E72] disabled:opacity-50 text-white font-semibold text-xs uppercase tracking-wider transition shadow-xs flex items-center justify-center gap-2 cursor-pointer"
+                      disabled={irisStatus === 'pass' || irisStatus === 'scanning'}
+                      className={`w-full py-2.5 px-3 rounded-lg text-white font-semibold text-xs uppercase tracking-wider transition shadow-xs flex items-center justify-center gap-2 ${
+                        irisStatus === 'scanning'
+                          ? 'bg-slate-500 cursor-not-allowed'
+                          : 'bg-[#0B4F8F] hover:bg-[#083E72] disabled:opacity-50 cursor-pointer'
+                      }`}
                     >
                       <svg className="w-4 h-4 text-cyan-200" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                         <path d="M2 12s3.5-6.5 10-6.5 10 6.5-3.5 6.5-10 6.5S2 12 2 12Z" />
                         <circle cx="12" cy="12" r="3" fill="currentColor" fillOpacity="0.25" />
                         <circle cx="12" cy="12" r="1.5" fill="currentColor" />
                       </svg>
-                      <span>Capture Iris (L1)</span>
+                      <span>{irisStatus === 'scanning' ? 'Scanning…' : 'Capture Iris (L1)'}</span>
                     </button>
                   </div>
+                  )}
                 </div>
 
-                {/* Master Action Footer: Proceed */}
+                {/* Master Action Footer. Three shapes:
+                    • all enrolled biometrics passed → "Complete Verification"
+                    • any enrolled biometric FAILED → "Retake" + "Continue"
+                      (Continue submits with the denied verdict so a
+                      hard fail can still reach Stage 4 for the result
+                      screen instead of dead-ending on this stage).
+                    • otherwise (idle/scanning) → status label only. */}
                 <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-[#E7EDF4] text-xs">
                   <div className="flex items-center gap-2 text-slate-600 text-xs">
-                    <span className={`w-2 h-2 rounded-full ${isBiometricComplete() ? 'bg-[#0F6B45]' : 'bg-[#0B4F8F]'}`} />
+                    <span className={`w-2 h-2 rounded-full ${
+                      isBiometricComplete() ? 'bg-[#0F6B45]'
+                        : anyEnrolledFailed() ? 'bg-[#DC2626]'
+                        : 'bg-[#0B4F8F]'
+                    }`} />
                     <span className="font-semibold">
-                      {isBiometricComplete() ? 'Biometric Criteria Satisfied' : 'Awaiting Hardware Capture'}
+                      {isBiometricComplete() ? 'Biometric Criteria Satisfied'
+                        : anyEnrolledFailed() ? 'Biometric Match Failed'
+                        : 'Awaiting Hardware Capture'}
                     </span>
                   </div>
 
                   {isBiometricComplete() && (
                     <button
                       type="button"
-                      onClick={submitFinalVerification}
+                      onClick={() => submitFinalVerification()}
                       disabled={submitting}
                       className="w-full sm:w-auto px-5 py-2.5 rounded-lg bg-[#0F6B45] hover:bg-[#0c5938] text-white font-semibold uppercase tracking-wider transition shadow-md flex items-center justify-center gap-2 cursor-pointer animate-surface-in text-xs"
                     >
                       <span>{submitting ? 'Completing Verification…' : 'Complete Verification →'}</span>
                     </button>
+                  )}
+
+                  {!isBiometricComplete() && anyEnrolledFailed() && (
+                    <div className="flex flex-col sm:flex-row items-center gap-2 w-full sm:w-auto animate-surface-in">
+                      <button
+                        type="button"
+                        onClick={retakeFailedBiometrics}
+                        disabled={submitting}
+                        className="w-full sm:w-auto px-5 py-2.5 rounded-lg bg-white border border-[#D5DDE7] text-[#0B1F3A] hover:bg-slate-50 font-semibold uppercase tracking-wider transition shadow-xs text-xs"
+                      >
+                        Retake
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => submitFinalVerification('denied')}
+                        disabled={submitting}
+                        className="w-full sm:w-auto px-5 py-2.5 rounded-lg bg-[#DC2626] hover:bg-[#B91C1C] text-white font-semibold uppercase tracking-wider transition shadow-md text-xs"
+                      >
+                        {submitting ? 'Submitting…' : 'Continue →'}
+                      </button>
+                    </div>
                   )}
                 </div>
 
@@ -1805,7 +2357,9 @@ export default function ClientDashboard() {
 
             {/* STAGE 4: OFFICIAL CERTIFICATE & SOVEREIGN SEAL STAMP */}
             {currentStage === 4 && (
-              <div className="h-full flex-1 -m-6 p-6 sm:p-7 bg-white border-2 border-[#0F6B45] rounded-xl shadow-md security-watermark-grid relative overflow-hidden flex flex-col justify-between animate-surface-in">
+              <div className={`h-full flex-1 -m-6 p-6 sm:p-7 bg-white border-2 rounded-xl shadow-md security-watermark-grid relative overflow-hidden flex flex-col justify-between animate-surface-in ${
+                result === 'denied' ? 'border-[#DC2626]' : 'border-[#0F6B45]'
+              }`}>
                 
                 {/* Subtle Background Watermark */}
                 <div className="absolute left-1/2 top-1/2 -translate-x-1/2 -translate-y-1/2 w-72 sm:w-96 opacity-[0.06] pointer-events-none select-none z-0">
@@ -1843,36 +2397,49 @@ export default function ClientDashboard() {
                     </div>
                   </div>
 
-                  {/* 3D Embossed Seal */}
+                  {/* 3D Embossed Seal — reflects the actual verdict.
+                      Verified → green seal; denied → rose seal with
+                      "DENIED" text. No hardcoded "VERIFIED PASS". */}
                   <div className="relative flex items-center justify-center w-18 h-18 self-center sm:self-auto shrink-0">
-                    <div className="shockwave-ring absolute w-18 h-18 rounded-full border-2 border-[#0F6B45] pointer-events-none" />
+                    <div className={`shockwave-ring absolute w-18 h-18 rounded-full border-2 pointer-events-none ${
+                      result === 'denied' ? 'border-[#DC2626]' : 'border-[#0F6B45]'
+                    }`} />
 
-                    <div className="seal-stamp-anim w-16 h-16 rounded-full bg-gradient-to-br from-[#0F6B45] to-[#0A4A30] p-[2px] shadow-lg flex items-center justify-center">
+                    <div className={`seal-stamp-anim w-16 h-16 rounded-full p-[2px] shadow-lg flex items-center justify-center ${
+                      result === 'denied'
+                        ? 'bg-gradient-to-br from-[#DC2626] to-[#7F1D1D]'
+                        : 'bg-gradient-to-br from-[#0F6B45] to-[#0A4A30]'
+                    }`}>
                       <div className="w-full h-full rounded-full border border-white/40 flex flex-col items-center justify-center text-center p-1 text-white">
-                        <span className="font-seal text-[8px] font-black tracking-wider leading-none text-amber-200">
-                          VERIFIED
+                        <span className={`font-seal text-[8px] font-black tracking-wider leading-none ${
+                          result === 'denied' ? 'text-rose-200' : 'text-amber-200'
+                        }`}>
+                          {result === 'denied' ? 'DENIED' : 'VERIFIED'}
                         </span>
-                        <span className="font-bold text-[10px] mt-0.5">PASS</span>
-                        <span className="text-[6.5px] text-emerald-200 font-semibold tracking-wider">BOARD AUTH</span>
+                        <span className="font-bold text-[10px] mt-0.5">
+                          {result === 'denied' ? 'FAIL' : 'PASS'}
+                        </span>
+                        <span className={`text-[6.5px] font-semibold tracking-wider ${
+                          result === 'denied' ? 'text-rose-100' : 'text-emerald-200'
+                        }`}>BOARD AUTH</span>
                       </div>
                     </div>
                   </div>
                 </div>
 
-                {/* Certificate Title & Exam Metadata Sub-Header */}
+                {/* Certificate Title & Exam Metadata Sub-Header.
+                    The "Official Verification Certificate & Admit
+                    Clearance" eyebrow and the "SESSION: FORENOON"
+                    hardcoded shift text were removed on operator
+                    request — neither reflects real data. */}
                 <div className="relative z-1 pt-3 pb-3 border-b border-dashed border-[#D5DDE7] flex flex-col sm:flex-row sm:items-center justify-between gap-2">
                   <div>
-                    <div className="text-[10px] font-semibold text-[#0B4F8F] uppercase tracking-widest flex items-center gap-1.5">
-                      <span className="w-1.5 h-1.5 rounded-full bg-[#0B4F8F]" />
-                      Official Verification Certificate & Admit Clearance
-                    </div>
                     <h2 className="text-lg sm:text-xl font-bold text-[#0B1F3A] tracking-tight font-display">
                       Examination Hall Candidate Biometric Verification Record
                     </h2>
                   </div>
                   <div className="text-left sm:text-right text-xs text-slate-500">
-                    <div><span className="font-semibold text-[#0B1F3A]">EXAM:</span> {candidate?.exam_name || wallet?.assigned_exam_name || 'NEET (UG) 2026'}</div>
-                    <div><span className="font-semibold text-[#0B1F3A]">SESSION:</span> FORENOON (09:00 - 12:00)</div>
+                    <div><span className="font-semibold text-[#0B1F3A]">EXAM:</span> {candidate?.exam_name || wallet?.assigned_exam_name || '—'}</div>
                   </div>
                 </div>
 
@@ -1931,43 +2498,43 @@ export default function ClientDashboard() {
                         {(candidate?.name || 'VERIFIED CANDIDATE').toUpperCase()} (<span className="font-mono text-[#0B4F8F]">{candidate?.roll_no || roll}</span>)
                       </span>
                     </div>
-                    <div className="grid grid-cols-2 gap-2">
-                      <div className="p-2 rounded-lg bg-[#F8FAFC] border border-[#E7EDF4] text-[11px]">
-                        <span className="text-slate-500 block">Verification Station:</span>
-                        <span className="font-semibold text-[#0B1F3A] truncate block">{candidate?.center_name || 'Center Pod #04'}</span>
-                      </div>
-                      <div className="p-2 rounded-lg bg-[#F8FAFC] border border-[#E7EDF4] text-[11px]">
-                        <span className="text-slate-500 block">Gate Clearance:</span>
-                        <span className="font-semibold text-[#0F6B45] block">ADMIT GRANTED ✓</span>
-                      </div>
+                    {/* Gate Clearance box removed on operator
+                        request — the verdict already shows on the
+                        seal + the per-modality rows below. Verification
+                        Station stays as a single full-width row. */}
+                    <div className="p-2 rounded-lg bg-[#F8FAFC] border border-[#E7EDF4] text-[11px]">
+                      <span className="text-slate-500 block">Verification Station:</span>
+                      <span className="font-semibold text-[#0B1F3A] truncate block">{candidate?.center_name || '—'}</span>
                     </div>
-                    <div className="p-2.5 rounded-lg bg-[#E8F5EE] border border-[#B4DCC7] text-[#0F6B45] flex justify-between items-center font-semibold">
-                      <span className="flex items-center gap-1.5">
-                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
-                        </svg>
-                        Face Match (1:1):
-                      </span>
-                      <span>VERIFIED (MATCHED)</span>
-                    </div>
-                    <div className="p-2.5 rounded-lg bg-[#E8F5EE] border border-[#B4DCC7] text-[#0F6B45] flex justify-between items-center font-semibold">
-                      <span className="flex items-center gap-1.5">
-                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
-                        </svg>
-                        Fingerprint Match:
-                      </span>
-                      <span>{fpStatus === 'fail' ? 'VERIFICATION FAILED' : 'VERIFIED (MATCHED)'}</span>
-                    </div>
-                    <div className="p-2.5 rounded-lg bg-[#E8F5EE] border border-[#B4DCC7] text-[#0F6B45] flex justify-between items-center font-semibold">
-                      <span className="flex items-center gap-1.5">
-                        <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                          <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2.5" d="M5 13l4 4L19 7" />
-                        </svg>
-                        Iris Match:
-                      </span>
-                      <span>VERIFIED (MATCHED)</span>
-                    </div>
+                    {/* Real per-modality rows. Only render the rows for
+                        modalities that were actually enrolled + captured
+                        for this candidate — otherwise the receipt reads
+                        like an over-promise. Each row's tint reflects
+                        the real match verdict, not a hardcoded pass. */}
+                    {hasEnrolledFace && (
+                      <ModalityRow
+                        label="Face Match (1:1)"
+                        matched={faceResult?.ok === true}
+                        skipped={!!faceResult?.notRequired}
+                        error={!!faceResult?.error}
+                      />
+                    )}
+                    {hasEnrolledFingerprint && (
+                      <ModalityRow
+                        label="Fingerprint Match"
+                        matched={fpStatus === 'pass'}
+                        skipped={fpStatus === 'idle' && !fpResult}
+                        error={fpStatus === 'fail'}
+                      />
+                    )}
+                    {hasEnrolledIris && (
+                      <ModalityRow
+                        label="Iris Match"
+                        matched={irisStatus === 'pass'}
+                        skipped={irisStatus === 'idle' && !irisResult}
+                        error={irisStatus === 'fail'}
+                      />
+                    )}
                   </div>
                 </div>
 
@@ -1979,33 +2546,36 @@ export default function ClientDashboard() {
                   </div>
 
                   <div className="flex items-center gap-2">
-                    <button
-                      type="button"
-                      onClick={() => {
-                        if (verificationId && typeof verificationId === 'number') {
-                          printVerificationPDF(verificationId)
-                        } else {
-                          window.print()
-                        }
-                      }}
-                      className="px-4 py-2.5 rounded-lg bg-[#0F6B45] hover:bg-[#0c5938] text-white font-semibold transition shadow-xs flex items-center justify-center gap-1.5 cursor-pointer text-xs"
-                    >
-                      <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-                        <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
-                      </svg>
-                      <span>Print PDF Receipt</span>
-                    </button>
-
-                    {verificationId && typeof verificationId === 'number' && (
-                      <button
-                        type="button"
-                        onClick={() => downloadVerificationPDF(verificationId)}
-                        className="px-3.5 py-2.5 rounded-lg border border-[#D5DDE7] bg-white hover:bg-slate-50 text-[#0B1F3A] font-semibold transition shadow-2xs cursor-pointer text-xs"
-                      >
-                        Download
-                      </button>
+                    {/* PDF actions only appear when the backend actually
+                        saved the row and gave us a numeric verification
+                        id. Prevents the old `window.print()` fallback
+                        which printed the browser view (with the sidebar,
+                        stage bar, etc.) instead of the proper backend
+                        receipt PDF. Both buttons hit the real
+                        /api/verifications/:id/pdf endpoint. */}
+                    {verificationId && typeof verificationId === 'number' ? (
+                      <>
+                        <button
+                          type="button"
+                          onClick={() => printVerificationPDF(verificationId)}
+                          className="px-4 py-2.5 rounded-lg bg-[#0F6B45] hover:bg-[#0c5938] text-white font-semibold transition shadow-xs flex items-center justify-center gap-1.5 cursor-pointer text-xs"
+                        >
+                          <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth="2" d="M17 17h2a2 2 0 002-2v-4a2 2 0 00-2-2H5a2 2 0 00-2 2v4a2 2 0 002 2h2m2 4h6a2 2 0 002-2v-4a2 2 0 00-2-2H9a2 2 0 00-2 2v4a2 2 0 002 2zm8-12V5a2 2 0 00-2-2H9a2 2 0 00-2 2v4h10z" />
+                          </svg>
+                          <span>Print PDF Receipt</span>
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => downloadVerificationPDF(verificationId)}
+                          className="px-3.5 py-2.5 rounded-lg border border-[#D5DDE7] bg-white hover:bg-slate-50 text-[#0B1F3A] font-semibold transition shadow-2xs cursor-pointer text-xs"
+                        >
+                          Download
+                        </button>
+                      </>
+                    ) : (
+                      <span className="text-[11px] text-slate-400 italic">PDF receipt unavailable — verification not saved.</span>
                     )}
-
                     <button
                       type="button"
                       onClick={resetDesk}

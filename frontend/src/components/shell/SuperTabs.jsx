@@ -2,6 +2,7 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { useEffect, useState } from 'react'
 import { BrandMark } from '../ui/brand.jsx'
+import SignOutConfirm from './SignOutConfirm.jsx'
 
 // Executive top-bar for the superadmin surfaces. Navy chrome with a
 // gold authority rule beneath it — the register a national credentialing
@@ -23,6 +24,7 @@ const tabs = [
 export default function SuperTabs() {
   const nav = useNavigate()
   const [now, setNow] = useState(() => new Date())
+  const [confirmingSignOut, setConfirmingSignOut] = useState(false)
 
   useEffect(() => {
     const id = setInterval(() => setNow(new Date()), 60_000)
@@ -94,7 +96,7 @@ export default function SuperTabs() {
             {timeText}
           </span>
           <button
-            onClick={onLogout}
+            onClick={() => setConfirmingSignOut(true)}
             className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-slate-200 hover:text-white bg-white/8 hover:bg-white/16 ring-1 ring-inset ring-white/15 px-3 py-1.5 rounded-lg transition-colors focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-amber-300"
             title="Sign out"
           >
@@ -105,6 +107,12 @@ export default function SuperTabs() {
       </div>
       {/* Gold authority rule */}
       <div className="h-[2px] rule-gold" />
+
+      <SignOutConfirm
+        open={confirmingSignOut}
+        onCancel={() => setConfirmingSignOut(false)}
+        onConfirm={() => { setConfirmingSignOut(false); onLogout() }}
+      />
     </header>
   )
 }

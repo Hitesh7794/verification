@@ -16,7 +16,7 @@ import DepositModal from './DepositModal.jsx'
 // the WalletWidget itself when the user deposits, or the Dashboard
 // after a lookup succeeds.
 
-export default function WalletWidget({ refreshKey = 0, onBalanceChange }) {
+export default function WalletWidget({ refreshKey = 0, onBalanceChange, compact = false }) {
   const [balance, setBalance] = useState(null)   // null = loading; number = paise
   const [cfg, setCfg] = useState(null)
   const [err, setErr] = useState('')
@@ -67,7 +67,15 @@ export default function WalletWidget({ refreshKey = 0, onBalanceChange }) {
           feePaise={cfg?.fee_per_lookup_paise || 500}
           onClick={() => setModalOpen(true)}
         />
-        <Button size="sm" onClick={() => setModalOpen(true)}>
+        {/* Compact mode (used in the admin navbar on narrow viewports)
+            hides the standalone Deposit button — the balance badge
+            itself is clickable and opens the same modal. Saves ~90 px
+            of horizontal space on a phone. */}
+        <Button
+          size="sm"
+          onClick={() => setModalOpen(true)}
+          className={compact ? 'hidden sm:inline-flex' : ''}
+        >
           Deposit
         </Button>
       </div>

@@ -365,6 +365,7 @@ export default function ReviewerApplicationDetail() {
               </Card>
             </div>
           )}
+
         </div>
 
         {/* RIGHT: doc previewer */}

@@ -41,6 +41,63 @@ export const INDIAN_STATES = [
   'Puducherry',
 ]
 
+// India Post PIN-code first-digit zone → set of Indian states / UTs
+// that live in that zone. Every state belongs to exactly one zone.
+// Used by the Register form as a coarse, offline sanity check that
+// the entered PIN plausibly belongs to the selected state — catches
+// typos and random inputs without pulling an external dataset.
+//
+// Reference: India Post's postal-index-number scheme; the first digit
+// is the region, the whole 6-digit code narrows to a district / post
+// office. We only check the region digit.
+export const PIN_ZONE_BY_STATE = {
+  // Zone 1 — Delhi + neighbouring north-western states
+  'Delhi': '1',
+  'Haryana': '1',
+  'Punjab': '1',
+  'Himachal Pradesh': '1',
+  'Chandigarh': '1',
+  'Jammu and Kashmir': '1',
+  'Ladakh': '1',
+  // Zone 2 — Uttar Pradesh + Uttarakhand
+  'Uttar Pradesh': '2',
+  'Uttarakhand': '2',
+  // Zone 3 — Rajasthan + Gujarat cluster
+  'Rajasthan': '3',
+  'Gujarat': '3',
+  'Dadra and Nagar Haveli and Daman and Diu': '3',
+  // Zone 4 — central + western India
+  'Maharashtra': '4',
+  'Madhya Pradesh': '4',
+  'Chhattisgarh': '4',
+  'Goa': '4',
+  // Zone 5 — southern Deccan
+  'Andhra Pradesh': '5',
+  'Telangana': '5',
+  'Karnataka': '5',
+  // Zone 6 — southern coast
+  'Tamil Nadu': '6',
+  'Kerala': '6',
+  'Puducherry': '6',
+  'Lakshadweep': '6',
+  // Zone 7 — East + north-east + islands
+  'West Bengal': '7',
+  'Odisha': '7',
+  'Assam': '7',
+  'Arunachal Pradesh': '7',
+  'Nagaland': '7',
+  'Manipur': '7',
+  'Mizoram': '7',
+  'Meghalaya': '7',
+  'Tripura': '7',
+  'Sikkim': '7',
+  'Andaman and Nicobar Islands': '7',
+  // Zone 8 — Bihar + Jharkhand
+  'Bihar': '8',
+  'Jharkhand': '8',
+  // Zone 9 is reserved for Army Post Offices — no civilian state maps here.
+}
+
 export const CITIES_BY_STATE = {
   'Andhra Pradesh': [
     'Adoni','Amaravati','Anantapur','Bhimavaram','Chilakaluripet','Chittoor','Dharmavaram',

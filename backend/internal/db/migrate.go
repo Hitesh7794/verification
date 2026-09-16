@@ -193,7 +193,91 @@ func Migrate(d *sql.DB) error {
 		}
 	}
 
+	if !applied[29] {
+		if err := applyV29LivenessOperatorID(ctx, d); err != nil {
+			return fmt.Errorf("apply v29 liveness_operator_id: %w", err)
+		}
+	}
+
+	if !applied[30] {
+		if err := applyV30ConsecutiveDenials(ctx, d); err != nil {
+			return fmt.Errorf("apply v30 consecutive_denials: %w", err)
+		}
+	}
+
 	return nil
+}
+
+// applyV30ConsecutiveDenials adds users.consecutive_denials — a running
+// counter of DENY verdicts the operator has submitted with no APPROVE
+// in between. Auto-lockout policy: three consecutive denies → the
+// verify_candidate handler stamps users.disabled_at, which the auth
+// middleware already enforces on every subsequent request. Any
+// APPROVE resets the counter to zero. Superadmin + client_reviewer
+// lift the disable through agent_enable_handlers.go.
+//
+// INT NOT NULL DEFAULT 0 so historic rows start at zero and don't get
+// spuriously locked out on their next verification.
+func applyV30ConsecutiveDenials(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx,
+		`ALTER TABLE users
+		    ADD COLUMN IF NOT EXISTS consecutive_denials INT NOT NULL DEFAULT 0`,
+	); err != nil {
+		return fmt.Errorf("add consecutive_denials: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`ALTER TABLE users
+		    ADD COLUMN IF NOT EXISTS disable_reason TEXT`,
+	); err != nil {
+		return fmt.Errorf("add disable_reason: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)`,
+		30, "consecutive_denials",
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// applyV29LivenessOperatorID adds liveness_checks.operator_id so
+// abandoned flows (liveness passed + wallet debited, but no
+// downstream verifications row) can name the operator who ran them
+// in the admin/reviewer history "Abandoned" filter.
+//
+// Nullable + no default: historic rows stay NULL so
+// admin/verifications/pending's LEFT JOIN u ON u.id = lc.operator_id
+// returns NULL → the frontend shows "—" for older abandoned rows and
+// the operator name for anything from this migration forward. No
+// backfill — there's no reliable path to reconstruct who ran a
+// pre-migration abandoned attempt (session_id doesn't map to a user
+// in any other table).
+func applyV29LivenessOperatorID(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx,
+		`ALTER TABLE liveness_checks
+		    ADD COLUMN IF NOT EXISTS operator_id BIGINT REFERENCES users(id)`,
+	); err != nil {
+		return fmt.Errorf("add operator_id: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)`,
+		29, "liveness_operator_id",
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // applyV28AllowDupEmailPerOrg drops the (org_id, email) uniqueness

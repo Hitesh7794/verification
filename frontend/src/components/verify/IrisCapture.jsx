@@ -172,231 +172,86 @@ export default function IrisCapture({
     }
   }
 
-  const [selectedEye, setSelectedEye] = useState('OD')
-  const isPass = result && result.ok === true
-  const isFail = result && result.ok === false
-  const isCapturing = busy || status === 'capturing'
-
   return (
-    <div className="space-y-3 font-mono text-xs">
-      <div className="flex items-center justify-between gap-2">
-        <Banner status={status} device={device} error={error} />
-        {/* Eye Selector */}
-        <div className="flex items-center gap-1 text-[10px] shrink-0">
-          <button
-            type="button"
-            onClick={() => !isPass && setSelectedEye('OD')}
-            className={`px-1.5 py-0.5 rounded font-bold transition ${
-              selectedEye === 'OD'
-                ? 'bg-[#0B4F8F] text-white'
-                : 'bg-white text-slate-500 border border-[#D5DDE7] hover:bg-slate-50'
-            }`}
-          >
-            OD (RIGHT)
-          </button>
-          <button
-            type="button"
-            onClick={() => !isPass && setSelectedEye('OS')}
-            className={`px-1.5 py-0.5 rounded font-bold transition ${
-              selectedEye === 'OS'
-                ? 'bg-[#0B4F8F] text-white'
-                : 'bg-white text-slate-500 border border-[#D5DDE7] hover:bg-slate-50'
-            }`}
-          >
-            OS (LEFT)
-          </button>
-        </div>
-      </div>
+    <div className="space-y-3">
+      <Banner status={status} device={device} error={error} />
 
-      {/* Single-Eye Monocular Eyepiece Viewfinder HUD */}
-      <div className="my-2 flex flex-col items-center">
-        <div
-          onClick={!busy && status !== 'service_down' ? onCapture : undefined}
-          className="w-full max-w-[290px] h-40 rounded-xl bg-[#07131F] border-2 border-[#83B3E9] p-2 flex flex-col justify-between relative overflow-hidden cursor-pointer group shadow-inner"
-        >
-          {/* Infrared Grid pattern */}
-          <div
-            className="absolute inset-0 opacity-20 pointer-events-none"
-            style={{
-              backgroundImage: 'radial-gradient(#00F2FE 1px, transparent 1px)',
-              backgroundSize: '14px 14px',
-            }}
+      {/* Preview + prompt area — same shape as FingerprintCapture's
+          dashed placeholder so the two capture cards read as one visual
+          family. Gives the operator a target zone even before capture
+          starts ("look at the iris device"), morphs into a spinner
+          during capture, and lands the captured BMP inline afterwards.
+          max-w-xs mx-auto keeps the tile a comfortable size on wide
+          layouts and doesn't fight the containing card's padding. */}
+      <div className="aspect-square w-full max-w-xs mx-auto rounded-lg border-2 border-dashed border-slate-300 bg-slate-50 flex flex-col items-center justify-center text-center p-6">
+        {result?.leftBmp ? (
+          <img
+            src={`data:image/bmp;base64,${result.leftBmp}`}
+            alt="captured iris"
+            className="w-full h-full object-contain"
           />
-
-          {/* Top HUD Status */}
-          <div className="flex justify-between items-center text-[8.5px] font-mono text-cyan-400 z-10 px-1">
-            <span>NIR 850nm STROBE</span>
-            <span className={`font-bold ${isCapturing ? 'text-cyan-300 animate-pulse' : 'text-amber-300'}`}>
-              {isCapturing ? 'PUPIL REFLEX LOCK…' : 'ALIGNED (15cm)'}
-            </span>
-            <span>EYE: {selectedEye} ({selectedEye === 'OD' ? 'RIGHT' : 'LEFT'})</span>
-          </div>
-
-          {/* Centered Large Monocular Single Eye Reticle */}
-          <div className="relative w-28 h-28 mx-auto my-auto flex items-center justify-center z-10">
-            {/* Outer Calibrated Degree Ring */}
-            <div
-              className={`w-28 h-28 rounded-full border border-dashed flex items-center justify-center relative iris-rotate-anim ${
-                isPass ? 'border-emerald-400/80' : 'border-cyan-400/60'
-              }`}
-            >
-              <div className="absolute -top-1 w-1.5 h-1.5 rounded-full bg-cyan-400" />
-              <div className="absolute -bottom-1 w-1.5 h-1.5 rounded-full bg-cyan-400/60" />
-              <div className="absolute -left-1 w-1.5 h-1.5 rounded-full bg-cyan-400/60" />
-              <div className="absolute -right-1 w-1.5 h-1.5 rounded-full bg-cyan-400/60" />
-            </div>
-
-            {/* Middle Concentric Boundary Ring */}
-            <div className="absolute w-20 h-20 rounded-full border border-cyan-300/40 flex items-center justify-center iris-rotate-rev">
-              {/* Eye Sclera & Iris Container */}
-              <div className="w-16 h-16 rounded-full bg-gradient-to-br from-cyan-950 via-[#07192C] to-emerald-950 border border-cyan-400/50 flex items-center justify-center relative overflow-hidden shadow-inner">
-                {/* Captured Bitmap Preview or Animated Eye SVG */}
-                {result?.leftBmp ? (
-                  <img
-                    src={`data:image/bmp;base64,${result.leftBmp}`}
-                    alt="captured iris"
-                    className="w-full h-full object-cover"
-                  />
-                ) : (
-                  <svg
-                    className={`w-12 h-12 eye-blink-anim transition-all duration-300 ${
-                      isPass
-                        ? 'text-emerald-400 drop-shadow-[0_0_10px_rgba(52,211,153,0.9)]'
-                        : 'text-cyan-400'
-                    }`}
-                    viewBox="0 0 24 24"
-                    fill="none"
-                    stroke="currentColor"
-                    strokeWidth="1.5"
-                    strokeLinecap="round"
-                    strokeLinejoin="round"
-                  >
-                    <path d="M2 12s3.5-6.5 10-6.5 10 6.5-3.5 6.5-10 6.5S2 12 2 12Z" />
-                    <circle
-                      cx="12"
-                      cy="12"
-                      r="4"
-                      className={`transition-transform duration-300 ${isCapturing ? 'pupil-pulse-active' : ''}`}
-                      fill="currentColor"
-                      fillOpacity="0.25"
-                      stroke="currentColor"
-                      strokeWidth="1.5"
-                    />
-                    <circle cx="12" cy="12" r="1.8" fill="#000" />
-                    <circle cx="13" cy="11" r="0.7" fill="#fff" />
-                  </svg>
-                )}
-              </div>
-            </div>
-
-            {/* Radar Conic Sweep */}
-            {isCapturing && (
-              <div className="absolute w-28 h-28 rounded-full iris-radar-conic pointer-events-none z-15" />
-            )}
-
-            {/* Crosshair Target Overlay */}
-            <div className="absolute inset-0 flex items-center justify-center pointer-events-none">
-              <div className="w-24 h-[1px] bg-cyan-400/40" />
-              <div className="h-24 w-[1px] bg-cyan-400/40 absolute" />
-              <div className="w-10 h-10 rounded-full border border-cyan-400/30" />
-            </div>
-          </div>
-
-          {/* Iris Sweep Laser Beam */}
-          {isCapturing && (
-            <div className="absolute inset-x-0 h-[2px] bg-cyan-400 iris-laser-sweep pointer-events-none z-15" />
-          )}
-
-          {/* Iris Pass Overlay */}
-          {isPass && (
-            <div className="absolute inset-0 bg-[#0F6B45]/90 flex flex-col items-center justify-center text-white font-mono text-center z-20">
-              <div className="w-7 h-7 rounded-full bg-white text-[#0F6B45] flex items-center justify-center mb-0.5 shadow-xs">
-                <svg className="w-4 h-4 text-[#0F6B45]" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3">
-                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                </svg>
-              </div>
-              <span className="text-xs font-bold uppercase">Single-Eye Iris Verified</span>
-              <span className="text-[9px] text-emerald-200">
-                {selectedEye} ({selectedEye === 'OD' ? 'Right Eye' : 'Left Eye'}) · Conf: 99.4% (Pass)
-              </span>
-            </div>
-          )}
-
-          {/* Footer prompt */}
-          <div className="text-[8px] font-mono text-center text-slate-400 z-10 flex justify-between px-1">
-            <span>FOCUS: OPTIMAL</span>
-            <span>Direct Gaze into Scope</span>
-            <span>STQC L1</span>
-          </div>
-        </div>
+        ) : busy || status === 'capturing' ? (
+          <>
+            <div className="h-12 w-12 rounded-full border-4 border-indigo-200 border-t-indigo-600 animate-spin" />
+            <p className="mt-3 text-sm text-slate-600">Look at the iris device…</p>
+          </>
+        ) : status === 'ready' ? (
+          <>
+            <p className="text-sm font-medium text-slate-700">Device ready</p>
+            <p className="text-xs text-slate-500 mt-1">
+              {device?.model || ''}
+              {device?.serial ? ` · ${device.serial}` : ''}
+            </p>
+          </>
+        ) : status === 'service_down' || status === 'error' ? (
+          <p className="text-sm text-slate-500">See message above</p>
+        ) : (
+          // idle — no probe has run yet. Tell the operator to
+          // capture; device presence is only known after that.
+          <p className="text-sm text-slate-500">Click Capture iris to start</p>
+        )}
       </div>
 
-      {/* Odometer & Status Strip */}
-      <div className="p-2.5 rounded-lg bg-white border border-[#E7EDF4] flex items-center justify-between font-mono text-xs mb-3">
-        <div>
-          <span className="text-[9px] text-slate-400 block uppercase">Confidence Score</span>
-          <span className={`text-lg font-bold tabular-nums ${isPass ? 'text-[#0F6B45]' : 'text-slate-400'}`}>
-            {result?.leftScore != null ? `${result.leftScore}%` : isPass ? '99.4%' : '0.85 (0%)'}
-          </span>
-        </div>
-        <span
-          className={`px-2 py-0.5 rounded font-bold text-[11px] ${
-            isPass
-              ? 'bg-[#E8F5EE] border border-[#B4DCC7] text-[#0F6B45]'
-              : isFail
-              ? 'bg-[#FBEAEC] border border-[#EFC0C7] text-[#DC2626]'
-              : isCapturing
-              ? 'bg-cyan-100 text-cyan-800 animate-pulse'
-              : 'bg-slate-100 text-slate-500'
-          }`}
-        >
-          {isPass ? 'MATCH (PASS)' : isFail ? 'NO MATCH' : isCapturing ? 'ANALYZING…' : 'WAITING SCAN'}
-        </span>
-      </div>
+      {result && <ResultSummary r={result} />}
 
       {error && (
-        <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-xs font-mono text-rose-700">
+        <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">
           {error instanceof IrisError ? `${error.code}: ${error.description}` : error.message}
         </div>
       )}
 
-      {/* Action row */}
+      {/* Action row — mirrors FingerprintCapture's structure: full-
+          width primary button on top, secondary (Reset device) full-
+          width below, so both cards align at the bottom regardless
+          of how many buttons the modality has. */}
       <div className="flex flex-col gap-2">
         {result ? (
-          <Button
-            variant="secondary"
-            className="w-full font-mono text-xs uppercase tracking-wider"
-            onClick={() => {
-              setResult(null)
-              setError(null)
-            }}
-          >
+          <Button variant="secondary" className="w-full" onClick={() => { setResult(null); setError(null) }}>
             Recapture
           </Button>
         ) : (
-          <button
-            type="button"
+          <Button
+            className="w-full"
             onClick={onCapture}
+            // Enabled when idle too — that's the whole point of not
+            // pre-probing: readiness is proven by the capture attempt.
+            // Only block during a capture-in-flight or a known-bad
+            // state (service_down / error) that the operator hasn't
+            // dismissed via Reset device.
             disabled={busy || status === 'service_down' || status === 'error'}
-            className="w-full py-2 px-3 rounded-lg bg-[#0B4F8F] hover:bg-[#083E72] disabled:opacity-50 text-white font-mono font-bold text-xs uppercase tracking-wider transition shadow-xs flex items-center justify-center gap-2 group cursor-pointer"
           >
-            <svg className="w-4 h-4 text-cyan-300 eye-blink-anim group-hover:scale-110 transition-transform" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
-              <path d="M2 12s3.5-6.5 10-6.5 10 6.5-3.5 6.5-10 6.5S2 12 2 12Z" />
-              <circle cx="12" cy="12" r="3" fill="currentColor" fillOpacity="0.25" />
-              <circle cx="12" cy="12" r="1.5" fill="currentColor" />
-            </svg>
-            <span>{busy ? 'Capturing Iris…' : 'Scan Candidate Iris (Single Eye)'}</span>
-          </button>
+            {busy ? 'Capturing iris…' : 'Capture iris'}
+          </Button>
         )}
-        <button
-          type="button"
+        <Button
+          variant="secondary"
+          className="w-full"
           onClick={onReset}
           disabled={busy}
-          className="w-full py-1.5 px-3 rounded-lg border border-[#D5DDE7] bg-white hover:bg-slate-50 text-slate-600 font-mono font-semibold text-[11px] uppercase tracking-wider transition cursor-pointer"
-          title="Force-release the iris device"
+          title="Force-release the iris device -- click this if you see 'Device Already Initialized' errors"
         >
-          Reset Device
-        </button>
+          Reset device
+        </Button>
       </div>
     </div>
   )

@@ -129,7 +129,14 @@ func (s *Server) verificationPDF(w http.ResponseWriter, r *http.Request) {
 		       COALESCE(e.exam_code, ''), COALESCE(e.name, ''),
 		       COALESCE(c.name, ''),
 		       ectr.centre_name, ectr.address, ectr.city, ectr.state, ectr.pincode,
-		       u.display_name
+		       u.display_name,
+		       -- DB flags for modality-tile selection. Authoritative
+		       -- over the filesystem indexer: an operator flow that
+		       -- correctly skipped a modality must not have the PDF
+		       -- silently re-add it because of an orphan file on disk.
+		       COALESCE(ec.has_photo, false),
+		       COALESCE(ec.has_fp_image, false) OR COALESCE(ec.has_fp_template, false),
+		       COALESCE(ec.has_iris, false)
 		  FROM verifications v
 		  LEFT JOIN exam_candidates ec ON ec.roll_no    = v.roll_no
 		  LEFT JOIN exams           e  ON e.id          = ec.exam_id
@@ -159,6 +166,7 @@ func (s *Server) verificationPDF(w http.ResponseWriter, r *http.Request) {
 	}
 
 	var b pdfBundle
+	var dbHasPhoto, dbHasFP, dbHasIris bool
 	err = s.deps.DB.QueryRowContext(r.Context(), db.Q(query), args...).Scan(
 		&b.VerificationID, &b.Status, &b.Via, &b.FaceMatch, &b.FpMatch,
 		&b.FaceMatchScore, &b.FpMatchScore, &b.IrisScore, &b.MatchThreshold,
@@ -170,6 +178,7 @@ func (s *Server) verificationPDF(w http.ResponseWriter, r *http.Request) {
 		&b.ExamCode, &b.ExamName, &b.ClientName,
 		&b.CentreName, &b.Address, &b.City, &b.State, &b.Pincode,
 		&b.OperatorName,
+		&dbHasPhoto, &dbHasFP, &dbHasIris,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		writeErr(w, http.StatusNotFound, "verification not found")
@@ -180,18 +189,25 @@ func (s *Server) verificationPDF(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Resolve the gallery photo AND populate per-candidate modality
-	// availability from the same filesystem indexer the operator UI
-	// reads. Modality tiles in the PDF render only for modalities the
-	// candidate actually has on file — matching the operator flow.
+	// Modality tile selection is driven by the DB flags, not the
+	// filesystem indexer. Prior to 2026-09-07 this used the FS
+	// indexer, which meant an orphan file on disk (e.g. a partial
+	// upload that wasn't reflected in has_iris) could silently add
+	// a modality tile the operator flow never captured. DB flags
+	// match what the operator flow consults, so the PDF now stays
+	// in lockstep with what was actually verified.
+	b.HasPhoto = dbHasPhoto
+	b.HasFP    = dbHasFP
+	b.HasIris  = dbHasIris
+
+	// The FS indexer is still the source for the gallery photo's
+	// physical path — the PDF needs the file to embed the enrolled
+	// image side-by-side with the probe.
 	galleryPath := ""
 	if row, ok := s.deps.Index.Get(b.RollNo); ok {
 		if row.HasPhoto {
 			galleryPath = row.PhotoPath
 		}
-		b.HasPhoto = row.HasPhoto
-		b.HasFP    = row.HasIsoTpl
-		b.HasIris  = row.HasIrisBytes
 	}
 	probePath := ""
 	if b.ProbePhotoPath.Valid {

@@ -93,7 +93,63 @@ func Migrate(d *sql.DB) error {
 		}
 	}
 
+	if !applied[10] {
+		if err := applyV10InitialReviewer(ctx, d); err != nil {
+			return fmt.Errorf("apply v10 initial_reviewer: %w", err)
+		}
+	}
+
 	return nil
+}
+
+// applyV10InitialReviewer captures the routing decision at
+// application-INSERT time in a column that never gets cleared, so
+// document-visibility policy can distinguish "registered under
+// superadmin oversight" from "registered under client-only board"
+// even after the app has been decided (which nulls out
+// pending_reviewer).
+//
+// Backfill for pre-existing rows: any still-pending row copies
+// pending_reviewer verbatim (that's the routing state at INSERT,
+// unchanged). Terminal (approved/rejected) rows default to 'admin'
+// — matching the conservative-visibility assumption we chose in the
+// list/download endpoints, and preserving the audit trail on
+// pre-migration superadmin decisions like SSC.
+func applyV10InitialReviewer(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx,
+		`ALTER TABLE institution_applications
+		    ADD COLUMN IF NOT EXISTS initial_reviewer TEXT`,
+	); err != nil {
+		return fmt.Errorf("add initial_reviewer: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE institution_applications
+		    SET initial_reviewer = pending_reviewer
+		  WHERE initial_reviewer IS NULL
+		    AND pending_reviewer IS NOT NULL`,
+	); err != nil {
+		return fmt.Errorf("backfill from pending_reviewer: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`UPDATE institution_applications
+		    SET initial_reviewer = 'admin'
+		  WHERE initial_reviewer IS NULL`,
+	); err != nil {
+		return fmt.Errorf("backfill terminal rows to admin: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)`,
+		10, "initial_reviewer",
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // applyV8ClientDomain mirrors DP's V26 on the CP so the superadmin

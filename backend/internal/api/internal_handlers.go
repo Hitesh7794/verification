@@ -376,22 +376,24 @@ func (s *Server) internalOrgsCreate(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Multi-client fan-out — matches what the on-DP reviewer approve
-	// handler writes (client_review_handlers.go, clientApproveApplication):
-	// one client_organization_approvals row, plus organization_exam_subscriptions
-	// for every currently visible + open exam under that client. Kept in
-	// the same tx as the org + user inserts so a fan-out failure rolls
-	// the whole provisioning back.
+	// V16 (2026-09-10): CP-triggered provisioning writes one
+	// client_organization_approvals row so the org can see the client's
+	// catalog, but no organization_exam_subscriptions rows. The V15
+	// blanket-client fan-out is removed — new orgs now use the per-exam
+	// request flow: the admin browses the catalog, clicks "Request
+	// access", and the client_reviewer approves each request from the
+	// Exam approval tab. Grandfathered pre-V16 rows are left untouched
+	// (see application_review_shared.go for the same comment).
 	//
-	// approved_by / subscribed_by / reviewed_by are NULL — the actual
-	// human reviewer lives on the Control Plane's platform_users table,
-	// which the DP has no foreign key to. The note field records
-	// provenance for audits.
+	// approved_by is NULL — the actual human reviewer lives on the
+	// Control Plane's platform_users table, which the DP has no foreign
+	// key to. The note field records provenance for audits.
 	if req.ClientID > 0 {
 		// Ensure the client actually exists on this DP; if not we can't
-		// fan out and the whole provisioning should fail rather than
-		// silently drop the coa. A missing client here means the CP's
-		// clients_registry has drifted from the DP's clients table.
+		// grant catalog visibility and the whole provisioning should
+		// fail rather than silently drop the coa. A missing client here
+		// means the CP's clients_registry has drifted from the DP's
+		// clients table.
 		var clientExists int
 		if err := tx.QueryRowContext(ctx,
 			`SELECT 1 FROM clients WHERE id = $1`, req.ClientID,
@@ -416,28 +418,6 @@ func (s *Server) internalOrgsCreate(w http.ResponseWriter, r *http.Request) {
 			req.ClientID, orgID,
 		); err != nil {
 			writeErr(w, http.StatusInternalServerError, "coa insert: "+err.Error())
-			return
-		}
-
-		if _, err := tx.ExecContext(ctx, `
-			INSERT INTO organization_exam_subscriptions(
-				org_id, exam_id, status, approval_type,
-				subscribed_by, requested_at,
-				reviewed_at, reviewed_by, review_note
-			)
-			SELECT $1, e.id, 'approved', 'blanket_client',
-			       NULL, NOW(),
-			       NOW(), NULL, 'Approved via Control Plane'
-			  FROM exams e
-			 WHERE e.client_id = $2 AND e.visible = 1 AND e.closed = 0
-			ON CONFLICT (org_id, exam_id) DO UPDATE SET
-				status = 'approved',
-				approval_type = EXCLUDED.approval_type,
-				reviewed_at = EXCLUDED.reviewed_at,
-				review_note = EXCLUDED.review_note`,
-			orgID, req.ClientID,
-		); err != nil {
-			writeErr(w, http.StatusInternalServerError, "exam subs fan-out: "+err.Error())
 			return
 		}
 	}

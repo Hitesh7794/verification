@@ -53,14 +53,20 @@ func New(cfg Config) *Client {
 // discriminate should switch on ErrorCode; AllPassed is only trustworthy
 // when ErrorCode == "0".
 type LivenessResult struct {
-	ErrorCode        string   `json:"ErrorCode"`
-	ErrorDescription string   `json:"ErrorDescription"`
-	FacesFound       int      `json:"FacesFound"`
-	PassiveMean      float64  `json:"PassiveMean"`
-	PassivePassed    bool     `json:"PassivePassed"`
-	BlinksDetected   int      `json:"BlinksDetected"`
-	ChallengesPassed []string `json:"ChallengesPassed"`
-	AllPassed        bool     `json:"AllPassed"`
+	ErrorCode         string   `json:"ErrorCode"`
+	ErrorDescription  string   `json:"ErrorDescription"`
+	FacesFound        int      `json:"FacesFound"`
+	// MaxFacesInFrame is the peak per-frame face count Luxand saw
+	// anywhere in the burst. > 1 means an accomplice/bystander was in
+	// the frame at some point; AllPassed is already false in that
+	// case, but this field lets the API layer surface it separately.
+	MaxFacesInFrame   int      `json:"MaxFacesInFrame"`
+	MultiFaceRejected bool     `json:"MultiFaceRejected"`
+	PassiveMean       float64  `json:"PassiveMean"`
+	PassivePassed     bool     `json:"PassivePassed"`
+	BlinksDetected    int      `json:"BlinksDetected"`
+	ChallengesPassed  []string `json:"ChallengesPassed"`
+	AllPassed         bool     `json:"AllPassed"`
 }
 
 // Sentinels — every failure is distinguishable so the HTTP layer can

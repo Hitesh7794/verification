@@ -75,22 +75,34 @@ export default function AdminHistory() {
     setErr('')
     try {
       const qs = buildQuery(extra)
-      // Fetch the completed verifications and the pending (abandoned
-      // after wallet-debit on liveness) rows in parallel — the pending
-      // endpoint is scoped to the same admin org and honours the same
-      // roll/from/to filters where they overlap. Failures on the
-      // pending fetch are non-fatal: the standard history still
-      // renders, we just don't decorate with the pending strip.
-      const [res, pRes] = await Promise.all([
-        api('/admin/verifications' + (qs ? '?' + qs : '')),
-        api('/admin/verifications/pending' + (qs ? '?' + qs : ''))
-          .catch(() => ({ rows: [] })),
-      ])
+      // What we fetch depends on the applied Status filter:
+      //   ""         (Any)      → both endpoints, interleave chronologically
+      //   "verified" / "denied" → completed only, skip pending (irrelevant)
+      //   "pending"             → pending only, skip completed
+      // The backend's /admin/verifications only accepts verified|denied
+      // for `status`, so when we're in pending-only mode we DON'T
+      // forward that value to the completed endpoint (it would 400 or
+      // silently drop).
+      const wantCompleted = appliedFilters.status !== 'pending'
+      const wantPending   = !appliedFilters.status || appliedFilters.status === 'pending'
+
+      const compP = wantCompleted
+        ? api('/admin/verifications' + (qs ? '?' + qs : ''))
+        : Promise.resolve({ rows: [], next_cursor: 0 })
+      // Strip the 'status=pending' out of the query going to /pending
+      // (endpoint doesn't accept it, would 400) — pending is implicit.
+      const pendingQs = new URLSearchParams()
+      for (const [k, v] of Object.entries({ ...appliedFilters, ...extra })) {
+        if (v && k !== 'status') pendingQs.append(k, v)
+      }
+      const pendP = wantPending
+        ? api('/admin/verifications/pending' + (pendingQs.toString() ? '?' + pendingQs.toString() : ''))
+            .catch(() => ({ rows: [] }))
+        : Promise.resolve({ rows: [] })
+
+      const [res, pRes] = await Promise.all([compP, pendP])
       setRows((prev) => append ? [...prev, ...(res.rows || [])] : (res.rows || []))
       setNextCursor(res.next_cursor || 0)
-      // Only replace pending rows on first-page loads, not on paginated
-      // "load more" (append=true). Pending is a fixed top strip, not
-      // paginated.
       if (!append) setPendingRows(pRes.rows || [])
     } catch (e) {
       setErr(e.message || 'failed to load history')
@@ -221,11 +233,13 @@ export default function AdminHistory() {
               <select
                 value={filters.status}
                 onChange={(e) => setFilters({ ...filters, status: e.target.value })}
+                aria-label="Status filter"
                 className="block w-full rounded-md border border-slate-300 px-3 py-2 text-sm"
               >
                 <option value="">Any</option>
                 <option value="verified">Verified</option>
                 <option value="denied">Denied</option>
+                <option value="pending">Abandoned</option>
               </select>
             </div>
             <div>
@@ -302,67 +316,88 @@ export default function AdminHistory() {
                 </tr>
               </thead>
               <tbody>
-                {/* Abandoned flows — the operator hit Start Over or
-                    closed the tab AFTER the wallet already debited on
-                    liveness pass, so a verifications row was never
-                    created and the debit looks orphaned in the wallet
-                    ledger. Render them ABOVE the completed rows with
-                    an amber "Abandoned" badge so the admin can reconcile
-                    debits to attempts even when the flow didn't finish.
-                    Backend key: liveness_checks WHERE session_id NOT
-                    IN verifications.idempotency_key. See
-                    /api/admin/verifications/pending. */}
-                {pendingRows.map((r) => (
-                  <tr
-                    key={'pending-' + r.id}
-                    className="border-t border-amber-100 bg-amber-50/40"
-                    title="This flow started (wallet debited on liveness pass) but was abandoned before the verification finished."
-                  >
-                    <td className="px-4 py-2 text-slate-500 whitespace-nowrap">{fmtDateTime(r.created_at)}</td>
-                    <td className="px-4 py-2 font-medium text-slate-900">{r.roll_no}</td>
-                    <td className="px-4 py-2">
-                      <Badge tone="amber">abandoned</Badge>
-                    </td>
-                    <td className="px-4 py-2 text-slate-500">—</td>
-                    <td className="px-4 py-2 text-slate-600 truncate max-w-[160px]">{r.center_name || '—'}</td>
-                    <td className="px-4 py-2 text-slate-500 italic">not recorded</td>
-                    <td className="px-4 py-2 text-right text-slate-400">—</td>
-                  </tr>
-                ))}
-                {rows.map((r) => (
-                  <tr key={r.id} className="border-t border-slate-100">
-                    <td className="px-4 py-2 text-slate-500 whitespace-nowrap">{fmtDateTime(r.created_at)}</td>
-                    <td className="px-4 py-2 font-medium text-slate-900">{r.roll_no}</td>
-                    <td className="px-4 py-2">
-                      <Badge tone={r.status === 'verified' ? 'green' : 'red'}>{r.status}</Badge>
-                    </td>
-                    <td className="px-4 py-2 text-slate-600">{r.via || '—'}</td>
-                    <td className="px-4 py-2 text-slate-600 truncate max-w-[160px]">{r.center_name}</td>
-                    <td className="px-4 py-2 text-slate-600 truncate max-w-[200px]">{r.operator_name}</td>
-                    <td className="px-4 py-2 text-right">
-                      <button
-                        type="button"
-                        onClick={() =>
-                          downloadVerificationPDF(r.id).catch((e) => setErr(e.message))
-                        }
-                        className="text-sm font-medium text-indigo-600 hover:text-indigo-800"
-                        title={`Download receipt for verification ${r.id}`}
-                      >
-                        Download
-                      </button>
-                    </td>
-                  </tr>
-                ))}
-                {rows.length === 0 && pendingRows.length === 0 && !loading && (
-                  <tr>
-                    <td colSpan={7} className="py-10">
-                      <EmptyState
-                        title="No verifications match"
-                        body="Try widening the date range or clearing filters."
-                      />
-                    </td>
-                  </tr>
-                )}
+                {/* Interleaved chronological view.
+                    Completed rows (verified/denied) and abandoned rows
+                    are merged into a single sequence sorted by
+                    created_at DESC so an admin scanning the audit
+                    timeline sees events in the exact order they
+                    happened at the centre — not "everything abandoned
+                    ever" pinned to the top.
+                    Each row carries a `_kind` marker set here so the
+                    render branch below can pick the right cells (an
+                    abandoned row has no via/operator/PDF). */}
+                {(() => {
+                  const merged = [
+                    ...rows.map((r) => ({ ...r, _kind: 'completed' })),
+                    ...pendingRows.map((r) => ({ ...r, _kind: 'pending' })),
+                  ]
+                  merged.sort((a, b) => {
+                    const ta = a.created_at ? new Date(a.created_at).getTime() : 0
+                    const tb = b.created_at ? new Date(b.created_at).getTime() : 0
+                    return tb - ta
+                  })
+                  if (merged.length === 0 && !loading) {
+                    return (
+                      <tr>
+                        <td colSpan={7} className="py-10">
+                          <EmptyState
+                            title="No verifications match"
+                            body="Try widening the date range or clearing filters."
+                          />
+                        </td>
+                      </tr>
+                    )
+                  }
+                  return merged.map((r) => {
+                    if (r._kind === 'pending') {
+                      return (
+                        <tr
+                          key={'pending-' + r.id}
+                          className="border-t border-slate-100"
+                          title="This flow started (wallet debited on liveness pass) but was abandoned before the verification finished."
+                        >
+                          <td className="px-4 py-2 text-slate-500 whitespace-nowrap">{fmtDateTime(r.created_at)}</td>
+                          <td className="px-4 py-2 font-medium text-slate-900">{r.roll_no}</td>
+                          <td className="px-4 py-2">
+                            <Badge tone="amber">abandoned</Badge>
+                          </td>
+                          <td className="px-4 py-2 text-slate-500">—</td>
+                          <td className="px-4 py-2 text-slate-600 truncate max-w-[160px]">{r.center_name || '—'}</td>
+                          <td className="px-4 py-2 text-slate-600 truncate max-w-[200px]">
+                            {r.operator_name
+                              ? r.operator_name
+                              : <span className="italic text-slate-400">not recorded</span>}
+                          </td>
+                          <td className="px-4 py-2 text-right text-slate-400">—</td>
+                        </tr>
+                      )
+                    }
+                    return (
+                      <tr key={r.id} className="border-t border-slate-100">
+                        <td className="px-4 py-2 text-slate-500 whitespace-nowrap">{fmtDateTime(r.created_at)}</td>
+                        <td className="px-4 py-2 font-medium text-slate-900">{r.roll_no}</td>
+                        <td className="px-4 py-2">
+                          <Badge tone={r.status === 'verified' ? 'green' : 'red'}>{r.status}</Badge>
+                        </td>
+                        <td className="px-4 py-2 text-slate-600">{r.via || '—'}</td>
+                        <td className="px-4 py-2 text-slate-600 truncate max-w-[160px]">{r.center_name}</td>
+                        <td className="px-4 py-2 text-slate-600 truncate max-w-[200px]">{r.operator_name}</td>
+                        <td className="px-4 py-2 text-right">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              downloadVerificationPDF(r.id).catch((e) => setErr(e.message))
+                            }
+                            className="text-sm font-medium text-indigo-600 hover:text-indigo-800"
+                            title={`Download receipt for verification ${r.id}`}
+                          >
+                            Download
+                          </button>
+                        </td>
+                      </tr>
+                    )
+                  })
+                })()}
               </tbody>
             </table>
           </div>

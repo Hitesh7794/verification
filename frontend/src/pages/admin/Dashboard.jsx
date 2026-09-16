@@ -58,7 +58,11 @@ export default function AdminDashboard() {
         getWallet().catch(() => null),
         getWalletConfig().catch(() => null),
       ])
-      setStats(s); setRecent(r); setByCenter(c); setTimeline(t)
+      // Recent activity panel shows the latest 10 — trimmed from
+      // whatever /admin/recent returns (backend caps at 25 today) so
+      // the operator sees a concise strip on the Overview and can go
+      // to /admin/history for the full list.
+      setStats(s); setRecent(Array.isArray(r) ? r.slice(0, 10) : r); setByCenter(c); setTimeline(t)
       setWallet(w); setWalletCfg(wc); setErr(''); setLoaded(true)
     } catch (e) { setErr(e.message) }
   }, 4000)
@@ -346,7 +350,7 @@ function RecentTable({ recent, loaded }) {
       <div className="flex items-baseline justify-between px-5 pt-4 pb-3 border-b border-warm">
         <div>
           <h3 className="text-[13px] font-semibold text-ink-900 tracking-tight">Recent activity</h3>
-          <p className="text-[11px] text-stone-500 mt-0.5">Latest 25 verifications</p>
+          <p className="text-[11px] text-stone-500 mt-0.5">Latest 10 verifications</p>
         </div>
         <Link to="/admin/history" className="text-[11px] font-medium text-brand-700 hover:underline">
           Full history →

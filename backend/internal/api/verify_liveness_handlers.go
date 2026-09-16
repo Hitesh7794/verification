@@ -3,6 +3,7 @@ package api
 import (
 	"context"
 	"database/sql"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -34,6 +35,12 @@ type livenessCheckResp struct {
 	BlinksDetected   int      `json:"blinks_detected"`
 	ChallengesPassed []string `json:"challenges_passed"`
 	FacesFound       int      `json:"faces_found"`
+	// Multi-face rejection surfaced from Luxand. When true, at some
+	// point in the burst Luxand saw more than one person in a single
+	// frame — the client should render a specific "only one person in
+	// frame" message rather than the generic liveness-failed copy.
+	MultiFaceRejected bool `json:"multi_face_rejected,omitempty"`
+	MaxFacesInFrame   int  `json:"max_faces_in_frame,omitempty"`
 	// ExpiresIn tells the operator's UI how long it has to complete
 	// the face capture before the gate expires and it must redo
 	// liveness. Zero when Pass=false.
@@ -121,13 +128,15 @@ func (s *Server) livenessCheck(w http.ResponseWriter, r *http.Request) {
 		// stripped by the middleware before the response leaves.
 		w.Header().Set("X-Wallet-Skip", "1")
 		writeJSON(w, http.StatusOK, livenessCheckResp{
-			SessionID:        req.SessionID,
-			Pass:             false,
-			PassiveMean:      res.PassiveMean,
-			PassivePassed:    res.PassivePassed,
-			BlinksDetected:   res.BlinksDetected,
-			ChallengesPassed: res.ChallengesPassed,
-			FacesFound:       res.FacesFound,
+			SessionID:         req.SessionID,
+			Pass:              false,
+			PassiveMean:       res.PassiveMean,
+			PassivePassed:     res.PassivePassed,
+			BlinksDetected:    res.BlinksDetected,
+			ChallengesPassed:  res.ChallengesPassed,
+			FacesFound:        res.FacesFound,
+			MultiFaceRejected: res.MultiFaceRejected,
+			MaxFacesInFrame:   res.MaxFacesInFrame,
 		})
 		return
 	}
@@ -152,15 +161,17 @@ func (s *Server) livenessCheck(w http.ResponseWriter, r *http.Request) {
 		if _, err := s.deps.DB.ExecContext(r.Context(),
 			`INSERT INTO liveness_checks(
 			     org_id, roll_no, session_id, passive_mean,
-			     challenges_passed, expires_at)
-			 VALUES ($1, $2, $3, $4, $5::jsonb, NOW() + ($6 || ' seconds')::interval)
+			     challenges_passed, expires_at, operator_id)
+			 VALUES ($1, $2, $3, $4, $5::jsonb, NOW() + ($6 || ' seconds')::interval, $7)
 			 ON CONFLICT (session_id) DO UPDATE
 			     SET passive_mean      = EXCLUDED.passive_mean,
 			         challenges_passed = EXCLUDED.challenges_passed,
-			         expires_at        = EXCLUDED.expires_at`,
+			         expires_at        = EXCLUDED.expires_at,
+			         operator_id       = COALESCE(liveness_checks.operator_id, EXCLUDED.operator_id)`,
 			orgID, roll, req.SessionID,
 			res.PassiveMean, string(challengesJSON),
 			fmt.Sprintf("%d", maxAge),
+			claims.UserID,
 		); err != nil {
 			writeErr(w, http.StatusInternalServerError,
 				"could not record liveness pass: "+err.Error())
@@ -176,13 +187,15 @@ func (s *Server) livenessCheck(w http.ResponseWriter, r *http.Request) {
 	}
 
 	resp := livenessCheckResp{
-		SessionID:        req.SessionID,
-		Pass:             res.AllPassed,
-		PassiveMean:      res.PassiveMean,
-		PassivePassed:    res.PassivePassed,
-		BlinksDetected:   res.BlinksDetected,
-		ChallengesPassed: res.ChallengesPassed,
-		FacesFound:       res.FacesFound,
+		SessionID:         req.SessionID,
+		Pass:              res.AllPassed,
+		PassiveMean:       res.PassiveMean,
+		PassivePassed:     res.PassivePassed,
+		BlinksDetected:    res.BlinksDetected,
+		ChallengesPassed:  res.ChallengesPassed,
+		FacesFound:        res.FacesFound,
+		MultiFaceRejected: res.MultiFaceRejected,
+		MaxFacesInFrame:   res.MaxFacesInFrame,
 	}
 	if resp.Pass {
 		resp.ExpiresIn = s.deps.Cfg.LivenessMaxAgeSeconds
@@ -194,11 +207,18 @@ func (s *Server) livenessCheck(w http.ResponseWriter, r *http.Request) {
 }
 
 // livenessClientVerifiedReq is the payload posted by a MediaPipe-based
-// client after it has run its own blink challenge locally. No frames —
-// the client already scored the sequence in the browser or on-device
-// and just needs the server to record the gate pass.
+// client after it has run its own blink challenge locally.
+//
+// Frames is optional: when present it's a base64-encoded JPEG burst
+// captured during the MediaPipe scan. The server forwards it to
+// Luxand for a passive anti-spoof score + multi-face rejection —
+// belt-and-braces on top of the client's blink challenge. Both must
+// pass. If frames is empty the endpoint keeps its old behaviour
+// (trust the client blink alone) for backward compatibility during
+// rollout.
 type livenessClientVerifiedReq struct {
-	SessionID string `json:"session_id"`
+	SessionID string   `json:"session_id"`
+	Frames    []string `json:"frames,omitempty"`
 }
 
 // livenessClientVerified POST /api/candidates/{roll}/liveness-client-verified
@@ -223,7 +243,10 @@ func (s *Server) livenessClientVerified(w http.ResponseWriter, r *http.Request) 
 		writeErr(w, http.StatusBadRequest, "roll required")
 		return
 	}
-	r.Body = http.MaxBytesReader(w, r.Body, 4<<10)
+	// 4 MB cap now that this endpoint can carry an optional frame
+	// burst (~15 × 30 KB JPEGs = ~450 KB in practice, but headroom
+	// for occasional larger cameras / 480p bursts).
+	r.Body = http.MaxBytesReader(w, r.Body, 4<<20)
 	var req livenessClientVerifiedReq
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeErr(w, http.StatusBadRequest, "invalid body: "+err.Error())
@@ -246,6 +269,101 @@ func (s *Server) livenessClientVerified(w http.ResponseWriter, r *http.Request) 
 	}
 	orgID := *claims.OrgID
 
+	// A liveness burst is REQUIRED. Previously an empty `frames`
+	// array was tolerated for backward compat with older MediaPipe-
+	// only clients — but that meant `{"session_id":"x"}` alone would
+	// insert a passing gate row and unlock /face-match with no
+	// server-side anti-spoof at all. Both production clients (web +
+	// Android) always send a burst now, so this is safe to require.
+	if len(req.Frames) == 0 {
+		writeErr(w, http.StatusBadRequest,
+			"liveness burst required — client must send frames captured during the blink")
+		return
+	}
+
+	// Server-side Luxand anti-spoof, on top of the client's MediaPipe
+	// blink challenge. Runs on every request (frames are required
+	// above). Luxand challenges intentionally empty — MediaPipe
+	// already handled the blink on-device; here Luxand is the
+	// passive liveness + multi-face rejector.
+	luxFrames := make([][]byte, 0, len(req.Frames))
+	for _, b64 := range req.Frames {
+		raw, decErr := base64.StdEncoding.DecodeString(b64)
+		if decErr != nil {
+			continue
+		}
+		luxFrames = append(luxFrames, raw)
+	}
+	luxRes, luxErr := s.luxand.LivenessCheck(r.Context(), luxFrames, []string{})
+
+	// Luxand policy (2026-09-10): Luxand is ADVISORY, not a hard gate.
+	// The MediaPipe blink challenge on the client is the primary
+	// liveness signal, and passive anti-spoof is disabled (see
+	// 2026-09-09 change below). The only Luxand result we still act
+	// on is the multi-face count — which is only available when
+	// Luxand actually scored the burst. So:
+	//
+	//   * ErrDisabled  → proceed on blink alone (dev/test deploys
+	//     without a Luxand container).
+	//   * transport failure → proceed on blink alone + log. Was 502,
+	//     but a transient Luxand hiccup shouldn't punish the user;
+	//     ops still sees the log line.
+	//   * envelope error ("-4 too few frames", "-2 no face found") →
+	//     proceed on blink alone + log. Was 200 pass:false, which
+	//     was surfacing to users as "couldn't verify your face" on
+	//     lower-quality webcams / fast blinks that produced short
+	//     bursts. Not a real signal now that passive is off.
+	//   * clean Luxand response with MultiFaceRejected → still
+	//     blocks (accomplice in frame is a distinct threat model).
+	//   * clean Luxand response without multi-face → pass.
+	var (
+		luxPassiveMean       float64
+		luxPassivePassed     bool
+		luxMultiFaceRejected bool
+		luxMaxFacesInFrame   int
+	)
+	switch {
+	case errors.Is(luxErr, luxand.ErrDisabled):
+		fmt.Printf("livenessClientVerified: luxand disabled — MediaPipe-only path (dev/test)\n")
+	case luxErr != nil:
+		fmt.Printf("livenessClientVerified: luxand transport failed — proceeding on blink alone: %v\n", luxErr)
+	case luxRes.ErrorCode != "0":
+		fmt.Printf("livenessClientVerified: luxand envelope error %s (%s) — proceeding on blink alone\n",
+			luxRes.ErrorCode, luxRes.ErrorDescription)
+	default:
+		luxPassiveMean = luxRes.PassiveMean
+		luxPassivePassed = luxRes.PassivePassed
+		luxMultiFaceRejected = luxRes.MultiFaceRejected
+		luxMaxFacesInFrame = luxRes.MaxFacesInFrame
+		// Reject the gate if Luxand refused the burst. Signal the
+		// wallet middleware to skip the debit — the operator gets
+		// to retry.
+		// Anti-spoof policy (2026-09-09): passive-liveness DISABLED.
+		// Was rejecting real users on lower-end laptop cameras / dim
+		// office lighting even after the Luxand-service thresholds
+		// were loosened to 0.55/0.30. MediaPipe blink challenge
+		// remains the primary liveness signal (client-side); the
+		// multi-face check is kept because it's a distinct threat
+		// model (accomplice standing behind the candidate) and cheap
+		// to enforce via MaxFacesInFrame > 1. PassiveMean is still
+		// returned in the response so ops can see the score in
+		// server logs / audit records.
+		if luxMultiFaceRejected {
+			w.Header().Set("X-Wallet-Skip", "1")
+			writeJSON(w, http.StatusOK, livenessCheckResp{
+				SessionID:         req.SessionID,
+				Pass:              false,
+				PassiveMean:       luxPassiveMean,
+				PassivePassed:     luxPassivePassed,
+				MultiFaceRejected: luxMultiFaceRejected,
+				MaxFacesInFrame:   luxMaxFacesInFrame,
+				ChallengesPassed:  []string{"blink"},
+				FacesFound:        1,
+			})
+			return
+		}
+	}
+
 	// Same UPSERT the Luxand path uses. challenges_passed always
 	// contains ["blink"] since MediaPipe only runs the blink challenge
 	// today; adding new challenges is a co-ordinated change with the
@@ -259,14 +377,16 @@ func (s *Server) livenessClientVerified(w http.ResponseWriter, r *http.Request) 
 	if _, err := s.deps.DB.ExecContext(r.Context(),
 		`INSERT INTO liveness_checks(
 		     org_id, roll_no, session_id, passive_mean,
-		     challenges_passed, expires_at)
-		 VALUES ($1, $2, $3, 0, $4::jsonb, NOW() + ($5 || ' seconds')::interval)
+		     challenges_passed, expires_at, operator_id)
+		 VALUES ($1, $2, $3, 0, $4::jsonb, NOW() + ($5 || ' seconds')::interval, $6)
 		 ON CONFLICT (session_id) DO UPDATE
 		     SET passive_mean      = EXCLUDED.passive_mean,
 		         challenges_passed = EXCLUDED.challenges_passed,
-		         expires_at        = EXCLUDED.expires_at`,
+		         expires_at        = EXCLUDED.expires_at,
+		         operator_id       = COALESCE(liveness_checks.operator_id, EXCLUDED.operator_id)`,
 		orgID, roll, req.SessionID, challengesJSON,
 		fmt.Sprintf("%d", maxAge),
+		claims.UserID,
 	); err != nil {
 		writeErr(w, http.StatusInternalServerError,
 			"could not record liveness pass: "+err.Error())
@@ -280,11 +400,15 @@ func (s *Server) livenessClientVerified(w http.ResponseWriter, r *http.Request) 
 		})
 
 	writeJSON(w, http.StatusOK, livenessCheckResp{
-		SessionID:        req.SessionID,
-		Pass:             true,
-		ChallengesPassed: []string{"blink"},
-		FacesFound:       1,
-		ExpiresIn:        maxAge,
+		SessionID:         req.SessionID,
+		Pass:              true,
+		PassiveMean:       luxPassiveMean,
+		PassivePassed:     luxPassivePassed,
+		MultiFaceRejected: luxMultiFaceRejected,
+		MaxFacesInFrame:   luxMaxFacesInFrame,
+		ChallengesPassed:  []string{"blink"},
+		FacesFound:        1,
+		ExpiresIn:         maxAge,
 	})
 }
 

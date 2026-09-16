@@ -33,6 +33,8 @@ import ReviewerKycInbox from './pages/reviewer/KycInbox.jsx'
 import ReviewerExams from './pages/reviewer/Exams.jsx'
 import ReviewerExamDetail from './pages/reviewer/ExamDetail.jsx'
 import ReviewerHistory from './pages/reviewer/History.jsx'
+import ReviewerExamApproval from './pages/reviewer/ExamApproval.jsx'
+import ReviewerAgents from './pages/reviewer/Agents.jsx'
 
 import Register from './pages/register/Register.jsx'
 import SetPassword from './pages/register/SetPassword.jsx'
@@ -266,6 +268,22 @@ function RoutesTree() {
             element={
               <RequireRole role="client_reviewer">
                 <ReviewerApplicationDetail />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/reviewer/exam-approval"
+            element={
+              <RequireRole role="client_reviewer">
+                <ReviewerExamApproval />
+              </RequireRole>
+            }
+          />
+          <Route
+            path="/reviewer/agents"
+            element={
+              <RequireRole role="client_reviewer">
+                <ReviewerAgents />
               </RequireRole>
             }
           />

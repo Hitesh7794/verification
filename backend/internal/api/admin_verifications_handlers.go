@@ -99,12 +99,13 @@ type verificationRow struct {
 // where debits went when an operator closed the tab or hit Start Over
 // after the liveness step (see /api/admin/verifications/pending).
 type pendingLivenessRow struct {
-	ID         int64  `json:"id"`         // liveness_checks.id (namespaced separately from verifications.id)
-	RollNo     string `json:"roll_no"`
-	Status     string `json:"status"`     // always "abandoned"
-	CenterName string `json:"center_name"` // exam name (name (code)) — same shape as verifications row
-	CreatedAt  string `json:"created_at"`
-	SessionID  string `json:"session_id"` // idempotency_key that the missing verification would have used
+	ID           int64  `json:"id"`         // liveness_checks.id (namespaced separately from verifications.id)
+	RollNo       string `json:"roll_no"`
+	Status       string `json:"status"`     // always "abandoned"
+	CenterName   string `json:"center_name"` // exam name (name (code)) — same shape as verifications row
+	CreatedAt    string `json:"created_at"`
+	SessionID    string `json:"session_id"` // idempotency_key that the missing verification would have used
+	OperatorName string `json:"operator_name,omitempty"` // display_name of the operator who ran liveness; empty for pre-V29 rows
 }
 
 // GET /api/admin/verifications
@@ -263,17 +264,23 @@ func floatPtrToString(p *float64) string {
 
 // GET /api/admin/verifications/pending
 //
-// Returns liveness_checks rows whose session_id never appeared as an
-// idempotency_key on any verifications row. These are the flows where
-// the operator abandoned mid-verification AFTER the wallet already
-// debited on liveness pass — the money left the org's balance but the
-// admin sees nothing in the standard history listing.
+// Returns one row per wallet debit whose associated liveness session
+// never produced a saved verification. Grouped by wallet_transactions,
+// not liveness_checks — because multiple retakes within a single
+// session_id upsert the same liveness_checks row while still debiting
+// on each POST. The old query grouped by liveness row and hid the
+// retake debits from the admin's audit trail (2026-09-15 fix).
 //
-// Surfaces enough context for the admin to reconcile: roll number,
-// exam name, and when the abandoned attempt happened. No operator
-// column because liveness_checks doesn't store operator_id (added
-// 2026-08 for a face-match idempotency gate, not for audit); adding
-// that would need a schema migration + backfill.
+// Correlation:
+//   * charge → operator's most recent liveness_checks row for the same
+//     (org, roll, operator) at-or-immediately-before the charge time
+//     (5 s grace window absorbs UPSERT ordering).
+//   * that liveness row's session_id → any saved verifications row
+//     via verifications.idempotency_key.
+//   * charge is "abandoned" iff no such verification exists. Charges
+//     that DID lead to a verification are surfaced by
+//     /admin/verifications instead — never both, so history stays
+//     debit-count-accurate.
 //
 // Scope: same as adminListVerifications — admin sees own org only,
 // superadmin sees all (or optionally ?org_id=N).
@@ -284,47 +291,65 @@ func floatPtrToString(p *float64) string {
 // a shift. Admin can narrow date range to see older ones.
 func (s *Server) adminListPendingVerifications(w http.ResponseWriter, r *http.Request) {
 	c := claimsFrom(r)
-	where := " WHERE v.id IS NULL"
+	where := " WHERE wt.kind = 'charge'" +
+		" AND wt.related_roll IS NOT NULL" +
+		" AND wt.related_roll <> ''" +
+		" AND v.id IS NULL"
 	var args []any
 	if c.Role == "admin" && c.OrgID != nil {
-		where += " AND lc.org_id = ?"
+		where += " AND wt.org_id = ?"
 		args = append(args, *c.OrgID)
 	} else if c.Role == "superadmin" {
 		if v := strings.TrimSpace(r.URL.Query().Get("org_id")); v != "" {
 			if n, err := strconv.ParseInt(v, 10, 64); err == nil && n > 0 {
-				where += " AND lc.org_id = ?"
+				where += " AND wt.org_id = ?"
 				args = append(args, n)
 			}
 		}
 	}
 	q := r.URL.Query()
 	if roll := strings.TrimSpace(q.Get("roll")); roll != "" {
-		where += " AND lc.roll_no = ?"
+		where += " AND wt.related_roll = ?"
 		args = append(args, roll)
 	}
 	if from := q.Get("from"); from != "" {
 		if t, err := time.Parse("2006-01-02", from); err == nil {
-			where += " AND lc.created_at >= ?"
+			where += " AND wt.created_at >= ?"
 			args = append(args, t)
 		}
 	}
 	if to := q.Get("to"); to != "" {
 		if t, err := time.Parse("2006-01-02", to); err == nil {
-			where += " AND lc.created_at < ?"
+			where += " AND wt.created_at < ?"
 			args = append(args, t.Add(24*time.Hour))
 		}
 	}
 	args = append(args, 100)
 
 	rows, err := s.deps.DB.QueryContext(r.Context(),
-		db.Q(`SELECT lc.id, lc.roll_no, lc.session_id, lc.created_at,
-		        COALESCE(e.name || ' (' || e.exam_code || ')', '')
-		   FROM liveness_checks lc
+		db.Q(`SELECT wt.id, wt.related_roll,
+		             COALESCE(lc.session_id, ''),
+		             wt.created_at,
+		             COALESCE(e.name || ' (' || e.exam_code || ')', ''),
+		             COALESCE(u.display_name, '')
+		   FROM wallet_transactions wt
+		   LEFT JOIN LATERAL (
+		       SELECT lc.session_id, lc.created_at
+		         FROM liveness_checks lc
+		        WHERE lc.org_id      = wt.org_id
+		          AND lc.roll_no     = wt.related_roll
+		          AND lc.operator_id = wt.actor_user_id
+		          AND lc.created_at <= wt.created_at + interval '5 seconds'
+		        ORDER BY lc.created_at DESC
+		        LIMIT 1
+		   ) lc ON true
 		   LEFT JOIN verifications v
 		          ON v.idempotency_key = lc.session_id
-		   LEFT JOIN exam_candidates ec ON ec.roll_no = lc.roll_no
+		         AND v.org_id           = wt.org_id
+		   LEFT JOIN users u ON u.id = wt.actor_user_id
+		   LEFT JOIN exam_candidates ec ON ec.roll_no = wt.related_roll
 		   LEFT JOIN exams e ON e.id = ec.exam_id`+
-			where+` ORDER BY lc.created_at DESC LIMIT ?`), args...,
+			where+` ORDER BY wt.created_at DESC LIMIT ?`), args...,
 	)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db error: "+err.Error())
@@ -337,6 +362,7 @@ func (s *Server) adminListPendingVerifications(w http.ResponseWriter, r *http.Re
 		var row pendingLivenessRow
 		if err := rows.Scan(
 			&row.ID, &row.RollNo, &row.SessionID, &row.CreatedAt, &row.CenterName,
+			&row.OperatorName,
 		); err != nil {
 			writeErr(w, http.StatusInternalServerError, "scan: "+err.Error())
 			return
