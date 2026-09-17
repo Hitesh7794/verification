@@ -337,12 +337,15 @@ export default function AdminHistory() {
                     return tb - ta
                   })
                   if (merged.length === 0 && !loading) {
+                    const filtersActive = Object.values(appliedFilters).some((v) => v)
                     return (
                       <tr>
                         <td colSpan={7} className="py-10">
                           <EmptyState
-                            title="No verifications match"
-                            body="Try widening the date range or clearing filters."
+                            title={filtersActive ? 'No verifications match' : 'No verification history yet'}
+                            body={filtersActive
+                              ? 'Try widening the date range or clearing filters.'
+                              : 'Completed verifications will appear here once your agents start running them.'}
                           />
                         </td>
                       </tr>

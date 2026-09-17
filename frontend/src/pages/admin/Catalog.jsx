@@ -102,7 +102,7 @@ export default function Catalog() {
         <PageHead
           eyebrow="Catalog"
           title="Exam catalog"
-          subtitle="Every open exam on the platform. Click Request access to ask the client's reviewer to add an exam to your subscriptions. They'll approve or reject the request; you'll get an email either way."
+          subtitle="Open exams available under the client(s) that have approved your institution. Click Request access to ask the client's reviewer to add an exam to your subscriptions. They'll approve or reject the request; you'll get an email either way."
         />
         {err && (
           <div role="alert" className="mb-4 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">

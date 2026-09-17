@@ -20,6 +20,7 @@ export default function SetPassword() {
   const [password, setPw] = useState('')
   const [confirm, setConfirm] = useState('')
   const [showPw, setShowPw] = useState(false)
+  const [showConfirm, setShowConfirm] = useState(false)
   const [err, setErr] = useState('')
 
   useEffect(() => {
@@ -157,12 +158,23 @@ export default function SetPassword() {
 
                 <div>
                   <Label>Confirm new password</Label>
-                  <Input
-                    type={showPw ? 'text' : 'password'}
-                    value={confirm}
-                    onChange={(e) => setConfirm(e.target.value)}
-                    required
-                  />
+                  <div className="relative">
+                    <Input
+                      type={showConfirm ? 'text' : 'password'}
+                      value={confirm}
+                      onChange={(e) => setConfirm(e.target.value)}
+                      required
+                      className="pr-10"
+                    />
+                    <button
+                      type="button"
+                      onClick={() => setShowConfirm((v) => !v)}
+                      className="absolute inset-y-0 right-0 px-3 flex items-center text-slate-400 hover:text-slate-600"
+                      aria-label={showConfirm ? 'Hide password' : 'Show password'}
+                    >
+                      <Icon.Eye className="h-4 w-4" />
+                    </button>
+                  </div>
                 </div>
 
                 {err && (

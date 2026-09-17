@@ -222,9 +222,16 @@ const FIELD_RULES = {
     form?.affiliation_body === 'Other' && !v.trim() ? 'Please specify' : undefined,
   approx_student_count: (v, form) => {
     if (form?.institution_type === 'other') return undefined
-    const n = Number(v)
-    if (!v || !n) return 'Required'
-    return n < 1 || n > 10_000_000 ? 'Must be a positive number' : undefined
+    const s = String(v ?? '').trim()
+    if (!s) return 'Required'
+    // Whole positive integer only — a headcount can't be 10.6 or -1.
+    // /^[0-9]+$/ blocks decimals, negatives, exponents, plus / minus
+    // signs, and any stray non-digits that the type=number input can
+    // still accept (Firefox lets you type "e", "-", ".").
+    if (!/^[0-9]+$/.test(s)) return 'Must be a whole number (no decimals)'
+    const n = Number(s)
+    if (n < 1 || n > 10_000_000) return 'Must be between 1 and 10,000,000'
+    return undefined
   },
   address_line1: (v) => {
     const s = (v || '').trim()
@@ -257,8 +264,25 @@ const FIELD_RULES = {
     if (zone && s[0] !== zone) return 'Invalid PIN code'
     return undefined
   },
-  head_name: (v, form) =>
-    v.trim().length < 2 ? (form?.institution_type === 'other' ? 'Nodal officer name required' : 'Required') : undefined,
+  head_name: (v, form) => {
+    const s = (v || '').trim()
+    if (s.length < 2) {
+      return form?.institution_type === 'other' ? 'Nodal officer name required' : 'Required'
+    }
+    if (s.length > 120) return 'Maximum 120 characters allowed'
+    // Real-world names: letters (incl. Unicode letters for non-Latin
+    // scripts), spaces, hyphens, apostrophes, periods (for initials
+    // like "Dr. A. P. J. Kalam"). Digits and other punctuation are
+    // rejected — a name field must not accept "09876545678908765".
+    // \p{L} = any Unicode letter; \p{M} = combining marks (for
+    // scripts like Devanagari that stack).
+    if (!/^[\p{L}\p{M}][\p{L}\p{M}\s'.\-]*$/u.test(s)) {
+      return 'Only letters, spaces, hyphens and apostrophes allowed'
+    }
+    // Must contain at least one letter — "..." or " - " alone shouldn't pass.
+    if (!/\p{L}/u.test(s)) return 'Name must contain letters'
+    return undefined
+  },
   head_email: (v) =>
     /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(v.trim()) ? undefined : 'Invalid email',
   head_mobile: (v) => {
@@ -1134,11 +1158,18 @@ function Step0({ form, errors, update, onBlurField, onNext, onTypeSelect, checki
               error={errors.approx_student_count}
             >
               <Input
-                type="number"
+                type="text"
+                inputMode="numeric"
+                pattern="[0-9]*"
                 value={form.approx_student_count}
-                onChange={(e) => update('approx_student_count', e.target.value)}
+                // Strip anything that isn't a digit BEFORE it hits state
+                // — dot, minus, "e", spaces, alphabetics — so the field
+                // physically cannot show a decimal like 10.6 even if the
+                // user pastes one. Backup enforcement in the validator.
+                onChange={(e) => update('approx_student_count', e.target.value.replace(/\D/g, ''))}
                 onBlur={() => onBlurField('approx_student_count')}
                 placeholder="500"
+                maxLength={8}
               />
             </Field>
           )}
@@ -1661,6 +1692,7 @@ function Step1({
               value={form.head_name}
               onChange={(e) => update('head_name', e.target.value)}
               onBlur={() => onBlurField('head_name')}
+              maxLength={120}
               placeholder={isRecruiter ? 'e.g. Shri Rajesh Verma' : 'Dr. Rajesh Kumar'}
             />
           </Field>

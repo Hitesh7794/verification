@@ -2,19 +2,31 @@
 // City list = all district headquarters + major municipal cities/well-known
 // towns for that state. If an institute's city is missing, add it here.
 
+// All 28 states + 8 UTs interleaved in strict A–Z order — the earlier
+// list split states first, UTs after, which made the dropdown "restart"
+// alphabetically halfway down (West Bengal → Andaman and Nicobar
+// Islands). Locale-agnostic alphabetical order is what the dropdown
+// consumer expects.
 export const INDIAN_STATES = [
+  'Andaman and Nicobar Islands',
   'Andhra Pradesh',
   'Arunachal Pradesh',
   'Assam',
   'Bihar',
+  'Chandigarh',
   'Chhattisgarh',
+  'Dadra and Nagar Haveli and Daman and Diu',
+  'Delhi',
   'Goa',
   'Gujarat',
   'Haryana',
   'Himachal Pradesh',
+  'Jammu and Kashmir',
   'Jharkhand',
   'Karnataka',
   'Kerala',
+  'Ladakh',
+  'Lakshadweep',
   'Madhya Pradesh',
   'Maharashtra',
   'Manipur',
@@ -22,6 +34,7 @@ export const INDIAN_STATES = [
   'Mizoram',
   'Nagaland',
   'Odisha',
+  'Puducherry',
   'Punjab',
   'Rajasthan',
   'Sikkim',
@@ -31,14 +44,6 @@ export const INDIAN_STATES = [
   'Uttar Pradesh',
   'Uttarakhand',
   'West Bengal',
-  'Andaman and Nicobar Islands',
-  'Chandigarh',
-  'Dadra and Nagar Haveli and Daman and Diu',
-  'Delhi',
-  'Jammu and Kashmir',
-  'Ladakh',
-  'Lakshadweep',
-  'Puducherry',
 ]
 
 // India Post PIN-code first-digit zone → set of Indian states / UTs

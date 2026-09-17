@@ -164,7 +164,7 @@ function TodayTile({ today, verified, denied, loaded, delay = 0 }) {
         {loaded ? <CountUp value={today} /> : <span className="text-stone-300">—</span>}
       </p>
       <div className="mt-2 flex items-center gap-2.5 text-[11px] text-stone-500">
-        <span className="tabular-nums"><span className="text-emerald-700 font-semibold">{nf.format(verified)}</span> ok</span>
+        <span className="tabular-nums"><span className="text-emerald-700 font-semibold">{nf.format(verified)}</span> verified</span>
         <span className="text-stone-300">·</span>
         <span className="tabular-nums"><span className="text-rose-700 font-semibold">{nf.format(denied)}</span> denied</span>
       </div>

@@ -751,12 +751,12 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
         {!isEdit && (
           <div>
             <Label>Username</Label>
-            <Input value={username} onChange={(e) => setUsername(e.target.value)} required autoFocus minLength={3} />
+            <Input value={username} onChange={(e) => setUsername(e.target.value)} required autoFocus minLength={3} maxLength={60} />
           </div>
         )}
         <div>
           <Label>Display name</Label>
-          <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} />
+          <Input value={displayName} onChange={(e) => setDisplayName(e.target.value)} maxLength={150} />
         </div>
         <div>
           <Label>Email</Label>
@@ -767,6 +767,7 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
             placeholder="agent@college.edu"
             required
             autoComplete="email"
+            maxLength={254}
           />
         </div>
         <div>
@@ -802,6 +803,7 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
               onChange={(e) => setPassword(e.target.value)}
               required={!isEdit}
               minLength={10}
+              maxLength={128}
               autoComplete="new-password"
               className="pr-10"
             />

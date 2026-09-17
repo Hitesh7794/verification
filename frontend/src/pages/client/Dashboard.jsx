@@ -840,7 +840,24 @@ export default function ClientDashboard() {
       try {
         const frames = await grabLiveVideoBurst()
         if (!frames.length) throw new Error('Could not read camera frames')
-        await postLivenessClientVerified(candidate.roll_no, idempotencyKey, frames)
+        const resp = await postLivenessClientVerified(candidate.roll_no, idempotencyKey, frames)
+        // A 200 with pass:false means the server accepted the payload
+        // but Luxand rejected it (today: multi-face). No liveness_checks
+        // row was written and no wallet debit fired, so the face-match
+        // 412 that follows is misleading — treat it as a liveness fail
+        // with a specific message so the sidebar and error text agree.
+        if (resp?.pass === false) {
+          const msg = resp?.multi_face_rejected
+            ? 'Multiple faces detected — only the candidate can be visible in frame. Please move others out of view and retry.'
+            : 'Liveness check did not pass. Please retry.'
+          setLivenessError(msg)
+          setLivenessPassing(false)
+          setLivenessPassed(false)
+          setLivenessOK(false)
+          setLivenessArmed(false)
+          refreshWallet()
+          return
+        }
         // Gate row is written server-side — liveness itself has cleared
         // even if the face-match below misses. Refresh the wallet
         // right away because the backend's wallet middleware debits
@@ -1637,22 +1654,50 @@ export default function ClientDashboard() {
                       </div>
                     </div>
 
-                    {/* Captured Live Photo OR Awaiting Capture Viewport */}
-                    {snap ? (
-                      <div className="rounded-lg overflow-hidden border-2 border-[#0F6B45] bg-slate-100 aspect-[4/5] relative flex items-center justify-center shadow-2xs animate-surface-in">
-                        <img
-                          src={snap}
-                          alt="Captured Candidate"
-                          className="w-full h-full object-cover contrast-105"
-                        />
-                        <div className="absolute bottom-0 inset-x-0 bg-[#0F6B45] text-white text-[9px] font-semibold py-0.5 text-center flex items-center justify-center gap-1 tracking-wider">
-                          <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3">
-                            <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
-                          </svg>
-                          CAPTURED
+                    {/* Tile paint mirrors the verdict — a captured photo
+                        alone is not proof of match. */}
+                    {snap ? (() => {
+                      const facePassed = faceResult?.ok === true
+                      const faceFailed = faceResult?.ok === false
+                      const border = facePassed
+                        ? 'border-[#0F6B45]'
+                        : faceFailed
+                        ? 'border-[#DC2626]'
+                        : 'border-[#0B4F8F]'
+                      const bar = facePassed
+                        ? 'bg-[#0F6B45]'
+                        : faceFailed
+                        ? 'bg-[#DC2626]'
+                        : 'bg-[#0B4F8F]'
+                      return (
+                        <div className={`rounded-lg overflow-hidden border-2 ${border} bg-slate-100 aspect-[4/5] relative flex items-center justify-center shadow-2xs animate-surface-in`}>
+                          <img
+                            src={snap}
+                            alt="Captured Candidate"
+                            className="w-full h-full object-cover contrast-105"
+                          />
+                          <div className={`absolute bottom-0 inset-x-0 ${bar} text-white text-[9px] font-semibold py-0.5 text-center flex items-center justify-center gap-1 tracking-wider`}>
+                            {facePassed ? (
+                              <>
+                                <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M5 13l4 4L19 7" />
+                                </svg>
+                                CAPTURED
+                              </>
+                            ) : faceFailed ? (
+                              <>
+                                <svg className="w-2.5 h-2.5 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24" strokeWidth="3">
+                                  <path strokeLinecap="round" strokeLinejoin="round" d="M6 18L18 6M6 6l12 12" />
+                                </svg>
+                                NOT MATCHED
+                              </>
+                            ) : (
+                              <>CAPTURED</>
+                            )}
+                          </div>
                         </div>
-                      </div>
-                    ) : (
+                      )
+                    })() : (
                       <div className="rounded-lg border-2 border-dashed border-[#83B3E9]/70 bg-[#EEF5FD]/40 aspect-[4/5] relative flex flex-col items-center justify-center text-center p-2.5 transition-all">
                         <div className="w-10 h-10 rounded-full bg-white border border-[#83B3E9] flex items-center justify-center text-[#0B4F8F] mb-1.5 shadow-2xs">
                           <svg className="w-5 h-5 text-[#0B4F8F] animate-pulse" fill="none" stroke="currentColor" viewBox="0 0 24 24">
