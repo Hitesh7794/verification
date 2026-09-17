@@ -57,16 +57,17 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	// the email side of the OR to match.
 	identifier := strings.TrimSpace(req.Username)
 	emailLower := strings.ToLower(identifier)
+	var activatedAt sql.NullTime
 	err := s.deps.DB.QueryRowContext(r.Context(), db.Q(
 		`SELECT id, password_hash, role, org_id, client_id, display_name,
-		        disabled_at, password_change_required, username
+		        disabled_at, password_change_required, username, activated_at
 		   FROM users
 		  WHERE username = ?
 		     OR (email = ? AND role IN ('admin','client','client_reviewer'))
 		  LIMIT 1`),
 		identifier, emailLower,
 	).Scan(&id, &passHash, &role, &orgID, &clientID, &displayName,
-		&disabledAt, &passChangeReq, &actualUsername)
+		&disabledAt, &passChangeReq, &actualUsername, &activatedAt)
 	if err == sql.ErrNoRows {
 		s.auditAnonymous(r, "login.failure", map[string]any{
 			"username": req.Username, "reason": "unknown_user",
@@ -93,6 +94,19 @@ func (s *Server) login(w http.ResponseWriter, r *http.Request) {
 	// blocked, not that their credentials are wrong.
 	if disabledAt.Valid {
 		writeErr(w, http.StatusForbidden, "account disabled — contact your administrator")
+		return
+	}
+	// Fixed 2026-09-17. Admin accounts provisioned via KYC approval
+	// are seeded with an unusable placeholder password_hash and are
+	// only meant to log in after the applicant activates via the
+	// magic link (which stamps activated_at). Without this check, a
+	// leaked / derived placeholder would authenticate. Superadmin +
+	// client (operators, admin-created with a real password) + client_reviewer
+	// (created with a real password and activated_at pre-stamped) are
+	// exempt: their password_hash is always a genuine credential.
+	if role == "admin" && !activatedAt.Valid {
+		writeErr(w, http.StatusForbidden,
+			"account not activated yet — check your email for the activation link, or ask the platform team to resend it")
 		return
 	}
 

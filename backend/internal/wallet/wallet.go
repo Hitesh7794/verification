@@ -42,6 +42,14 @@ var (
 	// internally (to make the ledger easy) but callers shouldn't pass
 	// negative or zero amounts.
 	ErrInvalidAmount = errors.New("wallet: amount must be > 0")
+
+	// ErrCapExceeded: the operator's personal spending_cap_paise would
+	// be exceeded by this debit. Enforced INSIDE the debit transaction
+	// (in the UPDATE users ... SET spent_paise clause) so two concurrent
+	// debits can't both slip past the middleware's pre-check with a
+	// stale spent value and blow past the cap. HTTP handler maps this
+	// to 402 with the same shape the middleware's own pre-check emits.
+	ErrCapExceeded = errors.New("wallet: operator spending cap exceeded")
 )
 
 // Kind enumerates the transaction types. The DB CHECK constraint enforces
@@ -257,12 +265,56 @@ func (s *Store) Debit(ctx context.Context, orgID, actorUserID int64, amountPaise
 	// personal actor" — skip the bump in that case. UPDATE ... WHERE id
 	// = ? affecting 0 rows (deleted user) is a no-op, not an error,
 	// which is intentional.
+	//
+	// Fixed 2026-09-17. The cap check is now folded into the UPDATE's
+	// WHERE clause: the increment lands ONLY if the operator has no
+	// cap set, OR the post-increment spent would still be within the
+	// cap. Two concurrent debits that both passed the middleware's
+	// pre-check on stale `spent` will race here — one wins, the other
+	// gets RowsAffected == 0 and we bubble ErrCapExceeded so the whole
+	// tx rolls back and the operator sees the same 402 message.
+	//
+	// The row-not-found case (deleted user) still needs to be a no-op,
+	// not a rollback — hence the extra "row exists but declined" branch
+	// that runs when RowsAffected == 0.
 	if actorUserID != 0 {
-		if _, err := tx.ExecContext(ctx,
-			db.Q(`UPDATE users SET spent_paise = spent_paise + $1 WHERE id = $2`),
+		res, err := tx.ExecContext(ctx,
+			db.Q(`UPDATE users
+			         SET spent_paise = spent_paise + $1
+			       WHERE id = $2
+			         AND (spending_cap_paise IS NULL
+			              OR spent_paise + $1 <= spending_cap_paise)`),
 			amountPaise, actorUserID,
-		); err != nil {
+		)
+		if err != nil {
 			return Transaction{}, fmt.Errorf("bump spent_paise: %w", err)
+		}
+		affected, err := res.RowsAffected()
+		if err != nil {
+			return Transaction{}, fmt.Errorf("bump spent_paise rows: %w", err)
+		}
+		if affected == 0 {
+			// Distinguish "user row absent (deleted)" — legitimate no-op —
+			// from "cap would be exceeded" — hard fail. A separate
+			// SELECT inside the same tx snapshots the operator's cap
+			// state at commit isolation.
+			var (
+				exists sql.NullInt64
+				cap    sql.NullInt64
+				spent  sql.NullInt64
+			)
+			if err := tx.QueryRowContext(ctx,
+				db.Q(`SELECT id, spending_cap_paise, spent_paise
+				         FROM users WHERE id = $1`),
+				actorUserID,
+			).Scan(&exists, &cap, &spent); err != nil && !errors.Is(err, sql.ErrNoRows) {
+				return Transaction{}, fmt.Errorf("bump spent_paise recheck: %w", err)
+			}
+			if exists.Valid && cap.Valid {
+				return Transaction{}, ErrCapExceeded
+			}
+			// exists.Valid==false → deleted user, treat as no-op and
+			// continue (matches the pre-fix behaviour).
 		}
 	}
 

@@ -202,6 +202,16 @@ func (s *Server) livenessCheck(w http.ResponseWriter, r *http.Request) {
 		if resp.ExpiresIn <= 0 {
 			resp.ExpiresIn = 90
 		}
+	} else {
+		// Fixed 2026-09-17. `res.AllPassed == false` with a clean
+		// (ErrorCode == "0") Luxand envelope used to fall through here
+		// with NO X-Wallet-Skip header, which meant the walletCharge
+		// middleware debited ₹1 for a failed liveness challenge (too
+		// few blinks, passive below threshold, multi-face). Only the
+		// envelope-error branch above set the skip. Uniform skip on
+		// every pass:false path — the wallet only pays for a gate
+		// row actually being written.
+		w.Header().Set("X-Wallet-Skip", "1")
 	}
 	writeJSON(w, http.StatusOK, resp)
 }

@@ -470,6 +470,18 @@ func (s *Server) createVerification(w http.ResponseWriter, r *http.Request) {
 // final key. Runs in its own goroutine (called async by the
 // createVerification handler).
 func (s *Server) promoteCaptureBlobs(req verifyReq, verifID, operatorID int64) {
+	// Panic guard — a nil-deref / bounds / DB-driver panic inside this
+	// background goroutine would take the whole portal-server process
+	// down. chi.Recoverer only wraps HTTP handlers, not goroutines the
+	// handlers spawn. Fixed 2026-09-17. Log the recovery so ops sees
+	// the panic instead of it disappearing silently.
+	defer func() {
+		if rec := recover(); rec != nil {
+			log.Printf("promoteCaptureBlobs panic: verif_id=%d operator_id=%d idem=%q recover=%v",
+				verifID, operatorID, req.IdempotencyKey, rec)
+		}
+	}()
+
 	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second)
 	defer cancel()
 

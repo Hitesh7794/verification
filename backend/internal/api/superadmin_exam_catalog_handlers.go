@@ -164,14 +164,28 @@ func (s *Server) superadminCreateClient(w http.ResponseWriter, r *http.Request) 
 }
 
 func (s *Server) superadminListClients(w http.ResponseWriter, r *http.Request) {
+	// Reviewers may only see their own client row. Fixed 2026-09-17 —
+	// the old query returned every client to every reviewer.
+	where := ""
+	args := []any{}
+	claims := claimsFrom(r)
+	if claims != nil && claims.Role == "client_reviewer" {
+		scope, ok := s.clientReviewerScope(r)
+		if !ok {
+			writeErr(w, http.StatusForbidden, "client reviewer scope required")
+			return
+		}
+		where = " WHERE c.id = ?"
+		args = append(args, scope)
+	}
 	rows, err := s.deps.DB.QueryContext(r.Context(), db.Q(`
 		SELECT c.id, c.name, COALESCE(c.notes,''),
 		       c.visible, c.closed, c.portal_enabled, c.kyc_review_mode,
 		       c.closed_at, c.created_at, c.updated_at,
 		       (SELECT COUNT(*) FROM exams e WHERE e.client_id = c.id) AS exam_count,
 		       (SELECT COUNT(*) FROM exams e WHERE e.client_id = c.id AND e.closed = 0) AS active_exam_count
-		FROM clients c
-		ORDER BY c.created_at DESC`))
+		FROM clients c`+where+`
+		ORDER BY c.created_at DESC LIMIT 500`), args...)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "db read: "+err.Error())
 		return
@@ -204,6 +218,10 @@ func (s *Server) superadminGetClient(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusBadRequest, "bad id")
 		return
 	}
+	if !s.assertScopedClient(r, id) {
+		writeErr(w, http.StatusNotFound, "client not found")
+		return
+	}
 	c, err := s.loadClient(r.Context(), id)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -231,6 +249,10 @@ func (s *Server) superadminPatchClient(w http.ResponseWriter, r *http.Request) {
 	id, err := parseInt64(chi.URLParam(r, "id"))
 	if err != nil {
 		writeErr(w, http.StatusBadRequest, "bad id")
+		return
+	}
+	if !s.assertScopedClient(r, id) {
+		writeErr(w, http.StatusNotFound, "client not found")
 		return
 	}
 	var req patchClientReq
@@ -376,27 +398,27 @@ func (s *Server) resolveExamCreateClientID(r *http.Request) (int64, int, string)
 	}
 	paramIDStr := chi.URLParam(r, "id")
 	if claims.Role == "client_reviewer" {
-		clientID, ok := s.clientReviewerScope(r)
-		if ok && clientID > 0 {
-			if paramIDStr != "" {
-				paramID, err := parseInt64(paramIDStr)
-				if err == nil && paramID > 0 {
-					return paramID, 0, ""
-				}
-			}
-			return clientID, 0, ""
+		// Fixed 2026-09-17. Previously the URL param was returned
+		// verbatim on top of a resolved scope, letting a reviewer for
+		// client A create exams under client B by choosing the URL.
+		// The fallback branch also did `SELECT id FROM clients ORDER
+		// BY id ASC LIMIT 1` — an arbitrary client. Both paths are
+		// gone; reviewer scope is now the only source of truth and a
+		// URL param that disagrees is a 403.
+		scope, ok := s.clientReviewerScope(r)
+		if !ok || scope <= 0 {
+			return 0, http.StatusForbidden, "client reviewer scope required"
 		}
 		if paramIDStr != "" {
 			paramID, err := parseInt64(paramIDStr)
-			if err == nil && paramID > 0 {
-				return paramID, 0, ""
+			if err != nil || paramID <= 0 {
+				return 0, http.StatusBadRequest, "bad client id"
+			}
+			if paramID != scope {
+				return 0, http.StatusForbidden, "client mismatch"
 			}
 		}
-		var firstCID int64
-		if err := s.deps.DB.QueryRowContext(r.Context(), "SELECT id FROM clients ORDER BY id ASC LIMIT 1").Scan(&firstCID); err == nil {
-			return firstCID, 0, ""
-		}
-		return 0, http.StatusBadRequest, "no client found"
+		return scope, 0, ""
 	}
 	if claims.Role == "superadmin" {
 		if paramIDStr == "" {
@@ -850,16 +872,51 @@ func (s *Server) superadminBulkCreateExamsCSV(w http.ResponseWriter, r *http.Req
 	})
 }
 
-// checkExamScope checks if the caller (superadmin or client_reviewer) has access to examID.
+// assertScopedClient answers the question "may this caller act on
+// clientID?". Superadmin can act on any client; a client_reviewer must
+// be scoped to that exact client. Anyone else is refused.
+//
+// Fixed 2026-09-17 — previously the reviewer path returned `true`
+// unconditionally, which meant reviewer JWTs could read/write every
+// client and every exam in the DB.
+func (s *Server) assertScopedClient(r *http.Request, clientID int64) bool {
+	claims := claimsFrom(r)
+	if claims == nil || clientID <= 0 {
+		return false
+	}
+	if claims.Role == "superadmin" {
+		return true
+	}
+	if claims.Role == "client_reviewer" {
+		scope, ok := s.clientReviewerScope(r)
+		return ok && scope == clientID
+	}
+	return false
+}
+
+// checkExamScope checks if the caller (superadmin or client_reviewer)
+// has access to examID. For a reviewer the exam MUST belong to the
+// reviewer's own client_id — a stale row of "return true for any
+// reviewer" is what let reviewers of client A DELETE / PATCH every
+// exam in the DB. Fixed 2026-09-17.
 func (s *Server) checkExamScope(r *http.Request, examID int64) bool {
 	claims := claimsFrom(r)
 	if claims == nil {
 		return false
 	}
-	if claims.Role == "superadmin" || claims.Role == "client_reviewer" {
+	if claims.Role == "superadmin" {
 		return true
 	}
-	return false
+	if claims.Role != "client_reviewer" {
+		return false
+	}
+	var examClientID int64
+	if err := s.deps.DB.QueryRowContext(r.Context(),
+		`SELECT client_id FROM exams WHERE id = $1`, examID,
+	).Scan(&examClientID); err != nil {
+		return false
+	}
+	return s.assertScopedClient(r, examClientID)
 }
 
 func (s *Server) superadminGetExam(w http.ResponseWriter, r *http.Request) {
@@ -1511,6 +1568,10 @@ func (s *Server) toggleFlag(w http.ResponseWriter, r *http.Request, table, col s
 		writeErr(w, http.StatusNotFound, "exam not found")
 		return
 	}
+	if table == "clients" && !s.assertScopedClient(r, id) {
+		writeErr(w, http.StatusNotFound, "client not found")
+		return
+	}
 	q := fmt.Sprintf(
 		"UPDATE %s SET %s = 1 - %s, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
 		table, col, col)
@@ -1539,6 +1600,10 @@ func (s *Server) setCloseFlag(w http.ResponseWriter, r *http.Request, table stri
 	}
 	if table == "exams" && !s.checkExamScope(r, id) {
 		writeErr(w, http.StatusNotFound, "exam not found")
+		return
+	}
+	if table == "clients" && !s.assertScopedClient(r, id) {
+		writeErr(w, http.StatusNotFound, "client not found")
 		return
 	}
 	var q string

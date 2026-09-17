@@ -10,6 +10,7 @@ package api
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -147,9 +148,19 @@ func (s *Server) provisionOrgAndAdmin(r *http.Request, appID int64, sendWelcomeE
 	// Placeholder password — applicant sets a real one via the magic
 	// link. NOT NULL on password_hash makes the placeholder necessary
 	// even though it's never a valid login credential (magic link is
-	// verified out-of-band and password gets replaced on set-password).
+	// verified out-of-band, password gets replaced on set-password,
+	// and login refuses admin accounts whose activated_at is NULL).
+	//
+	// Fixed 2026-09-17 — was `bcrypt("placeholder-" + slug(inst) + "_" + app_id)`
+	// which anyone with public knowledge of the institution name and
+	// the (sequential) app_id could compute. Now 32 cryptographic-random
+	// bytes so even a schema leak can't derive the plaintext.
 	username := slugifyUsername(instName) + "_" + strconv.FormatInt(appID, 10)
-	placeholder, err := bcrypt.GenerateFromPassword([]byte("placeholder-"+username), bcrypt.MinCost)
+	randBytes := make([]byte, 32)
+	if _, err := cryptorand.Read(randBytes); err != nil {
+		return nil, fmt.Errorf("rand: %w", err)
+	}
+	placeholder, err := bcrypt.GenerateFromPassword(randBytes, bcrypt.MinCost)
 	if err != nil {
 		return nil, fmt.Errorf("bcrypt: %w", err)
 	}

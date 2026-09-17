@@ -174,6 +174,24 @@ func (s *Server) walletCharge(next http.HandlerFunc) http.HandlerFunc {
 				buf.flush()
 				return
 			}
+			if errors.Is(err, wallet.ErrCapExceeded) {
+				// Race twin of the pre-check at line 107: two
+				// concurrent debits both passed the middleware's
+				// stale-read cap check, then raced to increment
+				// spent_paise inside wallet.Debit — the loser rolls
+				// back here. Same 402 shape the pre-check emits so
+				// the frontend surfaces the same "cap reached" copy.
+				// Fixed 2026-09-17. Response body's spent/cap fields
+				// are best-effort — we don't re-query since the tx
+				// already rolled back; the client shows the pre-check
+				// message from the wallet summary poll anyway.
+				w.Header().Set("Content-Type", "application/json")
+				w.WriteHeader(http.StatusPaymentRequired)
+				_, _ = w.Write([]byte(fmt.Sprintf(
+					`{"error":"verification agent spending cap reached; ask your admin to raise it","spent_paise":%d,"cap_paise":%d,"fee_paise":%d}`,
+					spent, cap.Int64, fee)))
+				return
+			}
 			// Genuine error path — bail before flushing so the
 			// caller sees the failure, not a stale candidate body.
 			writeErr(w, http.StatusInternalServerError, "wallet debit: "+err.Error())

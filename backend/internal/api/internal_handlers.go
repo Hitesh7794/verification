@@ -33,6 +33,7 @@ package api
 
 import (
 	"context"
+	cryptorand "crypto/rand"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -355,8 +356,19 @@ func (s *Server) internalOrgsCreate(w http.ResponseWriter, r *http.Request) {
 	// slugified name don't collide.
 	username := slugifyUsername(req.InstitutionName) + "_" + strconv.FormatInt(req.ExternalApplicationID, 10)
 	// Placeholder password — never a valid credential; the applicant
-	// sets a real one via the magic link on their first visit.
-	placeholder, err := bcrypt.GenerateFromPassword([]byte("placeholder-"+username), bcrypt.MinCost)
+	// sets a real one via the magic link on their first visit, and
+	// login refuses admin accounts whose activated_at is NULL.
+	//
+	// Fixed 2026-09-17 — was bcrypt("placeholder-" + slug(inst) + "_" + app_id),
+	// which anyone with public knowledge of the institution name and
+	// the (sequential) external app_id could derive. Now 32 crypto-
+	// random bytes.
+	randBytes := make([]byte, 32)
+	if _, err := cryptorand.Read(randBytes); err != nil {
+		writeErr(w, http.StatusInternalServerError, "rand: "+err.Error())
+		return
+	}
+	placeholder, err := bcrypt.GenerateFromPassword(randBytes, bcrypt.MinCost)
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "bcrypt: "+err.Error())
 		return
