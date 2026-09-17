@@ -70,6 +70,10 @@ export default function ReviewerExamApproval() {
         byOrg.set(key, {
           name: key,
           orgId: r.org_id,
+          city: '',
+          state: '',
+          headName: '',
+          headDesignation: '',
           pending: 0,
           approved: 0,
           rejected: 0,
@@ -77,6 +81,13 @@ export default function ReviewerExamApproval() {
         })
       }
       const g = byOrg.get(key)
+      // First non-empty wins: every request for an institute carries the
+      // same details, but a given row can have them blank when the org
+      // predates the KYC fields.
+      g.city = g.city || r.city || ''
+      g.state = g.state || r.state || ''
+      g.headName = g.headName || r.head_name || ''
+      g.headDesignation = g.headDesignation || r.head_designation || ''
       if (r.status === 'pending') g.pending++
       else if (r.status === 'approved') g.approved++
       else if (r.status === 'rejected') g.rejected++
@@ -106,7 +117,8 @@ export default function ReviewerExamApproval() {
     return institutes.filter((i) => {
       if (statusFilter === 'pending' && i.pending === 0) return false
       if (statusFilter === 'clean'   && i.pending  >  0) return false
-      if (q && !i.name.toLowerCase().includes(q)) return false
+      if (q && ![i.name, i.city, i.state, i.headName]
+        .some((v) => (v || '').toLowerCase().includes(q))) return false
       return true
     })
   }, [institutes, search, statusFilter])
@@ -285,6 +297,7 @@ export default function ReviewerExamApproval() {
       ) : (
         <div className="rounded-xl bg-white ring-1 ring-warm overflow-hidden shadow-sm">
           <div className="h-[2px] rule-gold" />
+          <InstituteListHeader />
           <ul className="divide-y divide-slate-100">
             {filteredInstitutes.map((inst) => (
               <InstituteRow
@@ -310,9 +323,42 @@ export default function ReviewerExamApproval() {
 //                   reachable but never fights the pending rows.
 // Whole row stays clickable as a large hit target; the button carries
 // the animation + affordance.
+// One row per institute, laid out as columns on a desk monitor: who,
+// where, who signs for them, when they were last active, and the
+// action. The middle of the row used to be empty — the name and a
+// one-line subtitle were the only content, so the eye had to travel the
+// whole width to reach the button with nothing to read on the way.
+//
+// The column widths live here rather than in a table because the row is
+// a single click target; RowColumns keeps the header strip above the
+// list on exactly the same grid.
+//
+// The action column is a fixed 118px rather than `auto`. With `auto` the
+// header's word and the row's button measured differently, the flexible
+// columns divided what was left differently, and every heading sat a few
+// pixels off its own column — the drift growing across the row.
+const ROW_GRID =
+  'lg:grid lg:grid-cols-[minmax(0,2.2fr)_minmax(0,1.5fr)_minmax(0,1.5fr)_minmax(0,0.9fr)_118px] lg:items-center'
+
+function InstituteListHeader() {
+  return (
+    <div className={`hidden lg:block px-4 py-2 border-b border-warm bg-[#F6F8FA]
+                     text-[11px] font-semibold uppercase tracking-wider text-slate-500`}>
+      <div className={ROW_GRID + ' gap-4'}>
+        <span className="pl-14">Institute</span>
+        <span>Location</span>
+        <span>Head of institution</span>
+        <span>Last activity</span>
+        <span className="text-right">Requests</span>
+      </div>
+    </div>
+  )
+}
+
 function InstituteRow({ inst, onOpen }) {
   const hasPending = inst.pending > 0
   const initial = (inst.name.trim().charAt(0) || '?').toUpperCase()
+  const location = [inst.city, inst.state].filter(Boolean).join(', ')
   return (
     <li>
       <div
@@ -322,7 +368,7 @@ function InstituteRow({ inst, onOpen }) {
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen() }
         }}
-        className={`group relative w-full px-4 py-3.5 flex items-center gap-4 cursor-pointer transition-colors ${
+        className={`group relative w-full px-4 py-3.5 flex items-center gap-4 cursor-pointer transition-colors ${ROW_GRID} ${
           hasPending ? 'hover:bg-amber-50/40' : 'hover:bg-stone-50'
         }`}
       >
@@ -335,61 +381,81 @@ function InstituteRow({ inst, onOpen }) {
           />
         )}
 
-        <span
-          aria-hidden="true"
-          className={`h-10 w-10 shrink-0 rounded-lg flex items-center justify-center font-display font-bold text-[14px] transition-transform group-hover:scale-[1.04] ${
-            hasPending ? 'bg-amber-100 text-amber-800' : 'bg-stone-100 text-stone-700'
-          }`}
-        >
-          {initial}
-        </span>
-
-        <div className="min-w-0 flex-1">
-          <p className="font-semibold text-slate-900 truncate">
-            {inst.name}
-          </p>
-          <p className="mt-0.5 text-[12px] text-slate-500 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-            {inst.approved > 0 && (
-              <span>
-                <span className="font-medium text-emerald-700 tabular-nums">
-                  {inst.approved}
-                </span>{' '}
-                approved
-              </span>
-            )}
-            {inst.rejected > 0 && (
-              <span>
-                <span className="font-medium text-rose-700 tabular-nums">
-                  {inst.rejected}
-                </span>{' '}
-                rejected
-              </span>
-            )}
-            {inst.latestActivity && (
-              <span className="text-slate-400">
-                · last activity {formatRelative(inst.latestActivity)}
-              </span>
-            )}
-            {inst.approved === 0 && inst.rejected === 0 && !inst.latestActivity && (
-              <span className="text-slate-400">No history yet</span>
-            )}
-          </p>
+        {/* Who */}
+        <div className="flex items-center gap-4 min-w-0">
+          <span
+            aria-hidden="true"
+            className={`h-10 w-10 shrink-0 rounded-lg flex items-center justify-center font-display font-bold text-[14px] transition-transform group-hover:scale-[1.04] ${
+              hasPending ? 'bg-amber-100 text-amber-800' : 'bg-stone-100 text-stone-700'
+            }`}
+          >
+            {initial}
+          </span>
+          <div className="min-w-0">
+            <p className="font-semibold text-slate-900 truncate">{inst.name}</p>
+            <p className="mt-0.5 text-[12px] text-slate-500 flex flex-wrap items-center gap-x-2">
+              {inst.approved > 0 && (
+                <span>
+                  <span className="font-medium text-emerald-700 tabular-nums">{inst.approved}</span>{' '}
+                  approved
+                </span>
+              )}
+              {inst.rejected > 0 && (
+                <span>
+                  <span className="font-medium text-rose-700 tabular-nums">{inst.rejected}</span>{' '}
+                  rejected
+                </span>
+              )}
+              {inst.approved === 0 && inst.rejected === 0 && (
+                <span className="text-slate-400">No decisions yet</span>
+              )}
+            </p>
+          </div>
         </div>
+
+        {/* Where */}
+        <p className="hidden lg:block min-w-0 truncate text-[13px] text-slate-700" title={location}>
+          {location || <span className="text-slate-300">—</span>}
+        </p>
+
+        {/* Who signs for them */}
+        <div className="hidden lg:block min-w-0">
+          <p className="truncate text-[13px] text-slate-700" title={inst.headName}>
+            {inst.headName || <span className="text-slate-300">—</span>}
+          </p>
+          {inst.headDesignation && (
+            <p className="truncate text-[11.5px] text-slate-400">{inst.headDesignation}</p>
+          )}
+        </div>
+
+        {/* When */}
+        <p className="hidden lg:block text-[12.5px] text-slate-500 tabular-nums">
+          {inst.latestActivity ? formatRelative(inst.latestActivity) : <span className="text-slate-300">—</span>}
+        </p>
+
+        {/* Below lg the columns collapse, so the same three facts ride
+            under the name instead of disappearing. */}
+        <p className="lg:hidden -mt-1 text-[12px] text-slate-500 truncate">
+          {[location, inst.headName, inst.latestActivity ? `last activity ${formatRelative(inst.latestActivity)}` : '']
+            .filter(Boolean).join(' · ') || 'No details on file'}
+        </p>
 
         {/* Right-hand action. onClick stops propagation so the button
             can carry its own focus/hover state without the outer row
             also flashing — but both fire the same handler, so a click
             anywhere on the row opens the drill. */}
-        {hasPending ? (
-          <PendingActionButton
-            count={inst.pending}
-            onClick={(e) => { e.stopPropagation(); onOpen() }}
-          />
-        ) : (
-          <CleanActionButton
-            onClick={(e) => { e.stopPropagation(); onOpen() }}
-          />
-        )}
+        <div className="justify-self-end">
+          {hasPending ? (
+            <PendingActionButton
+              count={inst.pending}
+              onClick={(e) => { e.stopPropagation(); onOpen() }}
+            />
+          ) : (
+            <CleanActionButton
+              onClick={(e) => { e.stopPropagation(); onOpen() }}
+            />
+          )}
+        </div>
       </div>
     </li>
   )

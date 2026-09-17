@@ -3,6 +3,7 @@ import { NavLink, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { useAuth } from '../../lib/auth.jsx'
 import { reviewerMe } from '../../lib/reviewer/api.js'
+import { getStoredToken } from '../../lib/authStorage.js'
 import ntaLogo from '../../assets/nta-logo.png'
 import emblemSvg from '../../assets/emblem.svg'
 import ReportProblem from '../support/ReportProblem.jsx'
@@ -59,6 +60,20 @@ const tabs = [
 // enough that a dozen reviewer tabs don't hammer the endpoint.
 const PORTAL_GATE_INTERVAL_MS = 15_000
 
+// ── /me cache ───────────────────────────────────────────────────────
+// Every reviewer page renders its own <ReviewerShell>, so React unmounts
+// the header and mounts a fresh one on each tab switch. With `me` starting
+// at null, the masthead fell back to its placeholder — the board lockup
+// vanished and the name read '…' — until /me came back. That reads as the
+// whole bar reloading on every click.
+//
+// Keyed on the session token rather than held bare: logout() clears the
+// stored session but cannot clear a module variable, so an unkeyed cache
+// would show one board's identity to the next reviewer who signs in on
+// the same tab. A new login mints a new token, which misses.
+let meCache = { key: '', data: null }
+const sessionKey = () => getStoredToken('reviewer')
+
 export default function ReviewerShell({ children, meOverride }) {
   return (
     <div className="min-h-full bg-warm-page">
@@ -78,7 +93,14 @@ export default function ReviewerShell({ children, meOverride }) {
 function ReviewerHeader({ meOverride }) {
   const nav = useNavigate()
   const { user, logout } = useAuth()
-  const [me, setMe] = useState(meOverride || null)
+  // Seed from the cache when the token matches, so a tab switch paints
+  // the finished masthead on its first render. The poll below still runs
+  // and still boots a revoked session; this only removes the blank frame.
+  const cacheKey = sessionKey()
+  const [me, setMe] = useState(() => {
+    if (meOverride) return meOverride
+    return cacheKey !== '' && meCache.key === cacheKey ? meCache.data : null
+  })
   const [now, setNow] = useState(() => new Date())
   const [confirmingSignOut, setConfirmingSignOut] = useState(false)
 
@@ -103,9 +125,11 @@ function ReviewerHeader({ meOverride }) {
         .then((r) => {
           if (!alive) return
           if (r && r.portal_enabled === false) {
+            meCache = { key: '', data: null }
             kick('portal_disabled')
             return
           }
+          meCache = { key: sessionKey(), data: r }
           setMe(r)
         })
         .catch((e) => {
@@ -114,6 +138,7 @@ function ReviewerHeader({ meOverride }) {
           // deleted, or JWT rejected). Boot to login with the right
           // reason so the banner reads correctly.
           if (e && (e.status === 403 || e.status === 401)) {
+            meCache = { key: '', data: null }
             const msg = String(e.message || '').toLowerCase()
             kick(msg.includes('portal') ? 'portal_disabled' : 'session_expired')
           }
@@ -135,6 +160,7 @@ function ReviewerHeader({ meOverride }) {
   }, [])
 
   function onLogout() {
+    meCache = { key: '', data: null }
     logout()
     nav('/reviewer/login', { replace: true })
   }

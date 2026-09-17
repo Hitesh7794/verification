@@ -129,7 +129,7 @@ export default function AdminShell({ children, walletRefreshKey, onWalletBalance
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-        className="mx-auto max-w-7xl px-4 sm:px-6 py-6 sm:py-8"
+        className="px-4 sm:px-6 lg:px-8 py-6 sm:py-8"
       >
         {children}
       </motion.main>
