@@ -78,7 +78,7 @@ export default function AdminTabs({ walletRefreshKey, onWalletBalanceChange }) {
           tabs + right cluster sum a hair too wide, flex-wrap lets
           the row grow taller rather than horizontally overflowing
           the page (min-h-16 instead of a fixed h-16). */}
-      <div className="mx-auto max-w-7xl px-3 sm:px-4 xl:px-6 flex flex-wrap items-center gap-x-3 gap-y-2 sm:gap-4 xl:gap-8 py-2 sm:py-0 sm:min-h-16">
+      <div className="px-3 sm:px-4 lg:px-6 flex flex-wrap items-center gap-x-3 gap-y-2 sm:gap-4 xl:gap-8 py-2 sm:py-0 sm:min-h-16">
         {/* Brand */}
         <div className="flex items-center gap-2 sm:gap-2.5 shrink-0 min-w-0">
           <BrandMark size={26} tone="inverse" />

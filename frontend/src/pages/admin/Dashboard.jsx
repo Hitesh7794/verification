@@ -4,11 +4,13 @@ import {
   ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from 'recharts'
 import { motion } from 'framer-motion'
-import { Link } from 'react-router-dom'
+import { Link, useNavigate } from 'react-router-dom'
 
 import AdminShell, { PageHead } from '../../components/shell/AdminShell.jsx'
 import { CountUp } from '../../components/shell/SuperUI.jsx'
 import { Button } from '../../components/ui/ui.jsx'
+import { Icon, StatTile } from '../../components/ui/extras.jsx'
+import { StaggerItem, StaggerList } from '../../components/ui/motion.jsx'
 import { api } from '../../lib/api.js'
 import { usePolling } from '../../lib/usePolling.js'
 import DepositModal from '../../components/wallet/DepositModal.jsx'
@@ -38,6 +40,7 @@ function fmtTime(s) {
 }
 
 export default function AdminDashboard() {
+  const nav = useNavigate()
   const [stats, setStats] = useState(null)
   const [recent, setRecent] = useState([])
   const [byCenter, setByCenter] = useState([])
@@ -98,14 +101,6 @@ export default function AdminDashboard() {
         </div>
       )}
 
-      {/* Wallet strip — admin's primary daily concern goes first */}
-      {wallet && walletCfg && (
-        <WalletStrip
-          wallet={wallet}
-          cfg={walletCfg}
-          onTopUp={() => setDepositOpen(true)}
-        />
-      )}
 
       {depositOpen && walletCfg && (
         <DepositModal
@@ -120,23 +115,53 @@ export default function AdminDashboard() {
         />
       )}
 
-      {/* KPI row — 4 compact tiles */}
-      <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-4 mb-6">
-        <TodayTile      today={today} verified={todayVerified} denied={todayDenied} loaded={loaded} delay={0} />
-        <BigStat label="Total verifications" value={total}    loaded={loaded} delay={0.05} />
-        <BigStat label="Enrolled candidates" value={enrolled} loaded={loaded} delay={0.10} />
-        <BigStat label="Subscribed exams"    value={exams}    loaded={loaded} delay={0.15}
-          onClick={() => document.getElementById('activity')?.scrollIntoView({ behavior: 'smooth' })}
-          hint="See activity ↓" />
-      </div>
+      {/* Same four figures as before, in the tile the superadmin and
+          reviewer desks use, so an institution admin, a board reviewer
+          and the platform team all read a number the same way. Three of
+          them now go somewhere: the tile is the shortest route to the
+          page that explains it. */}
+      <StaggerList className="grid gap-4 grid-cols-2 lg:grid-cols-4 mb-4">
+        <StaggerItem>
+          <StatTile
+            label="Today" value={today} accent="pending" icon={Icon.Clock}
+            hint={loaded ? `${nf.format(todayVerified)} verified · ${nf.format(todayDenied)} denied` : 'Loading…'}
+          />
+        </StaggerItem>
+        <StaggerItem>
+          <StatTile
+            label="Total verifications" value={total} accent="approved" icon={Icon.ShieldCheck}
+            hint="Open full history →"
+            onClick={() => nav('/admin/history')}
+          />
+        </StaggerItem>
+        <StaggerItem>
+          <StatTile
+            label="Enrolled candidates" value={enrolled} accent="total" icon={Icon.User}
+            hint="Across your exams"
+          />
+        </StaggerItem>
+        <StaggerItem>
+          <StatTile
+            label="Subscribed exams" value={exams} accent="total" icon={Icon.File}
+            hint="Open my exams →"
+            onClick={() => nav('/admin/my-exams')}
+          />
+        </StaggerItem>
+      </StaggerList>
 
-      {/* Trend chart — full width for one clear focus */}
-      <div className="mb-6">
+      {/* The chart is the page's focus, so it takes the width; the
+          wallet rides beside it rather than as a banner across the top,
+          because it is a standing figure to keep an eye on, not an
+          announcement to read once. */}
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_340px] xl:items-stretch mb-4">
         <TrendCard timeline={timeline} />
+        {wallet && walletCfg ? (
+          <WalletCard wallet={wallet} cfg={walletCfg} onTopUp={() => setDepositOpen(true)} />
+        ) : <div />}
       </div>
 
       {/* Two-column detail row — top exams (left) + recent (right) */}
-      <div className="grid gap-4 lg:grid-cols-2 mb-8" id="activity">
+      <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(0,1.6fr)] xl:items-stretch mb-8" id="activity">
         <TopExamsCard rows={byCenter} />
         <RecentTable recent={recent} loaded={loaded} />
       </div>
@@ -144,98 +169,74 @@ export default function AdminDashboard() {
   )
 }
 
-// ── TodayTile ────────────────────────────────────────────────────────
-// Featured tile — how many verifications happened today, split
-// verified/denied. Amber-accented label so it visually anchors as
-// "current" against the three neutral scale metrics.
-function TodayTile({ today, verified, denied, loaded, delay = 0 }) {
-  return (
-    <motion.div
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, delay, ease: [0.22, 1, 0.36, 1] }}
-      whileHover={{ y: -2 }}
-      className="flex flex-col rounded-xl border border-warm bg-warm-surface px-5 py-4 shadow-sm hover:shadow-md transition-shadow"
-    >
-      <p className="text-[10px] font-semibold uppercase tracking-widest text-slate-600 mb-1.5">
-        Today
-      </p>
-      <p className="text-2xl font-semibold text-ink-900 tracking-tight tabular-nums leading-none">
-        {loaded ? <CountUp value={today} /> : <span className="text-stone-300">—</span>}
-      </p>
-      <div className="mt-2 flex items-center gap-2.5 text-[11px] text-stone-500">
-        <span className="tabular-nums"><span className="text-emerald-700 font-semibold">{nf.format(verified)}</span> ok</span>
-        <span className="text-stone-300">·</span>
-        <span className="tabular-nums"><span className="text-rose-700 font-semibold">{nf.format(denied)}</span> denied</span>
-      </div>
-    </motion.div>
-  )
-}
-
-// ── BigStat ──────────────────────────────────────────────────────────
-// Compact scale-metric tile — small caps label on top, big number
-// below. Sized to match TodayTile's footprint so the KPI row aligns.
-function BigStat({ label, value, loaded, delay = 0, onClick, hint }) {
-  const clickable = !!onClick
-  return (
-    <motion.button
-      type={clickable ? 'button' : undefined}
-      onClick={onClick}
-      disabled={!clickable}
-      initial={{ opacity: 0, y: 12 }}
-      animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, delay, ease: [0.22, 1, 0.36, 1] }}
-      whileHover={{ y: -2 }}
-      className={`group text-left w-full flex flex-col rounded-xl border border-warm bg-warm-surface px-5 py-4 shadow-sm hover:shadow-md transition-shadow ${clickable ? 'cursor-pointer focus:outline-none focus:ring-2 focus:ring-stone-400 hover:border-warm-strong' : 'cursor-default'}`}
-    >
-      <p className="text-[10px] font-semibold uppercase tracking-widest text-stone-500 mb-1.5">
-        {label}
-      </p>
-      <p className="text-2xl font-semibold text-ink-900 tracking-tight tabular-nums leading-none">
-        {loaded ? <CountUp value={value} /> : <span className="text-stone-300">—</span>}
-      </p>
-      <p className={`mt-2 text-[11px] ${clickable ? 'font-medium text-brand-700 opacity-0 group-hover:opacity-100 transition-opacity' : 'text-stone-400 italic'}`}>
-        {clickable && hint ? hint : 'Across the platform'}
-      </p>
-    </motion.button>
-  )
-}
-
-// ── Wallet strip ─────────────────────────────────────────────────────
-function WalletStrip({ wallet, cfg, onTopUp }) {
+// ── WalletCard ───────────────────────────────────────────────────────
+// The balance, what it buys, and the way to add more — the three things
+// an institution admin checks before an exam day. It used to be a banner
+// stretched across the top of the page, which gave a standing figure the
+// weight of an announcement; as a card beside the chart it stays in view
+// without shouting.
+//
+// Same numbers as the banner had: balance, lookups remaining, fee per
+// lookup, and the low-balance warning.
+function WalletCard({ wallet, cfg, onTopUp }) {
   const balance = wallet.balance_paise || 0
   const feePerLookup = cfg.fee_per_lookup_paise || 0
   const remainingLookups = feePerLookup > 0 ? Math.floor(balance / feePerLookup) : Infinity
-  const low = balance < feePerLookup * 20
+  const low = feePerLookup > 0 && balance < feePerLookup * 20
+  // How full the bar reads: 200 lookups is treated as a comfortable
+  // float, so the bar is a sense of runway rather than a percentage of
+  // anything the server reports.
+  const runway = feePerLookup > 0 ? Math.min(1, remainingLookups / 200) : 1
   return (
     <motion.div
       initial={{ opacity: 0, y: 12 }}
       animate={{ opacity: 1, y: 0 }}
-      transition={{ duration: 0.4, delay: 0.2 }}
-      className={`mb-6 rounded-2xl border ${low ? 'border-amber-200 bg-amber-50/40' : 'border-warm bg-warm-surface'} px-6 py-5 shadow-sm flex flex-wrap items-center gap-6`}
+      transition={{ duration: 0.4, delay: 0.2, ease: [0.22, 1, 0.36, 1] }}
+      className={`flex flex-col rounded-2xl border shadow-sm overflow-hidden ${
+        low ? 'border-amber-300 bg-amber-50/50' : 'border-warm bg-warm-surface'}`}
     >
-      <div className="flex-1 min-w-0">
-        <p className="text-[11px] font-semibold uppercase tracking-widest text-slate-600 mb-2">
-          Wallet balance
-        </p>
-        <div className="flex items-baseline gap-3 flex-wrap">
-          <span className="text-3xl font-semibold text-ink-900 tabular-nums leading-none">
-            {formatRupees(balance)}
-          </span>
-          {feePerLookup > 0 && (
-            <span className="text-[11px] text-stone-500 tabular-nums">
-              ≈ <span className={low ? 'text-amber-800 font-semibold' : 'text-stone-700 font-semibold'}>{remainingLookups.toLocaleString('en-IN')}</span> lookups remaining
-              &nbsp;·&nbsp;{formatRupees(feePerLookup)} / lookup
-            </span>
-          )}
+      <div className="flex-1 px-5 py-4 flex flex-col">
+        <div className="flex items-center justify-between gap-3">
+          <p className="text-[11px] font-semibold uppercase tracking-widest text-stone-500">
+            Wallet balance
+          </p>
+          <Icon.ShieldCheck className={`h-4 w-4 ${low ? 'text-amber-600' : 'text-stone-300'}`} />
         </div>
+
+        <p className="mt-3 text-[34px] leading-none font-semibold text-ink-900 tabular-nums tracking-tight">
+          {formatRupees(balance)}
+        </p>
+
+        {feePerLookup > 0 && (
+          <>
+            <div className="mt-4 h-1.5 rounded-full bg-[#ECF0F5] overflow-hidden">
+              <motion.div
+                initial={{ width: 0 }}
+                animate={{ width: `${runway * 100}%` }}
+                transition={{ duration: 0.8, ease: [0.22, 1, 0.36, 1] }}
+                className={`h-full rounded-full ${low ? 'bg-amber-500' : 'bg-brand-500'}`}
+              />
+            </div>
+            <p className="mt-2 text-[12px] text-stone-600 tabular-nums">
+              <span className={`font-semibold ${low ? 'text-amber-800' : 'text-ink-900'}`}>
+                {remainingLookups.toLocaleString('en-IN')}
+              </span>{' '}
+              lookups remaining
+              <span className="text-stone-400"> · {formatRupees(feePerLookup)} each</span>
+            </p>
+          </>
+        )}
+
         {low && (
-          <p className="mt-2 text-[11px] text-amber-800">
-            Balance is running low — top up to keep operators uninterrupted.
+          <p className="mt-2 text-[11.5px] text-amber-800 leading-relaxed">
+            Running low — top up to keep your agents working without interruption.
           </p>
         )}
+
+        <div className="mt-auto pt-4">
+          <Button onClick={onTopUp} className="w-full justify-center">Top up</Button>
+        </div>
       </div>
-      <Button onClick={onTopUp}>Top up</Button>
     </motion.div>
   )
 }
@@ -263,7 +264,10 @@ function TrendCard({ timeline }) {
       </div>
       <div className="p-5 pt-1">
         {trend.length === 0 ? (
-          <ChartEmpty />
+          <CardEmpty
+            title="No verifications in the last 14 days"
+            body="Each day your agents verify candidates, this chart fills in — verified and denied stacked per day."
+          />
         ) : (
           <div className="h-56">
             <ResponsiveContainer>
@@ -304,21 +308,33 @@ function TopExamsCard({ rows }) {
   const top = rows.slice(0, 6)
   const busiest = Math.max(...top.map((r) => r.total || 0), 1)
   return (
-    <div className="rounded-2xl border border-warm bg-warm-surface shadow-sm overflow-hidden">
+    <div className="flex flex-col h-full rounded-2xl border border-warm bg-warm-surface shadow-sm overflow-hidden">
       <div className="px-5 pt-4 pb-3 border-b border-warm">
         <h3 className="text-[13px] font-semibold text-ink-900 tracking-tight">Top exams</h3>
         <p className="text-[11px] text-stone-500 mt-0.5">By verification volume</p>
       </div>
       {top.length === 0 ? (
-        <div className="p-5"><ChartEmpty /></div>
+        // Centred in what is left of the card, so an empty half still
+        // ends level with the table beside it.
+        <div className="flex-1 grid place-items-center">
+          <CardEmpty
+            icon={Icon.File}
+            title="No exam activity yet"
+            body="Once verifications start, your busiest exams are ranked here by volume."
+          />
+        </div>
       ) : (
-        <ul className="divide-y divide-warm">
+        // Rows keep their own height and the list sits in the middle of
+        // whatever height the row shares with the table beside it.
+        // Stretching four rows to fill the card instead put 50px of air
+        // inside each one, which reads as padding nobody chose.
+        <ul className="flex-1 flex flex-col justify-center divide-y divide-warm">
           {top.map((r, i) => {
             const share  = ((r.total || 0) / busiest) * 100
             const success = r.total ? (r.verified / r.total) * 100 : 0
             const color = SERIES[i % SERIES.length]
             return (
-              <li key={r.id} className="px-5 py-3 hover:bg-[#F6F8FA] transition-colors">
+              <li key={r.id} className="px-5 py-3.5 hover:bg-[#F6F8FA] transition-colors">
                 <div className="flex items-center gap-3 text-xs">
                   <span className="h-2.5 w-2.5 rounded-sm shrink-0" style={{ background: color }} />
                   <span className="font-medium text-stone-800 truncate flex-1">{r.name}</span>
@@ -346,7 +362,7 @@ function TopExamsCard({ rows }) {
 // ── RecentTable ──────────────────────────────────────────────────────
 function RecentTable({ recent, loaded }) {
   return (
-    <div className="rounded-2xl border border-warm bg-warm-surface shadow-sm overflow-hidden">
+    <div className="flex flex-col h-full rounded-2xl border border-warm bg-warm-surface shadow-sm overflow-hidden">
       <div className="flex items-baseline justify-between px-5 pt-4 pb-3 border-b border-warm">
         <div>
           <h3 className="text-[13px] font-semibold text-ink-900 tracking-tight">Recent activity</h3>
@@ -357,11 +373,15 @@ function RecentTable({ recent, loaded }) {
         </Link>
       </div>
       {!loaded ? (
-        <div className="p-5 text-sm text-stone-500 italic">Loading…</div>
+        <div className="flex-1 p-5 text-sm text-stone-500 italic">Loading…</div>
       ) : recent.length === 0 ? (
-        <div className="p-10 text-center text-sm text-stone-500 italic">No recent activity</div>
+        <CardEmpty
+          icon={Icon.User}
+          title="No verifications yet"
+          body="The last ten verifications your agents run will appear here as they happen."
+        />
       ) : (
-        <div className="overflow-x-auto">
+        <div className="flex-1 overflow-x-auto">
           <table className="w-full text-sm">
             <thead>
               <tr className="border-b border-warm bg-[#F6F8FA]">
@@ -410,10 +430,17 @@ function TrendTooltip({ active, payload, label }) {
   )
 }
 
-function ChartEmpty() {
+// Empty state. Two lines: what belongs here, and the one thing that
+// makes it appear. A card that only says "no data" leaves the reader to
+// work out whether something is broken.
+function CardEmpty({ title, body, icon: IconComp = Icon.Clock }) {
   return (
-    <div className="h-48 flex items-center justify-center text-sm text-stone-400 italic">
-      No data yet
+    <div className="px-5 py-10 text-center">
+      <span className="mx-auto mb-3 grid h-10 w-10 place-items-center rounded-xl bg-stone-100 text-stone-500">
+        <IconComp className="h-5 w-5" />
+      </span>
+      <p className="text-[13px] font-semibold text-stone-800">{title}</p>
+      <p className="mt-1 text-[12px] text-stone-500 max-w-xs mx-auto leading-relaxed">{body}</p>
     </div>
   )
 }
