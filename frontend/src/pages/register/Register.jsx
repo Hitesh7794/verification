@@ -194,9 +194,24 @@ const FIELD_RULES = {
     INSTITUTION_TYPES.find((t) => t.value === v) ? undefined : 'Pick a type',
   institution_type_other: () => undefined,
   aishe_code: (v, form) => {
-    if (!v.trim()) {
-      return form?.institution_type === 'other' ? 'Required (Govt Ref / Notification / CIN)' : 'Required (AISHE code)'
+    const s = String(v ?? '').trim().toUpperCase()
+    const isRecruiter = form?.institution_type === 'other'
+    if (!s) {
+      return isRecruiter ? 'Required (Govt Ref / Notification / CIN)' : 'Required (AISHE code)'
     }
+    if (!isRecruiter) {
+      // AISHE: <Letter>-<digits>. Official prefixes U/C/A/S; kept
+      // permissive at [A-Z] so a new category (e.g. deemed uni) isn't
+      // locked out. Digits 4-6 per real AISHE lists.
+      if (!/^[A-Z]-\d{4,6}$/.test(s)) return 'Format: letter + hyphen + 4–6 digits (e.g. C-12345)'
+      return undefined
+    }
+    // Recruiter / "other" branch: accept a strict 21-char CIN, else
+    // fall back to a free-form Gazette / Govt Ref with a safe
+    // character allowlist and a 5–100 length window.
+    if (/^[LU]\d{5}[A-Z]{2}\d{4}[A-Z]{3}\d{6}$/.test(s)) return undefined
+    if (s.length < 5 || s.length > 100) return 'Enter 5–100 characters (CIN or Gazette / Govt Ref)'
+    if (!/^[A-Z0-9 .,\-/():#&]+$/.test(s)) return 'Only letters, digits, spaces, and . , - / ( ) : # & allowed'
     return undefined
   },
   pan: (v) => {
@@ -218,8 +233,19 @@ const FIELD_RULES = {
     }
     return undefined
   },
-  affiliation_body_other: (v, form) =>
-    form?.affiliation_body === 'Other' && !v.trim() ? 'Please specify' : undefined,
+  affiliation_body_other: (v, form) => {
+    if (form?.affiliation_body !== 'Other') return undefined
+    const s = String(v ?? '').trim()
+    if (!s) return 'Please specify'
+    if (s.length < 2 || s.length > 100) return 'Enter 2–100 characters'
+    // Sector labels are things like "Public Sector Undertaking (PSU)"
+    // or "Ministry of Home Affairs" — letters, spaces, and light
+    // punctuation. Reject strings of pure digits / garbage keystrokes.
+    if (!/^[\p{L}\p{M}][\p{L}\p{M}\s.,'\-&()]*$/u.test(s)) {
+      return 'Only letters, spaces, and . , - \' & ( ) allowed'
+    }
+    return undefined
+  },
   approx_student_count: (v, form) => {
     if (form?.institution_type === 'other') return undefined
     const s = String(v ?? '').trim()
@@ -1092,9 +1118,9 @@ function Step0({ form, errors, update, onBlurField, onNext, onTypeSelect, checki
             <InputWithIcon
               icon={isRecruiter ? Icon.FileText : Icon.ShieldCheck}
               value={form.aishe_code}
-              onChange={(e) => update('aishe_code', e.target.value)}
+              onChange={(e) => update('aishe_code', e.target.value.toUpperCase().slice(0, 100))}
               onBlur={() => onBlurField('aishe_code')}
-              placeholder={isRecruiter ? 'e.g. Gazette No. / Act Ref / CIN' : 'C-12345'}
+              placeholder={isRecruiter ? 'e.g. U72200MH2020PTC345678 (CIN) or S.O. 2464(E)' : 'C-12345'}
             />
           </Field>
           <Field
