@@ -420,17 +420,29 @@ export default function Register() {
     if (field === 'head_mobile' && value !== form.head_mobile) {
       setMobileOtpToken('')
     }
-    // Live-correct: only re-run the rule for a field that is ALREADY
-    // showing an error, so the message disappears the instant the value
-    // becomes valid. Fields with no error stay quiet while typing —
-    // nobody wants "Invalid email" at "r@".
-    //
-    // Kept as its own setState rather than nested inside the setForm
-    // updater: updaters must be pure, and React may run them twice in
-    // StrictMode, which swallowed this update entirely on the first pass.
+    // Fields with a well-defined target shape (fixed length, specific
+    // char class, or a numeric range) validate live on every keystroke
+    // once the user has typed anything at all — no waiting for blur or
+    // Continue. Free-text fields (email, name, address) still stay
+    // quiet while typing and only surface an error once one is already
+    // shown, so half-typed values don't get nagged.
+    const LIVE_VALIDATE = new Set([
+      'aishe_code', 'pan', 'head_mobile', 'pin_code',
+      'year_established', 'approx_student_count',
+    ])
     setErrors((e) => {
-      if (!e[field]) return e
-      const msg = FIELD_RULES[field]?.(String(value ?? ''), { ...form, [field]: value })
+      const strVal = String(value ?? '')
+      const trimmed = strVal.trim()
+      // Empty → drop any existing error but never surface a fresh one
+      // ("Required" mid-typing is the wrong beat; Continue catches it).
+      if (trimmed === '') {
+        if (!e[field]) return e
+        const { [field]: _drop, ...rest } = e
+        return rest
+      }
+      // Free-text field with no existing error → stay quiet.
+      if (!e[field] && !LIVE_VALIDATE.has(field)) return e
+      const msg = FIELD_RULES[field]?.(strVal, { ...form, [field]: value })
       if (msg === e[field]) return e
       const { [field]: _drop, ...rest } = e
       return msg ? { ...rest, [field]: msg } : rest
