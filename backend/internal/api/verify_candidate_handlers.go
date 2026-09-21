@@ -48,6 +48,41 @@ var allowedVerificationVia = map[string]bool{
 // from the filesystem (legacy path). Once S3 + TrustView land the
 // artifact URLs become derived from exam_code, but the DB-level gate
 // here doesn't need to change again.
+// operatorHasPurse reports whether this operator has a spending limit
+// allocated, and writes the 402 itself when they don't. The body is
+// the same shape walletCharge emits so the frontend has one branch to
+// handle, with cap_paise 0 marking "nothing allocated" as opposed to
+// "allocation exhausted".
+//
+// Wallet off (no wallet service, or a zero fee) means nothing is being
+// billed at all, so there is nothing to allocate and the gate opens.
+func (s *Server) operatorHasPurse(w http.ResponseWriter, r *http.Request, claims *auth.Claims) bool {
+	if s.wallet == nil || s.deps.Cfg.WalletFeePerLookupPaise <= 0 {
+		return true
+	}
+	var (
+		cap   sql.NullInt64
+		spent int64
+	)
+	err := s.deps.DB.QueryRowContext(r.Context(),
+		`SELECT spending_cap_paise, COALESCE(spent_paise, 0)
+		   FROM users WHERE id = $1`, claims.UserID,
+	).Scan(&cap, &spent)
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		writeErr(w, http.StatusInternalServerError, "verification agent lookup: "+err.Error())
+		return false
+	}
+	if cap.Valid {
+		return true
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(http.StatusPaymentRequired)
+	_, _ = w.Write([]byte(fmt.Sprintf(
+		`{"error":"no spending limit assigned to this verification agent; ask your admin to set one","spent_paise":%d,"cap_paise":0,"fee_paise":%d}`,
+		spent, s.deps.Cfg.WalletFeePerLookupPaise)))
+	return false
+}
+
 func (s *Server) getCandidate(w http.ResponseWriter, r *http.Request) {
 	roll := strings.TrimSpace(chi.URLParam(r, "roll"))
 	if roll == "" {
@@ -57,6 +92,16 @@ func (s *Server) getCandidate(w http.ResponseWriter, r *http.Request) {
 	claims := claimsFrom(r)
 	if claims == nil {
 		writeErr(w, http.StatusUnauthorized, "missing token")
+		return
+	}
+
+	// Money gate at the search rather than at the camera (2026-09-21).
+	// An operator with no purse allocated cannot finish a verification
+	// — walletCharge refuses the liveness POST — so refusing the roll
+	// lookup as well means they hear it before a candidate has sat
+	// down and been photographed. Client role only: admin and
+	// superadmin lookups are free and were never capped.
+	if claims.Role == "client" && !s.operatorHasPurse(w, r, claims) {
 		return
 	}
 
