@@ -273,10 +273,20 @@ func (s *Server) adminSubscribe(w http.ResponseWriter, r *http.Request) {
 
 	// V16 flow (2026-09-10): admin subscribe is a REQUEST, not an
 	// immediate grant. Rewinds V15's "click = approved" behaviour.
-	// The row lands as status='pending' with approval_type=
-	// 'institute_request' and the client's reviewer(s) get an email;
-	// the reviewer then approves/rejects via the existing
-	// /api/client/subscription-requests/*/approve|reject endpoints.
+	// The row lands as status='pending' and the client's reviewer(s)
+	// get an email; the reviewer then approves/rejects via the
+	// existing /api/client/subscription-requests/*/approve|reject
+	// endpoints.
+	//
+	// approval_type stays NULL until someone decides (2026-09-21).
+	// It records HOW a request was approved and the column is
+	// CHECK-constrained to NULL / 'per_exam' / 'blanket_client'; the
+	// 'institute_request' marker written here was none of those, so
+	// Postgres rejected the row and the institute got a 500 from
+	// "Request access". It only showed up on a re-request: while an
+	// approved or pending row still existed the handler returned
+	// early above, and unsubscribe DELETEs the row, so the next
+	// click fell through to this INSERT.
 	//
 	// Idempotency rules:
 	//   * existing row is 'approved'   → return 200 unchanged (already subscribed)
@@ -314,13 +324,13 @@ func (s *Server) adminSubscribe(w http.ResponseWriter, r *http.Request) {
 			requested_at, subscribed_by,
 			reviewed_at, reviewed_by, review_note
 		) VALUES(
-			$1, $2, 'pending', 'institute_request',
+			$1, $2, 'pending', NULL,
 			NOW(), $3,
 			NULL, NULL, ''
 		)
 		ON CONFLICT (org_id, exam_id) DO UPDATE SET
 			status = 'pending',
-			approval_type = 'institute_request',
+			approval_type = NULL,
 			requested_at = NOW(),
 			subscribed_by = EXCLUDED.subscribed_by,
 			reviewed_at = NULL,

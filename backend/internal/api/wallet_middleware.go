@@ -101,10 +101,28 @@ func (s *Server) walletCharge(next http.HandlerFunc) http.HandlerFunc {
 		// re-running a NEW liveness (which is what happens on a fresh
 		// roll lookup) always costs.
 
+		// 1.4. No cap assigned means no allowance (2026-09-21). An
+		// operator with spending_cap_paise unset used to spend straight
+		// out of the institution's wallet with no personal ceiling, so
+		// an admin who simply forgot to set a limit had handed out an
+		// unlimited one. Money must now be allocated deliberately:
+		// until an admin sets a cap the operator's purse is zero and
+		// every lookup is refused. Same 402 shape as the cap-reached
+		// branch below, with cap_paise 0 so the frontend can tell the
+		// two apart.
+		if !cap.Valid {
+			w.Header().Set("Content-Type", "application/json")
+			w.WriteHeader(http.StatusPaymentRequired)
+			_, _ = w.Write([]byte(fmt.Sprintf(
+				`{"error":"no spending limit assigned to this verification agent; ask your admin to set one","spent_paise":%d,"cap_paise":0,"fee_paise":%d}`,
+				spent, fee)))
+			return
+		}
+
 		// 1.5. Cap check runs AFTER the cache. Purpose: block only new
 		// spend, not free re-checks. Same message shape the frontend
 		// expects for wallet-empty (402).
-		if cap.Valid && spent+int64(fee) > cap.Int64 {
+		if spent+int64(fee) > cap.Int64 {
 			w.Header().Set("Content-Type", "application/json")
 			w.WriteHeader(http.StatusPaymentRequired)
 			_, _ = w.Write([]byte(fmt.Sprintf(

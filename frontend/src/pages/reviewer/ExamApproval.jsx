@@ -1,17 +1,25 @@
 import { useEffect, useMemo, useState } from 'react'
 import ReviewerShell from '../../components/reviewer/ReviewerShell.jsx'
 import { Button } from '../../components/ui/ui.jsx'
-import { Icon, Skeleton } from '../../components/ui/extras.jsx'
+import { Icon, Skeleton, StatTile } from '../../components/ui/extras.jsx'
+import { motion } from 'framer-motion'
+import { FadeIn, StaggerItem, StaggerList } from '../../components/ui/motion.jsx'
+import { Band, Rule } from '../../components/reviewer/BoardBand.jsx'
 import { listSubscriptionRequests } from '../../lib/reviewer/api.js'
 import SubscriptionRequestsPanel from '../../components/reviewer/SubscriptionRequestsPanel.jsx'
 
-// Reviewer > Exam approval (V16, overhauled 2026-09-14).
+// Reviewer > Exam approval (V16, overhauled 2026-09-14; head rebuilt
+// 2026-09-21).
 //
-// Editorial layout that matches the rest of the reviewer surface —
-// warm-surface cards with a gold rule, stone monogram tiles, the same
-// filter language the Agents page uses, and a clean roster underneath.
 // Two states: LIST (every institute with any exam request) and DRILL
 // (one institute's requests, delegated to SubscriptionRequestsPanel).
+//
+// The page opens on the same figures-first head as the KYC desk — the
+// shared StatTile row, each tile a filter, beside a Band. It used to
+// open on four plain numbers under a paragraph, which said nothing a
+// reviewer could act on: the figure that matters is not how many
+// requests exist but which institute has been waiting longest, so the
+// Band carries that and the rest of the queue.
 
 function formatRelative(iso) {
   if (!iso) return '—'
@@ -26,10 +34,23 @@ function formatRelative(iso) {
   return `${d} day${d === 1 ? '' : 's'} ago`
 }
 
+// How long a request has been waiting, as a headline rather than a
+// sentence: "8 days", not "8 days ago".
+function formatWait(iso) {
+  if (!iso) return '—'
+  const secs = Math.max(0, Math.round((Date.now() - new Date(iso).getTime()) / 1000))
+  const m = Math.round(secs / 60)
+  if (m < 60) return `${Math.max(1, m)} min`
+  const h = Math.round(m / 60)
+  if (h < 48) return `${h} hr`
+  return `${Math.round(h / 24)} days`
+}
+
 const STATUS_OPTIONS = [
-  { value: 'all',     label: 'All institutes' },
-  { value: 'pending', label: 'Has pending requests' },
-  { value: 'clean',   label: 'All decided' },
+  { value: 'all',      label: 'All institutes' },
+  { value: 'pending',  label: 'Has pending requests' },
+  { value: 'approved', label: 'Has approvals' },
+  { value: 'rejected', label: 'Has rejections' },
 ]
 
 export default function ReviewerExamApproval() {
@@ -64,7 +85,13 @@ export default function ReviewerExamApproval() {
   // activity for stable ordering.
   const institutes = useMemo(() => {
     const byOrg = new Map()
+    // Same duplicate-by-name join as the panel: count each (org, exam)
+    // request once, or an institute with four requests reads as eight.
+    const seen = new Set()
     for (const r of allItems || []) {
+      const rowKey = `${r.org_id}:${r.exam_id}`
+      if (seen.has(rowKey)) continue
+      seen.add(rowKey)
       const key = r.org_name || `#${r.org_id}`
       if (!byOrg.has(key)) {
         byOrg.set(key, {
@@ -115,8 +142,10 @@ export default function ReviewerExamApproval() {
   const filteredInstitutes = useMemo(() => {
     const q = search.trim().toLowerCase()
     return institutes.filter((i) => {
-      if (statusFilter === 'pending' && i.pending === 0) return false
-      if (statusFilter === 'clean'   && i.pending  >  0) return false
+      if (statusFilter === 'pending'  && i.pending  === 0) return false
+      if (statusFilter === 'approved' && i.approved === 0) return false
+      if (statusFilter === 'rejected' && i.rejected === 0) return false
+      if (statusFilter === 'clean'    && i.pending   >  0) return false
       if (q && ![i.name, i.city, i.state, i.headName]
         .some((v) => (v || '').toLowerCase().includes(q))) return false
       return true
@@ -126,7 +155,22 @@ export default function ReviewerExamApproval() {
   const filtersActive = !!search || statusFilter !== 'all'
   const clearFilters  = () => { setSearch(''); setStatusFilter('all') }
 
+  // The single request that has waited longest, and the queue behind
+  // it. This is the page's real subject: a count of pending requests
+  // doesn't tell a reviewer where to start, and an institute that
+  // asked eight days ago is the one to open first.
+  const queue = useMemo(() => {
+    const waiting = institutes.filter((i) => i.pending > 0)
+    let oldest = null
+    for (const r of allItems || []) {
+      if (r.status !== 'pending') continue
+      if (!oldest || (r.requested_at || '') < (oldest.requested_at || '')) oldest = r
+    }
+    return { waiting, oldest }
+  }, [institutes, allItems])
+
   // ─── DRILL view ────────────────────────────────────────────────────
+  const drillInst = institutes.find((i) => i.name === selectedName)
   if (selectedName) {
     return (
       <ReviewerShell>
@@ -161,14 +205,60 @@ export default function ReviewerExamApproval() {
                   Approve or reject exam subscription requests. Decisions
                   email the institute directly.
                 </p>
+                {/* The facts the roster showed a click ago — where they
+                    are and who signs for them — so the reviewer isn't
+                    deciding against a bare name. */}
+                {(drillInst?.city || drillInst?.state || drillInst?.headName) && (
+                  <p className="mt-2 text-xs text-slate-500 flex flex-wrap items-center gap-x-2 gap-y-1">
+                    {[drillInst.city, drillInst.state].filter(Boolean).length > 0 && (
+                      <span className="inline-flex items-center gap-1.5">
+                        <Icon.Building className="h-3.5 w-3.5 text-slate-400" />
+                        {[drillInst.city, drillInst.state].filter(Boolean).join(', ')}
+                      </span>
+                    )}
+                    {drillInst.headName && (
+                      <>
+                        <span aria-hidden="true" className="text-slate-300">·</span>
+                        <span className="inline-flex items-center gap-1.5">
+                          <Icon.User className="h-3.5 w-3.5 text-slate-400" />
+                          {drillInst.headName}
+                          {drillInst.headDesignation && (
+                            <span className="text-slate-400">({drillInst.headDesignation})</span>
+                          )}
+                        </span>
+                      </>
+                    )}
+                  </p>
+                )}
               </div>
             </div>
+
+            {drillInst && (
+              <div className="flex items-center gap-2 shrink-0">
+                {drillInst.pending > 0 && (
+                  <span className="rounded-full bg-amber-50 border border-amber-200 px-2.5 py-1 text-[11px] font-semibold text-amber-800 tabular-nums">
+                    {drillInst.pending} pending
+                  </span>
+                )}
+                {drillInst.approved > 0 && (
+                  <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 tabular-nums">
+                    {drillInst.approved} approved
+                  </span>
+                )}
+                {drillInst.rejected > 0 && (
+                  <span className="rounded-full bg-rose-50 border border-rose-200 px-2.5 py-1 text-[11px] font-semibold text-rose-700 tabular-nums">
+                    {drillInst.rejected} rejected
+                  </span>
+                )}
+              </div>
+            )}
           </div>
         </div>
 
         <SubscriptionRequestsPanel
           key={selectedName}
           institutionName={selectedName}
+          orgId={drillInst?.orgId}
           onChange={() => load()}
         />
       </ReviewerShell>
@@ -178,43 +268,115 @@ export default function ReviewerExamApproval() {
   // ─── LIST view ─────────────────────────────────────────────────────
   return (
     <ReviewerShell>
-      {/* Header — warm-surface card with monogram tile + stats strip.
-          Same shape as KycInbox / Agents. */}
-      <div className="mb-6 rounded-xl bg-warm-surface ring-1 ring-warm overflow-hidden shadow-sm">
-        <div className="h-[3px] rule-gold" />
-        <div className="p-5 sm:p-6">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="flex items-start gap-4 min-w-0">
-              <div className="h-12 w-12 rounded-xl bg-stone-100 text-stone-800 flex items-center justify-center shrink-0">
-                <Icon.FileText className="h-6 w-6" />
+      <FadeIn>
+      <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
+        <div className="min-w-0">
+          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
+            Exam approval
+          </h1>
+          <p className="mt-1 text-sm text-slate-500">
+            Institutes asking for access to your exams. Every decision
+            emails them.
+          </p>
+        </div>
+        <Button variant="secondary" size="sm" onClick={load} disabled={refreshing}>
+          <Icon.Refresh className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
+          <span className="ml-1.5">{refreshing ? 'Refreshing…' : 'Refresh'}</span>
+        </Button>
+      </div>
+
+      {/* Figures first, each one a filter — the KYC desk's tiles, so a
+          reviewer slices two queues the same way. Counts are requests,
+          the list underneath is institutes, which is why Pending reads
+          "across N institutes". */}
+      <div className="mb-6 grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-stretch">
+        <StaggerList className="grid gap-4 grid-cols-2 lg:grid-cols-4">
+          <StaggerItem>
+            <StatTile label="Pending" value={totals.pending} accent="pending" icon={Icon.Clock}
+                      hint={totals.pending > 0
+                        ? `across ${totals.withPending} institute${totals.withPending === 1 ? '' : 's'}`
+                        : 'Nothing waiting'}
+                      onClick={() => setStatusFilter('pending')} active={statusFilter === 'pending'} />
+          </StaggerItem>
+          <StaggerItem>
+            <StatTile label="Approved" value={totals.approved} accent="approved" icon={Icon.Check}
+                      hint="Exams they can verify"
+                      onClick={() => setStatusFilter('approved')} active={statusFilter === 'approved'} />
+          </StaggerItem>
+          <StaggerItem>
+            <StatTile label="Rejected" value={totals.rejected} accent="rejected" icon={Icon.X}
+                      hint="Turned down with a note"
+                      onClick={() => setStatusFilter('rejected')} active={statusFilter === 'rejected'} />
+          </StaggerItem>
+          <StaggerItem>
+            <StatTile label="Institutes" value={totals.institutes} accent="total" icon={Icon.Building}
+                      hint="Asked at least once"
+                      onClick={() => setStatusFilter('all')} active={false} />
+          </StaggerItem>
+        </StaggerList>
+
+        <Band className="xl:w-[460px]">
+          {queue.oldest ? (
+            <>
+              <button
+                type="button"
+                onClick={() => setSelectedName(queue.oldest.org_name)}
+                className="group shrink-0 text-left cursor-pointer"
+              >
+                <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                  Longest wait
+                </p>
+                <p className="mt-1 text-[28px] leading-none font-semibold tracking-tight text-amber-700 tabular-nums">
+                  {formatWait(queue.oldest.requested_at)}
+                </p>
+                <p className="mt-1.5 text-xs text-slate-600 max-w-[190px] truncate group-hover:text-slate-900 group-hover:underline underline-offset-2">
+                  {queue.oldest.org_name}
+                </p>
+              </button>
+              <Rule />
+              <div className="min-w-0 flex-1">
+                <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
+                  Waiting on you
+                </p>
+                <ul className="mt-2 space-y-1.5">
+                  {queue.waiting.slice(0, 3).map((i) => (
+                    <li key={i.name}>
+                      <button
+                        type="button"
+                        onClick={() => setSelectedName(i.name)}
+                        className="w-full flex items-baseline justify-between gap-3 text-left cursor-pointer group"
+                      >
+                        <span className="text-xs text-slate-700 truncate group-hover:text-slate-900 group-hover:underline underline-offset-2">
+                          {i.name}
+                        </span>
+                        <span className="text-xs font-semibold text-amber-700 tabular-nums shrink-0">
+                          {i.pending}
+                        </span>
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+                {queue.waiting.length > 3 && (
+                  <p className="mt-2 text-[11px] text-slate-500">
+                    +{queue.waiting.length - 3} more below
+                  </p>
+                )}
               </div>
+            </>
+          ) : (
+            <div className="flex items-center gap-3">
+              <span className="h-10 w-10 rounded-xl bg-emerald-50 text-emerald-600 grid place-items-center shrink-0">
+                <Icon.Check className="h-5 w-5" />
+              </span>
               <div className="min-w-0">
-                <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
-                  Exam approval
-                </h1>
-                <p className="mt-1 text-sm text-slate-500 max-w-xl">
-                  Institutes that have asked for access to your exams.
-                  Open one to review every request and email the
-                  institute a decision.
+                <p className="text-sm font-semibold text-slate-800">Queue clear</p>
+                <p className="text-xs text-slate-500">
+                  Every request has a decision. New ones land here.
                 </p>
               </div>
             </div>
-            <Button variant="secondary" size="sm" onClick={load} disabled={refreshing}>
-              <Icon.Refresh className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-              <span className="ml-1.5">{refreshing ? 'Refreshing…' : 'Refresh'}</span>
-            </Button>
-          </div>
-
-          {/* Stats strip — total institutes + pending + approved + rejected
-              across the full response. Pinned; doesn't shift on filter. */}
-          <div className="mt-5 pt-5 border-t border-slate-100 grid grid-cols-2 sm:grid-cols-4 gap-6 text-sm">
-            <Stat label="Institutes"      value={totals.institutes} />
-            <Stat label="Pending"          value={totals.pending}    tone="amber"
-                  hint={totals.pending > 0 ? `across ${totals.withPending} institute${totals.withPending === 1 ? '' : 's'}` : ''} />
-            <Stat label="Approved"         value={totals.approved}   tone="emerald" />
-            <Stat label="Rejected"         value={totals.rejected}   tone="rose" />
-          </div>
-        </div>
+          )}
+        </Band>
       </div>
 
       {err && (
@@ -274,6 +436,9 @@ export default function ReviewerExamApproval() {
         </div>
       ) : institutes.length === 0 ? (
         <div className="rounded-xl bg-warm-surface ring-1 ring-warm p-10 text-center">
+          <span className="mx-auto mb-3 h-11 w-11 rounded-xl bg-stone-100 text-stone-500 grid place-items-center">
+            <Icon.Building className="h-5 w-5" />
+          </span>
           <p className="text-sm font-semibold text-slate-700">No requests yet</p>
           <p className="text-xs text-slate-500 mt-1">
             Requests appear here when an institute clicks
@@ -299,16 +464,18 @@ export default function ReviewerExamApproval() {
           <div className="h-[2px] rule-gold" />
           <InstituteListHeader />
           <ul className="divide-y divide-slate-100">
-            {filteredInstitutes.map((inst) => (
+            {filteredInstitutes.map((inst, i) => (
               <InstituteRow
                 key={inst.name}
                 inst={inst}
+                index={i}
                 onOpen={() => setSelectedName(inst.name)}
               />
             ))}
           </ul>
         </div>
       )}
+      </FadeIn>
     </ReviewerShell>
   )
 }
@@ -355,12 +522,16 @@ function InstituteListHeader() {
   )
 }
 
-function InstituteRow({ inst, onOpen }) {
+function InstituteRow({ inst, index = 0, onOpen }) {
   const hasPending = inst.pending > 0
   const initial = (inst.name.trim().charAt(0) || '?').toUpperCase()
   const location = [inst.city, inst.state].filter(Boolean).join(', ')
   return (
-    <li>
+    <motion.li
+      initial={{ opacity: 0, y: 6 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.22, delay: Math.min(index, 7) * 0.035, ease: [0.22, 1, 0.36, 1] }}
+    >
       <div
         role="button"
         tabIndex={0}
@@ -394,6 +565,15 @@ function InstituteRow({ inst, onOpen }) {
           <div className="min-w-0">
             <p className="font-semibold text-slate-900 truncate">{inst.name}</p>
             <p className="mt-0.5 text-[12px] text-slate-500 flex flex-wrap items-center gap-x-2">
+              {/* Pending leads: it's the only count that asks for
+                  something. It used to live only inside the button,
+                  so a row with four waiting requests read "1
+                  approved" — the least useful fact on the line. */}
+              {inst.pending > 0 && (
+                <span className="font-semibold text-amber-700 tabular-nums">
+                  {inst.pending} pending
+                </span>
+              )}
               {inst.approved > 0 && (
                 <span>
                   <span className="font-medium text-emerald-700 tabular-nums">{inst.approved}</span>{' '}
@@ -406,7 +586,7 @@ function InstituteRow({ inst, onOpen }) {
                   rejected
                 </span>
               )}
-              {inst.approved === 0 && inst.rejected === 0 && (
+              {inst.pending === 0 && inst.approved === 0 && inst.rejected === 0 && (
                 <span className="text-slate-400">No decisions yet</span>
               )}
             </p>
@@ -457,7 +637,7 @@ function InstituteRow({ inst, onOpen }) {
           )}
         </div>
       </div>
-    </li>
+    </motion.li>
   )
 }
 

@@ -18,6 +18,20 @@ import {
   postIrisMatch,
 } from '../../lib/api.js'
 import { getWalletSummary, formatRupees } from '../../lib/wallet/wallet.js'
+
+// An operator spends against the purse their admin allocated. No
+// allocation means no spending: the API refuses both the roll lookup
+// and the liveness charge, so the desk cannot verify anyone until an
+// admin sets a cap.
+function hasPurse(wallet) {
+  return typeof wallet?.cap_paise === 'number' && wallet.cap_paise > 0
+}
+
+// The 402 that says "nothing allocated" rather than "wallet empty" or
+// "cap exhausted" — marked by cap_paise 0 in the body.
+function isNoPurseError(err) {
+  return isWalletEmptyError(err) && err?.body?.cap_paise === 0
+}
 import ntaLogo from '../../assets/nta-logo.png'
 import emblemSvg from '../../assets/emblem.svg'
 import ntaWatermark from '../../assets/nta-watermark.png'
@@ -407,12 +421,22 @@ export default function ClientDashboard() {
   const [verificationStartedAt, setVerificationStartedAt] = useState(persisted?.verificationStartedAt ?? null)
   const [idempotencyKey, setIdempotencyKey] = useState(persisted?.idempotencyKey ?? null)
   const [walletEmpty, setWalletEmpty] = useState(false)
+  // No purse allocated to this operator. Distinct from walletEmpty:
+  // the institution may be flush, but nothing has been allocated to
+  // this desk, so the fix is an admin assigning a cap, not a top-up.
+  const [noPurse, setNoPurse] = useState(false)
   const [windowReminder, setWindowReminder] = useState(null)
 
   // Wallet
   const [wallet, setWallet] = useState(null)
   const refreshWallet = () => {
-    getWalletSummary().then(setWallet).catch(() => {})
+    getWalletSummary().then((w) => {
+      setWallet(w)
+      // Admin allocated a purse while the operator was sitting on the
+      // warning — clear it on the next heartbeat rather than making
+      // them reload the page.
+      if (hasPurse(w)) setNoPurse(false)
+    }).catch(() => {})
   }
   useEffect(() => {
     // Initial pull, then a light heartbeat every 20s so the header
@@ -753,6 +777,18 @@ export default function ClientDashboard() {
 
     setLookupErr('')
     setWalletEmpty(false)
+    setNoPurse(false)
+
+    // An operator with no purse can't finish a verification, and the
+    // API refuses the lookup for the same reason. When the wallet
+    // summary already told us that, say so on the spot instead of
+    // spending a round trip to be told the same thing.
+    if (wallet && !hasPurse(wallet)) {
+      setCandidate(null)
+      setNoPurse(true)
+      return
+    }
+
     setIsSearching(true)
 
     try {
@@ -790,7 +826,14 @@ export default function ClientDashboard() {
       setCurrentStage(1)
     } catch (e) {
       setCandidate(null)
-      if (isWalletEmptyError(e)) {
+      if (isNoPurseError(e)) {
+        // Don't refresh the wallet here: the summary and this 402 read
+        // the same column, so a summary that still reports a purse is
+        // stale, and letting it answer would wipe the warning the
+        // server just issued. The 20s heartbeat clears it on its own
+        // once a purse genuinely exists.
+        setNoPurse(true)
+      } else if (isWalletEmptyError(e)) {
         setWalletEmpty(true)
       } else {
         setLookupErr(e.message || `No candidate record found for roll "${targetRoll}"`)
@@ -1257,19 +1300,15 @@ export default function ClientDashboard() {
     const fee = wallet?.fee_per_lookup_paise || 500
     const capPaise = wallet?.cap_paise
     const spent = wallet?.spent_paise || 0
-    const orgBal = wallet?.org_balance_paise ?? 0
     const capped = typeof capPaise === 'number' && capPaise > 0
-    // Personal-purse pill: only meaningful when the admin gave this
-    // operator a spending_cap_paise. Then the denominator is that
-    // cap and the numerator is what's left in the personal purse.
-    // For an uncapped operator, `allocated` would have to be either
-    // a fabricated number (past dashboards used orgBal + spent, which
-    // meant "you have ₹42 left of ₹267" even though nobody ever
-    // deposited ₹267 — a misleading synthesis) or the org's total-ever
-    // deposits (not surfaced by the API). Neither is honest. In that
-    // case surface only the live org balance and hide the denominator.
-    const allocated = capped ? capPaise : null
-    const remaining = capped ? Math.max(0, capPaise - spent) : orgBal
+    // Personal-purse pill. The operator spends against the cap their
+    // admin allocated, and nothing else: with no cap assigned the
+    // purse is zero, not the institution's balance. The API enforces
+    // the same rule — a lookup without a cap comes back 402 — so the
+    // pill reading ₹0.00 is the literal truth about what this
+    // operator can spend, not a placeholder.
+    const allocated = capped ? capPaise : 0
+    const remaining = capped ? Math.max(0, capPaise - spent) : 0
 
     return (
       <div className="w-full shrink-0">
@@ -1304,19 +1343,20 @@ export default function ClientDashboard() {
 
           {/* Center Status & Operator Allocation */}
           <div className="flex items-center gap-3 sm:gap-4 flex-wrap">
-            {/* Wallet pill. Two shapes:
-                • Capped operator (spending_cap_paise > 0) — shows the
-                  personal purse as remaining/cap. Real numbers, both
-                  meaningful.
-                • Uncapped operator — draws from the shared org wallet;
-                  there's no personal ceiling to divide by, so surface
-                  just the org balance. (See renderSovereignHeader for
-                  why we no longer fake a denominator.) */}
+            {/* Wallet pill — always remaining / allocated, because the
+                allocation is the only money this operator commands.
+                No cap assigned reads ₹0.00 / ₹0.00 and the pill turns
+                amber: the desk is unfunded, lookups will be refused,
+                and the admin needs to allocate a purse. */}
             <div
-              className="flex items-center gap-2 px-3.5 py-1.5 rounded-lg bg-white/8 border border-white/15 text-xs shadow-xs"
+              className={`flex items-center gap-2 px-3.5 py-1.5 rounded-lg border text-xs shadow-xs ${
+                capped
+                  ? 'bg-white/8 border-white/15'
+                  : 'bg-amber-400/10 border-amber-300/40'
+              }`}
               title={capped
                 ? `Remaining: ${formatRupees(remaining)} | Allocated Purse: ${formatRupees(allocated)}`
-                : `Organisation wallet balance`}
+                : 'No purse allocated — ask your admin to set a spending limit before verifying'}
             >
               <svg className="w-3.5 h-3.5 text-amber-300 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
                 <path
@@ -1326,10 +1366,11 @@ export default function ClientDashboard() {
                   d="M3 10h18M7 15h1m4 0h1m-7 4h12a3 3 0 003-3V8a3 3 0 00-3-3H6a3 3 0 00-3 3v8a3 3 0 003 3z"
                 />
               </svg>
-              <span className="text-slate-300">{capped ? 'Purse:' : 'Balance:'}</span>
+              <span className="text-slate-300">Purse:</span>
               <span className="font-bold text-white tabular-nums">{formatRupees(remaining)}</span>
-              {capped && (
-                <span className="text-slate-400">/ <span className="text-slate-300 font-medium tabular-nums">{formatRupees(allocated)}</span></span>
+              <span className="text-slate-400">/ <span className="text-slate-300 font-medium tabular-nums">{formatRupees(allocated)}</span></span>
+              {!capped && (
+                <span className="font-semibold text-amber-300">not allocated</span>
               )}
             </div>
 
@@ -1604,6 +1645,17 @@ export default function ClientDashboard() {
                     />
                   </div>
                 </div>
+
+                {noPurse && (
+                  <div role="alert" className="rounded-lg bg-amber-50 border border-amber-200 px-3 py-2.5 text-xs text-amber-900">
+                    <p className="font-semibold">No verification purse allocated</p>
+                    <p className="mt-0.5 leading-relaxed text-amber-800">
+                      Your administrator hasn't set a spending limit for this
+                      desk yet, so candidate lookups are on hold. Ask them to
+                      allocate a purse, then search again.
+                    </p>
+                  </div>
+                )}
 
                 {lookupErr && !isSearchLocked && (
                   <div className="rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-xs text-rose-700 font-medium">

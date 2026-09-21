@@ -1086,13 +1086,20 @@ func (s *Server) clientApproveSubscriptionRequest(w http.ResponseWriter, r *http
 
 	if mode == "blanket_client" {
 		// 1. Insert or update client_organization_approvals to grant
-		//    client-wide blanket approval. Any subsequent subscription
-		//    by this organization for this client's exams will be
-		//    auto-approved instantly via adminSubscribe.
+		//    client-wide blanket approval. This is what puts the
+		//    client's full exam catalogue in front of the institute;
+		//    each new request still comes back here for a decision.
+		//
+		//    status is set explicitly on conflict (2026-09-21): a row
+		//    left over from a rejected KYC decision carries
+		//    status='rejected', and every catalogue query filters on
+		//    status='approved', so without this the reviewer's blanket
+		//    approval silently granted nothing.
 		if _, err := tx.ExecContext(r.Context(), `
-			INSERT INTO client_organization_approvals(client_id, org_id, approved_at, approved_by, note)
-			VALUES($1, $2, NOW(), $3, $4)
+			INSERT INTO client_organization_approvals(client_id, org_id, status, approved_at, approved_by, note)
+			VALUES($1, $2, 'approved', NOW(), $3, $4)
 			ON CONFLICT (client_id, org_id) DO UPDATE SET
+				status = 'approved',
 				approved_at = NOW(),
 				approved_by = EXCLUDED.approved_by,
 				note = EXCLUDED.note`,
@@ -1653,9 +1660,10 @@ func (s *Server) clientBulkApproveSubscriptionRequests(w http.ResponseWriter, r 
 		if mode == "blanket_client" {
 			// Grant blanket authorization for this client & organization
 			if _, err := tx.ExecContext(r.Context(), `
-				INSERT INTO client_organization_approvals(client_id, org_id, approved_at, approved_by, note)
-				VALUES($1, $2, NOW(), $3, $4)
+				INSERT INTO client_organization_approvals(client_id, org_id, status, approved_at, approved_by, note)
+				VALUES($1, $2, 'approved', NOW(), $3, $4)
 				ON CONFLICT (client_id, org_id) DO UPDATE SET
+					status = 'approved',
 					approved_at = NOW(),
 					approved_by = EXCLUDED.approved_by,
 					note = EXCLUDED.note`,
