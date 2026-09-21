@@ -121,7 +121,11 @@ export default function Operators() {
                   }
                 }}
               >
-                <Icon.Plus className="h-4 w-4 mr-1.5" />
+                {creating && createMode === 'single' ? (
+                  <Icon.X className="h-4 w-4 mr-1.5" />
+                ) : (
+                  <Icon.Plus className="h-4 w-4 mr-1.5" />
+                )}
                 {creating && createMode === 'single' ? 'Cancel' : 'New verification agent'}
               </Button>
             </div>
@@ -256,7 +260,11 @@ export default function Operators() {
                                 )}
                               </span>
                             ) : (
-                              <span className="text-slate-400">no cap</span>
+                              // b0427d9 flipped the semantic — an unset
+                              // cap now blocks every charge. Flag it in
+                              // amber so the admin sees the operator is
+                              // dead in the water until a cap is set.
+                              <Pill tone="amber" dot><span className="ml-1">not set</span></Pill>
                             )}
                           </td>
                           <td className="px-4 py-3 text-xs text-slate-600 tabular-nums">
@@ -269,18 +277,14 @@ export default function Operators() {
                             {/* V30 (2026-09-14): distinguish the auto-lockout
                                 from a plain manual disable. Auto-lockout uses
                                 a rose pill + a short reason so the admin sees
-                                immediately why the agent can't sign in. A
-                                still-active agent with 1 or 2 denies in a row
-                                gets a soft warning under the Active pill.  */}
+                                immediately why the agent can't sign in.
+                                Per-institute-admin request the mid-streak
+                                warning under the Active pill was removed —
+                                the auto-disabled state below is signal enough,
+                                and the running counter read as a scolding
+                                nag on the roster. */}
                             {o.status === 'active' ? (
-                              <div className="flex flex-col items-start gap-1">
-                                <Pill tone="emerald" dot>Active</Pill>
-                                {o.consecutive_denials > 0 && (
-                                  <span className="text-[10px] font-semibold text-amber-700">
-                                    {o.consecutive_denials}/3 denies in a row
-                                  </span>
-                                )}
-                              </div>
+                              <Pill tone="emerald" dot>Active</Pill>
                             ) : o.disable_reason === 'auto_streak' ? (
                               <div className="flex flex-col items-start gap-1">
                                 <Pill tone="rose" dot>Auto-disabled</Pill>
@@ -672,27 +676,49 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
   // limits anyway (see /liveness-check), but blocking obviously-broken
   // caps at form-submit surfaces the mistake before Save.
   //
-  //   capOverWallet — cap > current wallet balance (admin needs to top
-  //                   up first, or lower the cap)
+  //   capOverWallet — the operator's REMAINING headroom under the new
+  //                   cap (cap − spent) exceeds the current wallet
+  //                   balance. On create spent = 0 so the check reduces
+  //                   to "cap ≤ wallet". On edit we subtract the
+  //                   operator's already-spent amount so an admin can
+  //                   raise a cap on a partly-spent operator without
+  //                   the wallet needing to cover the full new cap.
   //   capBelowFee   — cap < ₹1 fee-per-lookup (operator can't verify
   //                   even one candidate — pointless "half-rupee" caps
   //                   like 0.10 used to slip past the min="0"/step="0.01"
   //                   input constraints; caught here now).
   const FEE_PAISE = 100 // matches WalletFeePerLookupPaise default; UI-only.
   const capPaiseLive = capRupees.trim() ? Math.round(Number(capRupees) * 100) : null
+  const operatorSpentPaise = mode === 'edit' && operator?.spent_paise ? operator.spent_paise : 0
+  const capRemainingPaise = capPaiseLive != null ? Math.max(0, capPaiseLive - operatorSpentPaise) : null
   const capOverWallet =
-    walletBalancePaise != null && capPaiseLive != null && capPaiseLive > walletBalancePaise
+    walletBalancePaise != null && capRemainingPaise != null && capRemainingPaise > walletBalancePaise
   const capBelowFee = capPaiseLive != null && capPaiseLive < FEE_PAISE
-  const capInvalid = capOverWallet || capBelowFee
+  // Cap is REQUIRED now (2026-09-21). The wallet middleware refuses
+  // every charge when spending_cap_paise is null (see b0427d9), so
+  // "no cap" agents can't verify anyone — surface the mistake here
+  // at Save instead of at the desk when the first candidate is up.
+  const capMissing = capPaiseLive == null
+  const capInvalid = capOverWallet || capBelowFee || capMissing
 
   async function onSubmit(e) {
     e.preventDefault()
+    if (capMissing) {
+      setErr("Set a spending cap in ₹. An agent with no cap can't verify any candidates.")
+      return
+    }
     if (capBelowFee) {
-      setErr("Spending cap must be at least ₹1 (one verification). Leave blank for no cap.")
+      setErr("Spending cap must be at least ₹1 (one verification).")
       return
     }
     if (capOverWallet) {
-      setErr(`Spending cap can't exceed the wallet balance (${formatRupees(walletBalancePaise)}). Top up the wallet first or lower the cap.`)
+      // Show the exact math so the admin knows what to change. If the
+      // operator hasn't spent anything (create, or fresh reset), fall
+      // back to the simpler "cap can't exceed wallet" copy.
+      const errMsg = operatorSpentPaise > 0
+        ? `Remaining allocation ${formatRupees(capRemainingPaise)} (cap ${formatRupees(capPaiseLive)} − already spent ${formatRupees(operatorSpentPaise)}) exceeds wallet balance ${formatRupees(walletBalancePaise)}. Top up the wallet or use a smaller cap.`
+        : `Spending cap can't exceed the wallet balance (${formatRupees(walletBalancePaise)}). Top up the wallet first or lower the cap.`
+      setErr(errMsg)
       return
     }
     if (!isPhoneValid) {
@@ -772,22 +798,31 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
         </div>
         <div>
           <Label>Phone number</Label>
-          <Input
-            type="tel"
-            value={phone}
-            // Strip everything except digits and cap at 10 chars on
-            // every keystroke — the field can only ever hold a 10-digit
-            // Indian mobile. Prevents pasting +91/91 prefixes, spaces,
-            // hyphens, or letters. Backend still re-validates, but this
-            // keeps the input unambiguous and the Save button honest.
-            onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
-            placeholder="9876543210"
-            required
-            autoComplete="tel"
-            inputMode="numeric"
-            pattern="[6-9][0-9]{9}"
-            maxLength={10}
-          />
+          <div className="relative">
+            <span
+              className="absolute left-3 top-1/2 -translate-y-1/2 text-sm font-medium text-slate-600 tabular-nums pointer-events-none select-none"
+              aria-hidden="true"
+            >
+              +91
+            </span>
+            <Input
+              type="tel"
+              value={phone}
+              // Strip everything except digits and cap at 10 chars on
+              // every keystroke — the field can only ever hold a 10-digit
+              // Indian mobile. Prevents pasting +91/91 prefixes, spaces,
+              // hyphens, or letters. Backend still re-validates, but this
+              // keeps the input unambiguous and the Save button honest.
+              onChange={(e) => setPhone(e.target.value.replace(/\D/g, '').slice(0, 10))}
+              placeholder="9876543210"
+              required
+              autoComplete="tel"
+              inputMode="numeric"
+              pattern="[6-9][0-9]{9}"
+              maxLength={10}
+              className="pl-12"
+            />
+          </div>
           {phone.length > 0 && !isPhoneValid && (
             <p className="text-[11px] text-rose-600 mt-1">
               Enter a 10-digit Indian mobile starting with <b>6, 7, 8, or 9</b>.
@@ -819,28 +854,39 @@ function OperatorForm({ subs, walletBalancePaise, mode, operator, onCancel, onSa
           </div>
         </div>
         <div>
-          <Label>Spending cap (₹, whole rupees; leave blank = no cap)</Label>
+          <Label>Spending cap (₹, whole rupees) — required</Label>
           <Input
             type="number"
             min="1"
             step="1"
+            required
             value={capRupees}
             onChange={(e) => setCapRupees(e.target.value)}
             placeholder="e.g. 10"
           />
           {(() => {
-            const showHint = walletBalancePaise != null || capBelowFee
+            const showHint = walletBalancePaise != null || capBelowFee || capMissing
             if (!showHint) return null
             let msg = ''
             let tone = 'text-slate-500'
-            if (capBelowFee) {
+            if (capMissing) {
+              msg = "An agent without a cap can't verify any candidates. Set the amount you're allocating."
+              tone = 'text-rose-600 font-medium'
+            } else if (capBelowFee) {
               msg = 'Cap must be at least ₹1 — one verification costs ₹1.'
               tone = 'text-rose-600 font-medium'
             } else if (capOverWallet) {
-              msg = `Cap exceeds wallet balance ${formatRupees(walletBalancePaise)}. Top up the wallet first, or lower the cap.`
+              msg = operatorSpentPaise > 0
+                ? `Remaining allocation ${formatRupees(capRemainingPaise)} (cap ${formatRupees(capPaiseLive)} − already spent ${formatRupees(operatorSpentPaise)}) exceeds wallet balance ${formatRupees(walletBalancePaise)}. Top up the wallet or use a smaller cap.`
+                : `Cap exceeds wallet balance ${formatRupees(walletBalancePaise)}. Top up the wallet first, or lower the cap.`
               tone = 'text-rose-600 font-medium'
             } else if (walletBalancePaise != null) {
-              msg = `Wallet balance: ${formatRupees(walletBalancePaise)} — cap must be ≤ this.`
+              // On edit, describe the room the operator has left under
+              // this cap so the admin sees the two numbers that actually
+              // matter (wallet + already-spent).
+              msg = operatorSpentPaise > 0
+                ? `Wallet balance ${formatRupees(walletBalancePaise)} · already spent ${formatRupees(operatorSpentPaise)}. New cap can raise the remaining allocation up to the wallet balance.`
+                : `Wallet balance: ${formatRupees(walletBalancePaise)} — cap must be ≤ this.`
             }
             return <p className={`text-[11px] mt-1 ${tone}`}>{msg}</p>
           })()}
