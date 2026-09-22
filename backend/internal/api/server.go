@@ -366,6 +366,10 @@ func (s *Server) Router() http.Handler {
 		// Operator's list of assigned exams — backs the current-exam
 		// picker on the dashboard. Client-role only.
 		r.Get("/api/operator/exams", s.requireRole("client")(s.listOperatorExams))
+		// Operator's own verification history (verified/denied). Feeds
+		// the Android app's per-agent history screen. Client-role only —
+		// admins/superadmins have their own /admin/verifications view.
+		r.Get("/api/verifications/mine", s.requireRole("client")(s.listMyVerifications))
 		r.Post("/api/wallet/order", s.requireRole("admin")(s.walletOrder))
 		r.Post("/api/wallet/verify-payment", s.requireRole("admin")(s.walletVerifyPayment))
 
