@@ -161,6 +161,13 @@ type walletSummaryResp struct {
 	AssignedExamVerificationTo   string `json:"assigned_exam_verification_to,omitempty"`
 	OperatorValidFrom            string `json:"operator_valid_from,omitempty"`
 	OperatorValidTo              string `json:"operator_valid_to,omitempty"`
+	// Longest roll number under the assigned exam, in digits. The
+	// Android roll-lookup screen renders that many input boxes instead
+	// of the hard-coded 7 — so a 5-digit exam gets 5 boxes. Zero (the
+	// omitempty branch — no assigned exam, empty exam, or older
+	// clients) means "use the client's own default." All existing
+	// consumers ignore an unknown field, so this is additive.
+	RollDigitLength int `json:"roll_digit_length,omitempty"`
 }
 
 func (s *Server) walletSummary(w http.ResponseWriter, r *http.Request) {
@@ -243,6 +250,18 @@ func (s *Server) walletSummary(w http.ResponseWriter, r *http.Request) {
 			resp.AssignedExamName = name.String
 			resp.AssignedExamVerificationFrom = vFrom.String
 			resp.AssignedExamVerificationTo = vTo.String
+			// Roll-number digit length for this exam. MAX over the
+			// exam's candidate roll numbers so a mixed set (e.g. some
+			// 5- some 7-digit) still gets enough boxes for the longest
+			// one. Silent on error / missing — the field stays 0 and
+			// the client falls back to its baked-in default.
+			var rollLen sql.NullInt64
+			_ = s.deps.DB.QueryRowContext(r.Context(), db.Q(
+				`SELECT COALESCE(MAX(LENGTH(roll_no)), 0) FROM exam_candidates WHERE exam_id = ?`,
+			), examID).Scan(&rollLen)
+			if rollLen.Valid && rollLen.Int64 > 0 {
+				resp.RollDigitLength = int(rollLen.Int64)
+			}
 		}
 	}
 	writeJSON(w, http.StatusOK, resp)
