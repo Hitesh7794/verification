@@ -3,6 +3,7 @@ package api
 import (
 	"database/sql"
 	"net/http"
+	"strconv"
 	"time"
 
 	"github.com/veni/neet-verification/internal/db"
@@ -12,12 +13,20 @@ import (
 // verifications, verified + denied only. Abandoned flows (started
 // liveness but never produced a verifications row) are excluded per
 // product ask — the operator's "who did I check" list should not read
-// as their own dropouts. Bounded to the most recent 100 rows so a
-// long day still fits one payload; if we later need pagination we can
-// add ?before=<id> the same way admin/verifications does.
+// as their own dropouts.
 //
-// Additive endpoint — nothing else references it, so shipping it can
-// neither break existing clients nor cause an unrelated regression.
+// Scoped to the caller. `operator_id` is the `users.id` FK of the
+// specific user who signed the verification, so an operator only ever
+// sees their own history — never their org-mates', never every row on
+// the box. Admins/superadmins keep /api/admin/verifications.
+//
+// Pagination: cursor-based, same shape as /api/admin/verifications so
+// clients don't need a second dialect. Pass ?before=<id> to fetch the
+// page older than that verifications.id. Response carries
+// `next_cursor` (the smallest id in the returned page) whenever the
+// page is full — a null next_cursor means "no more".
+
+const myVerificationsPageSize = 30
 
 type myVerificationRow struct {
 	ID        int64  `json:"id"`
@@ -29,7 +38,8 @@ type myVerificationRow struct {
 }
 
 type myVerificationsResp struct {
-	Items []myVerificationRow `json:"items"`
+	Items      []myVerificationRow `json:"items"`
+	NextCursor *int64              `json:"next_cursor,omitempty"`
 }
 
 func (s *Server) listMyVerifications(w http.ResponseWriter, r *http.Request) {
@@ -38,24 +48,58 @@ func (s *Server) listMyVerifications(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusUnauthorized, "auth required")
 		return
 	}
-	rows, err := s.deps.DB.QueryContext(r.Context(), db.Q(`
-		SELECT v.id, v.roll_no, v.status,
-		       COALESCE(v.face_match, 0),
-		       COALESCE(v.fp_match, 0),
-		       v.created_at
-		  FROM verifications v
-		 WHERE v.operator_id = ?
-		   AND v.status IN ('verified', 'denied')
-		 ORDER BY v.created_at DESC
-		 LIMIT 100
-	`), c.UserID)
+	// Parse optional cursor. Malformed (negative, non-numeric) is
+	// treated as "no cursor" so a bad client can't 400 the whole
+	// history — the operator just gets page 1 back.
+	var beforeID int64
+	if bs := r.URL.Query().Get("before"); bs != "" {
+		if n, err := strconv.ParseInt(bs, 10, 64); err == nil && n > 0 {
+			beforeID = n
+		}
+	}
+
+	// One extra row so we can tell "was this the last page?" without
+	// a second COUNT query — if we get pageSize back the caller can
+	// keep paging; if fewer, we know we hit the end.
+	limit := myVerificationsPageSize + 1
+
+	var (
+		rows *sql.Rows
+		err  error
+	)
+	if beforeID > 0 {
+		rows, err = s.deps.DB.QueryContext(r.Context(), db.Q(`
+			SELECT v.id, v.roll_no, v.status,
+			       COALESCE(v.face_match, 0),
+			       COALESCE(v.fp_match, 0),
+			       v.created_at
+			  FROM verifications v
+			 WHERE v.operator_id = ?
+			   AND v.status IN ('verified', 'denied')
+			   AND v.id < ?
+			 ORDER BY v.id DESC
+			 LIMIT ?
+		`), c.UserID, beforeID, limit)
+	} else {
+		rows, err = s.deps.DB.QueryContext(r.Context(), db.Q(`
+			SELECT v.id, v.roll_no, v.status,
+			       COALESCE(v.face_match, 0),
+			       COALESCE(v.fp_match, 0),
+			       v.created_at
+			  FROM verifications v
+			 WHERE v.operator_id = ?
+			   AND v.status IN ('verified', 'denied')
+			 ORDER BY v.id DESC
+			 LIMIT ?
+		`), c.UserID, limit)
+	}
 	if err != nil {
 		writeErr(w, http.StatusInternalServerError, "query: "+err.Error())
 		return
 	}
 	defer rows.Close()
 
-	out := myVerificationsResp{Items: make([]myVerificationRow, 0, 64)}
+	out := myVerificationsResp{Items: make([]myVerificationRow, 0, myVerificationsPageSize)}
 	for rows.Next() {
 		var (
 			row       myVerificationRow
@@ -76,10 +120,13 @@ func (s *Server) listMyVerifications(w http.ResponseWriter, r *http.Request) {
 		writeErr(w, http.StatusInternalServerError, "rows: "+err.Error())
 		return
 	}
+
+	// If we got the sentinel extra row, there's another page — drop
+	// it from the response and expose its predecessor as the cursor.
+	if len(out.Items) > myVerificationsPageSize {
+		out.Items = out.Items[:myVerificationsPageSize]
+		last := out.Items[len(out.Items)-1].ID
+		out.NextCursor = &last
+	}
 	writeJSON(w, http.StatusOK, out)
 }
-
-// Silence the sql import when db.Q's generated code doesn't reference
-// it directly — keeps go vet happy in some tags without pulling the
-// import in unnecessarily elsewhere.
-var _ = sql.ErrNoRows
