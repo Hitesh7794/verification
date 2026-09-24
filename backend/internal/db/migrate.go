@@ -205,7 +205,52 @@ func Migrate(d *sql.DB) error {
 		}
 	}
 
+	if !applied[31] {
+		if err := applyV31OperatorSelfies(ctx, d); err != nil {
+			return fmt.Errorf("apply v31 operator_selfies: %w", err)
+		}
+	}
+
 	return nil
+}
+
+// applyV31OperatorSelfies adds an operator_selfies table — one row per
+// verification-agent user, holding the S3 key of the selfie they
+// captured on the new post-login "take your photo" screen in the
+// Android app. Overwritten on every upload (latest wins) so the
+// column is a "most recent photo of who was on shift", not a history.
+//
+// captured_at tracks recency; the mobile app treats an old-enough
+// selfie as needing recapture in a later iteration (out of scope for
+// V31 — for now the client requires capture once per app process).
+//
+// Not linked into any existing table beyond the users FK — this is a
+// standalone auxiliary store, so shipping it can't affect existing
+// flows.
+func applyV31OperatorSelfies(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx, `
+		CREATE TABLE IF NOT EXISTS operator_selfies (
+		    user_id     BIGINT PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+		    s3_key      TEXT NOT NULL,
+		    captured_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW()
+		)
+	`); err != nil {
+		return fmt.Errorf("v31 create table: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)
+		 ON CONFLICT (version) DO NOTHING`,
+		31, "operator_selfies",
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // applyV30ConsecutiveDenials adds users.consecutive_denials — a running

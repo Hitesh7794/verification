@@ -370,6 +370,13 @@ func (s *Server) Router() http.Handler {
 		// the Android app's per-agent history screen. Client-role only —
 		// admins/superadmins have their own /admin/verifications view.
 		r.Get("/api/verifications/mine", s.requireRole("client")(s.listMyVerifications))
+		// Operator selfie — the post-login "take your photo" screen
+		// in the Android app posts here; the GET reports whether one
+		// has ever been captured (used by the client to decide
+		// whether to prompt in a future iteration; today the client
+		// prompts once per app process regardless).
+		r.Post("/api/operator/selfie", s.requireRole("client")(s.postOperatorSelfie))
+		r.Get("/api/operator/selfie", s.requireRole("client")(s.getOperatorSelfie))
 		r.Post("/api/wallet/order", s.requireRole("admin")(s.walletOrder))
 		r.Post("/api/wallet/verify-payment", s.requireRole("admin")(s.walletVerifyPayment))
 
