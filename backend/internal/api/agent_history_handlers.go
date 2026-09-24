@@ -35,6 +35,12 @@ type myVerificationRow struct {
 	FaceMatch bool   `json:"face_match"`
 	FpMatch   bool   `json:"fp_match"`
 	CreatedAt string `json:"created_at"`
+	// S3 key of the operator's active selfie at the time this row
+	// was inserted. Empty for pre-V33 rows and for verifications
+	// done by an admin (no selfie flow). The Android history screen
+	// hits /api/operator/selfies/bytes?key=<this> to render the
+	// thumbnail; a blank key renders the silhouette placeholder.
+	OperatorSelfieS3Key string `json:"operator_selfie_s3_key,omitempty"`
 }
 
 type myVerificationsResp struct {
@@ -72,7 +78,8 @@ func (s *Server) listMyVerifications(w http.ResponseWriter, r *http.Request) {
 			SELECT v.id, v.roll_no, v.status,
 			       COALESCE(v.face_match, 0),
 			       COALESCE(v.fp_match, 0),
-			       v.created_at
+			       v.created_at,
+			       COALESCE(v.operator_selfie_s3_key, '')
 			  FROM verifications v
 			 WHERE v.operator_id = ?
 			   AND v.status IN ('verified', 'denied')
@@ -85,7 +92,8 @@ func (s *Server) listMyVerifications(w http.ResponseWriter, r *http.Request) {
 			SELECT v.id, v.roll_no, v.status,
 			       COALESCE(v.face_match, 0),
 			       COALESCE(v.fp_match, 0),
-			       v.created_at
+			       v.created_at,
+			       COALESCE(v.operator_selfie_s3_key, '')
 			  FROM verifications v
 			 WHERE v.operator_id = ?
 			   AND v.status IN ('verified', 'denied')
@@ -107,7 +115,7 @@ func (s *Server) listMyVerifications(w http.ResponseWriter, r *http.Request) {
 			fp        int
 			createdAt time.Time
 		)
-		if err := rows.Scan(&row.ID, &row.RollNo, &row.Status, &face, &fp, &createdAt); err != nil {
+		if err := rows.Scan(&row.ID, &row.RollNo, &row.Status, &face, &fp, &createdAt, &row.OperatorSelfieS3Key); err != nil {
 			writeErr(w, http.StatusInternalServerError, "scan: "+err.Error())
 			return
 		}

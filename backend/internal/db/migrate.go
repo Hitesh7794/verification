@@ -211,7 +211,80 @@ func Migrate(d *sql.DB) error {
 		}
 	}
 
+	if !applied[32] {
+		if err := applyV32OperatorSelfieProfile(ctx, d); err != nil {
+			return fmt.Errorf("apply v32 operator_selfie_profile: %w", err)
+		}
+	}
+
+	if !applied[33] {
+		if err := applyV33VerificationSelfieSnapshot(ctx, d); err != nil {
+			return fmt.Errorf("apply v33 verification_selfie_snapshot: %w", err)
+		}
+	}
+
 	return nil
+}
+
+// applyV33VerificationSelfieSnapshot stashes the S3 key of the
+// operator's currently-active selfie onto each verification row at
+// insert time. Coupled with per-upload timestamped S3 keys (see
+// operator_selfie_handlers.go) it lets the app's history screen show
+// the exact selfie the operator was wearing when they did each
+// verification — a re-login mid-day (new selfie) doesn't rewrite
+// history, and pre-migration rows just have NULL and render the
+// silhouette placeholder client-side.
+func applyV33VerificationSelfieSnapshot(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx,
+		`ALTER TABLE verifications
+		    ADD COLUMN IF NOT EXISTS operator_selfie_s3_key TEXT`,
+	); err != nil {
+		return fmt.Errorf("v33 add column: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)
+		 ON CONFLICT (version) DO NOTHING`,
+		33, "verification_selfie_snapshot",
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+// applyV32OperatorSelfieProfile widens operator_selfies with the
+// operator's declared name + phone number — captured at the same
+// time as the selfie, on the post-login "who are you" screen in the
+// Android app, and never shown back inside the app. Nullable so the
+// V31-era rows (photo only) survive; the client always sends both on
+// the current build.
+func applyV32OperatorSelfieProfile(ctx context.Context, d *sql.DB) error {
+	tx, err := d.BeginTx(ctx, nil)
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+
+	if _, err := tx.ExecContext(ctx,
+		`ALTER TABLE operator_selfies
+		    ADD COLUMN IF NOT EXISTS name  TEXT,
+		    ADD COLUMN IF NOT EXISTS phone TEXT`,
+	); err != nil {
+		return fmt.Errorf("v32 add name/phone columns: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx,
+		`INSERT INTO schema_migrations(version, name) VALUES($1, $2)
+		 ON CONFLICT (version) DO NOTHING`,
+		32, "operator_selfie_profile",
+	); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
 // applyV31OperatorSelfies adds an operator_selfies table — one row per

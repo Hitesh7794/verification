@@ -377,6 +377,11 @@ func (s *Server) Router() http.Handler {
 		// prompts once per app process regardless).
 		r.Post("/api/operator/selfie", s.requireRole("client")(s.postOperatorSelfie))
 		r.Get("/api/operator/selfie", s.requireRole("client")(s.getOperatorSelfie))
+		// Streams the JPEG bytes for a selfie the caller owns.
+		// Prefix-gated on the requested key so a token can only
+		// ever fetch its own selfies. Used by the app's history
+		// screen for row thumbnails + tap-to-preview.
+		r.Get("/api/operator/selfies/bytes", s.requireRole("client")(s.getOperatorSelfieBytes))
 		r.Post("/api/wallet/order", s.requireRole("admin")(s.walletOrder))
 		r.Post("/api/wallet/verify-payment", s.requireRole("admin")(s.walletVerifyPayment))
 

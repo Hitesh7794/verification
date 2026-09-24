@@ -423,6 +423,12 @@ func (s *Server) createVerification(w http.ResponseWriter, r *http.Request) {
 
 	var id int64
 	err := s.deps.DB.QueryRowContext(r.Context(),
+		// operator_selfie_s3_key: snapshot the operator's currently-
+		// active selfie so the app's history screen can render the
+		// exact photo they were wearing when they did this
+		// verification. Subquery so we don't need a second Go
+		// round-trip; NULL when the operator predates V31 selfies
+		// or hasn't uploaded one yet (older APKs / admin overrides).
 		`INSERT INTO verifications(
 			roll_no, org_id, operator_id,
 			face_match, fp_match, status, note,
@@ -431,8 +437,10 @@ func (s *Server) createVerification(w http.ResponseWriter, r *http.Request) {
 			iris_left_score, iris_right_score, iris_left_quality, iris_right_quality,
 			face_match_score,
 			via, match_threshold, decision_ms, client_app_version,
-			idempotency_key
-		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25)
+			idempotency_key,
+			operator_selfie_s3_key
+		) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,
+			(SELECT s3_key FROM operator_selfies WHERE user_id = $3))
 		RETURNING id`,
 		req.RollNo, *claims.OrgID, claims.UserID,
 		boolInt(req.FaceMatch), boolInt(req.FpMatch), req.Status, nullable(req.Note),
