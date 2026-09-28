@@ -102,7 +102,7 @@
             // half-open eye — wait ~420ms for the eyes to be fully open, then fire.
             running = false;
             try { onStatus('hold', 'ready'); } catch (_) {}
-            setTimeout(function () { try { onBlink(); } catch (_) {} }, 420);
+            setTimeout(function () { try { onBlink(); } catch (_) {} }, 220);
             return;
           }
           closed = 0;

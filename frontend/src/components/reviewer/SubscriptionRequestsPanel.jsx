@@ -1,3 +1,5 @@
+import { RvSeal } from '../fv/FvReviewer.jsx'
+import { GlyphSheet, DecisionStamp } from '../fv/FvArt.jsx'
 import { useEffect, useState } from 'react'
 import { Button, Card, CardBody, Label } from '../ui/ui.jsx'
 import {
@@ -246,7 +248,7 @@ export default function SubscriptionRequestsPanel({ institutionName, orgId, onCh
         )}
 
         {pendingRows.length > 0 && (
-          <div className="mb-3 rounded-lg border border-warm bg-[#F8FAFC] px-3 py-2.5">
+          <div className="mb-3 rounded-lg border border-warm bg-[#F5F4F8] px-3 py-2.5">
             <div className="flex flex-wrap items-center justify-between gap-3">
               <label className="flex items-center gap-2.5 text-xs text-slate-700 cursor-pointer select-none">
                 <input
@@ -324,8 +326,13 @@ export default function SubscriptionRequestsPanel({ institutionName, orgId, onCh
               const isRejected = row.status === 'rejected'
               const rejectingHere = rejectingKey === key
               return (
-                <li key={key} className="py-3">
-                  <div className="flex items-start justify-between gap-4">
+                <li key={key} className="relative overflow-hidden py-3">
+                  {(isApproved || isRejected) && (
+                    <span aria-hidden="true" className="fv-stamp pointer-events-none absolute right-[14%] top-1/2 hidden -translate-y-1/2 lg:block">
+                      <DecisionStamp status={isApproved ? 'approved' : 'rejected'} className="h-12 w-32" />
+                    </span>
+                  )}
+                  <div className="relative flex items-start justify-between gap-4">
                     {!isPending && pendingRows.length > 0 && (
                       <span aria-hidden="true" className="mt-1 h-4 w-4 shrink-0" />
                     )}
@@ -339,36 +346,27 @@ export default function SubscriptionRequestsPanel({ institutionName, orgId, onCh
                         className="mt-1 h-4 w-4 shrink-0 rounded border-slate-300 accent-stone-800 cursor-pointer"
                       />
                     )}
+                    <GlyphSheet className="h-9 w-9 shrink-0" />
                     <div className="min-w-0 flex-1">
-                      <p className="text-sm font-semibold text-slate-900">
+                      <p className="fv-display text-[16px] leading-tight tracking-[-0.015em] text-fv-ink">
                         {row.exam_name}
-                        <span className="ml-2 font-mono text-xs font-normal text-slate-500">
-                          {row.exam_code}
-                        </span>
+                        {row.exam_code && <span className="ml-2 text-[13px] text-fv-muted">{row.exam_code}</span>}
                       </p>
-                      <p className="text-xs text-slate-500 mt-0.5">
+                      <p className="text-[13px] text-fv-muted mt-1">
                         Requested {formatRelative(row.requested_at)}
                         {row.candidate_count > 0 && (
                           <span> · {row.candidate_count.toLocaleString()} candidates</span>
                         )}
                       </p>
                       {row.review_note && !isPending && !isSystemNote(row.review_note) && (
-                        <p className="text-xs text-slate-600 mt-1.5 whitespace-pre-wrap">
-                          <span className="font-medium">Note:</span> {row.review_note}
+                        <p className="mt-2 rounded-[10px] border border-fv-line bg-fv-page px-3 py-2 text-[13px] text-fv-muted whitespace-pre-wrap">
+                          <span className="text-fv-ink">Your note</span> — {row.review_note}
                         </p>
                       )}
                     </div>
                     <div className="shrink-0">
-                      {isApproved && (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-50 border border-emerald-200 px-2 py-0.5 text-[11px] font-semibold text-emerald-700">
-                          Approved
-                        </span>
-                      )}
-                      {isRejected && (
-                        <span className="inline-flex items-center gap-1 rounded-full bg-rose-50 border border-rose-200 px-2 py-0.5 text-[11px] font-semibold text-rose-700">
-                          Rejected
-                        </span>
-                      )}
+                      {isApproved && <RvSeal status="approved" />}
+                      {isRejected && <RvSeal status="rejected" />}
                       {isPending && !rejectingHere && (
                         <div className="flex items-center gap-2">
                           <Button
@@ -376,9 +374,9 @@ export default function SubscriptionRequestsPanel({ institutionName, orgId, onCh
                             size="sm"
                             disabled={busy || working}
                             onClick={() => { setRejectingKey(key); setRejectNote(''); setErr('') }}
-                            className="!text-rose-700 !border-rose-200 hover:!bg-rose-50"
+                            className="!text-[#C62828] !border-[#EDD9B8] hover:!bg-[#FBF6EE]"
                           >
-                            Reject
+                            <span className="inline-flex items-center gap-1.5"><MarkIcon kind="cross" />Reject</span>
                           </Button>
                           <Button
                             variant="success"
@@ -386,7 +384,7 @@ export default function SubscriptionRequestsPanel({ institutionName, orgId, onCh
                             disabled={busy || working}
                             onClick={() => onApprove(row)}
                           >
-                            {busy ? 'Working…' : 'Approve'}
+                            <span className="inline-flex items-center gap-1.5"><MarkIcon kind="tick" />{busy ? 'Working…' : 'Approve'}</span>
                           </Button>
                         </div>
                       )}
@@ -471,4 +469,12 @@ function formatRelative(iso) {
   if (hrs < 48) return `${hrs} hr ago`
   const days = Math.round(hrs / 24)
   return `${days} day${days === 1 ? '' : 's'} ago`
+}
+
+function MarkIcon({ kind }) {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      {kind === 'tick' ? <path d="M5 12.5l4.5 4.5L19 7" /> : <path d="M6 6l12 12M18 6L6 18" />}
+    </svg>
+  )
 }

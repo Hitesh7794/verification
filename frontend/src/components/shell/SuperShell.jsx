@@ -1,66 +1,69 @@
-import { motion } from 'framer-motion'
-import SuperTabs from './SuperTabs.jsx'
+import { useNavigate } from 'react-router-dom'
+import FvSideShell, { FvPageHead } from '../fv/FvSideShell.jsx'
+import { IconGrid, IconFile, IconBook } from '../fv/FvAdminShell.jsx'
+import { useAuth } from '../../lib/auth.jsx'
 
-// Executive page shell for all superadmin surfaces. Sits between the
-// sticky SuperTabs top bar and the page content. Provides:
-//   - Consistent max-width + horizontal padding.
-//   - PageHead: title + optional eyebrow + right-slot actions.
-//   - Page-mount fade so navigation feels alive without being noisy.
+// SuperShell — the super admin's frame, in the FlatViolet redesign: the
+// shared sidebar (FvSideShell) with the three super admin sections.
+// Sign-out clears the stored session the same way the old top bar did.
 //
-// Usage:
-//   <SuperShell>
-//     <PageHead eyebrow="Overview" title="System dashboard" right={<Button ...>Export</Button>} />
-//     ...page content
-//   </SuperShell>
+// Route surface (kept in sync with server.go /api/super* + /api/superadmin/*):
+//   Overview      → /superadmin               (verification metrics)
+//   Applications  → /superadmin/applications  (institution KYC queue)
+//   Clients       → /superadmin/clients       (exam catalog root)
+
+const NAV = [
+  { to: '/superadmin', label: 'Overview', end: true, icon: IconGrid, guide: 'Checks across every institution on the portal.' },
+  { to: '/superadmin/applications', label: 'Applications', icon: IconFile, guide: 'Institutions waiting for their KYC to be reviewed.' },
+  { to: '/superadmin/clients', label: 'Clients', icon: IconBook, guide: 'Exam boards and the exams they run on the portal.' },
+]
 
 export default function SuperShell({ children }) {
+  const nav = useNavigate()
+  const { user } = useAuth() || {}
+
+  function onLogout() {
+    try {
+      localStorage.removeItem('token')
+      localStorage.removeItem('role_scope')
+      sessionStorage.clear()
+    } catch { /* ignore quota / privacy-mode errors */ }
+    nav('/superadmin/login', { replace: true })
+  }
+
   return (
-    <div className="min-h-full bg-warm-page">
-      <SuperTabs />
-      <motion.main
-        initial={{ opacity: 0, y: 8 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.28, ease: [0.22, 1, 0.36, 1] }}
-        className="mx-auto max-w-7xl px-6 py-8"
-      >
-        {children}
-      </motion.main>
-    </div>
+    <FvSideShell
+      bold
+      guide={false}
+      // One scene, not two, and not as a ghost: the crowd canvas used to
+      // run underneath the country board and the pair read as smudges.
+      // The board is now a panel on the overview, where it can be seen.
+      // Every page keeps the turning chakra.
+      backdrop="none"
+      subtitle="Super admin"
+      nav={NAV}
+      user={{ name: user?.name || user?.username || 'Super admin', role: 'Super admin' }}
+      onSignOut={onLogout}
+    >
+      {children}
+    </FvSideShell>
   )
 }
 
-export function PageHead({ eyebrow, title, subtitle, right }) {
-  return (
-    <div className="mb-7 flex items-start justify-between gap-4">
-      <div>
-        {eyebrow && (
-          <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-600 mb-1.5">
-            {eyebrow}
-          </p>
-        )}
-        <h1 className="font-display text-[26px] font-extrabold text-slate-900 tracking-[-0.025em]">
-          {title}
-        </h1>
-        {subtitle && (
-          <p className="text-sm text-slate-500 mt-1.5 max-w-2xl">{subtitle}</p>
-        )}
-      </div>
-      {right && <div className="flex items-center gap-2 shrink-0">{right}</div>}
-    </div>
-  )
+// Kept for the pages that import it: the FlatViolet page head. The old
+// all-caps eyebrow becomes a small plain line in the accent.
+export function PageHead({ eyebrow, title, subtitle, right, art }) {
+  return <FvPageHead eyebrow={eyebrow} title={title} subtitle={subtitle} right={right} art={art} />
 }
 
-// Section title used within a page (below PageHead) to demarcate
-// groupings. Small caps eyebrow, thin hairline underneath.
+// A section title inside a page: sentence case, a hairline under it.
 export function SectionHead({ title, count, right }) {
   return (
-    <div className="mb-3.5 flex items-baseline justify-between gap-4 border-b border-slate-200 pb-2.5">
+    <div className="mb-3.5 flex items-baseline justify-between gap-4 border-b border-fv-line pb-2.5">
       <div className="flex items-baseline gap-2.5">
-        <h2 className="text-[12px] font-bold uppercase tracking-[0.13em] text-slate-600">
-          {title}
-        </h2>
+        <h2 className="fv-display text-[18px] font-bold tracking-[-0.015em] text-fv-ink">{title}</h2>
         {typeof count === 'number' && (
-          <span className="rounded-full bg-slate-100 px-2 py-0.5 text-[11px] font-mono font-semibold text-slate-600 tabular-nums">
+          <span className="rounded-full bg-fv-card-focus px-2 py-0.5 text-[12px] font-semibold text-fv-accent-deep tabular-nums">
             {count}
           </span>
         )}

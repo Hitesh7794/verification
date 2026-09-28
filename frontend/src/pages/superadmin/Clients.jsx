@@ -1,3 +1,5 @@
+import BoardMark from '../../components/fv/BoardMark.jsx'
+import { ArtBoard } from '../../components/fv/FvArt.jsx'
 import { useCallback, useEffect, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -30,6 +32,7 @@ export default function Clients() {
   const [creating, setCreating] = useState(false)
   const [newName, setNewName] = useState('')
   const [newNotes, setNewNotes] = useState('')
+  const [newApiUrl, setNewApiUrl] = useState('')
   const [newKycMode, setNewKycMode] = useState('admin') // 'admin' | 'client' | 'both'
   const [saving, setSaving] = useState(false)
   // id of the row with a request in flight — disables that row's buttons
@@ -54,13 +57,19 @@ export default function Clients() {
 
   async function onCreate(e) {
     e.preventDefault()
-    if (!newName.trim()) return
+    if (!newName.trim() || !newApiUrl.trim()) return
     setSaving(true)
     setErr('')
     try {
-      await createClient({ name: newName.trim(), notes: newNotes.trim(), kyc_review_mode: newKycMode })
+      await createClient({
+        name: newName.trim(),
+        notes: newNotes.trim(),
+        api_url: newApiUrl.trim(),
+        kyc_review_mode: newKycMode,
+      })
       setNewName('')
       setNewNotes('')
+      setNewApiUrl('')
       setNewKycMode('admin')
       setCreating(false)
       await refresh({ quiet: true })
@@ -108,25 +117,17 @@ export default function Clients() {
       <FadeIn>
         <PageHead
           eyebrow="Directory"
-          title="Clients"
+          title="Clients" art={ArtBoard}
           subtitle="Exam-conducting bodies. Each client owns its exams."
           right={
             <Button onClick={() => setCreating(v => !v)}>
-              <Icon.Plus className="h-4 w-4 mr-1.5" />
+              {creating
+                ? <Icon.X className="h-4 w-4 mr-1.5" />
+                : <Icon.Plus className="h-4 w-4 mr-1.5" />}
               {creating ? 'Cancel' : 'New client'}
             </Button>
           }
         />
-
-        {/* Stats strip — three quick counts so the page has more
-            information density than a bare table. */}
-        {!loading && totalClients > 0 && (
-          <div className="grid grid-cols-3 gap-3 mb-6">
-            <StatChip label="Clients" value={totalClients} />
-            <StatChip label="Active" value={activeClients} tone="emerald" />
-            <StatChip label="Exams under them" value={totalExams} tone="indigo" />
-          </div>
-        )}
 
         {err && (
           <div role="alert" className="mb-4 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">
@@ -167,7 +168,6 @@ export default function Clients() {
                         <Input
                           value={newName}
                           onChange={(e) => setNewName(e.target.value)}
-                          placeholder="e.g. National Testing Agency"
                           maxLength={200}
                           autoFocus
                           required
@@ -189,6 +189,22 @@ export default function Clients() {
                         </p>
                       </div>
                     </div>
+                    <div>
+                      {/* Required by CP — this row's api_url is what the
+                          Control Plane calls when it needs to reach the
+                          client's Data Plane (KYC handoff, exam sync). */}
+                      <Label>Data Plane API URL <span className="text-rose-500">*</span></Label>
+                      <Input
+                        type="url"
+                        value={newApiUrl}
+                        onChange={(e) => setNewApiUrl(e.target.value)}
+                        placeholder="https://ssc.verifyportal.example.com"
+                        required
+                      />
+                      <p className="text-[11px] text-slate-500 mt-1">
+                        Base URL of this client's Data Plane. No trailing slash needed.
+                      </p>
+                    </div>
                     <div className="pt-2">
                       <Label>KYC review by <span className="text-rose-500">*</span></Label>
                       <p className="text-[11px] text-slate-500 mt-0.5 mb-2">
@@ -201,10 +217,10 @@ export default function Clients() {
                       />
                     </div>
                     <div className="flex justify-end gap-2 pt-2 border-t border-slate-100">
-                      <Button type="button" variant="ghost" onClick={() => { setCreating(false); setNewName(''); setNewNotes('') }}>
+                      <Button type="button" variant="ghost" onClick={() => { setCreating(false); setNewName(''); setNewNotes(''); setNewApiUrl('') }}>
                         Cancel
                       </Button>
-                      <Button type="submit" disabled={saving || !newName.trim()}>
+                      <Button type="submit" disabled={saving || !newName.trim() || !newApiUrl.trim()}>
                         {saving ? 'Creating…' : 'Create client'}
                       </Button>
                     </div>
@@ -215,115 +231,41 @@ export default function Clients() {
           )}
         </AnimatePresence>
 
-        <Card>
-          <CardBody className="p-0">
-            {loading ? (
-              <TableSkeleton />
-            ) : clients.length === 0 ? (
-              <EmptyClients onCreate={() => setCreating(true)} />
-            ) : (
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wider text-slate-500 bg-slate-50/70">
-                      <th className="px-5 py-3">Name</th>
-                      <th className="px-5 py-3">Exams</th>
-                      <th className="px-5 py-3">Status</th>
-                      <th className="px-5 py-3">Created</th>
-                      <th className="px-5 py-3 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {clients.map((c) => (
-                      <tr key={c.id} className="border-b border-slate-100 last:border-none hover:bg-slate-50/60 transition-colors">
-                        <td className="px-5 py-3.5">
-                          <Link to={`/superadmin/clients/${c.id}`} className="font-medium text-slate-900 hover:text-indigo-700 hover:underline">
-                            {c.name}
-                          </Link>
-                          {c.notes && <div className="text-xs text-slate-500 mt-0.5">{c.notes}</div>}
-                        </td>
-                        <td className="px-5 py-3.5 text-slate-700 tabular-nums">
-                          {c.active_exam_count != null
-                            ? (c.active_exam_count === c.exam_count ? (c.exam_count || 0) : `${c.active_exam_count} active / ${c.exam_count} total`)
-                            : (c.exam_count ?? 0)}
-                        </td>
-                        <td className="px-5 py-3.5">
-                          <div className="flex gap-1.5 flex-wrap">
-                            {c.closed && <Pill tone="amber" dot>Ended</Pill>}
-                            <KYCReviewModePill mode={c.kyc_review_mode || 'admin'} clientName={c.name} />
-                          </div>
-                        </td>
-                        <td className="px-5 py-3.5 text-xs text-slate-500 tabular-nums">
-                          {new Date(c.created_at).toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}
-                        </td>
-                        <td className="px-5 py-3.5">
-                          {confirmingId === c.id ? (
-                            // Inline confirmation: swaps in place of the
-                            // buttons rather than opening a dialog, which
-                            // is what R5 ("no modal windows") asks for.
-                            <div className="flex items-center justify-end gap-2">
-                              <span className="text-xs text-slate-600 whitespace-nowrap">
-                                End this client?
-                              </span>
-                              <Button
-                                variant="danger"
-                                size="sm"
-                                disabled={busyId === c.id}
-                                onClick={() => onClose(c)}
-                              >
-                                {busyId === c.id ? 'Ending…' : 'Confirm'}
-                              </Button>
-                              <Button
-                                variant="ghost"
-                                size="sm"
-                                disabled={busyId === c.id}
-                                onClick={() => setConfirmingId(null)}
-                              >
-                                Cancel
-                              </Button>
-                            </div>
-                          ) : (
-                            <div className="flex justify-end gap-1.5">
-                              {c.closed ? (
-                                <Button
-                                  variant="secondary"
-                                  size="sm"
-                                  disabled={busyId === c.id}
-                                  onClick={() => onReopen(c)}
-                                  title="Allow new activity under this client again"
-                                >
-                                  Reopen
-                                </Button>
-                              ) : (
-                                <Button
-                                  variant="secondary"
-                                  size="sm"
-                                  disabled={busyId === c.id}
-                                  onClick={() => setConfirmingId(c.id)}
-                                  title="Stop accepting new activity under this client (existing data preserved, reversible)"
-                                >
-                                  End
-                                </Button>
-                              )}
-                              <Link
-                                to={`/superadmin/clients/${c.id}`}
-                                className="inline-flex items-center px-3 py-1.5 text-sm font-medium rounded-lg bg-brand-600 text-white hover:bg-brand-700 transition-colors"
-                                title="Open this client's detail page to see and manage its exams"
-                              >
-                                Manage
-                                <Icon.ChevronRight className="h-3.5 w-3.5 ml-0.5" />
-                              </Link>
-                            </div>
-                          )}
-                        </td>
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </CardBody>
-        </Card>
+        {loading ? (
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {[0, 1, 2].map((k) => (
+              <div key={k} className="h-[190px] animate-pulse rounded-[16px] border border-fv-line bg-fv-card" />
+            ))}
+          </div>
+        ) : clients.length === 0 ? (
+          <EmptyClients onCreate={() => setCreating(true)} />
+        ) : (
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {clients.map((c) => (
+              <ClientCard
+                key={c.id}
+                c={c}
+                busy={busyId === c.id}
+                confirming={confirmingId === c.id}
+                onAskEnd={() => setConfirmingId(c.id)}
+                onCancelEnd={() => setConfirmingId(null)}
+                onEnd={() => onClose(c)}
+                onReopen={() => onReopen(c)}
+              />
+            ))}
+            <button
+              type="button"
+              onClick={() => setCreating(true)}
+              className="flex min-h-[190px] cursor-pointer flex-col items-center justify-center gap-2 rounded-[16px] border-2 border-dashed border-fv-line bg-transparent text-fv-faint transition hover:border-fv-accent-soft hover:bg-fv-card-focus hover:text-fv-accent-deep"
+            >
+              <span className="grid h-11 w-11 place-items-center rounded-full border-2 border-current text-[22px] font-bold leading-none">+</span>
+              <span className="text-[14.5px] font-bold">
+                Add a client <span className="fv-hi font-bold">नया क्लाइंट</span>
+              </span>
+            </button>
+          </div>
+        )}
+
       </FadeIn>
     </SuperShell>
   )
@@ -409,52 +351,6 @@ export function KYCReviewModePicker({ value, onChange, clientName }) {
   )
 }
 
-// KYCReviewModePill — compact badge used in the clients table. Labels
-// mirror the picker's checkbox naming (platform brand + client name)
-// so the reader doesn't have to translate 'admin'/'client'/'both'.
-export function KYCReviewModePill({ mode, clientName }) {
-  const rightLabel = (clientName || '').trim() || 'Client'
-  const label = mode === 'both' ? `${PLATFORM_BRAND} + ${rightLabel}`
-    : mode === 'client' ? rightLabel
-    : PLATFORM_BRAND
-  const tone = mode === 'both' ? 'indigo'
-    : mode === 'client' ? 'emerald'
-    : 'slate'
-  return <Pill tone={tone}>Review: {label}</Pill>
-}
-
-// Placeholder rows echoing the real table's rhythm, so the swap from
-// loading to loaded doesn't shift the layout.
-function TableSkeleton({ rows = 4 }) {
-  return (
-    <div className="divide-y divide-slate-100">
-      {Array.from({ length: rows }, (_, i) => (
-        <div key={i} className="flex items-center gap-4 px-5 py-4">
-          <Skeleton className="h-4 w-1/3" />
-          <Skeleton className="h-4 w-8" />
-          <Skeleton className="h-4 w-20" />
-          <Skeleton className="h-4 w-24 ml-auto" />
-        </div>
-      ))}
-    </div>
-  )
-}
-
-// Small numeric summary chip for the top-of-page stats strip.
-function StatChip({ label, value, tone = 'slate' }) {
-  const tones = {
-    slate: 'text-slate-900',
-    emerald: 'text-emerald-700',
-    indigo: 'text-indigo-700',
-  }
-  return (
-    <div className="rounded-xl bg-white ring-1 ring-slate-200 px-4 py-3">
-      <p className="text-[11px] font-medium uppercase tracking-wider text-slate-500">{label}</p>
-      <p className={`text-2xl font-semibold tabular-nums mt-0.5 ${tones[tone] || tones.slate}`}>{value}</p>
-    </div>
-  )
-}
-
 // Empty state — friendlier than a plain "no clients yet" line.
 function EmptyClients({ onCreate }) {
   return (
@@ -472,5 +368,110 @@ function EmptyClients({ onCreate }) {
         Add your first client
       </Button>
     </div>
+  )
+}
+
+// ── One client ─────────────────────────────────────────────────
+// A client is an exam body: it owns exams, it routes its own KYC, and
+// it can be ended without losing anything. The card carries those three
+// facts and nothing else; the detail page has the rest.
+function ClientCard({ c, busy, confirming, onAskEnd, onCancelEnd, onEnd, onReopen }) {
+  const active = Number(c.active_exam_count ?? c.exam_count) || 0
+  const totalExams = Number(c.exam_count) || 0
+  return (
+    <div className={`relative flex flex-col overflow-hidden rounded-[16px] border bg-fv-card transition ${
+      c.closed ? 'border-[#EDD9B8]' : 'border-fv-line hover:border-fv-accent-soft'
+    }`}>
+      {c.closed && <span aria-hidden="true" className="absolute inset-x-0 top-0 h-[3px] bg-[#E4A54B]" />}
+
+      <Link to={`/superadmin/clients/${c.id}`} className="group block px-5 pb-4 pt-5">
+        <BoardMark name={c.name} nameClass="fv-display text-[17px] font-bold leading-tight group-hover:text-fv-accent-deep" />
+        <p className="mt-1.5 line-clamp-2 min-h-[34px] text-[13px] font-semibold leading-snug text-fv-muted">
+          {c.notes || 'No note on this client.'}
+        </p>
+      </Link>
+
+      <div className="mx-5 grid grid-cols-2 gap-3 border-t border-fv-line py-3">
+        <span className="leading-tight">
+          <span className="block text-[12.5px] font-bold text-fv-faint">
+            Exams <span className="fv-hi font-bold">परीक्षाएँ</span>
+          </span>
+          <span className="block text-[15px] font-bold tabular-nums text-fv-ink">
+            {active === totalExams ? totalExams : <>{active} <span className="text-fv-faint">of {totalExams}</span></>}
+            {active !== totalExams && <span className="ml-1 text-[12.5px] font-bold text-fv-faint">running</span>}
+          </span>
+        </span>
+        <span className="leading-tight">
+          <span className="block text-[12.5px] font-bold text-fv-faint">
+            KYC seen by <span className="fv-hi font-bold">जाँच</span>
+          </span>
+          <span className="block truncate text-[15px] font-bold text-fv-ink">
+            {reviewedBy(c.kyc_review_mode || 'admin', c.name)}
+          </span>
+        </span>
+      </div>
+
+      <div className="mt-auto flex items-center justify-between gap-2 border-t border-fv-line bg-fv-page px-5 py-2.5">
+        {confirming ? (
+          <>
+            <span className="text-[13px] font-bold text-fv-ink">End this client?</span>
+            <span className="flex gap-1.5">
+              <button type="button" disabled={busy} onClick={onEnd}
+                      className="cursor-pointer rounded-[9px] bg-[#A8711F] px-2.5 py-1 text-[13px] font-bold text-white disabled:opacity-50">
+                {busy ? 'Ending…' : 'Yes, end it'}
+              </button>
+              <button type="button" disabled={busy} onClick={onCancelEnd}
+                      className="cursor-pointer rounded-[9px] border border-fv-line bg-white px-2.5 py-1 text-[13px] font-bold text-fv-muted">
+                Keep
+              </button>
+            </span>
+          </>
+        ) : (
+          <>
+            <span className="text-[12.5px] font-bold text-fv-faint">
+              {c.closed ? 'Ended' : 'Since'}{' '}
+              <span className="tabular-nums">
+                {c.created_at ? new Date(c.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
+              </span>
+            </span>
+            <span className="flex items-center gap-1.5">
+              {c.closed ? (
+                <button type="button" disabled={busy} onClick={onReopen}
+                        className="cursor-pointer rounded-[9px] border border-fv-line bg-white px-2.5 py-1 text-[13px] font-bold text-fv-ink transition hover:bg-fv-card disabled:opacity-50">
+                  Reopen
+                </button>
+              ) : (
+                <button type="button" disabled={busy} onClick={onAskEnd}
+                        className="cursor-pointer rounded-[9px] px-2 py-1 text-[13px] font-bold text-fv-faint transition hover:text-[#8A5A14] disabled:opacity-50">
+                  End
+                </button>
+              )}
+              <Link to={`/superadmin/clients/${c.id}`}
+                    className="inline-flex items-center gap-1 rounded-[9px] bg-fv-accent px-3 py-1.5 text-[13.5px] font-bold text-white transition hover:bg-fv-accent-deep">
+                Manage <span aria-hidden="true">›</span>
+              </Link>
+            </span>
+          </>
+        )}
+      </div>
+    </div>
+  )
+}
+
+// Who sees this client's registrations first.
+function reviewedBy(mode, clientName) {
+  const them = (clientName || '').trim() || 'the client'
+  if (mode === 'both') return `${PLATFORM_BRAND}, then ${them}`
+  if (mode === 'client') return them
+  return PLATFORM_BRAND
+}
+
+// KYCReviewModePill — the same fact as reviewedBy(), as a badge. Used
+// on the client detail page.
+export function KYCReviewModePill({ mode, clientName }) {
+  return (
+    <span className="inline-flex items-center gap-1.5 rounded-full bg-fv-card-focus px-2.5 py-1 text-[13px] font-bold text-fv-accent-deep ring-1 ring-fv-accent-soft">
+      Reviewed by {reviewedBy(mode, clientName)}
+    </span>
   )
 }

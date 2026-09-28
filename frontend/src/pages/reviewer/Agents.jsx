@@ -1,3 +1,8 @@
+import { RvTile, RvSeal, RvHead, RvPhoto } from '../../components/fv/FvReviewer.jsx'
+import { AgentPortrait, ArtCollege, GlyphSheet } from '../../components/fv/FvArt.jsx'
+import { hi } from '../../components/fv/hindi.jsx'
+import { ArtAgent } from '../../components/fv/FvArt.jsx'
+import FvEmpty from '../../components/fv/FvEmpty.jsx'
 import { useEffect, useMemo, useState } from 'react'
 import ReviewerShell from '../../components/reviewer/ReviewerShell.jsx'
 import { Button } from '../../components/ui/ui.jsx'
@@ -192,40 +197,30 @@ export default function ReviewerAgents() {
       <div className="mb-6 rounded-xl bg-warm-surface ring-1 ring-warm overflow-hidden shadow-sm">
         <div className="h-[3px] rule-gold" />
         <div className="p-5 sm:p-6">
-          <div className="flex flex-wrap items-start justify-between gap-4">
-            <div className="flex items-start gap-4 min-w-0">
-              <div className="h-12 w-12 rounded-xl bg-stone-100 text-stone-800 flex items-center justify-center shrink-0">
-                <Icon.ShieldCheck className="h-6 w-6" />
-              </div>
-              <div className="min-w-0">
-                <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
-                  Verification agents
-                </h1>
-                <p className="mt-1 text-sm text-slate-500 max-w-xl">
-                  Every agent under your client scope. Three consecutive
-                  denies auto-disables an agent — this is where you lift
-                  the lockout once you&rsquo;ve confirmed the reason.
-                </p>
-              </div>
-            </div>
-            <Button variant="secondary" size="sm" onClick={load} disabled={refreshing}>
-              <Icon.Refresh className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-              <span className="ml-1.5">{refreshing ? 'Refreshing…' : 'Refresh'}</span>
-            </Button>
-          </div>
+          <RvHead
+            title="Agents"
+            art={ArtAgent}
+            subtitle="Everyone verifying for your exams. Three denies in a row locks an agent out; you lift it here."
+            right={(
+              <Button variant="secondary" onClick={load} disabled={refreshing}>
+                <Icon.Refresh className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+                <span className="ml-1.5">{refreshing ? 'Refreshing…' : 'Refresh'}</span>
+              </Button>
+            )}
+          />
 
           {/* Stats strip — same shape as the other reviewer pages so it
               reads as part of the same product. */}
-          <div className="mt-5 pt-5 border-t border-slate-100 grid grid-cols-2 sm:grid-cols-4 gap-6 text-sm">
-            <Stat label="Total agents" value={total} />
-            <Stat label="Active" value={active.length} tone="emerald" />
-            <Stat
-              label="Auto-disabled"
-              value={auto.length}
-              tone="rose"
-              hint={auto.length ? 'needs your attention' : ''}
-            />
-            <Stat label="Manually disabled" value={manual.length} tone="slate" />
+          <div className="fv-stagger grid grid-cols-2 gap-3 lg:grid-cols-4">
+            <RvTile kind="agents" label="Agents" value={total}
+                    guide="Everyone with an agent login under your exams." />
+            <RvTile kind="approved" label="Active" value={active.length}
+                    guide="Agents who can sign in and verify right now." mood="typing" prop="stamp" />
+            <RvTile kind="rejected" label="Locked" value={auto.length}
+                    hint={auto.length ? 'needs your attention' : ''}
+                    guide="Locked after three denies in a row. Only you can lift it." mood="typing" prop="no" />
+            <RvTile kind="total" label="Disabled" value={manual.length}
+                    guide="Switched off by their own institution." />
           </div>
         </div>
       </div>
@@ -300,49 +295,39 @@ export default function ReviewerAgents() {
       {sorted.some((a) => a.status === 'disabled' && a.disable_reason === 'auto_streak') && (
         <section className="mb-8" aria-labelledby="attention-heading">
           <div className="mb-3 flex items-center gap-2">
-            <span
-              aria-hidden="true"
-              className="h-1.5 w-1.5 rounded-full bg-rose-500"
-            />
-            <h2
-              id="attention-heading"
-              className="text-[11px] font-bold uppercase tracking-[0.14em] text-rose-800"
-            >
-              Needs attention · {sorted.filter((a) => a.status === 'disabled' && a.disable_reason === 'auto_streak').length} agent{sorted.filter((a) => a.status === 'disabled' && a.disable_reason === 'auto_streak').length === 1 ? '' : 's'}
+            <LockArt className="h-9 w-9" />
+            <h2 id="attention-heading" className="fv-display text-[18px] tracking-[-0.015em] text-fv-ink">
+              Locked out
+              <span className="fv-hi ml-2 text-[13px] font-medium text-fv-faint">{hi('Locked')}</span>
             </h2>
           </div>
           <ul className="space-y-3">
             {sorted.filter((a) => a.status === 'disabled' && a.disable_reason === 'auto_streak').map((a) => (
               <li
                 key={a.id}
-                className="rounded-xl bg-white ring-1 ring-rose-200/70 shadow-sm overflow-hidden"
+                className="relative overflow-hidden rounded-[12px] border border-[#EDD9B8] bg-fv-card"
               >
-                <div className="h-[3px] bg-rose-500/80" />
-                <div className="p-4 sm:p-5 flex flex-wrap items-start gap-4">
-                  <span
-                    aria-hidden="true"
-                    className="h-11 w-11 shrink-0 rounded-lg bg-rose-100 text-rose-700 font-display font-extrabold text-[16px] flex items-center justify-center"
-                  >
-                    {initialFor(a)}
-                  </span>
+                <div className="h-[3px] bg-[#A8711F]" />
+                <RvPhoto name={a.org_name || a.institute_name} photo={a.org_photo_url || a.logo_url} width="34%" />
+                <div className="relative p-4 sm:p-5 flex flex-wrap items-start gap-4">
+                  <AgentPortrait seed={a.display_name || a.username} name={a.display_name || a.username}
+                                 className="h-14 w-14 shrink-0 grayscale" />
                   <div className="min-w-0 flex-1">
                     <div className="flex items-baseline gap-2 flex-wrap">
-                      <p className="text-[15px] font-semibold text-slate-900 truncate">
+                      <p className="fv-display text-[18px] leading-tight tracking-[-0.015em] text-fv-ink truncate">
                         {a.display_name || a.username}
                       </p>
-                      <span className="font-mono text-[11px] text-slate-400">
-                        {a.username}
-                      </span>
+                      <span className="text-[13px] text-fv-accent-deep">@{a.username}</span>
+                      <RvSeal status="locked" />
                     </div>
-                    <p className="mt-1 text-sm text-slate-600">
-                      Auto-disabled after 3 consecutive denies.
+                    <p className="mt-1.5 text-[14px] text-fv-muted">
+                      Locked after three denies in a row.
                       {a.disabled_at && (
                         <> Locked <span className="text-slate-500">{formatRelative(a.disabled_at)}</span>.</>
                       )}
                     </p>
-                    <p className="mt-1 text-xs text-slate-500">
-                      <span className="font-medium text-slate-600">{a.org_name}</span>
-                      {a.email && <> · {a.email}</>}
+                    <p className="mt-1.5 flex items-center gap-2 text-[13px] text-fv-ink">
+                      <ArtCollege className="h-6 w-6 shrink-0" />{a.org_name || a.institute_name || '—'}
                     </p>
                     {(a.assigned_exams || []).length > 0 && (
                       <div className="mt-2 flex flex-wrap gap-1.5">
@@ -385,11 +370,10 @@ export default function ReviewerAgents() {
           ))}
         </div>
       ) : sorted.length === 0 ? (
-        <div className="rounded-xl bg-warm-surface ring-1 ring-warm p-10 text-center">
+        <div className="rounded-xl bg-warm-surface ring-1 ring-warm">
           {filtersActive ? (
-            <>
-              <p className="text-sm font-semibold text-slate-700">No agents match those filters</p>
-              <p className="text-xs text-slate-500 mt-1">
+            <FvEmpty title="No agents match those filters" mood="detective">
+              <p className="text-[14px] text-fv-muted">
                 Try broadening the search or{' '}
                 <button
                   type="button"
@@ -399,15 +383,9 @@ export default function ReviewerAgents() {
                   clear all filters
                 </button>.
               </p>
-            </>
+            </FvEmpty>
           ) : (
-            <>
-              <p className="text-sm font-semibold text-slate-700">No agents yet</p>
-              <p className="text-xs text-slate-500 mt-1">
-                Verification agents appear here once your client&rsquo;s
-                approved institutes create them.
-              </p>
-            </>
+            <FvEmpty title="No agents yet" body="Verification agents appear here once your client’s approved institutes create them." />
           )}
         </div>
       ) : (
@@ -415,12 +393,12 @@ export default function ReviewerAgents() {
           <div className="h-[2px] rule-gold" />
           <div className="overflow-x-auto">
             <table className="min-w-full text-sm">
-              <thead className="bg-warm-surface text-slate-500 uppercase text-[11px]">
+              <thead className="bg-fv-page text-fv-muted text-[12.5px]">
                 <tr>
-                  <th className="text-left px-4 py-2.5 font-semibold tracking-wider">Agent</th>
-                  <th className="text-left px-4 py-2.5 font-semibold tracking-wider">Institute</th>
-                  <th className="text-left px-4 py-2.5 font-semibold tracking-wider">Exam</th>
-                  <th className="text-left px-4 py-2.5 font-semibold tracking-wider">Status</th>
+                  <th className="text-left px-4 py-2.5">Agent<span className="fv-hi ml-1.5 text-[11px] text-fv-faint">{hi('Agent')}</span></th>
+                  <th className="text-left px-4 py-2.5">Institute<span className="fv-hi ml-1.5 text-[11px] text-fv-faint">{hi('Institute')}</span></th>
+                  <th className="text-left px-4 py-2.5">Exam<span className="fv-hi ml-1.5 text-[11px] text-fv-faint">{hi('Exam')}</span></th>
+                  <th className="text-left px-4 py-2.5">Status<span className="fv-hi ml-1.5 text-[11px] text-fv-faint">{hi('Status')}</span></th>
                   <th className="text-left px-4 py-2.5 font-semibold tracking-wider">Last activity</th>
                   <th className="text-right px-4 py-2.5 font-semibold tracking-wider">Action</th>
                 </tr>
@@ -460,33 +438,34 @@ function AgentRow({ a, busy, onEnable }) {
     <tr className={rowTint}>
       <td className="px-4 py-3">
         <div className="flex items-center gap-3 min-w-0">
-          <span
-            aria-hidden="true"
-            className={`h-8 w-8 shrink-0 rounded-md flex items-center justify-center font-display font-bold text-[13px] ${
-              isAuto ? 'bg-rose-100 text-rose-700'
-              : isManual ? 'bg-slate-100 text-slate-500'
-              : 'bg-stone-100 text-stone-700'
-            }`}
-          >
-            {initialFor(a)}
-          </span>
+          <AgentPortrait seed={a.display_name || a.username} name={a.display_name || a.username}
+                         className={`h-10 w-10 shrink-0 ${isAuto || isManual ? 'grayscale opacity-70' : ''}`} />
           <div className="min-w-0">
-            <p className="font-semibold text-slate-900 truncate">
+            <p className="fv-display text-[16px] leading-tight tracking-[-0.015em] text-fv-ink truncate">
               {a.display_name || a.username}
             </p>
-            <p className="font-mono text-[11px] text-slate-400 truncate">
-              {a.username}
-              {a.email && <span className="ml-2 font-sans text-slate-500">{a.email}</span>}
-            </p>
+            <p className="truncate text-[12.5px] text-fv-accent-deep">@{a.username}</p>
           </div>
         </div>
       </td>
-      <td className="px-4 py-3 text-slate-700">
-        {a.org_name || <span className="text-slate-400">—</span>}
+      <td className="relative overflow-hidden px-4 py-3 text-fv-ink">
+        <RvPhoto name={a.org_name || a.institute_name} photo={a.org_photo_url || a.logo_url} width="70%" />
+        <span className="relative flex min-w-0 items-center gap-2">
+          <ArtCollege className="h-7 w-7 shrink-0" />
+          <span className="truncate">{a.org_name || a.institute_name || '—'}</span>
+        </span>
       </td>
       <td className="px-4 py-3">
-        {(a.assigned_exams || []).length === 0 ? (
-          <span className="text-slate-400 text-xs">Unassigned</span>
+        {(a.assigned_exams || []).length === 0 && !(a.exam_names || []).length ? (
+          <span className="text-[13px] text-fv-faint">No exam yet</span>
+        ) : (a.assigned_exams || []).length === 0 ? (
+          <div className="flex flex-col gap-0.5">
+            {(a.exam_names || []).map((n) => (
+              <span key={n} className="flex items-center gap-2 text-[13.5px] text-fv-ink">
+                <GlyphSheet className="h-6 w-6 shrink-0" /><span className="truncate">{n}</span>
+              </span>
+            ))}
+          </div>
         ) : (
           <div className="flex flex-col gap-0.5 min-w-0">
             {a.assigned_exams.map((e) => (
@@ -499,13 +478,7 @@ function AgentRow({ a, busy, onEnable }) {
         )}
       </td>
       <td className="px-4 py-3">
-        {isAuto ? (
-          <Pill tone="rose" dot>Auto-disabled</Pill>
-        ) : isManual ? (
-          <Pill tone="slate" dot>Disabled</Pill>
-        ) : (
-          <Pill tone="emerald" dot>Active</Pill>
-        )}
+        <RvSeal status={isAuto ? 'locked' : isManual ? 'disabled' : 'active'} />
       </td>
       <td className="px-4 py-3 text-slate-600 tabular-nums text-xs">
         {isAuto || isManual
@@ -579,5 +552,17 @@ function FilterSelect({ value, onChange, options, ariaLabel }) {
         </svg>
       </span>
     </div>
+  )
+}
+
+// The lock on a banner of agents who cannot sign in.
+function LockArt({ className }) {
+  return (
+    <svg viewBox="0 0 40 40" className={className} aria-hidden="true">
+      <rect x="8" y="17" width="24" height="18" rx="4" fill="#A8711F" />
+      <path d="M13 17v-4a7 7 0 0 1 14 0v4" fill="none" stroke="#A8711F" strokeWidth="3.4" />
+      <circle cx="20" cy="25" r="3" fill="#FFFFFF" />
+      <rect x="18.6" y="26" width="2.8" height="5" rx="1.4" fill="#FFFFFF" />
+    </svg>
   )
 }

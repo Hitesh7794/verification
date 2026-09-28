@@ -1,0 +1,144 @@
+/* Landing — FlatViolet, Bricolage only, flat. Tokens live in index.css (--color-fv-*).
+   Type scale (Bricolage; display cut opsz 96 for 28px and up):
+     13 · 15 · 17 · 21 · 28 · 44 · clamp(96→208) for the hero word. */
+
+.lp { min-height: 100vh; background: var(--color-fv-page); color: var(--color-fv-ink); }
+.lp :focus-visible { outline: 2px solid var(--color-fv-accent); outline-offset: 3px; border-radius: 6px; }
+
+/* ── Bar ─────────────────────────────────────────────────────────── */
+.lp-bar {
+  position: relative; z-index: 3;
+  display: flex; align-items: center; justify-content: space-between; gap: 16px;
+  max-width: 1240px; margin: 0 auto; padding: 20px 24px;
+}
+.lp-brand { display: flex; align-items: center; gap: 10px; font-size: 17px; font-weight: 600; letter-spacing: -0.01em; }
+.lp-brand-emblem { height: 34px; }
+.lp-nav { display: flex; align-items: center; gap: 22px; }
+.lp-link { font-size: 15px; font-weight: 500; color: var(--color-fv-muted); transition: color .21s; }
+.lp-link:hover { color: var(--color-fv-ink); }
+
+/* ── Buttons: flat, 12px corners (Flat), no arrows ───────────────── */
+.lp-btn {
+  display: inline-flex; align-items: center; justify-content: center;
+  height: 52px; padding: 0 22px; border-radius: 12px;
+  font-size: 16px; font-weight: 600; letter-spacing: 0.2px; white-space: nowrap;
+  transition: background-color .26s, color .26s, border-color .26s, transform .15s;
+}
+.lp-btn:active { transform: scale(.97); }
+.lp-btn-primary { background: var(--color-fv-accent); color: var(--color-fv-on-accent); }
+.lp-btn-primary:hover { background: var(--color-fv-accent-deep); }
+.lp-btn-quiet { background: var(--color-fv-card); color: var(--color-fv-ink); border: 1px solid var(--color-fv-line); }
+.lp-btn-quiet:hover { border-color: var(--color-fv-accent-soft); color: var(--color-fv-accent-deep); }
+.lp-btn-sm { height: 42px; padding: 0 16px; font-size: 15px; }
+
+/* ── Hero: the hall fills the first screen; the copy sits on its back wall ── */
+.lp-hero { position: relative; overflow: hidden; height: max(620px, calc(100vh - 82px)); }
+.lp-hall { position: absolute; inset: 0; }
+.lp-hero-top { position: relative; z-index: 2; max-width: 1240px; margin: 0 auto; padding: 1vh 24px 0; }
+.lp-hero-copy { display: flex; flex-direction: column; align-items: flex-start; max-width: min(560px, 44vw); }
+.lp-hero-emblem { flex: none; }
+.lp-greet { margin-top: 1.4vh; font-size: 17px; font-weight: 500; color: var(--color-fv-muted); }
+.lp-namaste {
+  font-variation-settings: "opsz" 96, "wdth" 76;
+  font-weight: 700;
+  font-size: clamp(76px, min(9.5vw, 17vh), 176px);
+  line-height: .84;
+  letter-spacing: -0.045em;
+  margin: 2px 0 0 -0.04em;
+}
+.lp-lede { margin-top: 2vh; font-size: clamp(16px, 1.25vw, 19px); line-height: 1.55; color: var(--color-fv-muted); text-wrap: pretty; }
+.lp-cta { margin-top: 2.6vh; display: flex; flex-wrap: wrap; gap: 12px; }
+
+/* One orchestrated entrance, timed to the emblem's clock. */
+@keyframes lp-in { from { opacity: 0; transform: translateY(12px); } to { opacity: 1; transform: none; } }
+.lp-in { animation: lp-in 620ms cubic-bezier(.22,.9,.28,1) both; animation-delay: var(--d, 0ms); }
+
+/* ── Sections ────────────────────────────────────────────────────── */
+.lp-sec { max-width: 1240px; margin: 0 auto; padding: 112px 24px 0; }
+.lp-sec-head { display: grid; grid-template-columns: minmax(0, 5fr) minmax(0, 6fr); gap: 32px 64px; align-items: end; }
+.lp-h2 {
+  font-variation-settings: "opsz" 96, "wdth" 88;
+  font-size: clamp(34px, 4.2vw, 52px); line-height: 1.02; letter-spacing: -0.03em; font-weight: 700;
+  text-wrap: balance;
+}
+.lp-sec-lede { font-size: 17px; line-height: 1.6; color: var(--color-fv-muted); max-width: 38em; }
+.lp-h3 { font-variation-settings: "opsz" 96; font-size: 24px; line-height: 1.1; font-weight: 700; letter-spacing: -0.02em; }
+
+/* Four checks on one floor line — a sequence, so they're numbered. */
+.lp-checks {
+  margin-top: 56px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
+  border-top: 1px solid var(--color-fv-line);
+}
+.lp-check { position: relative; padding: 0 24px 8px; border-left: 1px solid var(--color-fv-line); }
+.lp-check:first-child { border-left: 0; padding-left: 0; }
+.lp-check-fig { position: relative; height: 210px; margin: 0 -24px 22px; background: var(--color-fv-card-focus); overflow: hidden; }
+.lp-check:first-child .lp-check-fig { margin-left: 0; }
+.lp-check-canvas { position: absolute; bottom: -2px; left: 50%; transform: translateX(-50%); width: 176px; }
+.lp-check-step { font-size: 13px; font-weight: 600; color: var(--color-fv-accent); margin-bottom: 6px; }
+.lp-check-text { margin-top: 10px; font-size: 15px; line-height: 1.55; color: var(--color-fv-muted); max-width: 30ch; }
+
+/* Desks: a list, not a card grid. */
+.lp-desks { margin-top: 48px; border-top: 1px solid var(--color-fv-ink); }
+.lp-desk {
+  display: grid; grid-template-columns: minmax(0, 4fr) minmax(0, 5fr) auto; gap: 12px 40px; align-items: center;
+  padding: 26px 0; border-bottom: 1px solid var(--color-fv-line);
+}
+.lp-desk-who { font-variation-settings: "opsz" 96; font-size: 28px; line-height: 1.1; font-weight: 700; letter-spacing: -0.02em; }
+.lp-desk-what { font-size: 16px; line-height: 1.55; color: var(--color-fv-muted); max-width: 44ch; }
+.lp-desk-go { justify-self: end; }
+
+/* Register band — the one lit block on the page. */
+.lp-reg {
+  max-width: 1240px; margin: 112px auto 0; padding: 56px;
+  display: grid; grid-template-columns: minmax(0, 7fr) minmax(0, 5fr); gap: 48px;
+  background: var(--color-fv-card-focus); border-radius: 12px;
+}
+.lp-reg-copy { display: flex; flex-direction: column; align-items: flex-start; gap: 20px; }
+.lp-reg-docs { background: var(--color-fv-card); border: 1px solid var(--color-fv-line); border-radius: 12px; padding: 28px; align-self: start; }
+.lp-reg-docs-title { font-size: 15px; font-weight: 600; margin-bottom: 14px; }
+.lp-reg-docs ul { display: grid; gap: 12px; }
+.lp-reg-docs li { position: relative; padding-left: 22px; font-size: 16px; color: var(--color-fv-ink); }
+.lp-reg-docs li::before {
+  content: ''; position: absolute; left: 0; top: .55em; width: 10px; height: 10px; border-radius: 3px;
+  border: 2px solid var(--color-fv-accent-soft);
+}
+
+.lp-close { max-width: 1240px; margin: 0 auto; padding: 128px 24px 96px; }
+.lp-close-line {
+  font-variation-settings: "opsz" 96, "wdth" 92;
+  font-size: clamp(30px, 4.2vw, 56px); line-height: 1.08; letter-spacing: -0.028em; font-weight: 650;
+  max-width: 18em; text-wrap: balance;
+}
+
+.lp-foot {
+  max-width: 1240px; margin: 0 auto; padding: 28px 24px 40px;
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  border-top: 1px solid var(--color-fv-line); font-size: 14px; color: var(--color-fv-muted);
+}
+.lp-foot-emblem { height: 28px; }
+.lp-foot-fine { margin-left: auto; color: var(--color-fv-faint); font-size: 13px; }
+
+/* ── Small screens ───────────────────────────────────────────────── */
+@media (max-width: 900px) {
+  .lp-sec { padding-top: 80px; }
+  .lp-sec-head { grid-template-columns: minmax(0, 1fr); gap: 16px; }
+  .lp-checks { grid-template-columns: repeat(2, minmax(0, 1fr)); row-gap: 40px; border-top: 0; }
+  .lp-check, .lp-check:first-child { border-left: 0; padding: 0; }
+  .lp-check-fig, .lp-check:first-child .lp-check-fig { margin: 0 0 18px; border-radius: 12px; }
+  .lp-desk { grid-template-columns: minmax(0, 1fr); }
+  .lp-desk-go { justify-self: start; }
+  .lp-reg { margin: 80px 16px 0; padding: 32px 24px; grid-template-columns: minmax(0, 1fr); }
+  .lp-hero-copy { max-width: none; }
+}
+@media (max-width: 560px) {
+  .lp-hide-sm { display: none; }
+  .lp-cta .lp-btn { flex: 1 1 100%; }
+  .lp-hero-copy { min-width: 0; }
+  .lp-brand span:last-child { display: none; }
+  .lp-checks { grid-template-columns: minmax(0, 1fr); }
+  .lp-lede { font-size: 17px; }
+  .lp-foot-fine { margin-left: 0; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .lp-in { animation: none; }
+}

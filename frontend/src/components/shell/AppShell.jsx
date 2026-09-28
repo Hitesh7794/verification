@@ -1,3 +1,4 @@
+import PortalBackdrop from '../fv/PortalBackdrop.jsx'
 import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
 import { useAuth } from '../../lib/auth.jsx'
@@ -71,7 +72,10 @@ export default function AppShell({
   const showWallet = user?.role === 'admin'
 
   return (
-    <div className="min-h-screen flex flex-col justify-between bg-[#F1F4F8] text-[#0B1F3A]">
+    <div className={`relative flex min-h-screen flex-col justify-between bg-[#F5F4F8] text-[#211E33] ${
+      fullWidth ? 'lg:h-screen lg:overflow-hidden' : ''
+    }`}>
+      <PortalBackdrop />
       {customHeader ? (
         typeof customHeader === 'function' ? (
           customHeader({ user, handleLogout: requestSignOut, ReportProblem, AvatarMenu })
@@ -79,9 +83,10 @@ export default function AppShell({
           customHeader
         )
       ) : (
-        <header className="sticky top-0 z-30 bg-ink-chrome">
+        <header className="fv sticky top-0 z-30 bg-fv-card border-b border-fv-line">
+          <div aria-hidden="true" className="w-full"><div className="h-[3px] bg-[#F28C28]" /><div className="h-[3px] bg-white" /><div className="h-[3px] bg-[#138808]" /></div>
           <div className="mx-auto max-w-7xl px-6 h-16 flex items-center justify-between gap-4">
-            <Brand linkTo="/" tone="inverse" />
+            <Brand linkTo="/" />
             <div className="flex items-center gap-4">
               {showWallet && (
                 <WalletWidget
@@ -93,12 +98,11 @@ export default function AppShell({
               <AvatarMenu user={user} onLogout={requestSignOut} />
             </div>
           </div>
-          <div className="h-[2px] rule-gold" />
         </header>
       )}
 
-      <main className="flex-1 w-full">
-        <div className={fullWidth ? 'w-full px-4 sm:px-8 lg:px-10 py-5 space-y-5 animate-surface-in' : 'mx-auto max-w-7xl px-6 py-8 animate-surface-in'}>
+      <main className={`relative z-10 w-full flex-1 ${fullWidth ? 'flex lg:min-h-0' : ''}`}>
+        <div className={fullWidth ? 'flex w-full min-w-0 flex-col space-y-4 px-4 py-4 sm:px-8 lg:px-10 animate-surface-in' : 'mx-auto max-w-7xl px-6 py-8 animate-surface-in'}>
           {children}
         </div>
       </main>

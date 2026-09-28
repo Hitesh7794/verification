@@ -1,4 +1,6 @@
+import FvBackdrop from '../../components/fv/FvBackdrop.jsx'
 import { useEffect, useRef, useState } from 'react'
+import { DEMO, demoWait } from '../../lib/demo.js'
 import { Link, useNavigate } from 'react-router-dom'
 import { motion } from 'framer-motion'
 import { INDIAN_STATES, CITIES_BY_STATE, PIN_ZONE_BY_STATE } from '../../lib/india-locations.js'
@@ -486,6 +488,7 @@ export default function Register() {
   // Whole-step sweep on Continue — this one DOES flag empty required
   // fields, and merges into any errors already on screen.
   function validateStep(index) {
+    if (DEMO) { setErrors({}); return true }
     const e = {}
     for (const field of STEP_FIELDS[index]) {
       const msg = FIELD_RULES[field]?.(String(form[field] ?? ''), form)
@@ -570,6 +573,7 @@ export default function Register() {
   async function goToStep2() {
     if (!validateStep(S_ADDRESS)) return
 
+    if (DEMO) { setTopError(''); setStep(S_DOCUMENTS); return }
     if (!emailOtpToken) {
       setTopError('Please verify the Head of Institution Email address via OTP before continuing.')
       return
@@ -619,6 +623,7 @@ export default function Register() {
   // Documents → Review. The required-doc gate now checks the in-memory
   // File presence instead of a server-issued doc_id.
   function goToReview() {
+    if (DEMO) { setTopError(''); setStep(S_REVIEW); return }
     const activeDocs = getRequiredDocs(form)
     const missing = activeDocs.filter((d) => d.required && !uploaded[d.kind]?.file)
     if (missing.length) {
@@ -639,6 +644,7 @@ export default function Register() {
       setStep(badStep)
       return
     }
+    if (DEMO) { setSubmitting(true); await demoWait(800); setApplicationId(101); setSubmitting(false); setStep(S_DONE); return }
     const activeDocs = getRequiredDocs(form)
     const missing = activeDocs.filter((d) => d.required && !uploaded[d.kind]?.file)
     if (missing.length) {
@@ -764,19 +770,21 @@ export default function Register() {
           initial={{ opacity: 0, scale: 0.9 }}
           animate={{ opacity: 1, scale: 1 }}
           transition={{ duration: 1.2, delay: 0.1, ease: 'easeOut' }}
-          className="absolute -top-24 right-[-6rem] h-[26rem] w-[26rem] rounded-full bg-[#ECF0F5]/70 blur-[100px]"
+          className="absolute -top-24 right-[-6rem] h-[26rem] w-[26rem] rounded-full bg-[#EFEDF4]/70 blur-[100px]"
         />
       </div>
 
+      {/* The portal's living background, as on the signed-in pages. */}
+      <FvBackdrop left={0} />
       <PortalHeader
         right={
           <Link
             to="/admin/login"
-            className="inline-flex items-center gap-2 rounded-lg px-3.5 py-2
-                       text-sm font-semibold text-slate-200 hover:text-white
-                       bg-white/8 hover:bg-white/16 ring-1 ring-inset ring-white/15
+            className="inline-flex items-center gap-2 rounded-[10px] px-3.5 py-2
+                       text-[14px] font-semibold text-fv-accent-deep
+                       bg-fv-card hover:bg-fv-card-focus border border-fv-line
                        transition-colors focus-visible:outline-2
-                       focus-visible:outline-offset-2 focus-visible:outline-amber-300"
+                       focus-visible:outline-offset-2 focus-visible:outline-fv-accent"
           >
             <Icon.ChevronLeft className="h-4 w-4" />
             Back to sign in
@@ -790,17 +798,12 @@ export default function Register() {
             initial={{ opacity: 0, y: 12 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ duration: 0.45, ease: 'easeOut' }}
-            className="text-3xl sm:text-4xl lg:text-[2.65rem] font-bold tracking-tight text-ink-900 leading-tight"
+            className="fv-display text-3xl sm:text-4xl lg:text-[2.65rem] font-bold tracking-[-0.03em] text-fv-ink leading-tight"
           >
             {step === S_DONE
               ? 'Application received'
               : (
-                <>
-                  Register your{' '}
-                  <span className="text-gold-display">
-                    institution
-                  </span>
-                </>
+'Register your institution'
               )}
           </motion.h1>
           {step !== S_DONE && (
@@ -943,7 +946,7 @@ function StepSidebar({ step, form }) {
                       ? 'bg-ink-600 text-white shadow-sm'
                       : done
                       ? 'bg-emerald-50/70 hover:bg-emerald-50 text-emerald-950 border border-emerald-200/60'
-                      : 'bg-transparent text-stone-600 hover:bg-[#ECF0F5]/40'
+                      : 'bg-transparent text-stone-600 hover:bg-[#EFEDF4]/40'
                   }`}
                 >
                   <motion.span
@@ -955,7 +958,7 @@ function StepSidebar({ step, form }) {
                         ? 'bg-white/15 text-white'
                         : done
                         ? 'bg-emerald-100 text-emerald-700 ring-1 ring-emerald-200/80'
-                        : 'bg-[#ECF0F5] text-stone-600 font-mono text-xs font-semibold border border-warm'
+                        : 'bg-[#EFEDF4] text-stone-600 font-mono text-xs font-semibold border border-warm'
                     }`}
                   >
                     {done ? <Icon.Check className="h-4 w-4" /> : active ? <IconComp className="h-4 w-4" /> : stepNum}
@@ -1391,7 +1394,7 @@ function ReviewStep({ form, uploaded, onEdit, onBack, onSubmit, submitting }) {
           </ul>
         </div>
 
-        <div className="rounded-xl bg-[#ECF0F5]/60 border border-warm px-4 py-3 text-xs text-stone-700 leading-relaxed">
+        <div className="rounded-xl bg-[#EFEDF4]/60 border border-warm px-4 py-3 text-xs text-stone-700 leading-relaxed">
           Submitting locks the application for review. You won't be able to edit it
           afterwards — our team will contact the head of institution at the email above.
         </div>
@@ -1442,9 +1445,9 @@ function ReviewGroup({ title, rows, onEdit, note }) {
 function Divider({ label }) {
   return (
     <div className="flex items-center gap-3 pt-1">
-      <span className="h-px flex-1 bg-[#DDE4EC]" />
+      <span className="h-px flex-1 bg-[#E3E1EA]" />
       <span className="text-[11px] font-semibold uppercase tracking-wider text-stone-400">{label}</span>
-      <span className="h-px flex-1 bg-[#DDE4EC]" />
+      <span className="h-px flex-1 bg-[#E3E1EA]" />
     </div>
   )
 }
@@ -1555,7 +1558,7 @@ function YearPicker({ value, onChange, placeholder = 'Pick year', min = 1800, ma
                   if (next !== viewYear) setViewYear(next)
                 }}
                 disabled={!canGoBackward}
-                className="rounded-md p-1 text-stone-500 hover:bg-[#ECF0F5] hover:text-ink-900 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                className="rounded-md p-1 text-stone-500 hover:bg-[#EFEDF4] hover:text-ink-900 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                 aria-label="Previous decade"
               >
                 <Icon.ChevronLeft className="h-4 w-4" />
@@ -1573,7 +1576,7 @@ function YearPicker({ value, onChange, placeholder = 'Pick year', min = 1800, ma
                   if (next !== viewYear) setViewYear(next)
                 }}
                 disabled={!canGoForward}
-                className="rounded-md p-1 text-stone-500 hover:bg-[#ECF0F5] hover:text-ink-900 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
+                className="rounded-md p-1 text-stone-500 hover:bg-[#EFEDF4] hover:text-ink-900 transition-colors disabled:opacity-30 disabled:cursor-not-allowed disabled:hover:bg-transparent"
                 aria-label="Next decade"
               >
                 <Icon.ChevronRight className="h-4 w-4" />
@@ -1601,8 +1604,8 @@ function YearPicker({ value, onChange, placeholder = 'Pick year', min = 1800, ma
                         : outOfRange
                         ? 'text-stone-300 cursor-not-allowed'
                         : isCurrent
-                        ? 'text-ink-900 ring-1 ring-warm-strong bg-warm-surface hover:bg-[#ECF0F5]'
-                        : 'text-stone-700 hover:bg-[#ECF0F5]'
+                        ? 'text-ink-900 ring-1 ring-warm-strong bg-warm-surface hover:bg-[#EFEDF4]'
+                        : 'text-stone-700 hover:bg-[#EFEDF4]'
                     }`}
                   >
                     {y}
@@ -1905,7 +1908,7 @@ function DocUploadRow({ kind, label, hint, required, state, error, onFile, onRem
           className={`h-10 w-10 rounded-xl flex items-center justify-center shrink-0 border ${
             done
               ? 'bg-emerald-50 text-emerald-600 border-emerald-200'
-              : 'bg-[#ECF0F5] text-stone-700 border-warm'
+              : 'bg-[#EFEDF4] text-stone-700 border-warm'
           }`}
         >
           {done ? <Icon.Check className="h-5 w-5" /> : <Icon.FileText className="h-5 w-5" />}
@@ -1925,7 +1928,7 @@ function DocUploadRow({ kind, label, hint, required, state, error, onFile, onRem
             </p>
           )}
           {uploading && (
-            <div className="mt-2 h-1.5 w-full bg-[#DDE4EC] rounded-full overflow-hidden">
+            <div className="mt-2 h-1.5 w-full bg-[#E3E1EA] rounded-full overflow-hidden">
               <motion.div
                 className="h-full bg-ink-900 rounded-full"
                 initial={false}
@@ -2000,7 +2003,7 @@ function DonePanel({ applicationId, email, institutionName, onStartOver, onHome 
           Your onboarding application for <strong className="text-ink-900 font-semibold">{institutionName}</strong> has been successfully received and placed in the accreditation queue.
         </p>
 
-        <div className="mt-6 p-4 rounded-xl bg-[#ECF0F5]/70 border border-warm flex flex-col sm:flex-row items-center justify-between gap-3">
+        <div className="mt-6 p-4 rounded-xl bg-[#EFEDF4]/70 border border-warm flex flex-col sm:flex-row items-center justify-between gap-3">
           <div className="text-left">
             <p className="text-[11px] font-semibold uppercase tracking-wider text-stone-500">Application Reference ID</p>
             <p className="text-base font-bold font-mono text-ink-900 tracking-tight">#{applicationId ?? '—'}</p>

@@ -137,10 +137,13 @@ export default function ClientDetail() {
   return (
     <SuperShell>
       <FadeIn>
-        <div className="mb-3">
-          <Link to="/superadmin/clients" className="inline-flex items-center gap-1 text-xs font-medium text-slate-500 hover:text-slate-800 transition-colors">
-            <Icon.ChevronLeft className="h-3.5 w-3.5" />
-            All clients
+        <div className="mb-4">
+          <Link
+            to="/superadmin/clients"
+            className="group inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:border-indigo-400 hover:bg-indigo-50 hover:text-indigo-700"
+          >
+            <Icon.ChevronLeft className="h-4 w-4 transition-transform group-hover:-translate-x-0.5" />
+            <span>All clients</span>
           </Link>
         </div>
 
@@ -175,7 +178,9 @@ export default function ClientDetail() {
                   Delete
                 </Button>
                 <Button onClick={() => setCreating(v => !v)}>
-                  <Icon.Plus className="h-4 w-4 mr-1.5" />
+                  {creating
+                    ? <Icon.X className="h-4 w-4 mr-1.5" />
+                    : <Icon.Plus className="h-4 w-4 mr-1.5" />}
                   {creating ? 'Cancel' : 'New exam'}
                 </Button>
               </div>
@@ -618,7 +623,9 @@ function ReviewPortalPanel({ client, onChanged }) {
             </div>
             {reviewers.length === 0 ? (
               <Button size="sm" onClick={() => setShowAdd((v) => !v)}>
-                <Icon.Plus className="h-3.5 w-3.5 mr-1" />
+                {showAdd
+                  ? <Icon.X className="h-3.5 w-3.5 mr-1" />
+                  : <Icon.Plus className="h-3.5 w-3.5 mr-1" />}
                 {showAdd ? 'Cancel' : 'Add reviewer'}
               </Button>
             ) : (
@@ -783,7 +790,6 @@ function AddReviewerForm({ clientId, onCancel, onCreated }) {
           <Input
             value={username}
             onChange={(e) => setUsername(e.target.value)}
-            placeholder="nta_reviewer_1"
             autoComplete="off"
             required
           />
@@ -793,7 +799,6 @@ function AddReviewerForm({ clientId, onCancel, onCreated }) {
           <Input
             value={displayName}
             onChange={(e) => setDisplayName(e.target.value)}
-            placeholder="NTA Onboarding Team"
             required
           />
         </div>
@@ -803,7 +808,6 @@ function AddReviewerForm({ clientId, onCancel, onCreated }) {
             type="email"
             value={email}
             onChange={(e) => setEmail(e.target.value)}
-            placeholder="onboarding@nta.ac.in"
             autoComplete="off"
           />
         </div>
@@ -813,7 +817,6 @@ function AddReviewerForm({ clientId, onCancel, onCreated }) {
             type="text"
             value={password}
             onChange={(e) => setPassword(e.target.value)}
-            placeholder="At least 8 characters"
             autoComplete="new-password"
             required
           />

@@ -1,9 +1,10 @@
-import { Navigate, Route, Routes } from 'react-router-dom'
+import { Navigate, Route, Routes, useLocation } from 'react-router-dom'
 import { useAuth } from './lib/auth.jsx'
 import ClientBackGuard from './components/shell/ClientBackGuard.jsx'
 
 import ClientLogin from './pages/client/Login.jsx'
 import ClientDashboard from './pages/client/Dashboard.jsx'
+import OperatorSelfieGate from './components/verify/OperatorSelfieGate.jsx'
 import ClientDownloads from './pages/client/Downloads.jsx'
 
 import AdminLogin from './pages/admin/Login.jsx'
@@ -39,6 +40,9 @@ import ReviewerAgents from './pages/reviewer/Agents.jsx'
 import Register from './pages/register/Register.jsx'
 import SetPassword from './pages/register/SetPassword.jsx'
 import ForcePasswordChange from './pages/ForcePasswordChange.jsx'
+import LoginPreview from './pages/LoginPreview.jsx'
+import ScanPreview from './pages/ScanPreview.jsx'
+import Landing from './pages/Landing.jsx'
 
 // Build-mode driven route gating. Three production subdomains share
 // one codebase; each Vite build runs with VITE_APP_MODE set so it
@@ -98,15 +102,50 @@ export default function App() {
   )
 }
 
+// Sniff the hostname to pick which login `/` should send the visitor
+// to. CP box (admins.*.nip.io) → super-admin login; everywhere else
+// → institution admin login. Keeps one bundle across both boxes.
+function isCPHost() {
+  const host = (typeof window !== 'undefined' && window.location.hostname) || ''
+  return /^admins?\./i.test(host)
+}
+function RootRedirect() {
+  return <Navigate to={isCPHost() ? '/superadmin/login' : '/admin/login'} replace />
+}
+
+// The CP domain (admins.*.nip.io) shares one build with the DP box
+// but must ONLY surface the super-admin portal. Without this guard,
+// hitting e.g. admins.../institute/operator/login on CP would render
+// the operator login page — confusing at best, and a foothold for
+// credential-stuffing at worst (the CP API doesn't even accept
+// operator sign-ins, so any password typed there is wasted keystrokes
+// that never make it to the right box). We match /superadmin/* as
+// the only allowed prefix and bounce everything else to
+// /superadmin/login on this host.
+function CPRouteGuard({ children }) {
+  const loc = useLocation()
+  if (isCPHost()) {
+    const p = loc.pathname
+    const allowed = p === '/' || p.startsWith('/superadmin')
+    if (!allowed) return <Navigate to="/superadmin/login" replace />
+  }
+  return children
+}
+
 function RoutesTree() {
   return (
+    <CPRouteGuard>
     <Routes>
       {/* Root: no landing page — send visitors straight to the admin
           login (which now hosts the "Register your institution" CTA
           for new tenants). Operator and superadmin URLs are direct.
           Ops mode still deep-links to its own queue. */}
       {(includes('signup', 'verify')) && (
-        <Route path="/" element={<Navigate to="/admin/login" replace />} />
+        // Root goes straight to the login relevant for this box.
+        // On the CP host (admins.*) that's the super-admin login;
+        // everywhere else it's the institution admin login. Marketing
+        // Landing was removed 28 Sep 2026 per user ask.
+        <Route path="/" element={<RootRedirect />} />
       )}
       {MODE === 'ops' && (
         <Route path="/" element={<Navigate to="/superadmin/applications" replace />} />
@@ -148,7 +187,13 @@ function RoutesTree() {
             path="/institute/operator"
             element={
               <RequireRole role="client">
-                <ClientDashboard />
+                {/* Post-login "take your photo" gate — mirrors the
+                    Android app: name + mobile + selfie required once
+                    per session before the roll-number search opens.
+                    A fresh login (new token) forces a re-capture. */}
+                <OperatorSelfieGate>
+                  <ClientDashboard />
+                </OperatorSelfieGate>
               </RequireRole>
             }
           />
@@ -342,9 +387,15 @@ function RoutesTree() {
         </>
       )}
 
+      {/* Login redesign previews — version A (companion) and B (panel) side by side. */}
+      <Route path="/preview/login/:version/:role" element={<LoginPreview />} />
+      <Route path="/preview/landing" element={<Landing />} />
+      <Route path="/preview/scan" element={<ScanPreview />} />
+
       {/* Fallback — unknown routes go to the mode's home. For ops
           mode this lands at the queue; for others, the landing page. */}
       <Route path="*" element={<Navigate to="/" replace />} />
     </Routes>
+    </CPRouteGuard>
   )
 }

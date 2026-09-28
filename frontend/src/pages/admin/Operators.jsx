@@ -1,5 +1,8 @@
+import { ArtAgent, AgentPortrait, PurseGauge, GlyphSheet, GlyphWindow } from '../../components/fv/FvArt.jsx'
+import FvEmpty from '../../components/fv/FvEmpty.jsx'
 import React, { useCallback, useEffect, useRef, useState } from 'react'
-import AdminShell, { PageHead } from '../../components/shell/AdminShell.jsx'
+import AdminShell from '../../components/fv/FvAdminShell.jsx'
+import { PageHead } from '../../components/shell/AdminShell.jsx'
 import {
   Button,
   Card,
@@ -89,10 +92,12 @@ export default function Operators() {
 
   return (
     <AdminShell>
+      <div className="fv-bold">
       <FadeIn>
         <PageHead
           eyebrow="Team"
-          title="Verification Agents"
+          title="Verification agents" art={ArtAgent}
+          subtitle="Who verifies for you."
           right={
             <div className="flex gap-2">
               <Button
@@ -216,139 +221,38 @@ export default function Operators() {
         {loading ? (
           <div className="p-10 text-center text-sm text-slate-500">Loading…</div>
         ) : operators.length === 0 && !creating ? (
-          <Card><CardBody>
-            <div className="p-6 text-center">
-              <p className="text-sm text-slate-500">No verification agents yet.</p>
-              <p className="text-xs text-slate-400 mt-1">Click <b>New verification agent</b> to add one.</p>
-            </div>
-          </CardBody></Card>
+          <div className="rounded-[12px] border border-fv-line bg-fv-card">
+            <FvEmpty title="No agents yet" body="Tap New verification agent." />
+          </div>
         ) : (
-          <Card>
-            <CardBody className="p-0">
-              <div className="overflow-x-auto">
-                <table className="w-full text-sm">
-                  <thead>
-                    <tr className="border-b border-slate-200 text-left text-xs uppercase tracking-wider text-slate-500 bg-slate-50">
-                      <th className="px-4 py-2.5">Username</th>
-                      <th className="px-4 py-2.5">Display name</th>
-                      <th className="px-4 py-2.5">Cap / spent</th>
-                      <th className="px-4 py-2.5">Window</th>
-                      <th className="px-4 py-2.5">Exams</th>
-                      <th className="px-4 py-2.5">Status</th>
-                      <th className="px-4 py-2.5 text-right">Actions</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {operators.map((o) => (
-                      // Fragment wraps the row + its inline edit row so
-                      // React can render both children under <tbody>
-                      // without introducing an invalid element.
-                      <React.Fragment key={o.id}>
-                        <tr className="border-b border-warm last:border-none hover:bg-[#F6F8FA]">
-                          <td className="px-4 py-3 font-mono text-xs text-slate-700">{o.username}</td>
-                          <td className="px-4 py-3">
-                            <div className="text-slate-900">{o.display_name}</div>
-                            {o.email && <div className="text-xs text-slate-500 mt-0.5">{o.email}</div>}
-                            {o.phone && <div className="text-xs text-slate-500">{o.phone}</div>}
-                          </td>
-                          <td className="px-4 py-3 text-xs text-slate-600 tabular-nums">
-                            {o.spending_cap_paise ? (
-                              <span>
-                                ₹{(o.spent_paise / 100).toFixed(2)} / ₹{(o.spending_cap_paise / 100).toFixed(2)}
-                                {o.spent_paise >= o.spending_cap_paise && (
-                                  <Pill tone="rose" dot><span className="ml-1">Cap hit</span></Pill>
-                                )}
-                              </span>
-                            ) : (
-                              // b0427d9 flipped the semantic — an unset
-                              // cap now blocks every charge. Flag it in
-                              // amber so the admin sees the operator is
-                              // dead in the water until a cap is set.
-                              <Pill tone="amber" dot><span className="ml-1">not set</span></Pill>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 text-xs text-slate-600 tabular-nums">
-                            {o.valid_from || o.valid_to
-                              ? `${formatDateTime(o.valid_from) || '…'} → ${formatDateTime(o.valid_to) || '…'}`
-                              : <span className="text-slate-400">no window</span>}
-                          </td>
-                          <td className="px-4 py-3 text-slate-700 tabular-nums">{(o.assigned_exam_ids || []).length}</td>
-                          <td className="px-4 py-3">
-                            {/* V30 (2026-09-14): distinguish the auto-lockout
-                                from a plain manual disable. Auto-lockout uses
-                                a rose pill + a short reason so the admin sees
-                                immediately why the agent can't sign in.
-                                Per-institute-admin request the mid-streak
-                                warning under the Active pill was removed —
-                                the auto-disabled state below is signal enough,
-                                and the running counter read as a scolding
-                                nag on the roster. */}
-                            {o.status === 'active' ? (
-                              <Pill tone="emerald" dot>Active</Pill>
-                            ) : o.disable_reason === 'auto_streak' ? (
-                              <div className="flex flex-col items-start gap-1">
-                                <Pill tone="rose" dot>Auto-disabled</Pill>
-                                <span className="text-[10px] text-slate-500">3 denies in a row</span>
-                              </div>
-                            ) : (
-                              <Pill tone="slate" dot>Disabled</Pill>
-                            )}
-                          </td>
-                          <td className="px-4 py-3 text-right">
-                            <div className="inline-flex gap-2">
-                              <Button variant="secondary" size="sm" onClick={() => setEditing(editing === o.id ? null : o.id)}>
-                                {editing === o.id ? 'Close' : 'Edit'}
-                              </Button>
-                              {/* Auto-streak lockouts can only be lifted by the
-                                  client's reviewer or a superadmin (V30), so
-                                  the Enable button is hidden here — hovering
-                                  the pill explains why. */}
-                              {!(o.status === 'disabled' && o.disable_reason === 'auto_streak') && (
-                                <Button
-                                  variant="secondary"
-                                  size="sm"
-                                  onClick={() => onToggle(o.id, o.status === 'disabled')}
-                                  className={o.status === 'disabled'
-                                    ? ''
-                                    : '!text-rose-700 !border-rose-200 hover:!bg-rose-50 hover:!border-rose-300'}
-                                >
-                                  {o.status === 'disabled' ? 'Enable' : 'Disable'}
-                                </Button>
-                              )}
-                              <Button
-                                variant="secondary"
-                                size="sm"
-                                onClick={() => onDelete(o.id, o.username)}
-                                className="!text-rose-700 !border-rose-200 hover:!bg-rose-50 hover:!border-rose-300"
-                              >
-                                Delete
-                              </Button>
-                            </div>
-                          </td>
-                        </tr>
-                        {editing === o.id && (
-                          <tr>
-                            <td colSpan={7} className="bg-[#F6F8FA] border-b border-warm p-5">
-                              <OperatorForm
-                                subs={subs}
-                                walletBalancePaise={walletBalancePaise}
-                                mode="edit"
-                                operator={o}
-                                onCancel={() => setEditing(null)}
-                                onSaved={async () => { setEditing(null); await refresh() }}
-                              />
-                            </td>
-                          </tr>
-                        )}
-                      </React.Fragment>
-                    ))}
-                  </tbody>
-                </table>
-              </div>
-            </CardBody>
-          </Card>
+          <div className="fv-stagger grid grid-cols-1 gap-3 md:grid-cols-2 xl:grid-cols-3">
+            {operators.map((o) => (
+              <React.Fragment key={o.id}>
+                <AgentCard
+                  o={o}
+                  editingOpen={editing === o.id}
+                  onEdit={() => setEditing(editing === o.id ? null : o.id)}
+                  onToggle={() => onToggle(o.id, o.status === 'disabled')}
+                  onDelete={() => onDelete(o.id, o.username)}
+                />
+                {editing === o.id && (
+                  <div className="col-span-full rounded-[12px] border border-fv-line bg-fv-card p-5">
+                    <OperatorForm
+                      subs={subs}
+                      walletBalancePaise={walletBalancePaise}
+                      mode="edit"
+                      operator={o}
+                      onCancel={() => setEditing(null)}
+                      onSaved={async () => { setEditing(null); await refresh() }}
+                    />
+                  </div>
+                )}
+              </React.Fragment>
+            ))}
+          </div>
         )}
       </FadeIn>
+      </div>
     </AdminShell>
   )
 }
@@ -366,6 +270,101 @@ export default function Operators() {
 // `auto` too — so an absolute panel would be clipped or would spawn a
 // scrollbar instead of floating over the row. Growing the row is the
 // behaviour that actually works in both places this form is used.
+// One agent: their portrait, name and login, a dial for how much of their
+// purse is spent, their exams and window, and the three actions.
+function AgentCard({ o, editingOpen, onEdit, onToggle, onDelete }) {
+  const active = o.status === 'active'
+  const auto = o.status === 'disabled' && o.disable_reason === 'auto_streak'
+  const cap = o.spending_cap_paise || 0
+  const spent = o.spent_paise || 0
+  const rupees = (p) => `₹${(p / 100).toLocaleString('en-IN', { maximumFractionDigits: 0 })}`
+  const exams = (o.assigned_exam_ids || []).length
+  const windowText = o.valid_from || o.valid_to
+    ? `${formatDateTime(o.valid_from) || '…'} to ${formatDateTime(o.valid_to) || '…'}`
+    : 'Any time'
+  return (
+    <article className={`relative overflow-hidden rounded-[12px] border bg-fv-card ${editingOpen ? 'border-fv-accent' : 'border-fv-line'}`}
+             data-guide-title={o.display_name || o.username}
+             data-guide={active ? 'An agent. The dial is how much of their limit is spent.' : auto ? 'Locked after 3 denies in a row. Their reviewer can unlock.' : 'Switched off. Enable to let them sign in.'}>
+      {/* who */}
+      <div className="flex items-center gap-4 bg-fv-card-focus px-5 pt-5 pb-4">
+        <AgentPortrait seed={o.display_name || o.username} name={o.display_name || o.username} gender={o.gender} className={`h-16 w-16 shrink-0 ${active ? '' : 'grayscale opacity-70'}`} />
+        <div className="min-w-0 flex-1">
+          <h3 className="fv-display text-[20px] leading-tight tracking-[-0.02em] text-fv-ink truncate">{o.display_name || o.username}</h3>
+          <p className="text-[13.5px] text-fv-accent-deep truncate">@{o.username}</p>
+        </div>
+        <StatusSeal active={active} auto={auto} />
+      </div>
+      {/* purse */}
+      <div className="flex items-center gap-4 px-5 pt-4">
+        <PurseGauge spent={spent} cap={cap} className="h-14 w-24 shrink-0" />
+        {cap > 0 ? (
+          <div>
+            <p className="fv-display text-[24px] leading-none text-fv-ink tabular-nums">{rupees(spent)}</p>
+            <p className="mt-1 text-[13px] text-fv-muted tabular-nums">of {rupees(cap)}{spent >= cap ? ', limit hit' : ''}</p>
+          </div>
+        ) : (
+          <div>
+            <p className="fv-display text-[18px] leading-tight text-[#7A4F12]">No limit set</p>
+            <p className="text-[13px] text-fv-muted">Can't verify yet</p>
+          </div>
+        )}
+      </div>
+      {/* exams and window */}
+      <div className="mt-4 grid grid-cols-2 divide-x divide-fv-line border-t border-fv-line">
+        <div className="flex items-center gap-2.5 px-5 py-3">
+          <GlyphSheet className="h-7 w-7 shrink-0" />
+          <p className="text-[14px] text-fv-ink"><span className="tabular-nums">{exams}</span> {exams === 1 ? 'exam' : 'exams'}</p>
+        </div>
+        <div className="flex min-w-0 items-center gap-2.5 px-5 py-3">
+          <GlyphWindow className="h-6 w-6 shrink-0" />
+          <p className="truncate text-[13.5px] text-fv-ink">{windowText}</p>
+        </div>
+      </div>
+      {/* actions */}
+      <div className="grid grid-cols-3 divide-x divide-fv-line border-t border-fv-line text-[14px]">
+        <CardAction onClick={onEdit} icon="edit">{editingOpen ? 'Close' : 'Edit'}</CardAction>
+        {auto
+          ? <span className="flex items-center justify-center gap-1.5 py-3 text-fv-faint" title="Only their reviewer can unlock this agent">
+              <ActIcon name="lock" />Locked
+            </span>
+          : <CardAction onClick={onToggle} icon={active ? 'pause' : 'play'} warn={active}>{active ? 'Disable' : 'Enable'}</CardAction>}
+        <CardAction onClick={onDelete} icon="bin" warn>Delete</CardAction>
+      </div>
+    </article>
+  )
+}
+function CardAction({ onClick, icon, warn, children }) {
+  return (
+    <button type="button" onClick={onClick}
+            className={`flex items-center justify-center gap-1.5 py-3 transition-colors hover:bg-fv-card-focus ${warn ? 'text-[#7A4F12]' : 'text-fv-accent-deep'}`}>
+      <ActIcon name={icon} />{children}
+    </button>
+  )
+}
+function ActIcon({ name }) {
+  const d = {
+    edit: <><path d="M4 16.5V20h3.5L18 9.5 14.5 6z" /><path d="M13 7.5l3.5 3.5" /></>,
+    pause: <><rect x="6" y="5" width="4" height="14" rx="1.2" /><rect x="14" y="5" width="4" height="14" rx="1.2" /></>,
+    play: <path d="M7 5l12 7-12 7z" />,
+    bin: <><path d="M5 7h14M10 7V4.5h4V7M7 7l1 13h8l1-13" /></>,
+    lock: <><rect x="5" y="11" width="14" height="9" rx="2" /><path d="M8 11V8a4 4 0 0 1 8 0v3" /></>,
+  }[name]
+  return <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{d}</svg>
+}
+function StatusSeal({ active, auto }) {
+  const c = active ? '#5B3FA6' : auto ? '#A8711F' : '#A29EB3'
+  return (
+    <svg viewBox="0 0 64 64" className="h-14 w-14 shrink-0 -rotate-12" aria-label={active ? 'Active' : auto ? 'Locked' : 'Disabled'}>
+      <circle cx="32" cy="32" r="26" fill="none" stroke={c} strokeWidth="3.5" />
+      <circle cx="32" cy="32" r="20" fill="none" stroke={c} strokeWidth="1.4" strokeDasharray="3 3" />
+      {active && <path d="M22 33l7 7 13-15" fill="none" stroke={c} strokeWidth="4.5" strokeLinecap="round" strokeLinejoin="round" />}
+      {auto && <><rect x="23" y="31" width="18" height="13" rx="3" fill={c} /><path d="M26.5 31v-4a5.5 5.5 0 0 1 11 0v4" fill="none" stroke={c} strokeWidth="3" /></>}
+      {!active && !auto && <path d="M22 32h20" stroke={c} strokeWidth="4.5" strokeLinecap="round" />}
+    </svg>
+  )
+}
+
 function ExamMultiSelect({ subs, value, onChange, single = false }) {
   const [open, setOpen] = useState(false)
   const boxRef = useRef(null)

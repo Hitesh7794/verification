@@ -37,8 +37,8 @@
 // No icon library and no runtime: these are inline paths, so the first
 // paint of the first screen costs nothing extra.
 
-const STRUCTURE = '#93A2B5' // slate-400 — reads on navy without glare
-const ACCENT    = '#71D0A5' // emerald-300 — the product's verified
+const STRUCTURE = '#A29EB3' // slate-400 — reads on navy without glare
+const ACCENT    = '#C3B6E8' // emerald-300 — the product's verified
                             // colour. 9.23:1 on the navy panel.
 
 // PHASE offsets the glyph into its slot in the relay.

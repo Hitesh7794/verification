@@ -165,6 +165,47 @@ export async function fetchPhotoBlob(roll) {
   return URL.createObjectURL(blob)
 }
 
+// GET /api/operator/selfie — presence check for the operator's most
+// recent selfie. Returns `{present, captured_at}`; used by the
+// post-login gate to decide whether to force a capture on this fresh
+// session. Errors bubble to the caller (the gate treats them as
+// "not present" so the flow keeps working when the endpoint is
+// briefly unreachable). Mirrors the Android app's fetch semantics.
+export async function getOperatorSelfieStatus() {
+  const res = await fetch(`${BASE}/operator/selfie`, {
+    headers: { Authorization: `Bearer ${getToken()}` },
+  })
+  if (!res.ok) throw new Error(`operator selfie status ${res.status}`)
+  return res.json()
+}
+
+// POST /api/operator/selfie — uploads the operator's just-captured
+// selfie. Backend expects the raw JPEG bytes as the request body
+// (Content-Type image/jpeg, ≤ 2 MiB) plus the operator's declared
+// name + phone as X-Operator-* headers, exactly like the Android
+// client. Returns `{present, captured_at}` on success. Callers
+// should catch errors and surface them to the operator so they can
+// retake or retry rather than being stuck at a mystery spinner.
+export async function postOperatorSelfie(jpegBlob, { name, phone } = {}) {
+  const headers = {
+    Authorization: `Bearer ${getToken()}`,
+    'Content-Type': 'image/jpeg',
+  }
+  if (name)  headers['X-Operator-Name']  = name
+  if (phone) headers['X-Operator-Phone'] = phone
+  const res = await fetch(`${BASE}/operator/selfie`, {
+    method: 'POST',
+    headers,
+    body: jpegBlob,
+  })
+  if (!res.ok) {
+    let msg = `upload failed (${res.status})`
+    try { const j = await res.json(); if (j?.error) msg = j.error } catch {}
+    throw new Error(msg)
+  }
+  return res.json()
+}
+
 // Decode a Startek FM220U ISO/IEC 19794-4 fingerprint image record
 // (WSQ-inside) into a browser-renderable PNG via the backend Python
 // helper. Returns a data URL on success, null on any failure — pure

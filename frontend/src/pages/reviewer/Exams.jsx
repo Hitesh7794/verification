@@ -1,3 +1,5 @@
+import { RvTile, RvHead } from '../../components/fv/FvReviewer.jsx'
+import { ArtExam } from '../../components/fv/FvArt.jsx'
 import { useCallback, useEffect, useMemo, useState } from 'react'
 import { Link, useNavigate } from 'react-router-dom'
 import { motion, AnimatePresence } from 'framer-motion'
@@ -374,8 +376,8 @@ function NewExamForm({ onCancel, onCreated, onBulkCreated }) {
 // Slots are the validated default categorical order — blue, orange,
 // aqua, yellow, violet — which clears the CVD separation check at
 // ΔE 9.1 on its worst adjacent pair.
-const SPLIT_SLOTS = ['#2a78d6', '#eb6834', '#1baf7a', '#eda100', '#4a3aa7']
-const SPLIT_OTHER = '#66768C'
+const SPLIT_SLOTS = ['#43307D', '#7457BF', '#A99BDB', '#2B1F52', '#9A86D6']   // violet shades, labelled directly
+const SPLIT_OTHER = '#807B93'
 
 function CandidateSplit({ exams, total }) {
   // Which five get a slice: the five largest. A board running fifty
@@ -596,21 +598,16 @@ export default function ReviewerExams() {
         {/* Same tiles as the KYC desk and the superadmin Applications
             page. Inert here: this page has no list slice that maps one to
             one onto each figure, so they carry no click. */}
-        <div className="mb-6 grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-stretch">
-          <StaggerList className="grid gap-4 grid-cols-1 sm:grid-cols-3">
-            <StaggerItem>
-              <StatTile label="Total exams" value={exams.length} accent="total"
-                        icon={Icon.File} hint="Across every status" />
-            </StaggerItem>
-            <StaggerItem>
-              <StatTile label="Open / Live" value={openExams} accent="approved"
-                        icon={Icon.Calendar} hint="Window open now" />
-            </StaggerItem>
-            <StaggerItem>
-              <StatTile label="Enrolled candidates" value={totalCandidates} accent="total"
-                        icon={Icon.User} hint="Uploaded to these exams" />
-            </StaggerItem>
-          </StaggerList>
+        <RvHead title="Exams" art={ArtExam} subtitle="Your exams, their windows and their candidates." />
+        <div className="mb-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-stretch">
+          <div className="fv-stagger grid gap-3 grid-cols-1 sm:grid-cols-3">
+            <RvTile kind="exams" label="Exams" value={exams.length}
+                    guide="Every exam your board runs on the portal." mood="selfie" prop="omr" />
+            <RvTile kind="approved" label="Window open" value={openExams} hint="Right now"
+                    guide="Exams whose verification window is open now." mood="typing" prop="stamp" />
+            <RvTile kind="institutes" label="Candidates" value={totalCandidates}
+                    guide="Candidates uploaded to these exams." />
+          </div>
           <Band>
             <CandidateSplit exams={exams} total={totalCandidates} />
             <Rule />

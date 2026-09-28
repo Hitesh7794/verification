@@ -17,9 +17,11 @@ export async function listClients() {
 // is created with the default 'admin' and the operator has to visit the
 // detail page to correct it — reads as "my choice reverted to
 // Innovatiview". Pass name + notes + kyc_review_mode through explicitly.
-export async function createClient({ name, notes = '', kyc_review_mode }) {
+export async function createClient({ name, notes = '', kyc_review_mode, api_url, domain }) {
   const body = { name, notes }
   if (kyc_review_mode) body.kyc_review_mode = kyc_review_mode
+  if (api_url) body.api_url = api_url
+  if (domain) body.domain = domain
   return api('/superadmin/clients', { method: 'POST', body })
 }
 

@@ -126,7 +126,7 @@ export default function ConfirmDialog({
               )}
             </div>
 
-            <div className="flex items-center justify-end gap-2 px-6 py-3 bg-[#F6F8FA] border-t border-warm">
+            <div className="flex items-center justify-end gap-2 px-6 py-3 bg-[#F5F4F8] border-t border-warm">
               <button
                 type="button"
                 onClick={onCancel}

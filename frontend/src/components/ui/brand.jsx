@@ -35,15 +35,15 @@ export function BrandMark({ size = 28, tone = 'brand', className = '' }) {
       {/* Shield — custody of an identity. */}
       <path
         d="M16 2.5 4.5 7v9.2c0 6.4 4.7 11.4 11.5 13.3 6.8-1.9 11.5-6.9 11.5-13.3V7L16 2.5Z"
-        fill={inverse ? 'rgba(255,255,255,0.10)' : '#EEF5FD'}
-        stroke={inverse ? 'rgba(255,255,255,0.45)' : '#83B3E9'}
+        fill={inverse ? 'rgba(255,255,255,0.10)' : '#EFEBF9'}
+        stroke={inverse ? 'rgba(255,255,255,0.45)' : '#9A86D6'}
         strokeWidth="1.4"
         strokeLinejoin="round"
       />
       {/* Check — the decision. Gold: the one authoritative act. */}
       <path
         d="M10.6 16.1l3.7 3.8 7.1-7.6"
-        stroke={inverse ? '#E8C55E' : '#A96D15'}
+        stroke={inverse ? '#C99A50' : '#A8711F'}
         strokeWidth="2.6"
         strokeLinecap="round"
         strokeLinejoin="round"
@@ -68,13 +68,10 @@ export function Brand({ size = 'md', subtitle, linkTo, tone = 'brand' }) {
 
   const content = (
     <div className={`flex items-center ${s.gap}`}>
-      <BrandMark size={s.mark} tone={tone} className="shrink-0" />
+      <span aria-hidden="true" className="fv-emblem shrink-0" style={{ height: s.mark * 1.35, background: inverse ? '#FFFFFF' : undefined }} />
       <div className="flex flex-col leading-tight min-w-0">
-        <div className={`font-display font-extrabold tracking-[-0.025em] ${s.text}`}>
-          <span className={inverse ? 'text-white' : 'text-slate-900'}>Verification</span>
-          <span className={`ml-1.5 font-bold ${inverse ? 'text-amber-300' : 'text-warm-accent'}`}>
-            Portal
-          </span>
+        <div className={`fv-display font-bold tracking-[-0.02em] ${s.text} ${inverse ? 'text-white' : 'text-fv-ink'}`}>
+          Verification Portal
         </div>
         {subtitle && (
           <div className={`${inverse ? 'text-slate-300' : 'text-slate-500'} ${s.sub} mt-0.5 truncate`}>
@@ -110,15 +107,15 @@ export function Brand({ size = 'md', subtitle, linkTo, tone = 'brand' }) {
 // looking at without it dominating the bar.
 export function PortalHeader({ subtitle, tagLabel, right }) {
   return (
-    <header className="sticky top-0 z-30 bg-ink-chrome">
+    <header className="fv sticky top-0 z-30 bg-fv-card border-b border-fv-line">
+      <div aria-hidden="true"><div className="h-[3px] bg-[#F28C28]" /><div className="h-[3px] bg-white" /><div className="h-[3px] bg-[#138808]" /></div>
       <div className="mx-auto max-w-6xl px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
         <div className="flex items-center gap-3 min-w-0">
-          <Brand size="lg" subtitle={subtitle} linkTo="/" tone="inverse" />
+          <Brand size="lg" subtitle={subtitle} linkTo="/" />
           {tagLabel && (
             <span
-              className="hidden sm:inline-flex items-center rounded-full bg-white/10
-                         px-2.5 py-1 text-[11px] font-semibold text-slate-200
-                         ring-1 ring-inset ring-white/20"
+              className="hidden sm:inline-flex items-center rounded-full bg-fv-card-focus
+                         px-2.5 py-1 text-[12px] font-semibold text-fv-accent-deep"
             >
               {tagLabel}
             </span>
@@ -126,8 +123,6 @@ export function PortalHeader({ subtitle, tagLabel, right }) {
         </div>
         {right && <div className="shrink-0">{right}</div>}
       </div>
-      {/* Gold hairline — the authority rule under primary chrome. */}
-      <div className="h-[2px] rule-gold" />
     </header>
   )
 }

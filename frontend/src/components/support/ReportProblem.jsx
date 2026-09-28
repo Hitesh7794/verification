@@ -128,12 +128,12 @@ export default function ReportProblem() {
         title="Report a problem"
         className="group support-launcher relative shrink-0 grid place-items-center
                    h-9 w-9 rounded-full
-                   bg-white/12 ring-1 ring-inset ring-white/25 text-slate-200
-                   hover:bg-white/20 hover:text-white
-                   focus-visible:bg-white/20 focus-visible:text-white
+                   bg-fv-card-focus ring-1 ring-inset ring-fv-line text-fv-accent
+                   hover:bg-fv-tint hover:text-fv-accent-deep
+                   focus-visible:bg-fv-tint focus-visible:text-fv-accent-deep
                    transition-colors duration-200
                    focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2
-                   focus-visible:outline-amber-300"
+                   focus-visible:outline-fv-accent"
       >
         {/* Halo sits behind the mark, clipped by the button's own radius
             so it reads as the button breathing rather than a stray ring. */}
@@ -142,7 +142,7 @@ export default function ReportProblem() {
             utility, so it can't be expressed as a hover class. */}
         <span aria-hidden="true"
               className="pointer-events-none absolute inset-0 rounded-full
-                         ring-1 ring-amber-300/70 support-halo
+                         ring-1 ring-fv-accent-soft support-halo
                          transition-opacity duration-200" />
         <HeadsetIcon />
         {/* Tooltip. aria-hidden because the button already carries the

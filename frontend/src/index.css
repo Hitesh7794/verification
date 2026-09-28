@@ -51,244 +51,287 @@
      Blue-biased rather than pure grey — a neutral that leans toward
      the accent reads as chosen, where a dead grey reads as default.
      Mapped onto BOTH slate and stone (see note 1 above). */
-  --color-slate-50:  #F6F8FA;
-  --color-slate-100: #ECF0F5;
-  --color-slate-200: #DDE4EC;
-  --color-slate-300: #C5D0DC;
-  --color-slate-400: #93A2B5;
-  --color-slate-500: #66768C;
-  --color-slate-600: #4C5C71;
-  --color-slate-700: #3A485B;
-  --color-slate-800: #26313F;
-  --color-slate-900: #18212C;
-  --color-slate-950: #0D141C;
+  --color-slate-50:  #F5F4F8;
+  --color-slate-100: #EFEDF4;
+  --color-slate-200: #E3E1EA;
+  --color-slate-300: #D3CEE4;
+  --color-slate-400: #A29EB3;
+  --color-slate-500: #807B93;
+  --color-slate-600: #66627A;
+  --color-slate-700: #4A4660;
+  --color-slate-800: #332F47;
+  --color-slate-900: #211E33;
+  --color-slate-950: #15131F;
 
-  --color-stone-50:  #F6F8FA;
-  --color-stone-100: #ECF0F5;
-  --color-stone-200: #DDE4EC;
-  --color-stone-300: #C5D0DC;
-  --color-stone-400: #93A2B5;
-  --color-stone-500: #66768C;
-  --color-stone-600: #4C5C71;
-  --color-stone-700: #3A485B;
-  --color-stone-800: #26313F;
-  --color-stone-900: #18212C;
-  --color-stone-950: #0D141C;
+  --color-stone-50:  #F5F4F8;
+  --color-stone-100: #EFEDF4;
+  --color-stone-200: #E3E1EA;
+  --color-stone-300: #D3CEE4;
+  --color-stone-400: #A29EB3;
+  --color-stone-500: #807B93;
+  --color-stone-600: #66627A;
+  --color-stone-700: #4A4660;
+  --color-stone-800: #332F47;
+  --color-stone-900: #211E33;
+  --color-stone-950: #15131F;
 
-  --color-gray-50:  #F6F8FA;
-  --color-gray-100: #ECF0F5;
-  --color-gray-200: #DDE4EC;
-  --color-gray-300: #C5D0DC;
-  --color-gray-400: #93A2B5;
-  --color-gray-500: #66768C;
-  --color-gray-600: #4C5C71;
-  --color-gray-700: #3A485B;
-  --color-gray-800: #26313F;
-  --color-gray-900: #18212C;
-  --color-gray-950: #0D141C;
+  --color-gray-50:  #F5F4F8;
+  --color-gray-100: #EFEDF4;
+  --color-gray-200: #E3E1EA;
+  --color-gray-300: #D3CEE4;
+  --color-gray-400: #A29EB3;
+  --color-gray-500: #807B93;
+  --color-gray-600: #66627A;
+  --color-gray-700: #4A4660;
+  --color-gray-800: #332F47;
+  --color-gray-900: #211E33;
+  --color-gray-950: #15131F;
 
-  --color-neutral-50:  #F6F8FA;
-  --color-neutral-100: #ECF0F5;
-  --color-neutral-200: #DDE4EC;
-  --color-neutral-300: #C5D0DC;
-  --color-neutral-400: #93A2B5;
-  --color-neutral-500: #66768C;
-  --color-neutral-600: #4C5C71;
-  --color-neutral-700: #3A485B;
-  --color-neutral-800: #26313F;
-  --color-neutral-900: #18212C;
-  --color-neutral-950: #0D141C;
+  --color-neutral-50:  #F5F4F8;
+  --color-neutral-100: #EFEDF4;
+  --color-neutral-200: #E3E1EA;
+  --color-neutral-300: #D3CEE4;
+  --color-neutral-400: #A29EB3;
+  --color-neutral-500: #807B93;
+  --color-neutral-600: #66627A;
+  --color-neutral-700: #4A4660;
+  --color-neutral-800: #332F47;
+  --color-neutral-900: #211E33;
+  --color-neutral-950: #15131F;
 
-  --color-zinc-50:  #F6F8FA;
-  --color-zinc-100: #ECF0F5;
-  --color-zinc-200: #DDE4EC;
-  --color-zinc-300: #C5D0DC;
-  --color-zinc-400: #93A2B5;
-  --color-zinc-500: #66768C;
-  --color-zinc-600: #4C5C71;
-  --color-zinc-700: #3A485B;
-  --color-zinc-800: #26313F;
-  --color-zinc-900: #18212C;
-  --color-zinc-950: #0D141C;
+  --color-zinc-50:  #F5F4F8;
+  --color-zinc-100: #EFEDF4;
+  --color-zinc-200: #E3E1EA;
+  --color-zinc-300: #D3CEE4;
+  --color-zinc-400: #A29EB3;
+  --color-zinc-500: #807B93;
+  --color-zinc-600: #66627A;
+  --color-zinc-700: #4A4660;
+  --color-zinc-800: #332F47;
+  --color-zinc-900: #211E33;
+  --color-zinc-950: #15131F;
 
   /* ── Primary · azure ────────────────────────────────────────────
      Official, calm, unmistakably a government-grade blue rather than
      a product blue. Carries every primary action and active state.
      Occupies the legacy `indigo-*` and `blue-*` names. */
-  --color-indigo-50:  #EEF5FD;
-  --color-indigo-100: #D8E8FA;
-  --color-indigo-200: #B4D2F4;
-  --color-indigo-300: #83B3E9;
-  --color-indigo-400: #4E8FD8;
-  --color-indigo-500: #2A6FC0;
-  --color-indigo-600: #1A57A3;
-  --color-indigo-700: #164788;
-  --color-indigo-800: #163C70;
-  --color-indigo-900: #16345D;
-  --color-indigo-950: #0D1F3B;
+  --color-indigo-50:  #F6F3FC;
+  --color-indigo-100: #EFEBF9;
+  --color-indigo-200: #DDD5F2;
+  --color-indigo-300: #C3B6E8;
+  --color-indigo-400: #9A86D6;
+  --color-indigo-500: #7457BF;
+  --color-indigo-600: #5B3FA6;
+  --color-indigo-700: #43307D;
+  --color-indigo-800: #372868;
+  --color-indigo-900: #2B1F52;
+  --color-indigo-950: #1B1335;
 
-  --color-blue-50:  #EEF5FD;
-  --color-blue-100: #D8E8FA;
-  --color-blue-200: #B4D2F4;
-  --color-blue-300: #83B3E9;
-  --color-blue-400: #4E8FD8;
-  --color-blue-500: #2A6FC0;
-  --color-blue-600: #1A57A3;
-  --color-blue-700: #164788;
-  --color-blue-800: #163C70;
-  --color-blue-900: #16345D;
-  --color-blue-950: #0D1F3B;
+  --color-blue-50:  #F6F3FC;
+  --color-blue-100: #EFEBF9;
+  --color-blue-200: #DDD5F2;
+  --color-blue-300: #C3B6E8;
+  --color-blue-400: #9A86D6;
+  --color-blue-500: #7457BF;
+  --color-blue-600: #5B3FA6;
+  --color-blue-700: #43307D;
+  --color-blue-800: #372868;
+  --color-blue-900: #2B1F52;
+  --color-blue-950: #1B1335;
 
-  --color-violet-50:  #EEF5FD;
-  --color-violet-100: #D8E8FA;
-  --color-violet-200: #B4D2F4;
-  --color-violet-300: #83B3E9;
-  --color-violet-400: #4E8FD8;
-  --color-violet-500: #2A6FC0;
-  --color-violet-600: #1A57A3;
-  --color-violet-700: #164788;
-  --color-violet-800: #163C70;
-  --color-violet-900: #16345D;
-  --color-violet-950: #0D1F3B;
+  --color-violet-50:  #F6F3FC;
+  --color-violet-100: #EFEBF9;
+  --color-violet-200: #DDD5F2;
+  --color-violet-300: #C3B6E8;
+  --color-violet-400: #9A86D6;
+  --color-violet-500: #7457BF;
+  --color-violet-600: #5B3FA6;
+  --color-violet-700: #43307D;
+  --color-violet-800: #372868;
+  --color-violet-900: #2B1F52;
+  --color-violet-950: #1B1335;
 
   /* ── Gold ───────────────────────────────────────────────────────
      The authority accent. Spent sparingly: the wordmark, the active
      nav underline, a pending decision. Never a large fill. */
-  --color-amber-50:  #FDF9EC;
-  --color-amber-100: #F9F0CE;
-  --color-amber-200: #F2DE9A;
-  --color-amber-300: #E8C55E;
-  --color-amber-400: #DDAB33;
-  --color-amber-500: #C88E1B;
-  --color-amber-600: #A96D15;
-  --color-amber-700: #874F16;
-  --color-amber-800: #6F4019;
-  --color-amber-900: #5D3618;
-  --color-amber-950: #3A2210;
+  --color-amber-50:  #FBF6EE;
+  --color-amber-100: #F6EDDD;
+  --color-amber-200: #EDD9B8;
+  --color-amber-300: #DDBB85;
+  --color-amber-400: #C99A50;
+  --color-amber-500: #A8711F;
+  --color-amber-600: #99641B;
+  --color-amber-700: #7A4F12;
+  --color-amber-800: #633F10;
+  --color-amber-900: #4F320E;
+  --color-amber-950: #2E1D08;
 
-  --color-yellow-50:  #FDF9EC;
-  --color-yellow-100: #F9F0CE;
-  --color-yellow-200: #F2DE9A;
-  --color-yellow-300: #E8C55E;
-  --color-yellow-400: #DDAB33;
-  --color-yellow-500: #C88E1B;
-  --color-yellow-600: #A96D15;
-  --color-yellow-700: #874F16;
-  --color-yellow-800: #6F4019;
-  --color-yellow-900: #5D3618;
-  --color-yellow-950: #3A2210;
+  --color-yellow-50:  #FBF6EE;
+  --color-yellow-100: #F6EDDD;
+  --color-yellow-200: #EDD9B8;
+  --color-yellow-300: #DDBB85;
+  --color-yellow-400: #C99A50;
+  --color-yellow-500: #A8711F;
+  --color-yellow-600: #99641B;
+  --color-yellow-700: #7A4F12;
+  --color-yellow-800: #633F10;
+  --color-yellow-900: #4F320E;
+  --color-yellow-950: #2E1D08;
 
   /* ── Verified · emerald ─────────────────────────────────────────
      Deepened from Tailwind's default so it holds 4.5:1 on white at
      600 — status colour has to survive an exam hall projector. */
-  --color-emerald-50:  #EDFAF3;
-  --color-emerald-100: #D2F2E1;
-  --color-emerald-200: #A8E5C7;
-  --color-emerald-300: #71D0A5;
-  --color-emerald-400: #3EB482;
-  --color-emerald-500: #1E9767;
-  --color-emerald-600: #127A53;
-  --color-emerald-700: #106143;
-  --color-emerald-800: #114D37;
-  --color-emerald-900: #10402F;
-  --color-emerald-950: #06251A;
+  --color-emerald-50:  #F6F3FC;
+  --color-emerald-100: #EFEBF9;
+  --color-emerald-200: #DDD5F2;
+  --color-emerald-300: #C3B6E8;
+  --color-emerald-400: #9A86D6;
+  --color-emerald-500: #7457BF;
+  --color-emerald-600: #5B3FA6;
+  --color-emerald-700: #43307D;
+  --color-emerald-800: #372868;
+  --color-emerald-900: #2B1F52;
+  --color-emerald-950: #1B1335;
 
-  --color-green-50:  #EDFAF3;
-  --color-green-100: #D2F2E1;
-  --color-green-200: #A8E5C7;
-  --color-green-300: #71D0A5;
-  --color-green-400: #3EB482;
-  --color-green-500: #1E9767;
-  --color-green-600: #127A53;
-  --color-green-700: #106143;
-  --color-green-800: #114D37;
-  --color-green-900: #10402F;
-  --color-green-950: #06251A;
+  --color-green-50:  #F6F3FC;
+  --color-green-100: #EFEBF9;
+  --color-green-200: #DDD5F2;
+  --color-green-300: #C3B6E8;
+  --color-green-400: #9A86D6;
+  --color-green-500: #7457BF;
+  --color-green-600: #5B3FA6;
+  --color-green-700: #43307D;
+  --color-green-800: #372868;
+  --color-green-900: #2B1F52;
+  --color-green-950: #1B1335;
 
-  --color-teal-50:  #EDFAF3;
-  --color-teal-100: #D2F2E1;
-  --color-teal-200: #A8E5C7;
-  --color-teal-300: #71D0A5;
-  --color-teal-400: #3EB482;
-  --color-teal-500: #1E9767;
-  --color-teal-600: #127A53;
-  --color-teal-700: #106143;
-  --color-teal-800: #114D37;
-  --color-teal-900: #10402F;
-  --color-teal-950: #06251A;
+  --color-teal-50:  #F6F3FC;
+  --color-teal-100: #EFEBF9;
+  --color-teal-200: #DDD5F2;
+  --color-teal-300: #C3B6E8;
+  --color-teal-400: #9A86D6;
+  --color-teal-500: #7457BF;
+  --color-teal-600: #5B3FA6;
+  --color-teal-700: #43307D;
+  --color-teal-800: #372868;
+  --color-teal-900: #2B1F52;
+  --color-teal-950: #1B1335;
 
   /* ── Denied · rose ──────────────────────────────────────────────
      Reads as a considered refusal, not an error toast. */
-  --color-rose-50:  #FDF2F3;
-  --color-rose-100: #FBE1E4;
-  --color-rose-200: #F6C6CC;
-  --color-rose-300: #EE9EA8;
-  --color-rose-400: #E26D7C;
-  --color-rose-500: #D14456;
-  --color-rose-600: #B92F42;
-  --color-rose-700: #9B2437;
-  --color-rose-800: #822132;
-  --color-rose-900: #6F1F2E;
-  --color-rose-950: #3D0D17;
+  --color-rose-50:  #FBF6EE;
+  --color-rose-100: #F6EDDD;
+  --color-rose-200: #EDD9B8;
+  --color-rose-300: #DDBB85;
+  --color-rose-400: #C99A50;
+  --color-rose-500: #A8711F;
+  --color-rose-600: #99641B;
+  --color-rose-700: #7A4F12;
+  --color-rose-800: #633F10;
+  --color-rose-900: #4F320E;
+  --color-rose-950: #2E1D08;
 
-  --color-red-50:  #FDF2F3;
-  --color-red-100: #FBE1E4;
-  --color-red-200: #F6C6CC;
-  --color-red-300: #EE9EA8;
-  --color-red-400: #E26D7C;
-  --color-red-500: #D14456;
-  --color-red-600: #B92F42;
-  --color-red-700: #9B2437;
-  --color-red-800: #822132;
-  --color-red-900: #6F1F2E;
-  --color-red-950: #3D0D17;
+  --color-red-50:  #FBF6EE;
+  --color-red-100: #F6EDDD;
+  --color-red-200: #EDD9B8;
+  --color-red-300: #DDBB85;
+  --color-red-400: #C99A50;
+  --color-red-500: #A8711F;
+  --color-red-600: #99641B;
+  --color-red-700: #7A4F12;
+  --color-red-800: #633F10;
+  --color-red-900: #4F320E;
+  --color-red-950: #2E1D08;
+
+  /* added by the FlatViolet retheme */
+  --color-purple-50: #F6F3FC;
+  --color-purple-100: #EFEBF9;
+  --color-purple-200: #DDD5F2;
+  --color-purple-300: #C3B6E8;
+  --color-purple-400: #9A86D6;
+  --color-purple-500: #7457BF;
+  --color-purple-600: #5B3FA6;
+  --color-purple-700: #43307D;
+  --color-purple-800: #372868;
+  --color-purple-900: #2B1F52;
+  --color-purple-950: #1B1335;
+  --color-sky-50: #F6F3FC;
+  --color-sky-100: #EFEBF9;
+  --color-sky-200: #DDD5F2;
+  --color-sky-300: #C3B6E8;
+  --color-sky-400: #9A86D6;
+  --color-sky-500: #7457BF;
+  --color-sky-600: #5B3FA6;
+  --color-sky-700: #43307D;
+  --color-sky-800: #372868;
+  --color-sky-900: #2B1F52;
+  --color-sky-950: #1B1335;
+  --color-cyan-50: #F6F3FC;
+  --color-cyan-100: #EFEBF9;
+  --color-cyan-200: #DDD5F2;
+  --color-cyan-300: #C3B6E8;
+  --color-cyan-400: #9A86D6;
+  --color-cyan-500: #7457BF;
+  --color-cyan-600: #5B3FA6;
+  --color-cyan-700: #43307D;
+  --color-cyan-800: #372868;
+  --color-cyan-900: #2B1F52;
+  --color-cyan-950: #1B1335;
+  --color-orange-50: #FBF6EE;
+  --color-orange-100: #F6EDDD;
+  --color-orange-200: #EDD9B8;
+  --color-orange-300: #DDBB85;
+  --color-orange-400: #C99A50;
+  --color-orange-500: #A8711F;
+  --color-orange-600: #99641B;
+  --color-orange-700: #7A4F12;
+  --color-orange-800: #633F10;
+  --color-orange-900: #4F320E;
+  --color-orange-950: #2E1D08;
 
   /* ── Semantic aliases — prefer these in new code ────────────────*/
-  --color-brand-50:  #EEF5FD;
-  --color-brand-100: #D8E8FA;
-  --color-brand-200: #B4D2F4;
-  --color-brand-300: #83B3E9;
-  --color-brand-400: #4E8FD8;
-  --color-brand-500: #2A6FC0;
-  --color-brand-600: #1A57A3;
-  --color-brand-700: #164788;
-  --color-brand-800: #163C70;
-  --color-brand-900: #16345D;
+  --color-brand-50:  #F6F3FC;
+  --color-brand-100: #EFEBF9;
+  --color-brand-200: #DDD5F2;
+  --color-brand-300: #C3B6E8;
+  --color-brand-400: #9A86D6;
+  --color-brand-500: #7457BF;
+  --color-brand-600: #5B3FA6;
+  --color-brand-700: #43307D;
+  --color-brand-800: #372868;
+  --color-brand-900: #2B1F52;
 
   /* Ink — the navy chrome. Darker and bluer than the neutral ramp;
      used for top bars, sidebars and the primary button. */
-  --color-ink-600: #1B2B3D;
-  --color-ink-700: #14222F;
-  --color-ink-800: #0F1A25;
-  --color-ink-900: #0A121B;
-  --color-ink-950: #060C12;
+  --color-ink-600: #4B3590;
+  --color-ink-700: #43307D;
+  --color-ink-800: #372868;
+  --color-ink-900: #2B1F52;
+  --color-ink-950: #211E33;
 
   /* ── Type ───────────────────────────────────────────────────────
      Three roles, three faces. Display carries the headings and the
      big dashboard figures; Inter does the dense UI work it is best
      at; mono is for identifiers a human may have to read aloud
      (roll numbers, AISHE codes, hashes). */
-  --font-display: "Plus Jakarta Sans", "Inter", ui-sans-serif, system-ui,
-                  "Segoe UI", Roboto, sans-serif;
-  --font-sans: "Inter", ui-sans-serif, system-ui, -apple-system,
-               "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-  --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, Menlo,
-               Consolas, monospace;
+  --font-display: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --font-sans: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --font-mono: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
 
   /* ── Elevation ──────────────────────────────────────────────────
      Shadows are tinted with the ink navy rather than pure black —
      a black shadow on a cool ground reads as dirt. */
-  --shadow-xs:   0 1px 2px rgba(10, 18, 27, 0.04);
-  --shadow-sm:   0 1px 2px rgba(10, 18, 27, 0.05), 0 1px 3px rgba(10, 18, 27, 0.04);
-  --shadow-md:   0 2px 4px rgba(10, 18, 27, 0.04), 0 6px 16px -6px rgba(10, 18, 27, 0.10);
-  --shadow-lg:   0 4px 8px rgba(10, 18, 27, 0.04), 0 16px 32px -12px rgba(10, 18, 27, 0.14);
-  --shadow-xl:   0 8px 16px rgba(10, 18, 27, 0.05), 0 28px 56px -20px rgba(10, 18, 27, 0.20);
+  --shadow-xs:   0 0 #0000;
+  --shadow-sm:   0 0 #0000;
+  --shadow-md:   0 0 #0000;
+  --shadow-lg:   0 0 #0000;
+  --shadow-xl:   0 0 #0000;
 
   /* Radius — one step up from stock Tailwind. Softer corners read as
      more considered at dashboard density. */
   --radius-lg:  0.625rem;   /* 10px — buttons, inputs */
-  --radius-xl:  0.875rem;   /* 14px — cards */
-  --radius-2xl: 1.125rem;   /* 18px — modals, hero panels */
+  --radius-xl:  0.75rem;   /* 14px — cards */
+  --radius-2xl: 0.875rem;   /* 18px — modals, hero panels */
 }
 
 /* ═══════════════════════════════════════════════════════════════════
@@ -308,8 +351,8 @@ html, body {
 
 body {
   font-family: var(--font-sans);
-  background-color: #F6F8FA;
-  color: #18212C;
+  background-color: #F5F4F8;
+  color: #211E33;
   /* Inter's stylistic sets sharpen the lowercase g/a and the digits. */
   font-feature-settings: "cv02", "cv03", "cv04", "cv11", "ss01", "ss03";
   -webkit-font-smoothing: antialiased;
@@ -323,15 +366,15 @@ h1, h2, h3, .font-display {
 }
 
 ::selection {
-  background-color: #D8E8FA;
-  color: #0D1F3B;
+  background-color: #EFEBF9;
+  color: #1B1335;
 }
 
 /* ── Focus ────────────────────────────────────────────────────────
    One visible focus treatment for the whole product. Keyboard users
    get a clear azure ring; mouse users never see it. */
 :focus-visible {
-  outline: 2px solid #2A6FC0;
+  outline: 2px solid #7457BF;
   outline-offset: 2px;
   border-radius: 4px;
 }
@@ -351,10 +394,10 @@ select:focus-visible {
    rather than removed, so the rename never has to happen at 96 call
    sites. `warm` is now a historical name for "the page surface".
    ═══════════════════════════════════════════════════════════════════ */
-.bg-warm-page    { background-color: #F6F8FA; }   /* page canvas */
+.bg-warm-page    { background-color: #F5F4F8; }   /* page canvas */
 .bg-warm-surface { background-color: #FFFFFF; }   /* card surface */
-.bg-warm-tint    { background-color: #ECF0F5; }   /* highlighted band */
-.border-warm     { border-color: #DDE4EC; }       /* hairline border */
+.bg-warm-tint    { background-color: #EFEDF4; }   /* highlighted band */
+.border-warm     { border-color: #E3E1EA; }       /* hairline border */
 /* Same hairline, applied between siblings. Five surfaces already wrote
    `divide-y divide-warm` expecting this to exist; without it `divide-y`
    fell back to currentColor and drew the separators in near-black —
@@ -362,14 +405,14 @@ select:focus-visible {
    mirrors what Tailwind v4 emits for `divide-y` (bottom border on
    every child but the last), so the colour lands on the same edge the
    width does. */
-.divide-warm > :not(:last-child) { border-color: #DDE4EC; }
-.border-warm-strong { border-color: #C5D0DC; }    /* accented border */
+.divide-warm > :not(:last-child) { border-color: #E3E1EA; }
+.border-warm-strong { border-color: #D3CEE4; }    /* accented border */
 /* Brand gold on light surfaces, at body size. Darker than the gold used
-   on navy (#E8C55E) because it has to clear 4.5:1 against white — at
-   #A96D15 it measured 4.30:1 and read brown rather than gold.
+   on navy (#DDBB85) because it has to clear 4.5:1 against white — at
+   #99641B it measured 4.30:1 and read brown rather than gold.
    Used by the light-tone wordmark (ForcePasswordChange renders it at
    16px, which is normal text), so it cannot be lightened. */
-.text-warm-accent   { color: #8F5A11; }           /* 5.77:1 on white */
+.text-warm-accent   { color: #7A4F12; }           /* 5.77:1 on white */
 
 /* Brand gold for DISPLAY type only — 30px+ bold, which WCAG scores as
    large text at 3:1 rather than 4.5:1. That budget buys a gold that
@@ -377,10 +420,10 @@ select:focus-visible {
    accent word relates to the "Portal" in the wordmark instead of
    looking like a different, browner colour.
    Do NOT use below 24px regular / 18.66px bold — it fails there. */
-.text-gold-display  { color: #B87A15; }           /* 3.38:1 on the page ground */
+.text-gold-display  { color: #99641B; }           /* 3.38:1 on the page ground */
 
 /* Ring variants — several cards use ring-warm rather than border. */
-.ring-warm { --tw-ring-color: #DDE4EC; }
+.ring-warm { --tw-ring-color: #E3E1EA; }
 
 /* ── Surfaces ─────────────────────────────────────────────────────
    A small vocabulary of panel treatments. Border, fill and elevation
@@ -389,26 +432,26 @@ select:focus-visible {
    needs attention, `panel-sunken` recedes for empty and helper states. */
 .panel {
   background-color: #FFFFFF;
-  border: 1px solid #DDE4EC;
+  border: 1px solid #E3E1EA;
   border-radius: var(--radius-xl);
 }
 .panel-raised {
   background-color: #FFFFFF;
-  border: 1px solid #DDE4EC;
+  border: 1px solid #E3E1EA;
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-md);
 }
 .panel-sunken {
-  background-color: #F6F8FA;
-  border: 1px solid #E6EBF1;
+  background-color: #F5F4F8;
+  border: 1px solid #E3E1EA;
   border-radius: var(--radius-xl);
 }
 
 /* The navy chrome band used by top bars and the login hero. */
 .bg-ink-chrome {
-  background-color: #101C29;
+  background-color: #43307D;
   background-image:
-    linear-gradient(135deg, #16283A 0%, #101C29 55%, #0C1622 100%),
+    linear-gradient(135deg, #43307D 0%, #43307D 55%, #43307D 100%),
     radial-gradient(90% 120% at 10% 0%, rgba(42, 111, 192, 0.30) 0%, transparent 60%),
     radial-gradient(70% 90% at 95% 100%, rgba(169, 109, 21, 0.12) 0%, transparent 60%);
   background-blend-mode: normal, screen, screen;
@@ -439,12 +482,12 @@ select:focus-visible {
 ::-webkit-scrollbar { width: 10px; height: 10px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb {
-  background: #C5D0DC;
+  background: #D3CEE4;
   border-radius: 6px;
   border: 2px solid transparent;
   background-clip: content-box;
 }
-::-webkit-scrollbar-thumb:hover { background: #93A2B5; background-clip: content-box; }
+::-webkit-scrollbar-thumb:hover { background: #A29EB3; background-clip: content-box; }
 
 /* ── Motion ───────────────────────────────────────────────────────*/
 
@@ -694,7 +737,7 @@ select:focus-visible {
   flex: 1 1 20px;
   min-width: 16px;
   height: 3px;
-  background-color: #D5DDE7;
+  background-color: #E3E1EA;
   border-radius: 9999px;
   position: relative;
   overflow: hidden;
@@ -706,16 +749,16 @@ select:focus-visible {
   left: 0;
   bottom: 0;
   width: 0%;
-  background-color: #0B4F8F;
+  background-color: #5B3FA6;
   transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);
 }
 .stepper-fill-active {
   width: 100% !important;
-  background-color: #0F6B45 !important;
+  background-color: #5B3FA6 !important;
 }
 .stepper-fill-pulse {
   width: 100% !important;
-  background: linear-gradient(90deg, #0F6B45, #0B4F8F, #00F2FE);
+  background: linear-gradient(90deg, #5B3FA6, #5B3FA6, #9A86D6);
   background-size: 200% 100%;
   animation: beamPulse 1.8s linear infinite;
 }
@@ -733,8 +776,8 @@ select:focus-visible {
 
 /* Optical Sensor Platen */
 .platen-sensor {
-  background: radial-gradient(circle at 50% 50%, #EEF5FD 0%, #E2ECF7 100%);
-  border: 2px solid #83B3E9;
+  background: radial-gradient(circle at 50% 50%, #F6F3FC 0%, #EFEBF9 100%);
+  border: 2px solid #C3B6E8;
   box-shadow: inset 0 2px 6px rgba(11, 79, 143, 0.15);
   position: relative;
   overflow: hidden;
@@ -843,17 +886,17 @@ select:focus-visible {
   right: 14px;
   height: 3px;
   border-radius: 9999px;
-  background: linear-gradient(90deg, transparent, #00F2FE, #0B4F8F, transparent);
+  background: linear-gradient(90deg, transparent, #9A86D6, #5B3FA6, transparent);
   box-shadow: 0 0 10px rgba(0, 242, 254, 0.9);
   animation: fpScannerVertical 1.6s ease-in-out infinite;
   z-index: 20;
 }
 .fp-laser-scanner.scanner-green {
-  background: linear-gradient(90deg, transparent, #34D399, #0F6B45, transparent);
+  background: linear-gradient(90deg, transparent, #9A86D6, #5B3FA6, transparent);
   box-shadow: 0 0 14px rgba(16, 185, 129, 0.95);
 }
 .fp-laser-scanner.scanner-red {
-  background: linear-gradient(90deg, transparent, #F87171, #DC2626, transparent);
+  background: linear-gradient(90deg, transparent, #C99A50, #A8711F, transparent);
   box-shadow: 0 0 14px rgba(220, 38, 38, 0.95);
 }
 
@@ -887,9 +930,328 @@ select:focus-visible {
   left: 12%;
   right: 12%;
   height: 2px;
-  background: #0B4F8F;
+  background: #5B3FA6;
   border-radius: 2px;
   animation: basicScanLine 1.6s ease-in-out infinite;
   z-index: 10;
 }
 
+
+/* ═══════════════════════════════════════════════════════════════════
+   FLATVIOLET — redesign scheme (Flat → HumanEye).
+   Rules: no gradients, blooms, glows or drop shadows. One font
+   (Bricolage Grotesque; optical sizing gives titles the display cut).
+   No red, no green — warnings use `mark`, confirmations use accent.
+   Utilities: bg-fv-page, text-fv-ink, border-fv-line, …
+   ═══════════════════════════════════════════════════════════════════ */
+@theme {
+  --color-fv-page:        #F5F4F8;
+  --color-fv-card:        #FFFFFF;
+  --color-fv-card-focus:  #EFEBF9;
+  --color-fv-tint:        #DDD5F2;
+  --color-fv-line:        #E3E1EA;
+  --color-fv-disabled:    #D3CEE4;
+  --color-fv-accent:      #5B3FA6;
+  --color-fv-accent-deep: #43307D;
+  --color-fv-accent-soft: #9A86D6;
+  --color-fv-on-accent:   #FFFFFF;
+  --color-fv-ink:         #211E33;
+  --color-fv-muted:       #66627A;
+  --color-fv-faint:       #A29EB3;
+  --color-fv-mark:        #99641B;
+  --color-fv-skin:        #F3EAD9;
+  --color-fv-skin-dark:   #E2D4BE;
+  --color-fv-crease:      #CFBFA3;
+  --color-fv-shirt:       #F0EEF5;
+
+  --font-fv: "Bricolage Grotesque", ui-sans-serif, system-ui, sans-serif;
+  --radius-fv: 12px;
+}
+
+.fv {
+  font-family: var(--font-fv);
+  font-optical-sizing: auto;
+  color: var(--color-fv-ink);
+  background: var(--color-fv-page);
+}
+
+/* The drawn face blinks — the product's liveness check, as a gesture. */
+@keyframes fv-blink {
+  0%, 92%, 100% { transform: scaleY(0); }
+  95%           { transform: scaleY(1); }
+}
+.fv-lid {
+  transform-box: fill-box;
+  transform-origin: center top;
+  transform: scaleY(0);
+  animation: fv-blink 5.5s ease-in-out infinite;
+}
+/* Scan line travels the frame once in a while. */
+@keyframes fv-scan {
+  0%, 55%  { transform: translateY(0);     opacity: 0; }
+  60%      { opacity: 1; }
+  85%      { transform: translateY(232px); opacity: 1; }
+  90%,100% { transform: translateY(232px); opacity: 0; }
+}
+.fv-scan { animation: fv-scan 5.5s ease-in-out infinite; }
+@media (prefers-reduced-motion: reduce) {
+  .fv-lid, .fv-scan { animation: none; }
+  .fv-scan { opacity: 0; }
+}
+@keyframes fv-tap { 0%,100% { transform: translateY(0); } 50% { transform: translateY(1.6px); } }
+.fv-tap-a { animation: fv-tap .42s ease-in-out infinite; }
+.fv-tap-b { animation: fv-tap .42s ease-in-out infinite .21s; }
+@keyframes fv-confetti {
+  0%   { transform: translateY(0) rotate(0deg);     opacity: 0; }
+  10%  { opacity: 1; }
+  100% { transform: translateY(96px) rotate(260deg); opacity: 0; }
+}
+.fv-confetti { transform-box: fill-box; transform-origin: center; animation: fv-confetti 1.1s ease-in forwards; }
+@media (prefers-reduced-motion: reduce) {
+  .fv-tap-a, .fv-tap-b, .fv-confetti { animation: none; }
+}
+
+/* Bricolage cuts, as the Android Type.kt: Serif = display (opsz 96), Sans = text (opsz 14). */
+.fv       { font-variation-settings: "opsz" 14; }
+.fv-display { font-variation-settings: "opsz" 96; }
+/* State Emblem, tinted to ink via mask (the app tints the PNG with ColorFilter). */
+.fv-emblem {
+  background: var(--color-fv-ink);
+  -webkit-mask: url('./assets/emblem-lions.png') center / contain no-repeat;
+          mask: url('./assets/emblem-lions.png') center / contain no-repeat;
+  aspect-ratio: 1100 / 1571;
+}
+/* Entrance, as LoginScreen.entrance(): fade + rise 14px, 70 ms apart, 520 ms ease-out, 320 ms base delay. */
+@keyframes fv-enter { from { opacity: 0; transform: translateY(14px); } to { opacity: 1; transform: none; } }
+.fv-enter { animation: fv-enter 520ms cubic-bezier(.22,.9,.28,1) both; animation-delay: calc(320ms + var(--i, 0) * 70ms); }
+/* Companion rises into his corner (over-damped spring ≈ ease-out), 260 ms after open. */
+@keyframes fv-rise { from { transform: translateY(115%); } to { transform: none; } }
+.fv-rise { animation: fv-rise 1100ms cubic-bezier(.16,1,.3,1) 260ms both; }
+@media (prefers-reduced-motion: reduce) { .fv-enter, .fv-rise { animation: none; } }
+
+/* ── Tiranga — the tricolour, blended in sparingly ──────────────────
+   Saffron and India green join FlatViolet as national accents only:
+   a ribbon at the top of the page, the counter's strip, candidates'
+   clothes. Actions, focus and ticks stay violet. */
+@theme {
+  --color-fv-saffron: #F28C28;
+  --color-fv-green:   #138808;
+  --color-fv-chakra:  #0B1F6B;
+}
+.tricolour-top { position: relative; }
+.tricolour-top::before {
+  content: ''; position: absolute; z-index: 30; top: 0; left: 0; right: 0; height: 9px; pointer-events: none;
+  background: linear-gradient(to bottom,
+    var(--color-fv-saffron) 0 3px, #FFFFFF 3px 6px, var(--color-fv-green) 6px 9px);
+}
+
+/* ── Guide spotlight ─────────────────────────────────────────────────
+   While the guide explains something, it lifts forward and everything
+   else the guide knows about blurs and falls back. */
+[data-guide] {
+  transition: filter 220ms ease-out, opacity 220ms ease-out, transform 340ms cubic-bezier(.22,.9,.28,1);
+  will-change: transform;
+}
+.fv-focus [data-guide]:not(.fv-focused):not(:has(.fv-focused)) {
+  filter: blur(3px) saturate(0.85);
+  opacity: 0.45;
+  transform: scale(0.985);
+}
+.fv-focus .fv-focused {
+  position: relative;
+  z-index: 5;
+  transform: translateY(-3px) scale(1.045);
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-guide] { transition: filter 200ms ease, opacity 200ms ease; }
+  .fv-focus [data-guide]:not(.fv-focused):not(:has(.fv-focused)), .fv-focus .fv-focused { transform: none; }
+}
+.fv-demo [data-guide] { transition: none !important; }
+
+/* The guide bobs as he walks along his rail. */
+@keyframes fv-walk { 0%, 100% { transform: translateY(0) rotate(0deg); } 25% { transform: translateY(-4px) rotate(-1.5deg); } 75% { transform: translateY(-4px) rotate(1.5deg); } }
+.fv-walk { animation: fv-walk 280ms ease-in-out 2; }
+@media (prefers-reduced-motion: reduce) { .fv-walk { animation: none; } }
+
+
+/* Review mode: show the guide already popped out. */
+.fv-demo .fv-guide-pop, .fv-demo .fv-guide-pop * { transition: none !important; }
+@media (prefers-reduced-motion: reduce) { .fv-guide-pop, .fv-guide-pop * { transition: none !important; } }
+
+/* Admin: cards and sidebar are slightly see-through so the living background
+   runs under the whole screen. The guide's bubble and dialogs stay solid. */
+.fv-shell main .bg-fv-card, .fv-shell aside.bg-fv-card { background-color: rgb(255 255 255 / 0.8); }
+.fv-shell .fv-guide-pop .bg-fv-card, .fv-shell .recharts-tooltip-wrapper .bg-fv-card { background-color: #fff; }
+
+
+/* ═══════════════════════════════════════════════════════════════════
+   FLATVIOLET — portal-wide
+   The whole portal in one skin: Bricolage everywhere, flat surfaces.
+   Legacy gradients become a flat fill of their first colour; blooms and
+   glows are gone; elevation is gone (rings still work — they are drawn
+   through a different variable).
+   ═══════════════════════════════════════════════════════════════════ */
+body { font-family: var(--font-fv); font-optical-sizing: auto; background-color: #F5F4F8; color: #211E33; font-feature-settings: normal; }
+h1, h2, h3, .font-display { font-family: var(--font-fv); font-variation-settings: "opsz" 96; letter-spacing: -0.02em; }
+::selection { background-color: #DDD5F2; color: #211E33; }
+:focus-visible { outline-color: #5B3FA6; }
+*, ::before, ::after { --tw-shadow: 0 0 #0000 !important; --tw-inset-shadow: 0 0 #0000 !important; }
+[class*="bg-gradient-"], [class*="bg-linear-"], [class*="bg-radial"] {
+  background-image: none !important;
+  background-color: var(--tw-gradient-from, transparent);
+}
+.bg-clip-text { background-image: none !important; color: var(--tw-gradient-from, #211E33) !important; -webkit-text-fill-color: currentColor; }
+.bg-ink-chrome { background-color: #43307D; background-image: none; }
+.rule-gold { background-image: none; background-color: #9A86D6; }
+.panel-seam { background-image: none; background-color: rgba(255,255,255,.14); }
+.aurora-a, .aurora-b { display: none; }
+[class~="blur-2xl"], [class~="blur-3xl"] { display: none; }
+
+/* Inside the signed-in frames: sentence case, not shouting. The legacy
+   all-caps eyebrows and table heads read as template chrome. */
+.fv-shell .uppercase { text-transform: none; letter-spacing: -0.005em !important; }
+.fv-shell th { font-weight: 600; color: #66627A; }
+/* A page settles in once, gently. */
+@keyframes fv-page-enter { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+.fv-page-enter { animation: fv-page-enter 360ms cubic-bezier(.22,.9,.28,1) both; }
+
+/* Old decorative blooms (blur-[100px] blobs and the like): gone. */
+[class*=" blur-["]:not([class*="backdrop-blur"]), [class^="blur-["]:not([class*="backdrop-blur"]) { display: none; }
+
+/* The sheet the guide holds up bobs gently in his hands. */
+@keyframes fv-hold { 0%, 100% { transform: translateY(0) rotate(-3deg); } 50% { transform: translateY(-3px) rotate(2deg); } }
+.fv-hold { animation: fv-hold 1.8s ease-in-out infinite; transform-origin: 50% 90%; }
+
+/* Pages that speak only in bold. */
+.fv-bold, .fv-bold * { font-weight: 700 !important; }
+
+/* Devices page: the reading flowing along the cables, the glass pulsing,
+   the IR lights winking, the tick popping. */
+@keyframes fv-flow { to { stroke-dashoffset: -40; } }
+.fv-flow { stroke-dasharray: 6 14; animation: fv-flow 1.1s linear infinite; }
+@keyframes fv-glass { 0%, 100% { fill: #C3B6E8; } 50% { fill: #9A86D6; } }
+.fv-glass { animation: fv-glass 1.8s ease-in-out infinite; }
+@keyframes fv-blink { 0%, 49% { opacity: 1; } 50%, 100% { opacity: .25; } }
+.fv-blink { animation: fv-blink 1.2s steps(1) infinite; }
+@keyframes fv-pop { 0%, 60% { transform: scale(0); } 72% { transform: scale(1.15); } 80%, 100% { transform: scale(1); } }
+.fv-pop { transform-box: fill-box; transform-origin: center; animation: fv-pop 2.4s ease-out infinite; }
+
+/* ═══════════════════════════════════════════════════════════════════
+   Motion polish — small, answers-your-action movement only.
+   ═══════════════════════════════════════════════════════════════════ */
+/* Cards that can be acted on lift a hair under the pointer. */
+.fv-shell article, .fv-lift {
+  transition: transform 220ms cubic-bezier(.22,.9,.28,1), border-color 220ms ease;
+}
+.fv-shell article:hover, .fv-lift:hover { transform: translateY(-2px); }
+
+/* Buttons and links press in. */
+.fv-shell button:active, .fv-shell a:active { transform: translateY(1px); }
+.fv-shell button, .fv-shell a { transition: transform 120ms ease, background-color 180ms ease, color 180ms ease, border-color 180ms ease; }
+
+/* The menu items ease across as the pointer arrives. */
+.fv-shell nav a { transition: transform 200ms cubic-bezier(.22,.9,.28,1), background-color 180ms ease, color 180ms ease; }
+.fv-shell nav a:hover { transform: translateX(2px); }
+
+/* A grid settles in, one item after the next. */
+.fv-stagger > * { animation: fv-page-enter 420ms cubic-bezier(.22,.9,.28,1) both; }
+.fv-stagger > *:nth-child(1) { animation-delay: 20ms; }
+.fv-stagger > *:nth-child(2) { animation-delay: 70ms; }
+.fv-stagger > *:nth-child(3) { animation-delay: 120ms; }
+.fv-stagger > *:nth-child(4) { animation-delay: 170ms; }
+.fv-stagger > *:nth-child(5) { animation-delay: 220ms; }
+.fv-stagger > *:nth-child(6) { animation-delay: 270ms; }
+.fv-stagger > *:nth-child(n+7) { animation: none; }   /* long lists never wait */
+
+/* Numbers that change tick over rather than jump. */
+.fv-shell .tabular-nums { transition: color 200ms ease; }
+
+@media (prefers-reduced-motion: reduce) {
+  .fv-shell article:hover, .fv-lift:hover, .fv-shell nav a:hover { transform: none; }
+  .fv-stagger > * { animation: none; }
+}
+
+/* Something waiting on you breathes gently. */
+@keyframes fv-breathe { 0%, 100% { transform: scale(1); } 50% { transform: scale(1.07); } }
+.fv-breathe { animation: fv-breathe 2.4s ease-in-out infinite; transform-origin: center; }
+@media (prefers-reduced-motion: reduce) { .fv-breathe { animation: none; } }
+
+/* Devanagari has its own face — Bricolage carries no Devanagari glyphs. */
+.fv-hi { font-family: "Noto Sans Devanagari", "Bricolage Grotesque", sans-serif; letter-spacing: 0; }
+
+/* A decision stamp lands: it drops in from above, presses, and settles.
+   Hovering the row presses it again. */
+@keyframes fv-stamp-in {
+  0%   { transform: translateY(-50%) scale(2.6) rotate(-16deg); opacity: 0; }
+  55%  { opacity: .85; }
+  70%  { transform: translateY(-50%) scale(0.92) rotate(-8deg); opacity: .85; }
+  84%  { transform: translateY(-50%) scale(1.06) rotate(-8deg); }
+  100% { transform: translateY(-50%) scale(1) rotate(-8deg); opacity: .82; }
+}
+@keyframes fv-stamp-press {
+  0%   { transform: translateY(-50%) scale(1) rotate(-8deg); opacity: .82; }
+  35%  { transform: translateY(-50%) scale(1.14) rotate(-11deg); opacity: .9; }
+  60%  { transform: translateY(-50%) scale(0.95) rotate(-8deg); }
+  100% { transform: translateY(-50%) scale(1) rotate(-8deg); opacity: .95; }
+}
+.fv-stamp { animation: fv-stamp-in 720ms cubic-bezier(.3,1.3,.4,1) both; }
+li:hover > .fv-stamp { animation: fv-stamp-press 520ms cubic-bezier(.3,1.3,.4,1) both; }
+@media (prefers-reduced-motion: reduce) {
+  .fv-stamp, li:hover > .fv-stamp { animation: none; opacity: .82; transform: translateY(-50%) rotate(-8deg); }
+}
+
+/* A banner photo drifts very slowly, so the page is never quite still. */
+@keyframes fv-kenburns {
+  0%, 100% { transform: scale(1.06) translate3d(0, 0, 0); }
+  50%      { transform: scale(1.12) translate3d(-1.5%, -1.5%, 0); }
+}
+.fv-kenburns { animation: fv-kenburns 26s ease-in-out infinite; }
+.fv-kenburns > * { width: 100%; height: 100%; object-fit: cover; }
+@media (prefers-reduced-motion: reduce) { .fv-kenburns { animation: none; } }
+
+/* Keypad keys go down under the finger and come straight back. */
+.fv-key { transition: transform 90ms ease, background-color 160ms ease, border-color 160ms ease; }
+.fv-key:active:not(:disabled) { transform: translateY(2px) scale(.97); background-color: #DDD5F2; }
+@media (prefers-reduced-motion: reduce) { .fv-key:active:not(:disabled) { transform: none; } }
+
+/* ── The super admin's motion ──────────────────────────────────────────
+   Three things move here, and only three. A crest is pressed onto the
+   page the way a stamp is pressed: it arrives big and slightly askew,
+   overshoots, and settles square. Rows stagger by --i so a queue reads
+   as a sequence rather than a flash. A grain of sand falls inside the
+   "waiting" stamp, because that stamp is the one thing on the page that
+   is genuinely still happening. Everything else waits for a click. */
+@keyframes fv-press-in {
+  0%   { opacity: 0; transform: scale(1.24) rotate(-7deg); }
+  62%  { opacity: 1; transform: scale(.965) rotate(2deg); }
+  100% { opacity: 1; transform: scale(1) rotate(0deg); }
+}
+.fv-press-in {
+  animation: fv-press-in 460ms cubic-bezier(.2, .9, .28, 1.25) both;
+  animation-delay: calc(var(--i, 0) * 55ms);
+}
+
+@keyframes fv-grain {
+  0%, 12%   { transform: translateY(0); opacity: 1; }
+  46%       { transform: translateY(4.4px); opacity: 1; }
+  52%, 100% { transform: translateY(4.4px); opacity: 0; }
+}
+.fv-grain { animation: fv-grain 2.6s cubic-bezier(.55, 0, .7, 1) infinite; }
+
+@keyframes fv-pile {
+  0%, 12%  { transform: scaleY(.5); opacity: .55; }
+  52%,100% { transform: scaleY(1);  opacity: 1; }
+}
+.fv-pile { animation: fv-pile 2.6s cubic-bezier(.55, 0, .7, 1) infinite; transform-origin: 50% 100%; }
+
+/* The edge that marks the selected row grows out of its own middle. */
+@keyframes fv-edge-in { from { transform: scaleY(0); } to { transform: scaleY(1); } }
+.fv-edge-in { animation: fv-edge-in 220ms cubic-bezier(.22, 1, .36, 1) both; transform-origin: 50% 50%; }
+
+/* A bar that fills to its share once, on arrival. */
+.fv-bar-grow { transition: width 900ms cubic-bezier(.22, 1, .36, 1); }
+
+@media (prefers-reduced-motion: reduce) {
+  .fv-press-in, .fv-grain, .fv-pile, .fv-edge-in { animation: none; }
+  .fv-bar-grow { transition: none; }
+}

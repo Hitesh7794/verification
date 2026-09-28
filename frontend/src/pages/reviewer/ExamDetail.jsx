@@ -190,10 +190,13 @@ export default function ReviewerExamDetail() {
   return (
     <ReviewerShell>
       <FadeIn>
-        <div className="mb-2">
-          <Link to="/reviewer/exams" className="inline-flex items-center gap-1 text-xs font-medium text-slate-500 hover:text-slate-800 transition-colors">
-            <Icon.ChevronLeft className="h-3.5 w-3.5" />
-            All board exams
+        <div className="mb-4">
+          <Link
+            to="/reviewer/exams"
+            className="group inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:border-indigo-400 hover:bg-indigo-50 hover:text-indigo-700"
+          >
+            <Icon.ChevronLeft className="h-4 w-4 transition-transform group-hover:-translate-x-0.5" />
+            <span>All board exams</span>
           </Link>
         </div>
 
@@ -535,7 +538,7 @@ function BioMetric({ label, have, total }) {
   const complete = pct >= 100
   const low = pct < 80 && !complete
   return (
-    <div className="rounded-lg border border-warm bg-[#F6F8FA] px-4 py-3">
+    <div className="rounded-lg border border-warm bg-[#F5F4F8] px-4 py-3">
       <p className="text-[10px] font-semibold uppercase tracking-widest text-stone-500 mb-1">{label}</p>
       <p className="text-xl font-semibold text-ink-900 tabular-nums leading-none">
         {have.toLocaleString('en-IN')} <span className="text-xs font-normal text-stone-400">/ {total.toLocaleString('en-IN')}</span>
@@ -606,7 +609,7 @@ function BiometricUploadModal({ open, examId, candidate, currentStatus, onClose,
             </div>
           )}
         </div>
-        <div className="flex items-center justify-end gap-2 px-6 py-3 bg-[#F6F8FA] border-t border-warm">
+        <div className="flex items-center justify-end gap-2 px-6 py-3 bg-[#F5F4F8] border-t border-warm">
           <button
             type="button"
             onClick={onClose}

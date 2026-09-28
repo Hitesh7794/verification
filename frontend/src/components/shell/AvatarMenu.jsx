@@ -1,3 +1,4 @@
+import { AgentPortrait } from '../fv/FvArt.jsx'
 import { useEffect, useRef, useState } from 'react'
 import { Button } from '../ui/ui.jsx'
 import ChangePasswordModal from './ChangePasswordModal.jsx'
@@ -67,13 +68,15 @@ export default function AvatarMenu({ user, onLogout }) {
         aria-expanded={open}
         aria-label="Account menu"
         onClick={() => setOpen((v) => !v)}
-        className="h-9 w-9 rounded-full bg-white/12 ring-1 ring-inset ring-white/25
-                   text-white text-sm font-bold flex items-center justify-center
-                   hover:bg-white/20 transition-colors
+        className="h-9 w-9 overflow-hidden rounded-full bg-fv-card-focus ring-1 ring-inset ring-fv-line
+                   text-fv-accent-deep text-sm font-bold flex items-center justify-center
+                   hover:bg-fv-tint transition-colors
                    focus-visible:outline-2 focus-visible:outline-offset-2
-                   focus-visible:outline-amber-300"
+                   focus-visible:outline-fv-accent"
       >
-        {initial}
+        <AgentPortrait seed={user?.username || user?.display_name || 'operator'}
+                       name={user?.display_name || user?.username || ''}
+                       className="h-full w-full" />
       </button>
 
       {open && (

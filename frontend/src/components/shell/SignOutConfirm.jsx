@@ -50,23 +50,28 @@ export default function SignOutConfirm({ open, onCancel, onConfirm }) {
       <div
         aria-hidden="true"
         onClick={onCancel}
-        className="absolute inset-0 bg-slate-900/40 backdrop-blur-[2px] animate-[fade-in_140ms_ease-out]"
+        className="absolute inset-0 bg-fv-ink/45 backdrop-blur-[2px] animate-[fade-in_140ms_ease-out]"
       />
 
       <div
         className="
-          relative w-full max-w-sm rounded-2xl bg-white shadow-2xl ring-1 ring-slate-200/70 overflow-hidden
+          relative w-full max-w-[420px] overflow-hidden rounded-[14px]
+          border border-fv-line bg-fv-card
           animate-[dialog-in_180ms_cubic-bezier(0.22,1,0.36,1)]
         "
       >
-        <div className="h-[3px] rule-gold" />
+        {/* Tricolour hint strip — the same signature the rest of the
+            FlatViolet portal carries above its cards. */}
+        <div aria-hidden="true" className="h-[3px] w-full" style={{
+          background: 'linear-gradient(to right, #FF9933 0 33.33%, #FFFFFF 33.33% 66.66%, #128807 66.66% 100%)',
+        }} />
+
         <div className="p-5 sm:p-6">
-          <div className="flex items-start gap-3">
-            {/* Icon tile — subtle rose-tint so the action reads as a
-                real decision without shouting alarm. */}
+          <div className="flex items-start gap-3.5">
+            {/* Icon tile — violet-tinted to match the shell accents. */}
             <div
               aria-hidden="true"
-              className="h-11 w-11 shrink-0 rounded-xl bg-rose-50 text-rose-600 flex items-center justify-center"
+              className="grid h-11 w-11 shrink-0 place-items-center rounded-[12px] bg-fv-card-focus text-fv-accent ring-1 ring-inset ring-fv-accent-soft"
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
                 <path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" />
@@ -75,42 +80,42 @@ export default function SignOutConfirm({ open, onCancel, onConfirm }) {
               </svg>
             </div>
             <div className="min-w-0 flex-1">
-              <h2 id="signout-title" className="text-[15px] font-semibold text-slate-900">
+              <h2 id="signout-title" className="fv-display text-[17px] font-bold leading-tight tracking-[-0.015em] text-fv-ink">
                 Sign out?
+                <span className="fv-hi ml-2 text-[13px] font-bold text-fv-faint">साइन आउट?</span>
               </h2>
-              <p className="mt-1 text-[13px] text-slate-500">
-                You&rsquo;ll need to sign in again to continue where you
-                left off.
+              <p className="mt-1.5 text-[13.5px] leading-snug text-fv-muted">
+                You&rsquo;ll need to sign in again to continue where you left off.
+                <span className="fv-hi mt-1 block text-[12.5px] text-fv-faint">फिर से जारी रखने के लिए दुबारा साइन इन करना होगा।</span>
               </p>
             </div>
           </div>
 
-          <div className="mt-5 flex items-center justify-end gap-2">
+          <div className="mt-5 flex items-center justify-end gap-2.5">
             <button
               type="button"
               onClick={onCancel}
               className="
-                inline-flex items-center rounded-lg
-                bg-white text-slate-700 text-[13px] font-semibold
-                border border-slate-200 px-3.5 py-2
-                transition-[background-color,border-color,transform] duration-150
-                hover:bg-slate-50 hover:border-slate-300 active:translate-y-px
-                focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-slate-400
+                inline-flex items-center rounded-[10px] border border-fv-line bg-fv-card
+                px-4 py-2 text-[13.5px] font-bold text-fv-ink
+                transition-colors duration-150
+                hover:border-fv-accent-soft hover:bg-fv-page
+                focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fv-accent
               "
             >
               Cancel
+              <span className="fv-hi ml-1.5 text-[12px] font-bold text-fv-faint">रद्द</span>
             </button>
             <button
               ref={confirmRef}
               type="button"
               onClick={onConfirm}
               className="
-                inline-flex items-center gap-1.5 rounded-lg
-                bg-rose-600 text-white text-[13px] font-semibold
-                px-3.5 py-2 shadow-sm
-                transition-[background-color,box-shadow,transform] duration-150
-                hover:bg-rose-700 hover:shadow-md active:translate-y-px
-                focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-rose-500
+                inline-flex items-center gap-1.5 rounded-[10px]
+                bg-fv-accent px-4 py-2 text-[13.5px] font-bold text-white
+                transition-colors duration-150
+                hover:bg-fv-accent-deep
+                focus:outline-none focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-fv-accent
               "
             >
               <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
@@ -119,6 +124,7 @@ export default function SignOutConfirm({ open, onCancel, onConfirm }) {
                 <line x1="21" y1="12" x2="9" y2="12" />
               </svg>
               Sign out
+              <span className="fv-hi ml-1 text-[12px] font-bold text-white/85">साइन आउट</span>
             </button>
           </div>
         </div>

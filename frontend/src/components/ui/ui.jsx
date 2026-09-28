@@ -1,3 +1,4 @@
+import FvEmpty from '../fv/FvEmpty.jsx'
 // Lightweight, hand-rolled UI primitives — no icon library, no emojis.
 // Tailwind v4 utility classes only.
 //
@@ -205,17 +206,6 @@ export function PageHeader({ title, subtitle, right }) {
   )
 }
 
-export function EmptyState({ title, body }) {
-  return (
-    <div className="text-center py-12 px-6">
-      {/* A quiet mark rather than an illustration — an empty table is a
-          normal state here, not an error worth decorating. */}
-      <div
-        aria-hidden="true"
-        className="mx-auto mb-3 h-9 w-9 rounded-full border border-dashed border-slate-300 bg-slate-50"
-      />
-      <p className="text-sm font-semibold text-slate-700">{title}</p>
-      {body && <p className="mt-1 text-xs text-slate-500 max-w-sm mx-auto">{body}</p>}
-    </div>
-  )
+export function EmptyState({ title, body, mood, quip }) {
+  return <FvEmpty title={title} body={body} mood={mood} quip={quip} />
 }

@@ -1,5 +1,9 @@
+import HistoryScene from '../../components/fv/HistoryScene.jsx'
+import { AgentPortrait, GlyphSheet, GlyphWindow } from '../../components/fv/FvArt.jsx'
+import { ArtRecords } from '../../components/fv/FvArt.jsx'
 import { useEffect, useState } from 'react'
-import AdminShell, { PageHead } from '../../components/shell/AdminShell.jsx'
+import AdminShell from '../../components/fv/FvAdminShell.jsx'
+import { PageHead } from '../../components/shell/AdminShell.jsx'
 import {
   Badge,
   Button,
@@ -208,12 +212,16 @@ export default function AdminHistory() {
 
   return (
     <AdminShell>
+      {/* The page's living background: the archive. */}
+      <HistoryScene className="fixed bottom-[30px] right-[2%] z-0 h-[min(56vh,500px)] aspect-[480/300] opacity-[0.17]" />
+      <div className="fv-bold relative z-[1]">
       <PageHead
         eyebrow="Audit"
-        title="Verification history"
+        title="Verification history" art={ArtRecords}
+        subtitle="Every check, newest first."
         right={
           <Button onClick={downloadCSV} variant="secondary">
-            Export CSV
+            <span className="inline-flex items-center gap-2"><FIcon name="csv" />Export CSV</span>
           </Button>
         }
       />
@@ -221,7 +229,7 @@ export default function AdminHistory() {
         <CardBody>
           <form onSubmit={applyFilters} className="grid gap-3 sm:grid-cols-2 lg:grid-cols-5">
             <div>
-              <Label>Roll number</Label>
+              <Label><span className="inline-flex items-center gap-1.5"><FIcon name="id" />Roll number</span></Label>
               <Input
                 value={filters.roll}
                 onChange={(e) => setFilters({ ...filters, roll: e.target.value })}
@@ -229,7 +237,7 @@ export default function AdminHistory() {
               />
             </div>
             <div>
-              <Label>Status</Label>
+              <Label><span className="inline-flex items-center gap-1.5"><FIcon name="seal" />Status</span></Label>
               <select
                 value={filters.status}
                 onChange={(e) => setFilters({ ...filters, status: e.target.value })}
@@ -243,7 +251,7 @@ export default function AdminHistory() {
               </select>
             </div>
             <div>
-              <Label>Exam</Label>
+              <Label><span className="inline-flex items-center gap-1.5"><GlyphSheet className="h-4 w-4" />Exam</span></Label>
               <select
                 value={filters.exam_id}
                 onChange={(e) => setFilters({ ...filters, exam_id: e.target.value })}
@@ -256,7 +264,7 @@ export default function AdminHistory() {
               </select>
             </div>
             <div>
-              <Label>From</Label>
+              <Label><span className="inline-flex items-center gap-1.5"><GlyphWindow className="h-4 w-4" />From</span></Label>
               <Input
                 type="date"
                 value={filters.from}
@@ -268,7 +276,7 @@ export default function AdminHistory() {
               />
             </div>
             <div>
-              <Label>To</Label>
+              <Label><span className="inline-flex items-center gap-1.5"><GlyphWindow className="h-4 w-4" />To</span></Label>
               <Input
                 type="date"
                 value={filters.to}
@@ -282,10 +290,13 @@ export default function AdminHistory() {
             <div className="sm:col-span-2 lg:col-span-5 flex flex-wrap items-center gap-2 pt-1">
               <Button type="submit">Apply</Button>
               <Button type="button" variant="secondary" onClick={clearFilters}>Clear</Button>
-              <span className="ml-2 text-xs text-slate-500">Quick:</span>
-              <button type="button" onClick={() => applyPreset(1)}  className="text-xs underline text-slate-600 hover:text-slate-900">Today</button>
-              <button type="button" onClick={() => applyPreset(7)}  className="text-xs underline text-slate-600 hover:text-slate-900">Last 7 days</button>
-              <button type="button" onClick={() => applyPreset(30)} className="text-xs underline text-slate-600 hover:text-slate-900">Last 30 days</button>
+              <span className="ml-3 h-6 w-px bg-fv-line" aria-hidden="true" />
+              {[[1, 'Today'], [7, '7 days'], [30, '30 days']].map(([d, label]) => (
+                <button key={d} type="button" onClick={() => applyPreset(d)}
+                        className="inline-flex items-center gap-1.5 rounded-full border border-fv-line bg-fv-card px-3 py-1.5 text-[13px] text-fv-accent-deep hover:bg-fv-card-focus transition-colors">
+                  <GlyphWindow className="h-4 w-4" />{label}
+                </button>
+              ))}
             </div>
           </form>
         </CardBody>
@@ -298,112 +309,43 @@ export default function AdminHistory() {
       )}
 
       <Card>
-        <CardHeader>
-          <CardTitle>Results</CardTitle>
-        </CardHeader>
+        <div className="flex items-center gap-3 border-b border-fv-line px-5 py-4">
+          <ArtRecords className="h-10 w-10" />
+          <h2 className="fv-display text-[19px] tracking-[-0.015em] text-fv-ink">Results</h2>
+          {!loading && (
+            <span className="rounded-full bg-fv-card-focus px-2.5 py-0.5 text-[13px] text-fv-accent-deep tabular-nums">
+              {rows.length + pendingRows.length}
+            </span>
+          )}
+        </div>
         <CardBody className="p-0">
-          <div className="overflow-auto">
-            <table className="w-full text-sm">
-              <thead className="bg-slate-50 text-slate-500 uppercase text-xs">
-                <tr>
-                  <th className="text-left px-4 py-2 font-medium">When</th>
-                  <th className="text-left px-4 py-2 font-medium">Roll</th>
-                  <th className="text-left px-4 py-2 font-medium">Status</th>
-                  <th className="text-left px-4 py-2 font-medium">Via</th>
-                  <th className="text-left px-4 py-2 font-medium">Centre</th>
-                  <th className="text-left px-4 py-2 font-medium">Verification Agent</th>
-                  <th className="text-right px-4 py-2 font-medium">PDF</th>
-                </tr>
-              </thead>
-              <tbody>
-                {/* Interleaved chronological view.
-                    Completed rows (verified/denied) and abandoned rows
-                    are merged into a single sequence sorted by
-                    created_at DESC so an admin scanning the audit
-                    timeline sees events in the exact order they
-                    happened at the centre — not "everything abandoned
-                    ever" pinned to the top.
-                    Each row carries a `_kind` marker set here so the
-                    render branch below can pick the right cells (an
-                    abandoned row has no via/operator/PDF). */}
-                {(() => {
-                  const merged = [
-                    ...rows.map((r) => ({ ...r, _kind: 'completed' })),
-                    ...pendingRows.map((r) => ({ ...r, _kind: 'pending' })),
-                  ]
-                  merged.sort((a, b) => {
-                    const ta = a.created_at ? new Date(a.created_at).getTime() : 0
-                    const tb = b.created_at ? new Date(b.created_at).getTime() : 0
-                    return tb - ta
-                  })
-                  if (merged.length === 0 && !loading) {
-                    const filtersActive = Object.values(appliedFilters).some((v) => v)
-                    return (
-                      <tr>
-                        <td colSpan={7} className="py-10">
-                          <EmptyState
-                            title={filtersActive ? 'No verifications match' : 'No verification history yet'}
-                            body={filtersActive
-                              ? 'Try widening the date range or clearing filters.'
-                              : 'Completed verifications will appear here once your agents start running them.'}
-                          />
-                        </td>
-                      </tr>
-                    )
-                  }
-                  return merged.map((r) => {
-                    if (r._kind === 'pending') {
-                      return (
-                        <tr
-                          key={'pending-' + r.id}
-                          className="border-t border-slate-100"
-                          title="This flow started (wallet debited on liveness pass) but was abandoned before the verification finished."
-                        >
-                          <td className="px-4 py-2 text-slate-500 whitespace-nowrap">{fmtDateTime(r.created_at)}</td>
-                          <td className="px-4 py-2 font-medium text-slate-900">{r.roll_no}</td>
-                          <td className="px-4 py-2">
-                            <Badge tone="amber">abandoned</Badge>
-                          </td>
-                          <td className="px-4 py-2 text-slate-500">—</td>
-                          <td className="px-4 py-2 text-slate-600 truncate max-w-[160px]">{r.center_name || '—'}</td>
-                          <td className="px-4 py-2 text-slate-600 truncate max-w-[200px]">
-                            {r.operator_name
-                              ? r.operator_name
-                              : <span className="italic text-slate-400">not recorded</span>}
-                          </td>
-                          <td className="px-4 py-2 text-right text-slate-400">—</td>
-                        </tr>
-                      )
-                    }
-                    return (
-                      <tr key={r.id} className="border-t border-slate-100">
-                        <td className="px-4 py-2 text-slate-500 whitespace-nowrap">{fmtDateTime(r.created_at)}</td>
-                        <td className="px-4 py-2 font-medium text-slate-900">{r.roll_no}</td>
-                        <td className="px-4 py-2">
-                          <Badge tone={r.status === 'verified' ? 'green' : 'red'}>{r.status}</Badge>
-                        </td>
-                        <td className="px-4 py-2 text-slate-600">{r.via || '—'}</td>
-                        <td className="px-4 py-2 text-slate-600 truncate max-w-[160px]">{r.center_name}</td>
-                        <td className="px-4 py-2 text-slate-600 truncate max-w-[200px]">{r.operator_name}</td>
-                        <td className="px-4 py-2 text-right">
-                          <button
-                            type="button"
-                            onClick={() =>
-                              downloadVerificationPDF(r.id).catch((e) => setErr(e.message))
-                            }
-                            className="text-sm font-medium text-indigo-600 hover:text-indigo-800"
-                            title={`Download receipt for verification ${r.id}`}
-                          >
-                            Download
-                          </button>
-                        </td>
-                      </tr>
-                    )
-                  })
-                })()}
-              </tbody>
-            </table>
-          </div>
+          {(() => {
+            const merged = [
+              ...rows.map((r) => ({ ...r, _kind: 'completed' })),
+              ...pendingRows.map((r) => ({ ...r, _kind: 'pending' })),
+            ]
+            merged.sort((a, b) => {
+              const ta = a.created_at ? new Date(a.created_at).getTime() : 0
+              const tb = b.created_at ? new Date(b.created_at).getTime() : 0
+              return tb - ta
+            })
+            if (merged.length === 0 && !loading) {
+              const filtersActive = Object.values(appliedFilters).some((v) => v)
+              return (
+                <EmptyState
+                  title={filtersActive ? 'No verifications match' : 'No verification history yet'}
+                  body={filtersActive ? 'Try a wider date range.' : 'Checks land here as they happen.'}
+                />
+              )
+            }
+            return (
+              <ol className="relative">
+                {/* the timeline */}
+                <span aria-hidden="true" className="absolute top-0 bottom-0 left-[112px] w-[2px] bg-fv-card-focus" />
+                {merged.map((r) => <HistoryRow key={(r._kind === 'pending' ? 'p-' : '') + r.id} r={r} onPdf={() => downloadVerificationPDF(r.id).catch((e) => setErr(e.message))} />)}
+              </ol>
+            )
+          })()}
           {(nextCursor > 0 || loading) && (
             <div className="border-t border-slate-100 px-4 py-3 text-center">
               {loading ? (
@@ -421,6 +363,105 @@ export default function AdminHistory() {
           )}
         </CardBody>
       </Card>
+      </div>
     </AdminShell>
   )
+}
+
+// One check on the timeline: when, the report (roll + how it was checked),
+// where, who, its seal, and the receipt.
+function HistoryRow({ r, onPdf }) {
+  const abandoned = r._kind === 'pending'
+  const ok = r.status === 'verified'
+  const d = r.created_at ? new Date(r.created_at) : null
+  const via = (r.via || '').toLowerCase()
+  return (
+    <li className="relative grid grid-cols-[96px_32px_minmax(0,1.3fr)_minmax(0,1fr)_minmax(0,1fr)_auto] items-center gap-3 border-b border-fv-line px-4 py-3 last:border-0 hover:bg-fv-page/70 transition-colors"
+        data-guide-title={`Roll ${r.roll_no}`}
+        data-guide={abandoned ? 'Started but not finished. The fee was charged at the face check.' : ok ? 'Verified. Download the receipt on the right.' : 'Denied at the desk. The receipt shows why.'}
+        data-guide-mood={abandoned ? 'confused' : ok ? 'thumbsUp' : 'detective'}>
+      <div className="text-right leading-tight">
+        <p className="text-[14px] text-fv-ink tabular-nums">{d ? d.toLocaleTimeString('en-IN', { hour: '2-digit', minute: '2-digit', hour12: false }) : '—'}</p>
+        <p className="text-[12px] text-fv-faint tabular-nums">{d ? d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' }) : ''}</p>
+      </div>
+      <span className="relative z-[1] justify-self-center rounded-full ring-4 ring-white">
+        <Seal kind={abandoned ? 'abandoned' : ok ? 'ok' : 'denied'} />
+      </span>
+      <div className="flex min-w-0 items-center gap-3">
+        <MiniReport />
+        <div className="min-w-0">
+          <p className="fv-display text-[16px] leading-tight text-fv-ink tabular-nums">Roll {r.roll_no}</p>
+          <p className="mt-1 flex items-center gap-1.5">
+            {abandoned
+              ? <span className="text-[12.5px] text-[#7A4F12]">Not finished</span>
+              : <>
+                  <Via on={via.includes('face') || !via} kind="face" />
+                  <Via on={via.includes('finger')} kind="finger" />
+                  <Via on={via.includes('iris')} kind="iris" />
+                </>}
+          </p>
+        </div>
+      </div>
+      <p className="flex min-w-0 items-center gap-2 text-[13.5px] text-fv-muted">
+        <FIcon name="pin" /><span className="truncate">{r.center_name || '—'}</span>
+      </p>
+      <p className="flex min-w-0 items-center gap-2 text-[13.5px] text-fv-ink">
+        {r.operator_name ? <AgentPortrait seed={r.operator_name} name={r.operator_name} gender={r.operator_gender} className="h-8 w-8 shrink-0" /> : null}
+        <span className="truncate">{r.operator_name || 'Not recorded'}</span>
+      </p>
+      {abandoned ? <span className="w-[108px]" /> : (
+        <button type="button" onClick={onPdf} title={`Download receipt for verification ${r.id}`}
+                className="inline-flex w-[108px] items-center justify-center gap-1.5 rounded-[10px] border border-fv-line bg-fv-card px-3 py-2 text-[13px] text-fv-accent-deep hover:bg-fv-card-focus transition-colors">
+          <FIcon name="pdf" />Receipt
+        </button>
+      )}
+    </li>
+  )
+}
+function Seal({ kind }) {
+  const c = kind === 'ok' ? '#5B3FA6' : kind === 'denied' ? '#A8711F' : '#A29EB3'
+  return (
+    <svg viewBox="0 0 24 24" className="h-7 w-7" aria-label={kind === 'ok' ? 'Verified' : kind === 'denied' ? 'Denied' : 'Abandoned'}>
+      <circle cx="12" cy="12" r="11" fill={c} />
+      {kind === 'ok' && <path d="M7 12.3l3.2 3.2 6.6-7" fill="none" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" strokeLinejoin="round" />}
+      {kind === 'denied' && <path d="M8 8l8 8M16 8l-8 8" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" />}
+      {kind === 'abandoned' && <path d="M7.5 12h9" stroke="#fff" strokeWidth="2.4" strokeLinecap="round" />}
+    </svg>
+  )
+}
+function MiniReport() {
+  return (
+    <svg viewBox="0 0 28 34" className="h-10 w-8 shrink-0" aria-hidden="true">
+      <rect x="1" y="1" width="26" height="32" rx="3" fill="#fff" stroke="#DDD5F2" strokeWidth="1.4" />
+      <rect x="1" y="1" width="26" height="5" rx="2.5" fill="#5B3FA6" />
+      <rect x="4.5" y="9" width="8" height="10" rx="1.5" fill="#EFEBF9" />
+      <circle cx="8.5" cy="13" r="2.2" fill="#D9A47C" />
+      <rect x="15" y="10" width="9" height="2" rx="1" fill="#DDD5F2" />
+      <rect x="15" y="14" width="7" height="2" rx="1" fill="#EFEBF9" />
+      <path d="M6 28a3 3.4 0 1 1 6 0M4.5 29.5a4.5 5 0 1 1 9 -.5" fill="none" stroke="#9A86D6" strokeWidth="1" strokeLinecap="round" />
+    </svg>
+  )
+}
+function Via({ on, kind }) {
+  const paths = {
+    face: <><circle cx="12" cy="10" r="4.2" /><path d="M5 20c1.2-3.6 3.8-5.4 7-5.4s5.8 1.8 7 5.4" /><path d="M3 7V4h3M21 7V4h-3" /></>,
+    finger: <><path d="M8 18a4 5 0 0 1 8 0" /><path d="M6 15a6 7 0 0 1 12 0" /><path d="M4.5 12a7.5 8.5 0 0 1 15 0" /></>,
+    iris: <><path d="M2.5 12S6 6 12 6s9.5 6 9.5 6-3.5 6-9.5 6-9.5-6-9.5-6z" /><circle cx="12" cy="12" r="2.8" /></>,
+  }
+  return (
+    <span title={on ? { face: 'Face', finger: 'Fingerprint', iris: 'Iris' }[kind] : undefined}
+          className={`grid h-6 w-6 place-items-center rounded-full ${on ? 'bg-fv-card-focus text-fv-accent' : 'bg-transparent text-fv-disabled'}`}>
+      <svg viewBox="0 0 24 24" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{paths[kind]}</svg>
+    </span>
+  )
+}
+function FIcon({ name }) {
+  const d = {
+    csv: <><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5M12 11v6M9.5 14.5 12 17l2.5-2.5" /></>,
+    pdf: <><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z" /><path d="M14 3v5h5M9 13h6M9 17h4" /></>,
+    id: <><rect x="3" y="5" width="18" height="14" rx="2.5" /><circle cx="9" cy="11" r="2.2" /><path d="M6 16c.6-1.6 1.7-2.4 3-2.4s2.4.8 3 2.4M14.5 10h4M14.5 13.5h3" /></>,
+    seal: <><circle cx="12" cy="12" r="8.5" /><path d="M8.5 12.3l2.4 2.4 4.6-5" /></>,
+    pin: <><path d="M12 21s-6.5-6-6.5-11a6.5 6.5 0 0 1 13 0c0 5-6.5 11-6.5 11z" /><circle cx="12" cy="10" r="2.4" /></>,
+  }[name]
+  return <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0 text-fv-accent" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{d}</svg>
 }

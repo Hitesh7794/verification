@@ -185,9 +185,17 @@ export default function ExamDetail() {
   return (
     <SuperShell>
       <FadeIn>
-        <div className="mb-2">
-          <Link to={`/superadmin/clients/${exam.client_id}`} className="text-xs text-slate-500 hover:text-slate-700">
-            ← {exam.client_name}
+        <div className="mb-4">
+          {/* CP injects `cp_client_id` on the proxied exam so this back
+              link resolves to the CP-side client row; without it we'd
+              land on /superadmin/clients/<DP-native id> and the client
+              detail page would 404 ("Client not found"). */}
+          <Link
+            to={`/superadmin/clients/${exam.cp_client_id ?? exam.client_id}`}
+            className="group inline-flex items-center gap-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-sm font-semibold text-slate-700 shadow-sm transition-colors hover:border-indigo-400 hover:bg-indigo-50 hover:text-indigo-700"
+          >
+            <span aria-hidden="true" className="text-base leading-none transition-transform group-hover:-translate-x-0.5">←</span>
+            <span>{exam.client_name}</span>
           </Link>
         </div>
         <PageHead
@@ -278,14 +286,8 @@ export default function ExamDetail() {
             </div>
           </CardHeader>
           <CardBody>
-            <input
-              type="file"
-              accept=".csv,text/csv"
-              disabled={uploading}
-              onChange={(e) => onCSVUpload(e.target.files?.[0])}
-              className="block w-full text-sm text-slate-700 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200"
-            />
-            {uploading && <p className="mt-2 text-xs text-slate-500">Uploading + validating…</p>}
+            <CsvDrop id="candidates-csv" busy={uploading} onFile={onCSVUpload}
+                     hint="One row per candidate" />
             {uploadErr && (
               <div className="mt-3 rounded-lg bg-rose-50 border border-rose-200 p-3">
                 <p className="text-sm font-semibold text-rose-800 mb-1">Upload rejected — {uploadErr.length} problem{uploadErr.length === 1 ? '' : 's'}:</p>
@@ -314,14 +316,8 @@ export default function ExamDetail() {
             </div>
           </CardHeader>
           <CardBody>
-            <input
-              type="file"
-              accept=".csv,text/csv"
-              disabled={centresUploading}
-              onChange={(e) => onCentresUpload(e.target.files?.[0])}
-              className="block w-full text-sm text-slate-700 file:mr-3 file:py-1.5 file:px-3 file:rounded-md file:border-0 file:bg-slate-100 file:text-slate-700 hover:file:bg-slate-200"
-            />
-            {centresUploading && <p className="mt-2 text-xs text-slate-500">Uploading + validating…</p>}
+            <CsvDrop id="centres-csv" busy={centresUploading} onFile={onCentresUpload}
+                     hint="One row per centre" />
             {centresUploadInfo && (
               <div
                 className={`mt-3 rounded-lg px-3 py-2 text-sm border ${
@@ -371,9 +367,9 @@ export default function ExamDetail() {
                       <tr key={u.id} className="border-b border-slate-100 last:border-none">
                         <td className="px-4 py-3 text-slate-700 truncate max-w-xs" title={u.filename}>{u.filename}</td>
                         <td className="px-4 py-3 text-xs text-slate-500 tabular-nums">{formatBytes(u.size_bytes)}</td>
-                        <td className="px-4 py-3 text-slate-700 tabular-nums">{u.rows_seeded}</td>
+                        <td className="px-4 py-3 text-slate-700 tabular-nums">{u.rows_seeded ?? u.rows ?? '—'}</td>
                         <td className="px-4 py-3 text-xs text-slate-500">{u.uploaded_by || '—'}</td>
-                        <td className="px-4 py-3 text-xs text-slate-500">{new Date(u.uploaded_at).toLocaleString()}</td>
+                        <td className="px-4 py-3 text-xs text-slate-500">{whenText(u.uploaded_at)}</td>
                         <td className="px-4 py-3 text-right">
                           <Button variant="ghost" size="sm" onClick={() => downloadRawCSV(u.id, u.filename)}>
                             <Icon.Download className="h-3.5 w-3.5 mr-1" />
@@ -518,7 +514,7 @@ function BioMetric({ label, have, total }) {
   const complete = pct >= 100
   const low = pct < 80 && !complete
   return (
-    <div className="rounded-lg border border-warm bg-[#F6F8FA] px-4 py-3">
+    <div className="rounded-lg border border-warm bg-[#F5F4F8] px-4 py-3">
       <p className="text-[10px] font-semibold uppercase tracking-widest text-stone-500 mb-1">{label}</p>
       <p className="text-xl font-semibold text-ink-900 tabular-nums leading-none">
         {have.toLocaleString('en-IN')} <span className="text-xs font-normal text-stone-400">/ {total.toLocaleString('en-IN')}</span>
@@ -595,7 +591,7 @@ function BiometricUploadModal({ open, examId, candidate, currentStatus, onClose,
             </div>
           )}
         </div>
-        <div className="flex items-center justify-end gap-2 px-6 py-3 bg-[#F6F8FA] border-t border-warm">
+        <div className="flex items-center justify-end gap-2 px-6 py-3 bg-[#F5F4F8] border-t border-warm">
           <button
             type="button"
             onClick={onClose}
@@ -732,7 +728,82 @@ function EditExamForm({ exam, onCancel, onSaved }) {
 }
 
 function formatBytes(n) {
+  const v = Number(n)
+  if (n == null || Number.isNaN(v)) return '—'
+  n = v
   if (n < 1024) return n + ' B'
   if (n < 1024 * 1024) return (n / 1024).toFixed(1) + ' KB'
   return (n / (1024 * 1024)).toFixed(1) + ' MB'
+}
+
+// A date is either a date or a dash. "Invalid Date" is not a thing a
+// desk should ever be shown.
+function whenText(iso) {
+  if (!iso) return '—'
+  const d = new Date(iso)
+  if (Number.isNaN(d.getTime())) return '—'
+  return d.toLocaleString('en-IN', { day: 'numeric', month: 'short', year: 'numeric', hour: 'numeric', minute: '2-digit' })
+}
+
+// CsvDrop — somewhere to put a file.
+//
+// This was the browser's own <input type=file>: a grey "Choose File"
+// button and the words "No file chosen", in a typeface belonging to
+// nothing else on the page. It now takes a drop as well as a click, and
+// says what it is waiting for.
+function CsvDrop({ id, busy, onFile, hint }) {
+  const [over, setOver] = useState(false)
+  const [name, setName] = useState('')
+
+  const take = (file) => {
+    if (!file) return
+    setName(file.name)
+    onFile(file)
+  }
+
+  return (
+    <label
+      htmlFor={id}
+      onDragOver={(e) => { e.preventDefault(); setOver(true) }}
+      onDragLeave={() => setOver(false)}
+      onDrop={(e) => { e.preventDefault(); setOver(false); take(e.dataTransfer.files?.[0]) }}
+      className={`flex cursor-pointer items-center gap-4 rounded-[14px] border-2 border-dashed px-5 py-4 transition ${
+        busy ? 'cursor-wait border-fv-accent-soft bg-fv-card-focus'
+          : over ? 'border-fv-accent bg-fv-card-focus'
+            : 'border-fv-line bg-fv-page hover:border-fv-accent-soft hover:bg-fv-card-focus'
+      }`}
+    >
+      <svg viewBox="0 0 48 48" className="h-11 w-11 shrink-0" aria-hidden="true">
+        <rect x="10" y="7" width="24" height="32" rx="3.5" fill="#FFFFFF" stroke="#DDD5F2" strokeWidth="1.8" />
+        <path d="M27 7l7 7h-7z" fill="#DDD5F2" />
+        <path d="M15 20h14M15 25h14M15 30h9" stroke="#C9BDEF" strokeWidth="2" strokeLinecap="round" />
+        {busy
+          ? <circle cx="34" cy="32" r="7" fill="none" stroke="#5B3FA6" strokeWidth="2.6" strokeDasharray="28 16" />
+          : <g><circle cx="34" cy="32" r="8" fill="#5B3FA6" />
+              <path d="M34 36v-8m0 0l-3 3m3-3l3 3" fill="none" stroke="#FFFFFF" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" /></g>}
+      </svg>
+
+      <span className="min-w-0 flex-1 leading-tight">
+        <span className="block text-[15px] font-bold text-fv-ink">
+          {busy ? 'Reading the file…' : name || 'Drop a CSV here, or choose one'}
+        </span>
+        <span className="mt-0.5 block text-[13px] font-semibold text-fv-muted">
+          {busy ? 'Checking every row before anything is saved' : hint}
+        </span>
+      </span>
+
+      <span className="shrink-0 rounded-[10px] bg-fv-accent px-3.5 py-2 text-[13.5px] font-bold text-white">
+        {busy ? 'Working…' : 'Choose a file'}
+      </span>
+
+      <input
+        id={id}
+        type="file"
+        accept=".csv,text/csv"
+        disabled={busy}
+        onChange={(e) => take(e.target.files?.[0])}
+        className="sr-only"
+      />
+    </label>
+  )
 }

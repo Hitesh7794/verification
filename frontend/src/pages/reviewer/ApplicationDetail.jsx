@@ -1,3 +1,7 @@
+import FvEmpty from '../../components/fv/FvEmpty.jsx'
+import { RvSeal, RvPhoto, RvStamp, HindiName } from '../../components/fv/FvReviewer.jsx'
+import { ArtCollege, AgentPortrait, InstitutionArt } from '../../components/fv/FvArt.jsx'
+import { hi } from '../../components/fv/hindi.jsx'
 import { useEffect, useState } from 'react'
 import { Link, useNavigate, useParams } from 'react-router-dom'
 import ReviewerShell from '../../components/reviewer/ReviewerShell.jsx'
@@ -247,45 +251,54 @@ export default function ReviewerApplicationDetail() {
       <div className="mb-4 flex items-center justify-between">
         <Link
           to="/reviewer"
-          className="inline-flex items-center gap-1 text-sm font-medium text-slate-600 hover:text-slate-900"
+          className="inline-flex items-center gap-1.5 rounded-[10px] border border-fv-line bg-fv-card px-3 py-2 text-[13.5px] font-bold text-fv-accent-deep transition-colors hover:bg-fv-card-focus"
         >
           <Icon.ChevronLeft className="h-4 w-4" />
           Back to inbox
         </Link>
-        <div className="text-xs text-slate-500 font-mono">Application #{app.id}</div>
+        <div className="text-[13px] font-bold text-fv-muted tabular-nums">Application {app.id}</div>
       </div>
 
-      <div className="relative overflow-hidden rounded-2xl border border-slate-200 bg-white shadow-[0_1px_2px_rgba(15,23,42,0.04),0_8px_24px_-12px_rgba(15,23,42,0.08)] mb-6">
-        <div className="px-6 py-6 flex flex-wrap items-start justify-between gap-4">
-          <div className="flex items-start gap-4 min-w-0">
-            <span className="h-12 w-12 rounded-xl bg-brand-600 text-white flex items-center justify-center text-lg font-semibold shrink-0">
-              {(app.institution_name || '?').slice(0, 1).toUpperCase()}
-            </span>
-            <div className="min-w-0">
-              <div className="flex items-center gap-2 flex-wrap">
-                <h1 className="text-xl sm:text-2xl font-semibold tracking-tight text-slate-900 truncate">
+      <div className="relative mb-5 overflow-hidden rounded-[12px] border border-fv-line bg-fv-card">
+        {/* the institution itself: a banner, drifting very slowly */}
+        <div className="relative h-[168px] overflow-hidden bg-fv-card-focus">
+          <span aria-hidden="true" className="fv-kenburns absolute inset-0 opacity-[0.5]">
+            <InstitutionArt name={app.institution_name} photo={app.photo_url || app.logo_url} className="h-full w-full" />
+          </span>
+          <span aria-hidden="true" className="absolute inset-0"
+                style={{ background: 'linear-gradient(to top, rgba(255,255,255,.96), rgba(255,255,255,.45) 55%, rgba(255,255,255,.18))' }} />
+          <RvStamp status={app.status === 'approved' ? 'approved' : app.status === 'rejected' ? 'rejected' : null}
+                   right="5%" className="h-16 w-44" />
+        </div>
+
+        {/* who they are, on a plate over the banner */}
+        <div className="relative -mt-14 px-6 pb-6">
+          <div className="flex flex-wrap items-end justify-between gap-4">
+            <div className="flex min-w-0 items-end gap-4">
+              <span className="grid h-24 w-24 shrink-0 place-items-center rounded-[16px] border border-fv-line bg-fv-card">
+                <ArtCollege className="h-16 w-16" />
+              </span>
+              <div className="min-w-0 pb-1">
+                <h1 className="fv-display text-[28px] leading-tight tracking-[-0.03em] text-fv-ink">
                   {app.institution_name}
+                  <HindiName name={app.institution_name} given={app.institution_name_hi} className="text-[15px] font-medium" />
                 </h1>
-                <span className="inline-flex items-center gap-1.5 rounded-full bg-slate-100 px-2.5 py-0.5 text-xs font-medium text-slate-700">
-                  <span className={`h-1.5 w-1.5 rounded-full ${meta.dot}`} />
-                  {meta.label}
-                </span>
+                <p className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13.5px] font-bold text-fv-ink">
+                  <span>{cap(app.institution_type)}
+                    {hi(cap(app.institution_type)) && <span className="fv-hi ml-1.5 text-[12px] font-medium text-fv-faint">{hi(cap(app.institution_type))}</span>}
+                  </span>
+                  {app.aishe_code && <span className="text-fv-muted">{isRecruiter ? 'Govt / CIN' : 'AISHE'} {app.aishe_code}</span>}
+                  <span className="text-fv-muted">Submitted {formatRelative(app.created_at)}</span>
+                </p>
               </div>
-              <p className="mt-1 text-sm text-slate-600">
-                {cap(app.institution_type)}
-                {app.aishe_code && ` · ${isRecruiter ? 'Govt / CIN Ref' : 'AISHE'} ${app.aishe_code}`}
-              </p>
-              <p className="mt-0.5 text-xs text-slate-500">
-                Submitted {formatRelative(app.created_at)}
-              </p>
+            </div>
+            <div className="flex items-center gap-4 pb-1">
+              <RvSeal status={app.status === 'approved' ? 'approved' : app.status === 'rejected' ? 'rejected' : 'pending'} />
             </div>
           </div>
-          {approvalResult && (
-            <span className="inline-flex items-center gap-1.5 rounded-full bg-emerald-50 text-emerald-800 px-3 py-1 text-xs font-medium">
-              <Icon.Check className="h-3.5 w-3.5" />
-              Approved
-            </span>
-          )}
+
+          {/* where this application stands */}
+          <ReviewSteps status={app.status} docCount={(app.docs || []).length} />
         </div>
       </div>
 
@@ -301,7 +314,7 @@ export default function ReviewerApplicationDetail() {
         {/* LEFT: applicant data */}
         <div className="lg:col-span-2 space-y-5">
           <div>
-            <SectionTitle icon={Icon.Building}>{isRecruiter ? 'Organization' : 'Institution'}</SectionTitle>
+            <RvSection art={ArtCollege} title={isRecruiter ? 'Organization' : 'Institution'} />
             <Card>
               <CardBody>
                 <DefList rows={[
@@ -322,7 +335,7 @@ export default function ReviewerApplicationDetail() {
           </div>
 
           <div>
-            <SectionTitle icon={Icon.MapPin}>{isRecruiter ? 'Registered office' : 'Address'}</SectionTitle>
+            <RvSection art={PinArt} title={isRecruiter ? 'Registered office' : 'Address'} />
             <Card>
               <CardBody>
                 <p className="text-sm text-slate-900 leading-relaxed">
@@ -337,7 +350,7 @@ export default function ReviewerApplicationDetail() {
           </div>
 
           <div>
-            <SectionTitle icon={Icon.Mail}>{isRecruiter ? 'Nodal verification officer' : 'Head of institution'}</SectionTitle>
+            <RvSection art={HeadArt} title={isRecruiter ? 'Nodal verification officer' : 'Head of institution'} />
             <Card>
               <CardBody>
                 <DefList rows={[
@@ -400,7 +413,7 @@ export default function ReviewerApplicationDetail() {
                   )
                 })}
                 {app.docs.length === 0 && (
-                  <div className="px-4 py-3 text-sm text-slate-500">No documents uploaded</div>
+                  <div className="px-4 py-3 text-[14px] font-bold text-fv-muted">Nothing uploaded yet</div>
                 )}
               </div>
             </CardHeader>
@@ -442,8 +455,9 @@ export default function ReviewerApplicationDetail() {
                   <DocPreview blobUrl={docBlobUrl} mime={activeDoc.mime} />
                 )}
                 {!activeDoc && app.docs.length === 0 && (
-                  <div className="h-[600px] flex items-center justify-center text-sm text-slate-500">
-                    No documents to preview
+                  <div className="flex h-[600px] items-center justify-center">
+                    <FvEmpty title="No papers to read" body="Their scans appear here the moment they upload them."
+                             mood="waiting" quip="Nothing to read yet. I checked." />
                   </div>
                 )}
               </div>
@@ -605,14 +619,72 @@ function DocPreview({ blobUrl, mime }) {
 
 function DefList({ rows }) {
   return (
-    <dl className="space-y-2">
+    <dl className="divide-y divide-fv-line">
       {rows.map(([k, v]) => (
-        <div key={k} className="flex items-baseline gap-3 text-sm">
-          <dt className="w-32 shrink-0 text-slate-500">{k}</dt>
-          <dd className="flex-1 text-slate-900 break-words">{v || <span className="text-slate-400">—</span>}</dd>
+        <div key={k} className="flex items-center gap-3 py-2.5 text-[14px]">
+          <FactIcon label={k} />
+          <dt className="w-36 shrink-0 text-fv-muted">
+            {k}
+            {hi(k) && <span className="fv-hi ml-1.5 text-[11.5px] text-fv-faint">{hi(k)}</span>}
+          </dt>
+          <dd className="flex-1 break-words text-fv-ink">{v || <span className="text-fv-faint">Not given</span>}</dd>
         </div>
       ))}
     </dl>
+  )
+}
+
+// A small picture for whatever the row is about.
+function FactIcon({ label = '' }) {
+  const l = label.toLowerCase()
+  const d = /type|category|sector/.test(l) ? <><rect x="4" y="9" width="16" height="11" rx="2" /><path d="M9 9V6h6v3M4 14h16" /></>
+    : /aishe|cin|code/.test(l) ? <><rect x="3" y="6" width="18" height="12" rx="2" /><path d="M7 10h4M7 14h8M15 10h2" /></>
+    : /pan|tan/.test(l) ? <><rect x="3" y="5" width="18" height="14" rx="2.5" /><circle cx="9" cy="11" r="2.2" /><path d="M6 16c.6-1.6 1.7-2.4 3-2.4s2.4.8 3 2.4M14.5 10h4M14.5 13.5h3" /></>
+    : /year/.test(l) ? <><rect x="3" y="5" width="18" height="16" rx="2.5" /><path d="M8 3v4M16 3v4M3 10h18" /></>
+    : /affiliation|body/.test(l) ? <><path d="M4 10l8-5 8 5" /><path d="M6 10v9M18 10v9M4 19h16" /></>
+    : /student|approx/.test(l) ? <><circle cx="9" cy="9" r="3" /><path d="M3 19c0-3.4 2.6-5.6 6-5.6s6 2.2 6 5.6" /><circle cx="17" cy="8" r="2.4" /><path d="M16 13.4c2.4.2 4 1.9 4.6 4.6" /></>
+    : /name|designation|head|officer/.test(l) ? <><circle cx="12" cy="8" r="4" /><path d="M5 20c0-3.9 3.1-6.4 7-6.4s7 2.5 7 6.4" /></>
+    : /email|mail/.test(l) ? <><rect x="3" y="5" width="18" height="14" rx="2.5" /><path d="M3.5 7 12 13l8.5-6" /></>
+    : /mobile|phone/.test(l) ? <><rect x="7" y="3" width="10" height="18" rx="2.5" /><path d="M10.5 18h3" /></>
+    : <><circle cx="12" cy="12" r="8.5" /><path d="M12 8v.01M12 11v5" /></>
+  return (
+    <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0 text-fv-accent" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">{d}</svg>
+  )
+}
+
+// Where this application stands: papers in, your decision, their email.
+function ReviewSteps({ status, docCount }) {
+  const decided = status === 'approved' || status === 'rejected'
+  const steps = [
+    { title: 'Papers in', done: true, note: docCount ? `${docCount} document${docCount === 1 ? '' : 's'}` : 'None uploaded' },
+    { title: 'Your decision', done: decided, note: decided ? (status === 'approved' ? 'Approved' : 'Rejected') : 'Waiting on you' },
+    { title: 'They hear back', done: decided, note: decided ? 'Emailed' : 'After you decide' },
+  ]
+  return (
+    <ol className="mt-5 flex flex-wrap items-center gap-2">
+      {steps.map((st, i) => (
+        <li key={st.title} className="flex items-center gap-2">
+          <span className={`flex items-center gap-2 rounded-[10px] border px-3 py-2 ${
+            st.done ? 'border-fv-line bg-fv-card' : 'border-dashed border-fv-disabled bg-transparent'}`}>
+            <span className={`grid h-6 w-6 place-items-center rounded-full ${st.done ? 'bg-fv-accent text-white' : 'bg-fv-card-focus text-fv-accent'}`}>
+              {st.done
+                ? <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.5l4.5 4.5L19 7" /></svg>
+                : <span className="text-[12px] font-bold tabular-nums">{i + 1}</span>}
+            </span>
+            <span className="leading-tight">
+              <span className="block text-[13.5px] text-fv-ink">{st.title}</span>
+              <span className="block text-[12px] text-fv-muted">{st.note}</span>
+            </span>
+          </span>
+          {i < steps.length - 1 && (
+            <svg viewBox="0 0 24 12" className="h-3 w-6 shrink-0" aria-hidden="true">
+              <path d="M1 6h16" stroke="#C3B6E8" strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" />
+              <path d="M16 2l5 4-5 4" fill="none" stroke="#9A86D6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          )}
+        </li>
+      ))}
+    </ol>
   )
 }
 
@@ -691,5 +763,50 @@ function DecisionResultCard({ result, onBack }) {
         </button>
       </div>
     </div>
+  )
+}
+
+// A section heading: its drawing, the word, and the word in Hindi.
+function RvSection({ art: Art, title }) {
+  const h = hi(title)
+  return (
+    <div className="mb-2.5 flex items-center gap-2.5">
+      <Art className="h-8 w-8 shrink-0" />
+      <h2 className="fv-display text-[17px] tracking-[-0.015em] text-fv-ink">{title}</h2>
+      {h && <span className="fv-hi text-[13px] text-fv-faint">{h}</span>}
+    </div>
+  )
+}
+function PinArt({ className }) {
+  return (
+    <svg viewBox="0 0 32 32" className={className} aria-hidden="true">
+      <path d="M16 3c-5 0-9 3.8-9 8.6C7 18 16 28 16 28s9-10 9-16.4C25 6.8 21 3 16 3z" fill="#F28C28" />
+      <circle cx="16" cy="11.5" r="3.6" fill="#FFFFFF" />
+      <ellipse cx="16" cy="29" rx="7" ry="1.8" fill="#EFEBF9" />
+    </svg>
+  )
+}
+function HeadArt({ className }) {
+  return (
+    <svg viewBox="0 0 32 32" className={className} aria-hidden="true">
+      <circle cx="16" cy="16" r="16" fill="#EFEBF9" />
+      <circle cx="16" cy="13" r="5.6" fill="#D9A47C" />
+      <path d="M10.2 12.6c0-3.6 2.6-5.8 5.8-5.8s5.8 2.2 5.8 5.8c-1-1.8-2.4-2.9-4-3.2-1.2 1.1-4 1.9-7.6 3.2z" fill="#211E33" />
+      <path d="M6 30c0-5.2 4.6-8.4 10-8.4S26 24.8 26 30z" fill="#5B3FA6" />
+      <path d="M13.4 21.8 16 25l2.6-3.2" fill="#FFFFFF" />
+    </svg>
+  )
+}
+function DocsArt({ className }) {
+  return (
+    <svg viewBox="0 0 32 32" className={className} aria-hidden="true">
+      <rect x="5" y="4" width="17" height="22" rx="2.4" fill="#FFFFFF" stroke="#DDD5F2" strokeWidth="1.6" transform="rotate(-7 13 15)" />
+      <rect x="9" y="5" width="17" height="22" rx="2.4" fill="#FFFFFF" stroke="#9A86D6" strokeWidth="1.6" />
+      <rect x="9" y="5" width="17" height="5" rx="2.4" fill="#5B3FA6" />
+      <rect x="12" y="14" width="11" height="2" rx="1" fill="#DDD5F2" />
+      <rect x="12" y="18" width="8" height="2" rx="1" fill="#EFEBF9" />
+      <circle cx="24" cy="24" r="5" fill="#138808" />
+      <path d="M21.8 24.1l1.5 1.5 2.9-3.2" fill="none" stroke="#FFFFFF" strokeWidth="1.6" strokeLinecap="round" strokeLinejoin="round" />
+    </svg>
   )
 }

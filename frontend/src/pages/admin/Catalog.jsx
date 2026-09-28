@@ -1,5 +1,9 @@
+import BoardMark from '../../components/fv/BoardMark.jsx'
+import CatalogScene from '../../components/fv/CatalogScene.jsx'
+import { ArtExam, ArtBoard, ArtEnvelope, ArtStamp, ArtAssign, GlyphSheet, GlyphWindow, GlyphPeople } from '../../components/fv/FvArt.jsx'
 import { useCallback, useEffect, useState } from 'react'
-import AdminShell, { PageHead } from '../../components/shell/AdminShell.jsx'
+import AdminShell from '../../components/fv/FvAdminShell.jsx'
+import { PageHead } from '../../components/shell/AdminShell.jsx'
 import { Button, Card, CardBody } from '../../components/ui/ui.jsx'
 import { Pill } from '../../components/ui/extras.jsx'
 import { FadeIn } from '../../components/ui/motion.jsx'
@@ -98,17 +102,21 @@ export default function Catalog() {
 
   return (
     <AdminShell>
+      {/* The catalog's living background: the answer sheet being filled in. */}
+      <CatalogScene className="fixed bottom-[40px] right-[4%] z-0 h-[min(78vh,700px)] aspect-[360/440] opacity-[0.16]" />
+      <div className="fv-bold relative z-[1]">
       <FadeIn>
         <PageHead
           eyebrow="Catalog"
-          title="Exam catalog"
-          subtitle="Open exams available under the client(s) that have approved your institution. Click Request access to ask the client's reviewer to add an exam to your subscriptions. They'll approve or reject the request; you'll get an email either way."
+          title="Exam catalog" art={ArtExam}
+          subtitle="Exams you can ask to verify."
         />
         {err && (
           <div role="alert" className="mb-4 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">
             {err}
           </div>
         )}
+        {!initialLoading && <HowItWorks />}
         {initialLoading ? (
           <div className="p-16 text-center text-sm text-slate-500">
             <div className="inline-block h-6 w-6 rounded-full border-2 border-slate-200 border-t-stone-900 animate-spin mb-3" />
@@ -126,14 +134,22 @@ export default function Catalog() {
             {visibleClients.map((c) => (
               <Card key={c.id}>
                 <CardBody className="p-0">
-                  <div className="px-5 py-3 border-b border-slate-100 bg-slate-50/50">
-                    <h3 className="text-sm font-semibold text-slate-900">{c.name}</h3>
-                    {c.notes && <p className="text-xs text-slate-500 mt-0.5">{c.notes}</p>}
+                  <div className="flex items-center gap-4 px-5 py-4 border-b border-fv-line"
+                       data-guide-title={c.name} data-guide="An exam board that approved you.">
+                    <div className="min-w-0 flex-1">
+                      <h3 className="fv-display text-[19px] font-bold tracking-[-0.015em] text-fv-ink">
+                        <BoardMark name={c.name} size="lg" />
+                      </h3>
+                      {c.notes && <p className="text-[13px] text-fv-muted mt-1">{c.notes}</p>}
+                    </div>
+                    <span className="shrink-0 rounded-full bg-fv-card-focus px-3 py-1 text-[13px] font-semibold text-fv-accent-deep">
+                      {c.exams.length} open {c.exams.length === 1 ? 'exam' : 'exams'}
+                    </span>
                   </div>
                   <div className="overflow-x-auto">
                     <table className="w-full text-sm">
                       <thead>
-                        <tr className="border-b border-slate-100 text-left text-xs uppercase tracking-wider text-slate-500">
+                        <tr className="border-b border-fv-line text-left text-[13px] text-fv-muted">
                           <th className="px-5 py-2.5">Exam code</th>
                           <th className="px-5 py-2.5">Name</th>
                           <th className="px-5 py-2.5">Window</th>
@@ -153,13 +169,27 @@ export default function Catalog() {
                           const isRejected   = e.subscription_status === 'rejected'
                           const rowBusy      = busyExamId === e.id
                           return (
-                            <tr key={e.id} className="border-b border-slate-100 last:border-none hover:bg-slate-50/40">
-                              <td className="px-5 py-3 font-mono text-xs text-slate-700 tabular-nums">{e.exam_code}</td>
-                              <td className="px-5 py-3 text-slate-900 font-medium">{e.name}</td>
-                              <td className="px-5 py-3 text-xs text-slate-600 tabular-nums">
-                                {dateRange(e.verification_from, e.verification_to)}
+                            <tr key={e.id} className="border-b border-fv-line last:border-none hover:bg-fv-page/60"
+                                data-guide-title={e.name} data-guide="Request it, get approved, verify.">
+                              <td className="px-5 py-3.5 text-[13px] font-semibold text-fv-muted tabular-nums">{e.exam_code || '—'}</td>
+                              <td className="px-5 py-3.5">
+                                <span className="flex items-center gap-3">
+                                  <GlyphSheet className="h-8 w-8 shrink-0" />
+                                  <span className="fv-display text-[16px] font-bold text-fv-ink">{e.name}</span>
+                                </span>
                               </td>
-                              <td className="px-5 py-3 text-slate-700 tabular-nums">{e.candidate_count}</td>
+                              <td className="px-5 py-3.5 text-[13.5px] text-fv-muted tabular-nums">
+                                <span className="flex items-center gap-2">
+                                  <GlyphWindow className="h-5 w-5 shrink-0" />
+                                  {dateRange(e.verification_from, e.verification_to) || 'Window not set yet'}
+                                </span>
+                              </td>
+                              <td className="px-5 py-3.5 text-[14px] font-semibold text-fv-ink tabular-nums">
+                                <span className="flex items-center gap-2">
+                                  <GlyphPeople className="h-5 w-5 shrink-0" />
+                                  {e.candidate_count != null ? Number(e.candidate_count).toLocaleString('en-IN') : '—'}
+                                </span>
+                              </td>
                               <td className="px-5 py-3 text-right align-top">
                                 {isSubscribed ? (
                                   <div className="inline-flex items-center gap-2">
@@ -206,7 +236,12 @@ export default function Catalog() {
                                     disabled={rowBusy}
                                     onClick={() => onSubscribe(e.id)}
                                   >
-                                    {rowBusy ? 'Requesting…' : 'Request access'}
+                                    <span className="inline-flex items-center gap-1.5">
+                                      <svg viewBox="0 0 20 20" className="h-4 w-4" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+                                        <path d="M2.5 5.5h15v10h-15z" /><path d="M2.5 5.5 10 11l7.5-5.5" />
+                                      </svg>
+                                      {rowBusy ? 'Requesting…' : 'Request access'}
+                                    </span>
                                   </Button>
                                 )}
                               </td>
@@ -222,6 +257,39 @@ export default function Catalog() {
           </div>
         )}
       </FadeIn>
+      </div>
     </AdminShell>
+  )
+}
+
+// The three real steps from "I see an exam" to "my agents can verify it":
+// big pictures, a few words each, arrows between them.
+const STEPS = [
+  { art: ArtEnvelope, title: 'Request', text: 'Tap Request access' },
+  { art: ArtStamp, title: 'Approved', text: 'The board says yes' },
+  { art: ArtAssign, title: 'Verify', text: 'Your agents get it' },
+]
+function HowItWorks() {
+  return (
+    <section className="mt-6" aria-label="How an exam becomes yours">
+      <ol className="fv-stagger flex flex-col items-stretch gap-2 sm:flex-row">
+        {STEPS.map(({ art: A, title, text }, i) => (
+          <li key={title} className="contents">
+            <div className="flex flex-1 flex-col items-center rounded-[12px] border border-fv-line bg-fv-card px-4 pt-5 pb-4 text-center"
+                 data-guide-title={title} data-guide={text}>
+              <A className="h-32 w-32" />
+              <p className="fv-display mt-2 text-[20px] text-fv-ink">{title}</p>
+              <p className="text-[14px] text-fv-muted">{text}</p>
+            </div>
+            {i < STEPS.length - 1 && (
+              <svg viewBox="0 0 48 24" className="hidden w-12 shrink-0 self-center sm:block" aria-hidden="true">
+                <path d="M2 12h38" stroke="#9A86D6" strokeWidth="3" strokeDasharray="5 5" strokeLinecap="round" />
+                <path d="M34 5l9 7-9 7" fill="none" stroke="#5B3FA6" strokeWidth="3.4" strokeLinecap="round" strokeLinejoin="round" />
+              </svg>
+            )}
+          </li>
+        ))}
+      </ol>
+    </section>
   )
 }

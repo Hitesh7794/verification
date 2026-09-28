@@ -1,3 +1,6 @@
+import Bi, { hi, HindiName } from '../../components/fv/hindi.jsx'
+import { ArtCollege, InstitutionArt, DecisionStamp } from '../../components/fv/FvArt.jsx'
+import FvEmpty from '../../components/fv/FvEmpty.jsx'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Link } from 'react-router-dom'
 import { motion } from 'framer-motion'
@@ -34,7 +37,11 @@ const TABS = [
 // least one pending row is checked.
 
 export default function ReviewerKycInbox() {
-  const [status, setStatus] = useState('pending') // 'all' | 'pending' | 'approved' | 'rejected'
+  // ?status=all|approved|rejected opens that slice (handy for review).
+  const [status, setStatus] = useState(() => {
+    const q = new URLSearchParams(window.location.search).get('status')
+    return ['all', 'pending', 'approved', 'rejected'].includes(q) ? q : 'pending'
+  })
   const [items, setItems] = useState([])
   const [total, setTotal] = useState(0)
   const [counts, setCounts] = useState(null)
@@ -274,39 +281,35 @@ export default function ReviewerKycInbox() {
             queue the same way. Each tile switches the list below to its
             slice and brings the list into view; the active one takes its
             accent border. */}
-        <div className="mb-6 grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-stretch">
-        <StaggerList className="grid gap-4 grid-cols-2 lg:grid-cols-4">
-          <StaggerItem>
-            <StatTile label="Pending" value={stats.pending} accent="pending" icon={Icon.Clock}
-                      hint="Awaiting your review"
-                      onClick={() => openSlice('pending')} active={status === 'pending'} />
-          </StaggerItem>
-          <StaggerItem>
-            <StatTile label="Approved" value={stats.approved} accent="approved" icon={Icon.Check}
-                      hint="Active institutions"
-                      onClick={() => openSlice('approved')} active={status === 'approved'} />
-          </StaggerItem>
-          <StaggerItem>
-            <StatTile label="Rejected" value={stats.rejected} accent="rejected" icon={Icon.X}
-                      hint="Returned for changes"
-                      onClick={() => openSlice('rejected')} active={status === 'rejected'} />
-          </StaggerItem>
-          <StaggerItem>
-            <StatTile label="Total" value={stats.total} accent="total" icon={Icon.File}
-                      hint="All submissions"
-                      onClick={() => openSlice('all')} active={status === 'all'} />
-          </StaggerItem>
-        </StaggerList>
+        <div className="mb-4 grid gap-3 xl:grid-cols-[minmax(0,1fr)_minmax(300px,auto)] xl:items-stretch">
+          <div className="fv-stagger grid gap-3 grid-cols-2 lg:grid-cols-4">
+            <InboxTile kind="pending" label="Waiting on you" value={stats.pending}
+                       onClick={() => openSlice('pending')} active={status === 'pending'} />
+            <InboxTile kind="approved" label="Approved" value={stats.approved}
+                       onClick={() => openSlice('approved')} active={status === 'approved'} />
+            <InboxTile kind="rejected" label="Rejected" value={stats.rejected}
+                       onClick={() => openSlice('rejected')} active={status === 'rejected'} />
+            <InboxTile kind="total" label="All time" value={stats.total}
+                       onClick={() => openSlice('all')} active={status === 'all'} />
+          </div>
+          <BoardNumbers outcome={outcome} exams={liveExams} />
+        </div>
 
-        <Band>
-          <div className="shrink-0">
-            <OutcomeDial {...outcome} />
+        {/* Search and refresh, on one line with what they act on. */}
+        <div ref={listRef} className="scroll-mt-28 mb-4 flex flex-wrap items-center gap-3">
+          <div className="min-w-[220px] flex-1">
+            <Input
+              type="search"
+              placeholder="Search by university, city, head…"
+              value={search}
+              onChange={(e) => setSearch(e.target.value)}
+              className="bg-white"
+            />
           </div>
-          <Rule />
-          <div className="shrink-0 xl:w-[220px]">
-            <LiveWindows exams={liveExams} />
-          </div>
-        </Band>
+          <Button variant="secondary" onClick={load} disabled={loading}>
+            <Icon.RefreshCw className={`h-4 w-4 ${loading ? 'animate-spin' : ''}`} />
+            <span className="ml-1.5">{loading ? 'Refreshing…' : 'Refresh'}</span>
+          </Button>
         </div>
 
         {err && (
@@ -334,59 +337,6 @@ export default function ReviewerKycInbox() {
             </button>
           </div>
         )}
-
-        {/* Tab Controls and Search Bar */}
-        <div ref={listRef} className="scroll-mt-28 flex flex-wrap items-center justify-between gap-4 mb-4">
-          <div className="inline-flex rounded-xl bg-slate-100 p-1 text-sm font-medium">
-            {TABS.map((t) => {
-              const active = status === t.key
-              return (
-                <button
-                  key={t.key}
-                  type="button"
-                  onClick={() => setStatus(t.key)}
-                  aria-pressed={active}
-                  className="relative flex items-center gap-2 rounded-lg px-4 py-2 text-xs font-semibold"
-                >
-                  {/* The white pill is one element shared by all three
-                      tabs — framer moves it to whichever tab is active
-                      rather than fading one out and another in. */}
-                  {active && (
-                    <motion.span
-                      layoutId="reviewer-tab-pill"
-                      className="absolute inset-0 rounded-lg bg-white shadow-sm"
-                      transition={{ type: 'spring', stiffness: 420, damping: 34 }}
-                    />
-                  )}
-                  <span className={`relative transition-colors ${
-                    active ? 'text-slate-900' : 'text-slate-600 hover:text-slate-900'}`}>
-                    {t.label}
-                  </span>
-                  <span className={`relative rounded-full px-2 py-0.5 text-[10px] tabular-nums transition-colors ${
-                    active ? t.badge : 'bg-slate-200 text-slate-700'}`}>
-                    {t.key === 'all' ? stats.total : stats[t.key]}
-                  </span>
-                </button>
-              )
-            })}
-          </div>
-
-          <div className="flex items-center gap-3 w-full sm:w-auto">
-            <Button variant="secondary" size="sm" onClick={load} disabled={loading}>
-              <Icon.RefreshCw className={`h-3.5 w-3.5 ${loading ? 'animate-spin' : ''}`} />
-              <span className="ml-1.5">{loading ? 'Refreshing…' : 'Refresh'}</span>
-            </Button>
-            <div className="flex-1 sm:w-64">
-              <Input
-                type="search"
-                placeholder="Search by university, city, head…"
-                value={search}
-                onChange={(e) => setSearch(e.target.value)}
-                className="bg-white text-xs"
-              />
-            </div>
-          </div>
-        </div>
 
         {/* Bulk action bar — only visible on the pending tab when at least one row is selected */}
         {isPendingTab && selectionCount > 0 && (
@@ -425,7 +375,7 @@ export default function ReviewerKycInbox() {
             ) : (
               <>
                 {isPendingTab && (
-                  <div className="flex items-center gap-3 px-4 sm:px-5 py-2.5 border-b border-warm bg-[#F6F8FA] text-[12px] text-stone-600">
+                  <div className="flex items-center gap-3 px-4 sm:px-5 py-2.5 border-b border-warm bg-[#F5F4F8] text-[12px] text-stone-600">
                     <input
                       type="checkbox"
                       className="h-4 w-4 rounded border-slate-300 text-brand-600 focus:ring-brand-500"
@@ -498,10 +448,10 @@ function OutcomeDial({ total, passed, denied, rate }) {
     <div className="flex items-center gap-4">
       <div className="relative shrink-0">
         <svg width="76" height="76" viewBox="0 0 76 76" aria-hidden="true" className="-rotate-90">
-          <circle cx="38" cy="38" r={R} fill="none" stroke="#FECDD3" strokeWidth="8" />
+          <circle cx="38" cy="38" r={R} fill="none" stroke="#EDD9B8" strokeWidth="8" />
           <motion.circle
             cx="38" cy="38" r={R} fill="none"
-            stroke="#059669" strokeWidth="8" strokeLinecap="round"
+            stroke="#5B3FA6" strokeWidth="8" strokeLinecap="round"
             strokeDasharray={C}
             initial={{ strokeDashoffset: C }}
             animate={{ strokeDashoffset: C * (1 - share) }}
@@ -623,15 +573,7 @@ function EmptyState({ status }) {
       : status === 'approved'
       ? 'Applications you approve will be listed here with their assigned credentials.'
       : 'Applications you reject will be archived here.'
-  return (
-    <div className="p-12 text-center">
-      <div className="mx-auto h-12 w-12 rounded-xl bg-stone-100 text-stone-800 flex items-center justify-center mb-3">
-        <Icon.FileText className="h-6 w-6" />
-      </div>
-      <p className="text-sm font-semibold text-stone-900">{label}</p>
-      <p className="mt-1 text-xs text-stone-500 max-w-sm mx-auto">{sub}</p>
-    </div>
-  )
+  return <FvEmpty title={label} body={sub} mood={status === 'pending' ? 'thumbsUp' : 'waiting'} quip={status === 'pending' ? 'Inbox zero. Nicely done.' : undefined} />
 }
 
 // Register.jsx replaces institution_type 'other' with the free-text body
@@ -650,7 +592,22 @@ function Row({ it, index = 0, selectable, selected, onToggle, onRevoke, revoking
       initial={{ opacity: 0, y: 6 }}
       animate={{ opacity: 1, y: 0 }}
       transition={{ duration: 0.22, delay: Math.min(index, 7) * 0.035, ease: [0.22, 1, 0.36, 1] }}
-      className="flex items-start gap-3 p-4 sm:p-5 hover:bg-stone-50/70 transition-colors">
+      data-guide-title={it.institution_name}
+      data-guide={it.status === 'pending' ? 'An institution asking to verify candidates for your exams. Open it to check the papers and decide.' : it.status === 'approved' ? 'Approved. Its agents can verify candidates for your exams.' : 'Rejected. They can fix what is wrong and send it again.'}
+      data-guide-mood={it.status === 'approved' ? 'typing' : it.status === 'rejected' ? 'confused' : 'typing'}
+      data-guide-prop={it.status === 'approved' ? 'stamp' : it.status === 'rejected' ? 'no' : 'file'}
+      className="fv-lift relative overflow-hidden flex items-start gap-4 p-4 sm:p-5 hover:bg-fv-page/70 transition-colors">
+      {/* the institution's campus, faint across the strip */}
+      <span aria-hidden="true" className="pointer-events-none absolute inset-y-0 right-0 w-[42%] opacity-[0.09]"
+            style={{ maskImage: 'linear-gradient(to right, transparent, #000 55%)', WebkitMaskImage: 'linear-gradient(to right, transparent, #000 55%)' }}>
+        <InstitutionArt name={it.institution_name} photo={it.photo_url || it.logo_url || it.image_url} className="h-full w-full" />
+      </span>
+      {/* the decision, stamped across it */}
+      {(it.status === 'approved' || it.status === 'rejected') && (
+        <span aria-hidden="true" className="fv-stamp pointer-events-none absolute right-[19%] top-1/2 hidden -translate-y-1/2 lg:block">
+          <DecisionStamp status={it.status} className="h-16 w-44" />
+        </span>
+      )}
       {selectable && (
         <div className="pt-1">
           <input
@@ -662,40 +619,31 @@ function Row({ it, index = 0, selectable, selected, onToggle, onRevoke, revoking
           />
         </div>
       )}
-      <div className="min-w-0 flex-1">
+      <ArtCollege className="relative h-12 w-12 shrink-0" />
+      <div className="relative min-w-0 flex-1">
         <div className="flex flex-wrap items-baseline gap-2">
-          <h3 className="text-sm font-semibold text-ink-900 truncate">
+          <h3 className="fv-display text-[17px] leading-tight tracking-[-0.015em] text-fv-ink truncate">
             {it.institution_name}
+            <HindiName name={it.institution_name} given={it.institution_name_hi} className="text-[12.5px] font-medium" />
           </h3>
           <span className="text-[11px] text-stone-400">·</span>
-          <span className="text-xs text-stone-600 capitalize">
-            {it.institution_type?.replace(/_/g, ' ') || 'institution'}
+          <span className="text-[12.5px] leading-tight text-fv-muted capitalize">
+            <Bi en={(it.institution_type || 'institution').replace(/_/g, ' ').replace(/^./, (c) => c.toUpperCase())} />
           </span>
           {it.tier && (
             <span className="rounded-full bg-stone-100 px-2 py-0.5 text-[10px] font-medium text-stone-700">
               Tier {it.tier}
             </span>
           )}
-          {it.status === 'pending' && <Pill tone="amber" dot>Pending Review</Pill>}
-          {it.status === 'approved' && <Pill tone="emerald" dot>Approved</Pill>}
-          {it.status === 'rejected' && <Pill tone="rose" dot>Rejected</Pill>}
+          <InboxSeal status={it.status} />
         </div>
 
-        <p className="mt-1 text-xs text-stone-600">
-          <span className="font-medium text-stone-800">{it.head_name}</span>
-          {it.head_email && <span className="text-stone-400 font-mono text-[11px]"> · {it.head_email}</span>}
-          {it.city && it.state && <span className="text-stone-500"> · {it.city}, {it.state}</span>}
-          {it.aishe_code && <span className="text-stone-400 font-mono text-[11px]"> · {isRecruiterType(it.institution_type) ? 'Govt / CIN Ref' : 'AISHE'}: {it.aishe_code}</span>}
+        <p className="mt-1.5 text-[13px] text-fv-muted">
+          Submitted {it.created_at ? new Date(it.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}
         </p>
-
-        <div className="mt-2 flex items-center gap-3 text-[11px] text-stone-400">
-          <span>Submitted {it.created_at ? new Date(it.created_at).toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' }) : '—'}</span>
-          <span>·</span>
-          <span>{it.doc_count || 0} supporting doc{(it.doc_count || 0) === 1 ? '' : 's'}</span>
-        </div>
       </div>
 
-      <div className="shrink-0 flex items-center gap-2 pt-0.5">
+      <div className="relative shrink-0 flex items-center gap-2 pt-0.5">
         {it.status === 'rejected' && (
           <Button
             variant="secondary"
@@ -793,3 +741,163 @@ function MassActionModal({ kind, count, note, onNoteChange, busy, err, onConfirm
 // to-filter interactive tiles are wanted back, they lived here and
 // consumed the older stats.pending_review / .approved_this_week fields
 // on the reviewerStats endpoint.
+
+// One slice of the queue: its picture, its number, and what it means.
+// Tapping it filters the list below.
+function InboxTile({ kind, label, value, onClick, active }) {
+  const Art = { pending: TilePending, approved: TileApproved, rejected: TileRejected, total: TileAll }[kind]
+  return (
+    <button type="button" onClick={onClick} aria-pressed={active}
+            data-guide-title={label}
+            data-guide={kind === 'pending' ? 'Institutions waiting for your decision.' : kind === 'approved' ? 'Institutions you let in. Their agents can verify.' : kind === 'rejected' ? 'Rejected. They can fix what is wrong and send it again.' : 'Everything that has ever reached your desk.'}
+            data-guide-mood={kind === 'approved' ? 'typing' : kind === 'rejected' ? 'confused' : kind === 'total' ? 'waiting' : 'typing'}
+            data-guide-prop={kind === 'pending' ? 'file' : kind === 'approved' ? 'stamp' : kind === 'rejected' ? 'no' : undefined}
+            className={`fv-lift relative flex items-center gap-3 overflow-hidden rounded-[12px] border bg-fv-card px-4 py-3 text-left transition-colors ${
+              active ? 'border-fv-accent bg-fv-card-focus' : 'border-fv-line hover:bg-fv-card-focus'}`}>
+      <Art className={`absolute right-2 top-1/2 h-[68px] w-[68px] -translate-y-1/2 opacity-90 ${kind === 'pending' && value > 0 ? 'fv-breathe' : ''}`} />
+      <div className="relative min-w-0 flex-1 pr-[62px]">
+        <p className="fv-display text-[44px] leading-[0.9] tracking-[-0.045em] text-fv-ink tabular-nums">{value}</p>
+        <p className="mt-1.5 truncate text-[13.5px] leading-tight text-fv-muted">{label}</p>
+        {hi(label) && <p className="fv-hi truncate text-[12px] leading-tight text-fv-faint">{hi(label)}</p>}
+      </div>
+    </button>
+  )
+}
+
+// A seal on the row, in place of a word-pill.
+function InboxSeal({ status }) {
+  const c = status === 'approved' ? '#5B3FA6' : status === 'rejected' ? '#A8711F' : '#99641B'
+  const title = status === 'approved' ? 'Approved' : status === 'rejected' ? 'Rejected' : 'Waiting on you'
+  return (
+    <span className="inline-flex items-center gap-1.5 text-[12.5px] leading-tight text-fv-muted" title={title}>
+      <svg viewBox="0 0 24 24" className={`h-6 w-6 ${status === 'pending' ? 'fv-breathe' : ''}`} aria-label={title}>
+        <circle cx="12" cy="12" r="10.5" fill="none" stroke={c} strokeWidth="2" />
+        <circle cx="12" cy="12" r="7.5" fill="none" stroke={c} strokeWidth=".9" strokeDasharray="2.4 2.4" />
+        {status === 'approved' && <path d="M8 12.3l2.6 2.6 5.2-6" fill="none" stroke={c} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />}
+        {status === 'rejected' && <path d="M9 9l6 6M15 9l-6 6" stroke={c} strokeWidth="2.2" strokeLinecap="round" />}
+        {status === 'pending' && <path d="M12 7.5V12l3 2" fill="none" stroke={c} strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round" />}
+      </svg>
+      <Bi en={title} />
+    </span>
+  )
+}
+
+// The four tile pictures: the same tied file at four moments of its life.
+const TV = '#5B3FA6', TVD = '#43307D', TVS = '#9A86D6', TT = '#DDD5F2', TL = '#EFEBF9', TW = '#FFFFFF'
+const TM = '#A8711F', TSAF = '#F28C28', TKH = '#EDD9B8', TKHD = '#DDBB85'
+function TileBox({ className, children }) { return <svg viewBox="0 0 64 64" className={className} aria-hidden="true">{children}</svg> }
+
+// A tied file: cover, papers, saffron string.
+function FileBody({ x = 10, y = 12, w = 44, h = 44, tie = true }) {
+  return (
+    <g>
+      <rect x={x + 3} y={y + 2} width={w} height={h} rx="3" fill={TKHD} />
+      <rect x={x + 2} y={y - 1} width={w - 4} height={h} rx="2" fill={TW} stroke={TT} strokeWidth="1.4" />
+      <rect x={x} y={y} width={w} height={h} rx="3" fill={TKH} stroke={TKHD} strokeWidth="1.6" />
+      <rect x={x + 7} y={y + 7} width={w - 22} height="9" rx="2" fill={TW} stroke={TT} strokeWidth="1.2" />
+      <rect x={x + 10} y={y + 10} width="10" height="2.4" rx="1.2" fill={TV} />
+      {tie && (
+        <>
+          <path d={`M${x} ${y + h * 0.6}h${w}`} stroke={TSAF} strokeWidth="2.6" />
+          <path d={`M${x + w / 2} ${y}v${h}`} stroke={TSAF} strokeWidth="2.6" opacity=".9" />
+          <circle cx={x + w / 2} cy={y + h * 0.6} r="3.4" fill={TSAF} />
+        </>
+      )}
+    </g>
+  )
+}
+function TilePending({ className }) {
+  return (
+    <TileBox className={className}>
+      <rect x="4" y="22" width="42" height="36" rx="3" fill={TKHD} transform="rotate(-6 25 40)" />
+      <FileBody x={12} y={10} w={40} h={42} />
+      <circle cx="49" cy="49" r="12" fill={TSAF} />
+      <path d="M49 42.5V49l4.5 3" fill="none" stroke={TW} strokeWidth="3" strokeLinecap="round" strokeLinejoin="round" />
+    </TileBox>
+  )
+}
+function TileApproved({ className }) {
+  return (
+    <TileBox className={className}>
+      <FileBody x={8} y={10} w={42} h={44} />
+      <g transform="translate(45 44) rotate(-14)">
+        <circle r="15" fill="none" stroke={TV} strokeWidth="3.6" />
+        <circle r="10.5" fill="none" stroke={TV} strokeWidth="1.2" strokeDasharray="2.6 2.6" />
+        <path d="M-5.6 .2l3.8 3.8 7.4-8" fill="none" stroke={TV} strokeWidth="3.6" strokeLinecap="round" strokeLinejoin="round" />
+      </g>
+    </TileBox>
+  )
+}
+function TileRejected({ className }) {
+  return (
+    <TileBox className={className}>
+      <FileBody x={8} y={12} w={42} h={42} />
+      {/* it comes back: the arrow over the file, and the mark on it */}
+      <path d="M50 20a20 20 0 0 0-30-6" fill="none" stroke={TM} strokeWidth="3" strokeLinecap="round" />
+      <path d="M20 6l-4 8 9 1z" fill={TM} />
+      <g transform="translate(44 44) rotate(12)">
+        <circle r="13" fill="none" stroke={TM} strokeWidth="3.4" />
+        <path d="M-5 -5l10 10M5 -5l-10 10" stroke={TM} strokeWidth="3.4" strokeLinecap="round" />
+      </g>
+    </TileBox>
+  )
+}
+function TileAll({ className }) {
+  return (
+    <TileBox className={className}>
+      {/* the shelf they all end up on */}
+      <rect x="4" y="50" width="56" height="6" rx="2" fill={TVD} />
+      <g transform="translate(0 -2)">
+        <rect x="8" y="22" width="14" height="28" rx="2" fill={TKH} stroke={TKHD} strokeWidth="1.4" />
+        <rect x="24" y="16" width="14" height="34" rx="2" fill={TVS} />
+        <rect x="40" y="26" width="14" height="24" rx="2" fill={TKH} stroke={TKHD} strokeWidth="1.4" />
+        <rect x="11" y="28" width="8" height="2.4" rx="1.2" fill={TV} />
+        <rect x="27" y="22" width="8" height="2.4" rx="1.2" fill={TW} />
+        <rect x="43" y="32" width="8" height="2.4" rx="1.2" fill={TV} />
+        <path d="M8 40h14M24 40h14M40 40h14" stroke={TSAF} strokeWidth="2.2" />
+      </g>
+    </TileBox>
+  )
+}
+
+// The board's numbers beside the queue: how many candidates passed, how
+// many were denied, and whether any verification window is open.
+function BoardNumbers({ outcome, exams }) {
+  const pct = outcome?.rate ?? 0
+  const passed = outcome?.passed ?? 0
+  const denied = outcome?.denied ?? 0
+  const total = passed + denied
+  const R = 26, C = 2 * Math.PI * R
+  const open = (exams || []).length
+  return (
+    <div className="flex items-center gap-5 rounded-[12px] border border-fv-line bg-fv-card px-5 py-4"
+         data-guide-title="Your candidates" data-guide="How the checks for your exams have gone, and which windows are open."
+         data-guide-mood="eyeScan">
+      <svg viewBox="0 0 64 64" className="h-[76px] w-[76px] shrink-0" aria-hidden="true">
+        <circle cx="32" cy="32" r={R} fill="none" stroke="#EFEBF9" strokeWidth="9" />
+        <circle cx="32" cy="32" r={R} fill="none" stroke="#5B3FA6" strokeWidth="9" strokeLinecap="round"
+                strokeDasharray={C} strokeDashoffset={C * (1 - Math.min(1, pct / 100))}
+                transform="rotate(-90 32 32)" style={{ transition: 'stroke-dashoffset 900ms cubic-bezier(.22,.9,.28,1)' }} />
+        <text x="32" y="37" textAnchor="middle" fontSize="16" fontWeight="800" fill="#211E33"
+              fontFamily="Bricolage Grotesque, sans-serif">{Math.round(pct)}%</text>
+      </svg>
+      <div className="min-w-0">
+        <p className="fv-display text-[32px] leading-none tracking-[-0.04em] text-fv-ink tabular-nums">{total}</p>
+        <p className="mt-1 text-[13px] leading-tight text-fv-muted">Candidates checked</p>
+        <p className="fv-hi text-[12px] leading-tight text-fv-faint">{hi('Candidates checked')}</p>
+        <div className="mt-2 flex items-center gap-4 text-[13px]">
+          <span className="inline-flex items-center gap-1.5 text-fv-ink">
+            <span className="h-2.5 w-2.5 rounded-[3px] bg-fv-accent" />{passed} passed
+          </span>
+          <span className="inline-flex items-center gap-1.5 text-fv-ink">
+            <span className="h-2.5 w-2.5 rounded-[3px] bg-[#A8711F]" />{denied} denied
+          </span>
+        </div>
+        <p className="mt-2 inline-flex items-center gap-1.5 text-[12.5px] text-fv-muted">
+          <span className={`h-2 w-2 rounded-full ${open ? 'bg-fv-accent fv-breathe' : 'bg-fv-disabled'}`} />
+          {open ? `${open} verification ${open === 1 ? 'window' : 'windows'} open` : 'No window open right now'}
+        </p>
+      </div>
+    </div>
+  )
+}

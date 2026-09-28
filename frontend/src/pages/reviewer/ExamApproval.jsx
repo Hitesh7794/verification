@@ -1,3 +1,6 @@
+import { RvTile, RvSeal, RvPhoto, RvStamp, RvHead, HindiName } from '../../components/fv/FvReviewer.jsx'
+import { AgentPortrait, ArtCollege, InstitutionArt } from '../../components/fv/FvArt.jsx'
+import FvEmpty from '../../components/fv/FvEmpty.jsx'
 import { useEffect, useMemo, useState } from 'react'
 import ReviewerShell from '../../components/reviewer/ReviewerShell.jsx'
 import { Button } from '../../components/ui/ui.jsx'
@@ -48,16 +51,18 @@ function formatWait(iso) {
 
 const STATUS_OPTIONS = [
   { value: 'all',      label: 'All institutes' },
-  { value: 'pending',  label: 'Has pending requests' },
-  { value: 'approved', label: 'Has approvals' },
-  { value: 'rejected', label: 'Has rejections' },
+  { value: 'pending',  label: 'Pending requests' },
+  { value: 'approved', label: 'Approvals' },
+  { value: 'rejected', label: 'Rejections' },
 ]
 
 export default function ReviewerExamApproval() {
   const [allItems, setAllItems] = useState(null) // null=first load
   const [err, setErr] = useState('')
   const [refreshing, setRefreshing] = useState(false)
-  const [selectedName, setSelectedName] = useState('')
+  // ?institute=<name> opens that institute straight away (handy for review).
+  const [selectedName, setSelectedName] = useState(() =>
+    new URLSearchParams(window.location.search).get('institute') || '')
 
   // Filter state — search + presence filter. Same pattern as Agents:
   // client-side, composes AND, header numbers stay pinned to the
@@ -177,7 +182,7 @@ export default function ReviewerExamApproval() {
         <button
           type="button"
           onClick={() => { setSelectedName(''); load() }}
-          className="mb-3 inline-flex items-center gap-1.5 text-[12px] font-semibold text-stone-700 hover:text-stone-900"
+          className="mb-3 inline-flex items-center gap-1.5 rounded-[10px] border border-fv-line bg-fv-card px-3 py-2 text-[13.5px] text-fv-accent-deep transition-colors hover:bg-fv-card-focus"
         >
           <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
             <polyline points="15 18 9 12 15 6" />
@@ -187,71 +192,68 @@ export default function ReviewerExamApproval() {
 
         {/* Drill header — warm-surface + gold rule, monogram tile, a
             single-line breadcrumb-style subtitle. */}
-        <div className="mb-6 rounded-xl bg-warm-surface ring-1 ring-warm overflow-hidden shadow-sm">
-          <div className="h-[3px] rule-gold" />
-          <div className="p-5 sm:p-6 flex flex-wrap items-start justify-between gap-4">
-            <div className="flex items-start gap-4 min-w-0">
-              <div className="h-12 w-12 rounded-xl bg-stone-100 text-stone-800 flex items-center justify-center shrink-0">
-                <Icon.Building className="h-6 w-6" />
-              </div>
-              <div className="min-w-0">
-                <p className="text-[11px] font-bold uppercase tracking-[0.14em] text-slate-500">
-                  Institute
-                </p>
-                <h1 className="mt-0.5 text-2xl font-semibold tracking-tight text-slate-900 truncate">
-                  {selectedName}
-                </h1>
-                <p className="mt-1 text-sm text-slate-500">
-                  Approve or reject exam subscription requests. Decisions
-                  email the institute directly.
-                </p>
-                {/* The facts the roster showed a click ago — where they
-                    are and who signs for them — so the reviewer isn't
-                    deciding against a bare name. */}
-                {(drillInst?.city || drillInst?.state || drillInst?.headName) && (
-                  <p className="mt-2 text-xs text-slate-500 flex flex-wrap items-center gap-x-2 gap-y-1">
-                    {[drillInst.city, drillInst.state].filter(Boolean).length > 0 && (
+        <div className="relative mb-5 overflow-hidden rounded-[12px] border border-fv-line bg-fv-card">
+          {/* their campus, across the banner */}
+          <div className="relative h-[150px] overflow-hidden bg-fv-card-focus">
+            <span aria-hidden="true" className="fv-kenburns absolute inset-0 opacity-[0.5]">
+              <InstitutionArt name={selectedName} photo={drillInst?.photo_url || drillInst?.logo_url} className="h-full w-full" />
+            </span>
+            <span aria-hidden="true" className="absolute inset-0"
+                  style={{ background: 'linear-gradient(to top, rgba(255,255,255,.96), rgba(255,255,255,.45) 55%, rgba(255,255,255,.18))' }} />
+            <RvStamp status={drillInst && drillInst.pending === 0 ? (drillInst.approved > 0 ? 'approved' : drillInst.rejected > 0 ? 'rejected' : null) : null}
+                     right="5%" className="h-16 w-44" />
+          </div>
+
+          <div className="relative -mt-12 px-6 pb-6">
+            <div className="flex flex-wrap items-end justify-between gap-4">
+              <div className="flex min-w-0 items-end gap-4">
+                <span className="grid h-20 w-20 shrink-0 place-items-center rounded-[16px] border border-fv-line bg-fv-card">
+                  <ArtCollege className="h-14 w-14" />
+                </span>
+                <div className="min-w-0 pb-1">
+                  <h1 className="fv-display text-[26px] leading-tight tracking-[-0.025em] text-fv-ink truncate">
+                    {selectedName}
+                    <HindiName name={selectedName} given={drillInst?.name_hi} className="text-[14px] font-medium" />
+                  </h1>
+                  <p className="mt-2 flex flex-wrap items-center gap-x-4 gap-y-1 text-[13.5px] text-fv-ink">
+                    {[drillInst?.city, drillInst?.state].filter(Boolean).length > 0 && (
                       <span className="inline-flex items-center gap-1.5">
-                        <Icon.Building className="h-3.5 w-3.5 text-slate-400" />
-                        {[drillInst.city, drillInst.state].filter(Boolean).join(', ')}
+                        <PinIcon />{[drillInst.city, drillInst.state].filter(Boolean).join(', ')}
                       </span>
                     )}
-                    {drillInst.headName && (
-                      <>
-                        <span aria-hidden="true" className="text-slate-300">·</span>
-                        <span className="inline-flex items-center gap-1.5">
-                          <Icon.User className="h-3.5 w-3.5 text-slate-400" />
-                          {drillInst.headName}
-                          {drillInst.headDesignation && (
-                            <span className="text-slate-400">({drillInst.headDesignation})</span>
-                          )}
-                        </span>
-                      </>
+                    {drillInst?.headName && (
+                      <span className="inline-flex items-center gap-2">
+                        <AgentPortrait seed={drillInst.headName} name={drillInst.headName} className="h-7 w-7" />
+                        {drillInst.headName}
+                        {drillInst.headDesignation && <span className="text-fv-muted">({drillInst.headDesignation})</span>}
+                      </span>
                     )}
                   </p>
-                )}
+                </div>
               </div>
+              {drillInst && (
+                <div className="flex flex-wrap items-center gap-3 pb-1">
+                  {drillInst.pending > 0 && (
+                    <span className="inline-flex items-center gap-1.5 text-[13px] text-fv-ink">
+                      <span className="tabular-nums">{drillInst.pending}</span><RvSeal status="pending" />
+                    </span>
+                  )}
+                  {drillInst.approved > 0 && (
+                    <span className="inline-flex items-center gap-1.5 text-[13px] text-fv-ink">
+                      <span className="tabular-nums">{drillInst.approved}</span><RvSeal status="approved" />
+                    </span>
+                  )}
+                  {drillInst.rejected > 0 && (
+                    <span className="inline-flex items-center gap-1.5 text-[13px] text-fv-ink">
+                      <span className="tabular-nums">{drillInst.rejected}</span><RvSeal status="rejected" />
+                    </span>
+                  )}
+                </div>
+              )}
             </div>
 
-            {drillInst && (
-              <div className="flex items-center gap-2 shrink-0">
-                {drillInst.pending > 0 && (
-                  <span className="rounded-full bg-amber-50 border border-amber-200 px-2.5 py-1 text-[11px] font-semibold text-amber-800 tabular-nums">
-                    {drillInst.pending} pending
-                  </span>
-                )}
-                {drillInst.approved > 0 && (
-                  <span className="rounded-full bg-emerald-50 border border-emerald-200 px-2.5 py-1 text-[11px] font-semibold text-emerald-700 tabular-nums">
-                    {drillInst.approved} approved
-                  </span>
-                )}
-                {drillInst.rejected > 0 && (
-                  <span className="rounded-full bg-rose-50 border border-rose-200 px-2.5 py-1 text-[11px] font-semibold text-rose-700 tabular-nums">
-                    {drillInst.rejected} rejected
-                  </span>
-                )}
-              </div>
-            )}
+            {/* where their requests stand */}
+            <RequestSteps inst={drillInst} />
           </div>
         </div>
 
@@ -269,114 +271,35 @@ export default function ReviewerExamApproval() {
   return (
     <ReviewerShell>
       <FadeIn>
-      <div className="mb-5 flex flex-wrap items-end justify-between gap-3">
-        <div className="min-w-0">
-          <h1 className="text-2xl font-semibold tracking-tight text-slate-900">
-            Exam approval
-          </h1>
-          <p className="mt-1 text-sm text-slate-500">
-            Institutes asking for access to your exams. Every decision
-            emails them.
-          </p>
-        </div>
-        <Button variant="secondary" size="sm" onClick={load} disabled={refreshing}>
-          <Icon.Refresh className={`h-3.5 w-3.5 ${refreshing ? 'animate-spin' : ''}`} />
-          <span className="ml-1.5">{refreshing ? 'Refreshing…' : 'Refresh'}</span>
-        </Button>
-      </div>
+      <RvHead
+        title="Exam approval"
+        subtitle="Institutes asking for your exams. Every decision emails them."
+        right={(
+          <Button variant="secondary" onClick={load} disabled={refreshing}>
+            <Icon.Refresh className={`h-4 w-4 ${refreshing ? 'animate-spin' : ''}`} />
+            <span className="ml-1.5">{refreshing ? 'Refreshing…' : 'Refresh'}</span>
+          </Button>
+        )}
+      />
 
       {/* Figures first, each one a filter — the KYC desk's tiles, so a
           reviewer slices two queues the same way. Counts are requests,
           the list underneath is institutes, which is why Pending reads
           "across N institutes". */}
-      <div className="mb-6 grid gap-4 xl:grid-cols-[minmax(0,1fr)_auto] xl:items-stretch">
-        <StaggerList className="grid gap-4 grid-cols-2 lg:grid-cols-4">
-          <StaggerItem>
-            <StatTile label="Pending" value={totals.pending} accent="pending" icon={Icon.Clock}
-                      hint={totals.pending > 0
-                        ? `across ${totals.withPending} institute${totals.withPending === 1 ? '' : 's'}`
-                        : 'Nothing waiting'}
-                      onClick={() => setStatusFilter('pending')} active={statusFilter === 'pending'} />
-          </StaggerItem>
-          <StaggerItem>
-            <StatTile label="Approved" value={totals.approved} accent="approved" icon={Icon.Check}
-                      hint="Exams they can verify"
-                      onClick={() => setStatusFilter('approved')} active={statusFilter === 'approved'} />
-          </StaggerItem>
-          <StaggerItem>
-            <StatTile label="Rejected" value={totals.rejected} accent="rejected" icon={Icon.X}
-                      hint="Turned down with a note"
-                      onClick={() => setStatusFilter('rejected')} active={statusFilter === 'rejected'} />
-          </StaggerItem>
-          <StaggerItem>
-            <StatTile label="Institutes" value={totals.institutes} accent="total" icon={Icon.Building}
-                      hint="Asked at least once"
-                      onClick={() => setStatusFilter('all')} active={false} />
-          </StaggerItem>
-        </StaggerList>
-
-        <Band className="xl:w-[460px]">
-          {queue.oldest ? (
-            <>
-              <button
-                type="button"
-                onClick={() => setSelectedName(queue.oldest.org_name)}
-                className="group shrink-0 text-left cursor-pointer"
-              >
-                <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                  Longest wait
-                </p>
-                <p className="mt-1 text-[28px] leading-none font-semibold tracking-tight text-amber-700 tabular-nums">
-                  {formatWait(queue.oldest.requested_at)}
-                </p>
-                <p className="mt-1.5 text-xs text-slate-600 max-w-[190px] truncate group-hover:text-slate-900 group-hover:underline underline-offset-2">
-                  {queue.oldest.org_name}
-                </p>
-              </button>
-              <Rule />
-              <div className="min-w-0 flex-1">
-                <p className="text-[11px] font-semibold uppercase tracking-[0.12em] text-slate-500">
-                  Waiting on you
-                </p>
-                <ul className="mt-2 space-y-1.5">
-                  {queue.waiting.slice(0, 3).map((i) => (
-                    <li key={i.name}>
-                      <button
-                        type="button"
-                        onClick={() => setSelectedName(i.name)}
-                        className="w-full flex items-baseline justify-between gap-3 text-left cursor-pointer group"
-                      >
-                        <span className="text-xs text-slate-700 truncate group-hover:text-slate-900 group-hover:underline underline-offset-2">
-                          {i.name}
-                        </span>
-                        <span className="text-xs font-semibold text-amber-700 tabular-nums shrink-0">
-                          {i.pending}
-                        </span>
-                      </button>
-                    </li>
-                  ))}
-                </ul>
-                {queue.waiting.length > 3 && (
-                  <p className="mt-2 text-[11px] text-slate-500">
-                    +{queue.waiting.length - 3} more below
-                  </p>
-                )}
-              </div>
-            </>
-          ) : (
-            <div className="flex items-center gap-3">
-              <span className="h-10 w-10 rounded-xl bg-emerald-50 text-emerald-600 grid place-items-center shrink-0">
-                <Icon.Check className="h-5 w-5" />
-              </span>
-              <div className="min-w-0">
-                <p className="text-sm font-semibold text-slate-800">Queue clear</p>
-                <p className="text-xs text-slate-500">
-                  Every request has a decision. New ones land here.
-                </p>
-              </div>
-            </div>
-          )}
-        </Band>
+      <div className="fv-stagger mb-4 grid gap-3 grid-cols-2 lg:grid-cols-4">
+        <RvTile kind="pending" label="Waiting on you" value={totals.pending}
+                hint={totals.pending > 0 ? `across ${totals.withPending} institute${totals.withPending === 1 ? '' : 's'}` : 'Nothing waiting'}
+                guide="Institutes asking for one of your exams." mood="typing" prop="file"
+                onClick={() => setStatusFilter('pending')} active={statusFilter === 'pending'} />
+        <RvTile kind="approved" label="Approved" value={totals.approved}
+                guide="Exams you have given them. Their agents can verify." mood="typing" prop="stamp"
+                onClick={() => setStatusFilter('approved')} active={statusFilter === 'approved'} />
+        <RvTile kind="rejected" label="Rejected" value={totals.rejected}
+                guide="Requests you turned down. They can ask again." mood="typing" prop="no"
+                onClick={() => setStatusFilter('rejected')} active={statusFilter === 'rejected'} />
+        <RvTile kind="institutes" label="Institutes" value={totals.institutes}
+                guide="Every institute that has ever asked for one of your exams."
+                onClick={() => setStatusFilter('all')} active={statusFilter === 'all'} />
       </div>
 
       {err && (
@@ -435,15 +358,8 @@ export default function ReviewerExamApproval() {
           ))}
         </div>
       ) : institutes.length === 0 ? (
-        <div className="rounded-xl bg-warm-surface ring-1 ring-warm p-10 text-center">
-          <span className="mx-auto mb-3 h-11 w-11 rounded-xl bg-stone-100 text-stone-500 grid place-items-center">
-            <Icon.Building className="h-5 w-5" />
-          </span>
-          <p className="text-sm font-semibold text-slate-700">No requests yet</p>
-          <p className="text-xs text-slate-500 mt-1">
-            Requests appear here when an institute clicks
-            &ldquo;Request access&rdquo; on an exam in their catalog.
-          </p>
+        <div className="rounded-xl bg-warm-surface ring-1 ring-warm">
+          <FvEmpty title="No requests yet" body="Requests appear here when an institute clicks “Request access” on an exam in their catalog." />
         </div>
       ) : filteredInstitutes.length === 0 ? (
         <div className="rounded-xl bg-warm-surface ring-1 ring-warm p-10 text-center">
@@ -509,7 +425,7 @@ const ROW_GRID =
 
 function InstituteListHeader() {
   return (
-    <div className={`hidden lg:block px-4 py-2 border-b border-warm bg-[#F6F8FA]
+    <div className={`hidden lg:block px-4 py-2 border-b border-warm bg-[#F5F4F8]
                      text-[11px] font-semibold uppercase tracking-wider text-slate-500`}>
       <div className={ROW_GRID + ' gap-4'}>
         <span className="pl-14">Institute</span>
@@ -524,8 +440,9 @@ function InstituteListHeader() {
 
 function InstituteRow({ inst, index = 0, onOpen }) {
   const hasPending = inst.pending > 0
-  const initial = (inst.name.trim().charAt(0) || '?').toUpperCase()
   const location = [inst.city, inst.state].filter(Boolean).join(', ')
+  // what the row is stamped with: the last decision that matters
+  const stamp = hasPending ? null : inst.approved > 0 ? 'approved' : inst.rejected > 0 ? 'rejected' : null
   return (
     <motion.li
       initial={{ opacity: 0, y: 6 }}
@@ -539,10 +456,20 @@ function InstituteRow({ inst, index = 0, onOpen }) {
         onKeyDown={(e) => {
           if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen() }
         }}
-        className={`group relative w-full px-4 py-3.5 flex items-center gap-4 cursor-pointer transition-colors ${ROW_GRID} ${
-          hasPending ? 'hover:bg-amber-50/40' : 'hover:bg-stone-50'
+        data-guide-title={inst.name}
+        data-guide={hasPending ? 'This institute is waiting on you for an exam.' : 'Every request this institute has made.'}
+        data-guide-mood="typing" data-guide-prop={hasPending ? 'file' : stamp === 'rejected' ? 'no' : 'stamp'}
+        className={`group relative w-full overflow-hidden px-4 py-3.5 flex items-center gap-4 cursor-pointer transition-colors ${ROW_GRID} ${
+          hasPending ? 'hover:bg-fv-page' : 'hover:bg-fv-page'
         }`}
       >
+        <RvPhoto name={inst.name} photo={inst.photo_url || inst.logo_url} width="38%" />
+        {/* Stamp sits over the fading photo on the right of the row.
+            Pushed further right and slightly smaller so it stops
+            landing on top of the "Last activity" time; the time cell
+            below also gets its own z-layer + chip so it stays readable
+            when the two do brush against each other. */}
+        <RvStamp status={stamp} right="26%" className="h-11 w-32" />
         {/* Amber accent bar on the left of pending rows — sits inside
             the row so a quick scan finds the queue instantly. */}
         {hasPending && (
@@ -553,37 +480,27 @@ function InstituteRow({ inst, index = 0, onOpen }) {
         )}
 
         {/* Who */}
-        <div className="flex items-center gap-4 min-w-0">
-          <span
-            aria-hidden="true"
-            className={`h-10 w-10 shrink-0 rounded-lg flex items-center justify-center font-display font-bold text-[14px] transition-transform group-hover:scale-[1.04] ${
-              hasPending ? 'bg-amber-100 text-amber-800' : 'bg-stone-100 text-stone-700'
-            }`}
-          >
-            {initial}
-          </span>
+        <div className="relative flex items-center gap-4 min-w-0">
+          <ArtCollege className="h-11 w-11 shrink-0 transition-transform group-hover:scale-[1.04]" />
           <div className="min-w-0">
-            <p className="font-semibold text-slate-900 truncate">{inst.name}</p>
-            <p className="mt-0.5 text-[12px] text-slate-500 flex flex-wrap items-center gap-x-2">
+            <p className="fv-display text-[16px] leading-tight tracking-[-0.015em] text-fv-ink truncate">
+              {inst.name}
+              <HindiName name={inst.name} given={inst.name_hi} className="text-[12px] font-medium" />
+            </p>
+            <p className="mt-1 text-[12.5px] text-fv-muted flex flex-wrap items-center gap-x-3">
               {/* Pending leads: it's the only count that asks for
                   something. It used to live only inside the button,
                   so a row with four waiting requests read "1
                   approved" — the least useful fact on the line. */}
-              {inst.pending > 0 && (
-                <span className="font-semibold text-amber-700 tabular-nums">
-                  {inst.pending} pending
-                </span>
-              )}
+              {inst.pending > 0 && <RvSeal status="pending" />}
               {inst.approved > 0 && (
-                <span>
-                  <span className="font-medium text-emerald-700 tabular-nums">{inst.approved}</span>{' '}
-                  approved
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="tabular-nums text-fv-ink">{inst.approved}</span><RvSeal status="approved" />
                 </span>
               )}
               {inst.rejected > 0 && (
-                <span>
-                  <span className="font-medium text-rose-700 tabular-nums">{inst.rejected}</span>{' '}
-                  rejected
+                <span className="inline-flex items-center gap-1.5">
+                  <span className="tabular-nums text-fv-ink">{inst.rejected}</span><RvSeal status="rejected" />
                 </span>
               )}
               {inst.pending === 0 && inst.approved === 0 && inst.rejected === 0 && (
@@ -608,9 +525,16 @@ function InstituteRow({ inst, index = 0, onOpen }) {
           )}
         </div>
 
-        {/* When */}
-        <p className="hidden lg:block text-[12.5px] text-slate-500 tabular-nums">
-          {inst.latestActivity ? formatRelative(inst.latestActivity) : <span className="text-slate-300">—</span>}
+        {/* When — a small chip so the time stays legible even if the
+            APPROVED / REJECTED stamp brushes into this column. */}
+        <p className="hidden lg:block relative z-[1]">
+          {inst.latestActivity ? (
+            <span className="inline-flex items-center rounded-full bg-white/85 px-2 py-0.5 text-[12.5px] text-slate-600 tabular-nums ring-1 ring-slate-200/80 backdrop-blur-[1px]">
+              {formatRelative(inst.latestActivity)}
+            </span>
+          ) : (
+            <span className="text-slate-300">—</span>
+          )}
         </p>
 
         {/* Below lg the columns collapse, so the same three facts ride
@@ -769,5 +693,51 @@ function FilterSelect({ value, onChange, options, ariaLabel }) {
         </svg>
       </span>
     </div>
+  )
+}
+
+function PinIcon() {
+  return (
+    <svg viewBox="0 0 24 24" className="h-4 w-4 shrink-0 text-fv-accent" fill="none" stroke="currentColor" strokeWidth="1.9" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+      <path d="M12 21s-6.5-6-6.5-11a6.5 6.5 0 0 1 13 0c0 5-6.5 11-6.5 11z" /><circle cx="12" cy="10" r="2.4" />
+    </svg>
+  )
+}
+
+// Where an institute's requests stand: asked, decided, told.
+function RequestSteps({ inst }) {
+  const asked = (inst?.pending || 0) + (inst?.approved || 0) + (inst?.rejected || 0)
+  const decided = (inst?.approved || 0) + (inst?.rejected || 0)
+  const waiting = inst?.pending || 0
+  const steps = [
+    { title: 'They asked', done: asked > 0, note: `${asked} request${asked === 1 ? '' : 's'}` },
+    { title: 'You decide', done: waiting === 0 && decided > 0, note: waiting ? `${waiting} waiting on you` : 'All decided' },
+    { title: 'They hear back', done: waiting === 0 && decided > 0, note: decided ? 'Emailed' : 'After you decide' },
+  ]
+  return (
+    <ol className="mt-5 flex flex-wrap items-center gap-2">
+      {steps.map((st, i) => (
+        <li key={st.title} className="flex items-center gap-2">
+          <span className={`flex items-center gap-2 rounded-[10px] border px-3 py-2 ${
+            st.done ? 'border-fv-line bg-fv-card' : 'border-dashed border-fv-disabled bg-transparent'}`}>
+            <span className={`grid h-6 w-6 place-items-center rounded-full ${st.done ? 'bg-fv-accent text-white' : 'bg-fv-card-focus text-fv-accent'}`}>
+              {st.done
+                ? <svg viewBox="0 0 24 24" className="h-3.5 w-3.5" fill="none" stroke="currentColor" strokeWidth="3" strokeLinecap="round" strokeLinejoin="round"><path d="M5 12.5l4.5 4.5L19 7" /></svg>
+                : <span className="text-[12px] font-bold tabular-nums">{i + 1}</span>}
+            </span>
+            <span className="leading-tight">
+              <span className="block text-[13.5px] text-fv-ink">{st.title}</span>
+              <span className="block text-[12px] text-fv-muted">{st.note}</span>
+            </span>
+          </span>
+          {i < steps.length - 1 && (
+            <svg viewBox="0 0 24 12" className="h-3 w-6 shrink-0" aria-hidden="true">
+              <path d="M1 6h16" stroke="#C3B6E8" strokeWidth="2" strokeDasharray="4 4" strokeLinecap="round" />
+              <path d="M16 2l5 4-5 4" fill="none" stroke="#9A86D6" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+            </svg>
+          )}
+        </li>
+      ))}
+    </ol>
   )
 }
