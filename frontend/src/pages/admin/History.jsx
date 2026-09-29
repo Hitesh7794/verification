@@ -64,6 +64,15 @@ export default function AdminHistory() {
   const [nextCursor, setNextCursor] = useState(0)
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState('')
+  // Prev/Next pagination. The backend list endpoint is cursor-paginated
+  // (`before=<id>` returns rows older than that id), which is a one-way
+  // API on its own — you can go older but not back. We keep a stack of
+  // the `before` cursor that FETCHED each page so a "Prev" click re-runs
+  // the request that produced the previous page. `null` at the bottom
+  // is page 1 (no `before` param → newest). Page number is the stack
+  // length. The stack resets whenever filters change.
+  const [pageStack, setPageStack] = useState([null])
+  const pageIdx = pageStack.length
 
   function buildQuery(extra = {}) {
     const p = new URLSearchParams()
@@ -74,7 +83,7 @@ export default function AdminHistory() {
     return p.toString()
   }
 
-  async function load(extra = {}, append = false) {
+  async function load(extra = {}, { withPending = true } = {}) {
     setLoading(true)
     setErr('')
     try {
@@ -88,7 +97,7 @@ export default function AdminHistory() {
       // forward that value to the completed endpoint (it would 400 or
       // silently drop).
       const wantCompleted = appliedFilters.status !== 'pending'
-      const wantPending   = !appliedFilters.status || appliedFilters.status === 'pending'
+      const wantPending   = withPending && (!appliedFilters.status || appliedFilters.status === 'pending')
 
       const compP = wantCompleted
         ? api('/admin/verifications' + (qs ? '?' + qs : ''))
@@ -105,9 +114,12 @@ export default function AdminHistory() {
         : Promise.resolve({ rows: [] })
 
       const [res, pRes] = await Promise.all([compP, pendP])
-      setRows((prev) => append ? [...prev, ...(res.rows || [])] : (res.rows || []))
+      setRows(res.rows || [])
       setNextCursor(res.next_cursor || 0)
-      if (!append) setPendingRows(pRes.rows || [])
+      // Pending rows only render on page 1 — otherwise flipping through
+      // older pages would keep re-showing the same abandoned flows.
+      if (withPending) setPendingRows(pRes.rows || [])
+      else             setPendingRows([])
     } catch (e) {
       setErr(e.message || 'failed to load history')
     } finally {
@@ -116,8 +128,12 @@ export default function AdminHistory() {
   }
 
   // Reload whenever the *applied* filters change (not on every keystroke).
+  // Filter change also resets us back to page 1 — showing page N of a new
+  // filter set would read as "your filter did nothing" until they clicked
+  // Prev enough times.
   useEffect(() => {
-    load({}, false)
+    setPageStack([null])
+    load({}, { withPending: true })
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appliedFilters])
 
@@ -165,8 +181,29 @@ export default function AdminHistory() {
     setAppliedFilters({})
   }
 
-  function loadMore() {
-    if (nextCursor) load({ before: nextCursor }, true)
+  // After a page change we jump the window back to the top so the
+  // operator lands on row 1 of the new page instead of the bottom of
+  // the previous one — otherwise the pagination controls stay in view
+  // and the fresh rows scroll in below the fold, unnoticed.
+  function scrollToTop() {
+    try { window.scrollTo({ top: 0, behavior: 'smooth' }) } catch { window.scrollTo(0, 0) }
+  }
+
+  // Prev / Next handlers. Each page-2+ fetch skips the pending list so
+  // abandoned flows don't repeat once you've moved past page 1.
+  function nextPage() {
+    if (!nextCursor || loading) return
+    setPageStack((s) => [...s, nextCursor])
+    load({ before: nextCursor }, { withPending: false })
+    scrollToTop()
+  }
+  function prevPage() {
+    if (pageStack.length <= 1 || loading) return
+    const trimmed = pageStack.slice(0, -1)
+    const cursor = trimmed[trimmed.length - 1]
+    setPageStack(trimmed)
+    load(cursor ? { before: cursor } : {}, { withPending: cursor === null })
+    scrollToTop()
   }
 
   // Quick range presets — they apply immediately, no Apply click needed.
@@ -346,19 +383,29 @@ export default function AdminHistory() {
               </ol>
             )
           })()}
-          {(nextCursor > 0 || loading) && (
-            <div className="border-t border-slate-100 px-4 py-3 text-center">
-              {loading ? (
-                <span className="text-sm text-slate-500">Loading…</span>
-              ) : (
-                <button
-                  type="button"
-                  onClick={loadMore}
-                  className="text-sm font-medium text-indigo-600 hover:text-indigo-800"
-                >
-                  Load older
-                </button>
-              )}
+          {(pageIdx > 1 || nextCursor > 0 || loading) && (
+            <div className="flex items-center justify-between gap-3 border-t border-fv-line bg-fv-page/40 px-4 py-2.5">
+              <button
+                type="button"
+                onClick={prevPage}
+                disabled={pageIdx <= 1 || loading}
+                className="inline-flex items-center gap-1.5 rounded-[10px] border border-fv-line bg-fv-card px-3 py-1.5 text-[13px] font-semibold text-fv-ink transition-colors hover:border-fv-accent-soft hover:bg-fv-page disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-fv-card disabled:hover:border-fv-line"
+              >
+                <span aria-hidden="true">←</span>
+                Prev
+              </button>
+              <span className="text-[12.5px] font-semibold tabular-nums text-fv-muted">
+                {loading ? 'Loading…' : `Page ${pageIdx}`}
+              </span>
+              <button
+                type="button"
+                onClick={nextPage}
+                disabled={!nextCursor || loading}
+                className="inline-flex items-center gap-1.5 rounded-[10px] bg-fv-accent px-3 py-1.5 text-[13px] font-semibold text-white transition-colors hover:bg-fv-accent-deep disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-fv-accent"
+              >
+                Next
+                <span aria-hidden="true">→</span>
+              </button>
             </div>
           )}
         </CardBody>
