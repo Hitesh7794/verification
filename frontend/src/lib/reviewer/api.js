@@ -285,3 +285,24 @@ export async function listAgents() {
 export async function enableAgent(id) {
   return api(`/client/agents/${id}/enable`, { method: 'POST' })
 }
+
+// GET /api/client/verifications?operator_id=...
+//
+// One agent's own verifications, newest first. Same endpoint and same
+// row shape the Verification history tab uses — only the filter is
+// new, so an agent's page and the full history can never disagree
+// about what a verification says.
+//
+// `before` is the cursor the previous page returned (next_cursor);
+// omit it for the first page. Returns { rows, next_cursor }.
+export async function listAgentVerifications(
+  operatorId,
+  { limit = 25, before = 0, roll = '', status = '', from = '' } = {},
+) {
+  const qs = new URLSearchParams({ operator_id: String(operatorId), limit: String(limit) })
+  if (before) qs.set('before', String(before))
+  if (roll) qs.set('roll_like', roll)
+  if (status) qs.set('status', status)
+  if (from) qs.set('from', from)
+  return api(`/client/verifications?${qs}`)
+}

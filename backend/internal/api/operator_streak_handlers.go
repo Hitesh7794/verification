@@ -348,7 +348,12 @@ func (s *Server) reviewerListAgents(w http.ResponseWriter, r *http.Request) {
 		AssignedExams []examSummary `json:"assigned_exams"`
 	}
 	out := []item{}
-	byID := map[int64]*item{}
+	// Index, not &out[i]: append reallocates the backing array once the
+	// slice outgrows it, and every pointer taken before that moment
+	// then addresses the discarded array. Exams appended through those
+	// stale pointers were dropped on the floor, so every agent came
+	// back with assigned_exams: [] no matter what operator_exams said.
+	idxByID := map[int64]int{}
 	for rows.Next() {
 		var it item
 		var disabledAt sql.NullTime
@@ -365,7 +370,7 @@ func (s *Server) reviewerListAgents(w http.ResponseWriter, r *http.Request) {
 		}
 		it.AssignedExams = []examSummary{}
 		out = append(out, it)
-		byID[it.ID] = &out[len(out)-1]
+		idxByID[it.ID] = len(out) - 1
 	}
 
 	// Second round trip — pull all operator_exams for the returned
@@ -373,7 +378,7 @@ func (s *Server) reviewerListAgents(w http.ResponseWriter, r *http.Request) {
 	// Scoped to the caller's client_id so an admin cross-assigning an
 	// operator to another client's exam (shouldn't happen, but the
 	// gate is cheap) never surfaces here.
-	if len(byID) > 0 {
+	if len(idxByID) > 0 {
 		erows, err := s.deps.DB.QueryContext(r.Context(),
 			`SELECT oe.user_id, e.id, e.name, e.exam_code
 			   FROM operator_exams oe
@@ -399,8 +404,8 @@ func (s *Server) reviewerListAgents(w http.ResponseWriter, r *http.Request) {
 			if err := erows.Scan(&uid, &es.ID, &es.Name, &es.ExamCode); err != nil {
 				continue
 			}
-			if it, ok := byID[uid]; ok {
-				it.AssignedExams = append(it.AssignedExams, es)
+			if i, ok := idxByID[uid]; ok {
+				out[i].AssignedExams = append(out[i].AssignedExams, es)
 			}
 		}
 	}

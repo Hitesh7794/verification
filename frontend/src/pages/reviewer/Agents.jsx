@@ -3,11 +3,11 @@ import { AgentPortrait, ArtCollege, GlyphSheet } from '../../components/fv/FvArt
 import { hi } from '../../components/fv/hindi.jsx'
 import { ArtAgent } from '../../components/fv/FvArt.jsx'
 import FvEmpty from '../../components/fv/FvEmpty.jsx'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import ReviewerShell from '../../components/reviewer/ReviewerShell.jsx'
 import { Button } from '../../components/ui/ui.jsx'
 import { Icon, Pill, Skeleton } from '../../components/ui/extras.jsx'
-import { listAgents, enableAgent } from '../../lib/reviewer/api.js'
+import { listAgents, enableAgent, listAgentVerifications } from '../../lib/reviewer/api.js'
 
 // Reviewer > Agents (V30, 2026-09-14).
 //
@@ -73,6 +73,91 @@ export default function ReviewerAgents() {
   const [instFilter, setInstFilter] = useState('all')
   const [examFilter, setExamFilter] = useState('all')
   const [statusFilter, setStatusFilter] = useState('all')
+
+  // Opening a row swaps the roster for that one agent's work. Same
+  // page, same shell — the roster answers "who verifies for us", the
+  // open agent answers "what has this one actually done".
+  const [openAgent, setOpenAgent] = useState(null)
+  const [vRows, setVRows] = useState(null)   // null = first load
+  const [vErr, setVErr] = useState('')
+  const [vCursor, setVCursor] = useState(0)  // 0 = no further pages
+  const [vMore, setVMore] = useState(false)  // a "load more" is in flight
+
+  // Filters for the open agent's table. All three go to the server, so
+  // they narrow the whole history rather than just the page already on
+  // screen — a roll verified three weeks ago is still findable.
+  const [vRoll, setVRoll] = useState('')
+  const [vStatus, setVStatus] = useState('')
+  const [vWhen, setVWhen] = useState('')
+
+  // Rows arrive newest-first in pages; `before` is the cursor the last
+  // page handed back. Appending rather than replacing keeps what the
+  // reviewer has already scrolled past.
+  // Presets rather than a date picker: "when did this happen" on an
+  // agent's desk is answered in days, not calendar ranges.
+  const sinceFor = (when) => {
+    if (!when) return ''
+    const days = when === 'today' ? 0 : Number(when)
+    const d = new Date()
+    d.setDate(d.getDate() - days)
+    return d.toISOString().slice(0, 10)
+  }
+
+  const loadVerifications = async (agent, cursor = 0, filters = null) => {
+    if (!agent) return
+    const f = filters || { roll: vRoll, status: vStatus, when: vWhen }
+    cursor ? setVMore(true) : setVRows(null)
+    setVErr('')
+    try {
+      const r = await listAgentVerifications(agent.id, {
+        limit: 50, before: cursor,
+        roll: f.roll.trim(), status: f.status, from: sinceFor(f.when),
+      })
+      const page = r?.rows || []
+      setVRows((prev) => (cursor && prev ? [...prev, ...page] : page))
+      setVCursor(r?.next_cursor || 0)
+    } catch (e) {
+      if (!cursor) setVRows([])
+      setVErr(e?.body?.error || e?.message || 'Could not load this agent\u2019s verifications')
+    } finally {
+      setVMore(false)
+    }
+  }
+
+  function openAgentRow(a) {
+    setOpenAgent(a)
+    setVRows(null)
+    setVCursor(0)
+    setVRoll(''); setVStatus(''); setVWhen('')
+    appliedRoll.current = ''
+    loadVerifications(a, 0, { roll: '', status: '', when: '' })
+  }
+
+  // Search as the reviewer types, one request per pause rather than
+  // per keystroke. appliedRoll remembers what the server last saw, so
+  // a re-render can't fire a duplicate request for the same text.
+  const appliedRoll = useRef('')
+  useEffect(() => {
+    if (!openAgent) return
+    if (vRoll.trim() === appliedRoll.current) return
+    const timer = setTimeout(() => {
+      appliedRoll.current = vRoll.trim()
+      setVCursor(0)
+      loadVerifications(openAgent, 0, { roll: vRoll, status: vStatus, when: vWhen })
+    }, 350)
+    return () => clearTimeout(timer)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [vRoll, openAgent])
+
+  // Changing a filter always restarts at the newest page: a cursor
+  // from the previous filter set points into a different result.
+  function applyVFilter(next) {
+    const f = { roll: vRoll, status: vStatus, when: vWhen, ...next }
+    setVRoll(f.roll); setVStatus(f.status); setVWhen(f.when)
+    appliedRoll.current = f.roll.trim()
+    setVCursor(0)
+    loadVerifications(openAgent, 0, f)
+  }
 
   const load = async () => {
     setErr('')
@@ -188,6 +273,181 @@ export default function ReviewerAgents() {
     setInstFilter('all')
     setExamFilter('all')
     setStatusFilter('all')
+  }
+
+  // ─── one agent ───────────────────────────────────────────
+  if (openAgent) {
+    const a = openAgent
+    const isAuto = a.status === 'disabled' && a.disable_reason === 'auto_streak'
+    const isManual = a.status === 'disabled' && !isAuto
+    const rows = vRows || []
+    const verified = rows.filter((v) => v.status === 'verified').length
+    const denied = rows.filter((v) => v.status === 'denied').length
+
+    return (
+      <ReviewerShell>
+        <button
+          type="button"
+          onClick={() => { setOpenAgent(null); setVRows(null); setVErr('') }}
+          className="mb-3 inline-flex items-center gap-1.5 rounded-full border border-fv-line bg-fv-card px-3 py-1.5 text-[12.5px] font-semibold text-fv-ink hover:bg-fv-card-focus"
+        >
+          <svg xmlns="http://www.w3.org/2000/svg" width="14" height="14" viewBox="0 0 24 24" fill="none"
+               stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+            <polyline points="15 18 9 12 15 6" />
+          </svg>
+          All agents
+          <span className="fv-hi text-[11px] text-fv-faint">{hi('Agent')}</span>
+        </button>
+
+        <div className="mb-6 rounded-xl bg-warm-surface ring-1 ring-warm overflow-hidden shadow-sm">
+          <div className="h-[3px] rule-gold" />
+          <div className="relative overflow-hidden p-5 sm:p-6">
+            <RvPhoto name={a.org_name || a.institute_name} photo={a.org_photo_url || a.logo_url} width="26%" />
+            <div className="relative flex flex-wrap items-start gap-4">
+              <AgentPortrait seed={a.display_name || a.username} name={a.display_name || a.username}
+                             className={`h-14 w-14 shrink-0 ${isAuto || isManual ? 'grayscale opacity-70' : ''}`} />
+              <div className="min-w-0 flex-1">
+                <h1 className="fv-display text-[24px] leading-tight tracking-[-0.02em] text-fv-ink truncate">
+                  {a.display_name || a.username}
+                </h1>
+                <p className="text-[13px] text-fv-accent-deep">@{a.username}</p>
+                <p className="mt-1.5 flex flex-wrap items-center gap-x-2 gap-y-1 text-[13px] text-fv-muted">
+                  <span className="inline-flex items-center gap-1.5">
+                    <ArtCollege className="h-6 w-6 shrink-0" />
+                    {a.org_name || a.institute_name || '\u2014'}
+                  </span>
+                  {a.email && (<><span className="text-fv-faint">·</span><span className="truncate">{a.email}</span></>)}
+                </p>
+              </div>
+              <RvSeal status={isAuto ? 'locked' : isManual ? 'disabled' : 'active'} />
+            </div>
+
+            <div className="fv-stagger mt-5 grid grid-cols-2 gap-3 lg:grid-cols-3">
+              <RvTile kind="agents" label="Verifications" value={vRows === null ? '\u2014' : rows.length}
+                      hint={(vRoll || vStatus || vWhen) ? 'matching your filters' : (vCursor ? 'more on the next page' : '')} />
+              <RvTile kind="approved" label="Verified" value={vRows === null ? '\u2014' : verified} />
+              <RvTile kind="rejected" label="Denied" value={vRows === null ? '\u2014' : denied} />
+            </div>
+          </div>
+        </div>
+
+        {vErr && (
+          <div role="alert" className="mb-4 rounded-lg bg-rose-50 border border-rose-200 px-3 py-2 text-sm text-rose-700">
+            {vErr}
+          </div>
+        )}
+
+        <div className="mb-4 rounded-xl bg-fv-card ring-1 ring-warm shadow-sm">
+          <div className="grid grid-cols-1 gap-3 p-3 sm:grid-cols-[1fr_auto_auto_auto] sm:items-center sm:p-4">
+            <form
+              onSubmit={(e) => { e.preventDefault(); applyVFilter({ roll: vRoll }) }}
+              className="relative"
+            >
+              <span className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-fv-faint">
+                <Icon.Search className="h-4 w-4" />
+              </span>
+              <input
+                type="search"
+                value={vRoll}
+                onChange={(e) => setVRoll(e.target.value)}
+                onBlur={() => applyVFilter({ roll: vRoll })}
+                placeholder="Search roll number…"
+                aria-label="Search by roll number"
+                className="w-full rounded-lg border border-fv-line bg-white py-2 pl-9 pr-3 text-sm focus:border-fv-accent focus:outline-none focus:ring-2 focus:ring-fv-accent/20"
+              />
+            </form>
+
+            <FilterSelect
+              value={vStatus}
+              onChange={(v) => applyVFilter({ status: v })}
+              ariaLabel="Filter by result"
+              options={[
+                { value: '', label: 'All results' },
+                { value: 'verified', label: 'Verified only' },
+                { value: 'denied', label: 'Denied only' },
+              ]}
+            />
+
+            <FilterSelect
+              value={vWhen}
+              onChange={(v) => applyVFilter({ when: v })}
+              ariaLabel="Filter by time"
+              options={[
+                { value: '', label: 'Any time' },
+                { value: 'today', label: 'Today' },
+                { value: '7', label: 'Last 7 days' },
+                { value: '30', label: 'Last 30 days' },
+              ]}
+            />
+
+            {(vRoll || vStatus || vWhen) && (
+              <button
+                type="button"
+                onClick={() => applyVFilter({ roll: '', status: '', when: '' })}
+                className="justify-self-start text-[12.5px] font-semibold text-fv-accent-deep underline-offset-2 hover:underline sm:justify-self-auto"
+              >
+                Clear filters
+              </button>
+            )}
+          </div>
+        </div>
+
+        {vRows === null ? (
+          <div className="rounded-xl bg-white ring-1 ring-warm p-4 space-y-2">
+            {[0, 1, 2, 3, 4].map((k) => <Skeleton key={k} className="h-8 w-full" />)}
+          </div>
+        ) : rows.length === 0 && (vRoll || vStatus || vWhen) ? (
+          <FvEmpty
+            title="Nothing matches those filters"
+            body="Try a different roll number, result or period."
+          />
+        ) : rows.length === 0 ? (
+          <FvEmpty
+            title="No verifications yet"
+            body={`${a.display_name || a.username} hasn\u2019t verified a candidate on your exams so far.`}
+          />
+        ) : (
+          <div className="rounded-xl bg-white ring-1 ring-warm overflow-hidden shadow-sm">
+            <div className="h-[2px] rule-gold" />
+            <div className="overflow-x-auto">
+              <table className="min-w-full text-sm">
+                <thead className="bg-fv-page text-fv-muted text-[12.5px]">
+                  <tr>
+                    <th className="text-left px-4 py-2.5">When</th>
+                    <th className="text-left px-4 py-2.5">Roll<span className="fv-hi ml-1.5 text-[11px] text-fv-faint">{hi('Roll')}</span></th>
+                    {/* No institute column: every row here belongs to
+                        this one agent, whose institute is named in
+                        the card above. */}
+                    <th className="text-left px-4 py-2.5">Exam<span className="fv-hi ml-1.5 text-[11px] text-fv-faint">{hi('Exam')}</span></th>
+                    <th className="text-left px-4 py-2.5">Result<span className="fv-hi ml-1.5 text-[11px] text-fv-faint">{hi('Status')}</span></th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  {rows.map((v) => (
+                    <tr key={v.id} className="bg-white">
+                      <td className="px-4 py-3 text-slate-600 tabular-nums text-xs whitespace-nowrap">
+                        {formatRelative(v.created_at)}
+                      </td>
+                      <td className="px-4 py-3 font-mono text-[13px] text-fv-ink">{v.roll_no}</td>
+                      <td className="px-4 py-3 text-slate-600 text-[13px]">{v.center_name || '\u2014'}</td>
+                      <td className="px-4 py-3"><RvSeal status={v.status === 'verified' ? 'verified' : 'denied'} /></td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+            {vCursor > 0 && (
+              <div className="border-t border-slate-100 p-3 text-center">
+                <Button variant="secondary" size="sm" disabled={vMore}
+                        onClick={() => loadVerifications(a, vCursor)}>
+                  {vMore ? 'Loading\u2026' : 'Load older'}
+                </Button>
+              </div>
+            )}
+          </div>
+        )}
+      </ReviewerShell>
+    )
   }
 
   return (
@@ -410,6 +670,7 @@ export default function ReviewerAgents() {
                     a={a}
                     busy={busyId === a.id}
                     onEnable={() => onEnable(a.id)}
+                    onOpen={() => openAgentRow(a)}
                   />
                 ))}
               </tbody>
@@ -423,7 +684,7 @@ export default function ReviewerAgents() {
 
 // A single row in the roster table. Broken out so the status
 // decision tree stays legible.
-function AgentRow({ a, busy, onEnable }) {
+function AgentRow({ a, busy, onEnable, onOpen }) {
   const isAuto = a.status === 'disabled' && a.disable_reason === 'auto_streak'
   const isManual = a.status === 'disabled' && !isAuto
 
@@ -435,7 +696,16 @@ function AgentRow({ a, busy, onEnable }) {
     : 'bg-white'
 
   return (
-    <tr className={rowTint}>
+    <tr
+      className={`${rowTint} cursor-pointer transition-colors hover:bg-fv-card-focus`}
+      onClick={onOpen}
+      tabIndex={0}
+      role="button"
+      aria-label={`Open ${a.display_name || a.username}'s verifications`}
+      onKeyDown={(e) => {
+        if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); onOpen?.() }
+      }}
+    >
       <td className="px-4 py-3">
         <div className="flex items-center gap-3 min-w-0">
           <AgentPortrait seed={a.display_name || a.username} name={a.display_name || a.username}
@@ -485,7 +755,7 @@ function AgentRow({ a, busy, onEnable }) {
           ? <>disabled <span className="text-slate-500">{formatRelative(a.disabled_at)}</span></>
           : formatRelative(a.created_at)}
       </td>
-      <td className="px-4 py-3 text-right">
+      <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
         {isAuto || isManual ? (
           <Button
             variant="secondary"
