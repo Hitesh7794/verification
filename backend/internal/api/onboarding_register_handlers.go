@@ -777,8 +777,8 @@ func validateInit(r *registerInitReq) error {
 	// otherwise be three distinct rows.
 	r.InstitutionType = strings.ToLower(strings.TrimSpace(r.InstitutionType))
 	r.InstitutionType = strings.Join(strings.Fields(r.InstitutionType), " ")
-	if len(r.InstitutionName) < 3 || len(r.InstitutionName) > 200 {
-		return errors.New("institution_name must be 3-200 characters")
+	if len(r.InstitutionName) < 3 || len(r.InstitutionName) > 70 {
+		return errors.New("institution_name must be 3-70 characters")
 	}
 	if r.InstitutionType == "" || len(r.InstitutionType) > 80 {
 		return errors.New("institution_type is required (up to 80 characters)")

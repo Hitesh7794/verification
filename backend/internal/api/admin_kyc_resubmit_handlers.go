@@ -167,8 +167,8 @@ func (s *Server) adminPatchMyKYCApplication(w http.ResponseWriter, r *http.Reque
 	}
 	if req.InstitutionName != nil {
 		v := strings.TrimSpace(*req.InstitutionName)
-		if len(v) < 3 || len(v) > 200 {
-			writeErr(w, http.StatusBadRequest, "institution_name must be 3–200 characters")
+		if len(v) < 3 || len(v) > 70 {
+			writeErr(w, http.StatusBadRequest, "institution_name must be 3–70 characters")
 			return
 		}
 		push("institution_name", v)

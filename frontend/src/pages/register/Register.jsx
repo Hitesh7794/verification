@@ -188,10 +188,12 @@ function getRequiredDocs(form) {
 // Each rule returns an error string, or undefined when the value is
 // acceptable. `form` is passed for rules that depend on sibling/dynamic fields.
 const FIELD_RULES = {
-  institution_name: (v, form) =>
-    v.trim().length < 3
-      ? (form?.institution_type === 'other' ? 'Required (at least 3 characters)' : 'Required (at least 3 characters)')
-      : undefined,
+  institution_name: (v) => {
+    const t = v.trim()
+    if (t.length < 3)  return 'Required (at least 3 characters)'
+    if (t.length > 70) return 'Institution name must be 70 characters or fewer'
+    return undefined
+  },
   institution_type: (v) =>
     INSTITUTION_TYPES.find((t) => t.value === v) ? undefined : 'Pick a type',
   institution_type_other: () => undefined,
@@ -1121,6 +1123,7 @@ function Step0({ form, errors, update, onBlurField, onNext, onTypeSelect, checki
               value={form.institution_name}
               onChange={(e) => update('institution_name', e.target.value)}
               onBlur={() => onBlurField('institution_name')}
+              maxLength={70}
               placeholder={isRecruiter ? 'e.g. Staff Selection Commission (SSC) / ONGC / State PSC' : 'e.g. Saragarhi Memorial College of Eminence'}
             />
           </Field>
