@@ -500,6 +500,8 @@ func (s *Server) clientReviewerInstitutes(w http.ResponseWriter, r *http.Request
 //
 // Filters (all optional, combinable):
 //   ?roll=       exact roll number match
+//   ?roll_like=  substring roll match
+//   ?operator_id= one agent's verifications only
 //   ?status=     "verified" | "denied"
 //   ?from=YYYY-MM-DD
 //   ?to=YYYY-MM-DD
@@ -535,6 +537,28 @@ func (s *Server) clientReviewerVerifications(w http.ResponseWriter, r *http.Requ
 		where += fmt.Sprintf(" AND lower(o.name) LIKE '%%' || lower($%d) || '%%'", nextParam)
 		args = append(args, org)
 		nextParam++
+	}
+	// Substring roll search. The `roll` filter above is an exact
+	// match, which suits the history page's "paste the roll you were
+	// given" flow but is unusable against rolls that read
+	// NEET-UG-2026-ROLL-0004 — nobody types that to find one row.
+	// Kept as a separate parameter so the exact filter, and everything
+	// that already sends it, behaves exactly as before.
+	if rollLike := strings.TrimSpace(q.Get("roll_like")); rollLike != "" {
+		where += fmt.Sprintf(" AND v.roll_no ILIKE '%%' || $%d || '%%'", nextParam)
+		args = append(args, rollLike)
+		nextParam++
+	}
+
+	// One agent's own history — what the Agents tab opens when a
+	// reviewer clicks a row. The query already joins users on
+	// v.operator_id, so this is just another AND.
+	if operatorID := strings.TrimSpace(q.Get("operator_id")); operatorID != "" {
+		if n, err := strconv.ParseInt(operatorID, 10, 64); err == nil && n > 0 {
+			where += fmt.Sprintf(" AND v.operator_id = $%d", nextParam)
+			args = append(args, n)
+			nextParam++
+		}
 	}
 	if examID := strings.TrimSpace(q.Get("exam_id")); examID != "" {
 		// Both list + CSV queries already LEFT JOIN exam_candidates,
