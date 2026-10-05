@@ -102,15 +102,61 @@ export default function App() {
   )
 }
 
-// Sniff the hostname to pick which login `/` should send the visitor
-// to. CP box (admins.*.nip.io) → super-admin login; everywhere else
-// → institution admin login. Keeps one bundle across both boxes.
+// The two canonical hostnames this build serves. nip.io is wildcard
+// DNS — every <anything>.13-205-220-104.nip.io resolves to the CP
+// box, and every <anything>.13-127-17-248.nip.io resolves to the DP
+// box, so without a hostname guard a visitor can land on e.g.
+// nta.13-205-220-104.nip.io/superadmin/login and have the admins SPA
+// render anyway (nginx on CP falls back to the admins vhost for any
+// unknown Host header). Lock the SPA to just these two pairs; any
+// other nip.io host gets a blank "wrong URL" screen.
+const CANONICAL_HOSTS = Object.freeze({
+  'nta.13-127-17-248.nip.io':    'dp',  // Data Plane
+  'admins.13-205-220-104.nip.io': 'cp', // Control Plane
+})
+function currentHost() {
+  return (typeof window !== 'undefined' && window.location.hostname) || ''
+}
+// nip.io hosts outside the canonical pairs are rejected. Any other
+// hostname — localhost during dev, future custom production domain —
+// is allowed through unchanged.
+function isAllowedHost() {
+  const h = currentHost()
+  if (!h) return true
+  if (h in CANONICAL_HOSTS) return true
+  if (h.endsWith('.nip.io')) return false
+  return true
+}
 function isCPHost() {
-  const host = (typeof window !== 'undefined' && window.location.hostname) || ''
-  return /^admins?\./i.test(host)
+  return CANONICAL_HOSTS[currentHost()] === 'cp'
 }
 function RootRedirect() {
   return <Navigate to={isCPHost() ? '/superadmin/login' : '/admin/login'} replace />
+}
+
+// Shown when the current hostname is a nip.io subdomain pointing at
+// one of our boxes but isn't the canonical one — e.g. an operator
+// typed nta.<cp-ip>.nip.io by habit. Kept intentionally sparse: no
+// links, no "did you mean" hint, no branding — just a plain refusal.
+function WrongHostScreen() {
+  const h = currentHost()
+  return (
+    <div style={{
+      minHeight: '100vh', display: 'grid', placeItems: 'center',
+      padding: '2rem', fontFamily: 'system-ui, -apple-system, sans-serif',
+      background: '#F7F6FB', color: '#17142C',
+    }}>
+      <div style={{ maxWidth: 480, textAlign: 'center' }}>
+        <h1 style={{ fontSize: 28, fontWeight: 700, letterSpacing: '-0.02em', marginBottom: 12 }}>
+          This URL isn&rsquo;t serving the portal.
+        </h1>
+        <p style={{ fontSize: 15, color: '#5B587A', lineHeight: 1.5 }}>
+          <code style={{ background: '#EFEBF9', padding: '2px 6px', borderRadius: 6 }}>{h || 'unknown host'}</code>
+          <br />isn&rsquo;t one of the valid portal hostnames.
+        </p>
+      </div>
+    </div>
+  )
 }
 
 // The CP domain (admins.*.nip.io) shares one build with the DP box
@@ -121,9 +167,11 @@ function RootRedirect() {
 // operator sign-ins, so any password typed there is wasted keystrokes
 // that never make it to the right box). We match /superadmin/* as
 // the only allowed prefix and bounce everything else to
-// /superadmin/login on this host.
+// /superadmin/login on this host. The HostGuard above wraps this one
+// so a wrong hostname short-circuits before any route resolves.
 function CPRouteGuard({ children }) {
   const loc = useLocation()
+  if (!isAllowedHost()) return <WrongHostScreen />
   if (isCPHost()) {
     const p = loc.pathname
     const allowed = p === '/' || p.startsWith('/superadmin')
