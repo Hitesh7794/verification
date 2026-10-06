@@ -114,9 +114,12 @@ func (s *Server) notifyInstituteOfSubscriptionDecision(orgID, examID int64, appr
 		orgName, examName, examCode, clientName string
 		headEmail                               sql.NullString
 	)
-	// head_email lives on the institution_applications row that was
-	// matched to this org at KYC approval. Falls back to the admin
-	// user's email if the app row can't be located (renamed org, etc.).
+	// head_email lives on the application this organisation was
+	// created from — organizations.application_id. Matching on the
+	// NAME instead (as this did until 2026-10-06) picked any approved
+	// application sharing the name, so a decision about one institute
+	// could be mailed to a same-named institute's head. Falls back to
+	// the org's own admin when there is no application row.
 	if err := s.deps.DB.QueryRowContext(ctx,
 		`SELECT o.name, e.name, e.exam_code, c.name,
 		        COALESCE(app.head_email,
@@ -127,9 +130,16 @@ func (s *Server) notifyInstituteOfSubscriptionDecision(orgID, examID int64, appr
 		   FROM organizations o
 		   JOIN exams e ON e.id = $2
 		   JOIN clients c ON c.id = e.client_id
-		   LEFT JOIN institution_applications app
-		     ON LOWER(TRIM(app.institution_name)) = LOWER(TRIM(o.name))
-		    AND app.status = 'approved'
+		   LEFT JOIN LATERAL (
+		        SELECT a.head_email
+		          FROM institution_applications a
+		         WHERE a.status = 'approved'
+		           AND (a.id = o.application_id
+		                OR (o.application_id IS NULL
+		                    AND LOWER(TRIM(a.institution_name)) = LOWER(TRIM(o.name))))
+		         ORDER BY (a.id = o.application_id) DESC, a.id DESC
+		         LIMIT 1
+		   ) app ON TRUE
 		  WHERE o.id = $1`,
 		orgID, examID,
 	).Scan(&orgName, &examName, &examCode, &clientName, &headEmail); err != nil {

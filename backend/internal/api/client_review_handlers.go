@@ -1666,6 +1666,29 @@ type subscriptionBulkRejectReq struct {
 	Note    string  `json:"note"`
 }
 
+// subscriptionFlip is one (institute, exam) request that a bulk
+// decision actually changed. The UPDATEs are filtered on
+// status='pending', so a request someone else already decided is
+// skipped — collecting what came back from RETURNING is the only
+// honest way to know who to email.
+type subscriptionFlip struct{ orgID, examID int64 }
+
+// appendSubscriptionFlips drains an UPDATE ... RETURNING exam_id
+// cursor. It closes the rows before returning: lib/pq allows one
+// active cursor per transaction, and the loop above runs another
+// statement on the next institute.
+func appendSubscriptionFlips(dst []subscriptionFlip, rows *sql.Rows, orgID int64) []subscriptionFlip {
+	defer rows.Close()
+	for rows.Next() {
+		var examID int64
+		if err := rows.Scan(&examID); err != nil {
+			continue
+		}
+		dst = append(dst, subscriptionFlip{orgID: orgID, examID: examID})
+	}
+	return dst
+}
+
 // ---------- POST /api/client/subscription-requests/bulk-approve ----------
 func (s *Server) clientBulkApproveSubscriptionRequests(w http.ResponseWriter, r *http.Request) {
 	clientID, ok := s.clientReviewerScope(r)
@@ -1696,6 +1719,8 @@ func (s *Server) clientBulkApproveSubscriptionRequests(w http.ResponseWriter, r 
 		return
 	}
 	defer tx.Rollback()
+
+	var flips []subscriptionFlip
 
 	for _, orgID := range req.OrgIDs {
 		if orgID <= 0 {
@@ -1738,7 +1763,7 @@ func (s *Server) clientBulkApproveSubscriptionRequests(w http.ResponseWriter, r 
 				if examID <= 0 {
 					continue
 				}
-				if _, err := tx.ExecContext(r.Context(), `
+				erows, err := tx.QueryContext(r.Context(), `
 					UPDATE organization_exam_subscriptions
 					SET status = 'approved',
 					    approval_type = $1,
@@ -1748,15 +1773,18 @@ func (s *Server) clientBulkApproveSubscriptionRequests(w http.ResponseWriter, r 
 					WHERE org_id = $4
 					  AND exam_id = $5
 					  AND status = 'pending'
-					  AND exam_id IN (SELECT id FROM exams WHERE client_id = $6)`,
+					  AND exam_id IN (SELECT id FROM exams WHERE client_id = $6)
+					RETURNING exam_id`,
 					approvalType, claims.UserID, req.Note, orgID, examID, clientID,
-				); err != nil {
+				)
+				if err != nil {
 					writeErr(w, http.StatusInternalServerError, "db bulk approve: "+err.Error())
 					return
 				}
+				flips = appendSubscriptionFlips(flips, erows, orgID)
 			}
 		} else {
-			if _, err := tx.ExecContext(r.Context(), `
+			erows, err := tx.QueryContext(r.Context(), `
 				UPDATE organization_exam_subscriptions
 				SET status = 'approved',
 				    approval_type = $1,
@@ -1765,12 +1793,15 @@ func (s *Server) clientBulkApproveSubscriptionRequests(w http.ResponseWriter, r 
 				    review_note = $3
 				WHERE org_id = $4
 				  AND status = 'pending'
-				  AND exam_id IN (SELECT id FROM exams WHERE client_id = $5)`,
+				  AND exam_id IN (SELECT id FROM exams WHERE client_id = $5)
+				RETURNING exam_id`,
 				approvalType, claims.UserID, req.Note, orgID, clientID,
-			); err != nil {
+			)
+			if err != nil {
 				writeErr(w, http.StatusInternalServerError, "db bulk approve: "+err.Error())
 				return
 			}
+			flips = appendSubscriptionFlips(flips, erows, orgID)
 		}
 	}
 
@@ -1785,11 +1816,27 @@ func (s *Server) clientBulkApproveSubscriptionRequests(w http.ResponseWriter, r 
 		"client_id": clientID,
 		"mode":      mode,
 		"note":      req.Note,
+		"approved":  len(flips),
 	})
+
+	// Same mail the one-at-a-time Approve button sends, once per
+	// request that actually changed. Sequential inside a single
+	// goroutine: a reviewer clearing a long queue shouldn't spawn a
+	// goroutine per exam, and a slow SMTP must never hold up the
+	// reviewer's response.
+	go func(list []subscriptionFlip, note string) {
+		for _, f := range list {
+			s.notifyInstituteOfSubscriptionDecision(f.orgID, f.examID, true, note)
+		}
+	}(flips, req.Note)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":             true,
-		"approved_count": len(req.OrgIDs),
+		// Rows actually approved. This used to report len(req.OrgIDs),
+		// which counted the institutes asked about even when nothing
+		// was pending for them.
+		"approved_count": len(flips),
+		"institutes":     len(req.OrgIDs),
 		"mode":           mode,
 	})
 }
@@ -1825,6 +1872,8 @@ func (s *Server) clientBulkRejectSubscriptionRequests(w http.ResponseWriter, r *
 	}
 	defer tx.Rollback()
 
+	var flips []subscriptionFlip
+
 	for _, orgID := range req.OrgIDs {
 		if orgID <= 0 {
 			continue
@@ -1835,7 +1884,7 @@ func (s *Server) clientBulkRejectSubscriptionRequests(w http.ResponseWriter, r *
 				if examID <= 0 {
 					continue
 				}
-				if _, err := tx.ExecContext(r.Context(), `
+				erows, err := tx.QueryContext(r.Context(), `
 					UPDATE organization_exam_subscriptions
 					SET status = 'rejected',
 					    reviewed_at = NOW(),
@@ -1844,15 +1893,18 @@ func (s *Server) clientBulkRejectSubscriptionRequests(w http.ResponseWriter, r *
 					WHERE org_id = $3
 					  AND exam_id = $4
 					  AND status = 'pending'
-					  AND exam_id IN (SELECT id FROM exams WHERE client_id = $5)`,
+					  AND exam_id IN (SELECT id FROM exams WHERE client_id = $5)
+					RETURNING exam_id`,
 					claims.UserID, req.Note, orgID, examID, clientID,
-				); err != nil {
+				)
+				if err != nil {
 					writeErr(w, http.StatusInternalServerError, "db bulk reject: "+err.Error())
 					return
 				}
+				flips = appendSubscriptionFlips(flips, erows, orgID)
 			}
 		} else {
-			if _, err := tx.ExecContext(r.Context(), `
+			erows, err := tx.QueryContext(r.Context(), `
 				UPDATE organization_exam_subscriptions
 				SET status = 'rejected',
 				    reviewed_at = NOW(),
@@ -1860,12 +1912,15 @@ func (s *Server) clientBulkRejectSubscriptionRequests(w http.ResponseWriter, r *
 				    review_note = $2
 				WHERE org_id = $3
 				  AND status = 'pending'
-				  AND exam_id IN (SELECT id FROM exams WHERE client_id = $4)`,
+				  AND exam_id IN (SELECT id FROM exams WHERE client_id = $4)
+				RETURNING exam_id`,
 				claims.UserID, req.Note, orgID, clientID,
-			); err != nil {
+			)
+			if err != nil {
 				writeErr(w, http.StatusInternalServerError, "db bulk reject: "+err.Error())
 				return
 			}
+			flips = appendSubscriptionFlips(flips, erows, orgID)
 		}
 	}
 
@@ -1879,11 +1934,21 @@ func (s *Server) clientBulkRejectSubscriptionRequests(w http.ResponseWriter, r *
 		"exam_ids":  req.ExamIDs,
 		"client_id": clientID,
 		"note":      req.Note,
+		"rejected":  len(flips),
 	})
+
+	// A rejection carries the reviewer's note, and the institute
+	// needs it to fix whatever was wrong before re-applying.
+	go func(list []subscriptionFlip, note string) {
+		for _, f := range list {
+			s.notifyInstituteOfSubscriptionDecision(f.orgID, f.examID, false, note)
+		}
+	}(flips, req.Note)
 
 	writeJSON(w, http.StatusOK, map[string]any{
 		"ok":             true,
-		"rejected_count": len(req.OrgIDs),
+		"rejected_count": len(flips),
+		"institutes":     len(req.OrgIDs),
 	})
 }
 
