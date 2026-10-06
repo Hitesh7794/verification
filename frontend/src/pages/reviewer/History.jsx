@@ -57,13 +57,6 @@ export default function ReviewerHistory() {
   const [nextCursor, setNextCursor] = useState(0)
   const [loading, setLoading] = useState(false)
   const [err, setErr] = useState('')
-  // Prev/Next pagination — same pattern as admin/History. The list
-  // endpoint is cursor-only (`before=<id>`); we track the cursor that
-  // fetched each page so Prev can re-run the previous request. `null`
-  // at the bottom = page 1 (no `before` param, newest rows). Resets
-  // whenever filters change.
-  const [pageStack, setPageStack] = useState([null])
-  const pageIdx = pageStack.length
   const [institutes, setInstitutes] = useState([])
   // Flat exam list for the dropdown — every exam under this reviewer's
   // exam board. Fetched once from /client/exams, alpha-sorted.
@@ -106,7 +99,7 @@ export default function ReviewerHistory() {
     return p.toString()
   }
 
-  async function load(extra = {}, { withPending = true } = {}) {
+  async function load(extra = {}, append = false) {
     setLoading(true)
     setErr('')
     try {
@@ -117,7 +110,7 @@ export default function ReviewerHistory() {
       //   verified / denied → completed only, no pending
       //   pending           → pending only (abandoned flows)
       const wantCompleted = appliedFilters.status !== 'pending'
-      const wantPending   = withPending && (!appliedFilters.status || appliedFilters.status === 'pending')
+      const wantPending   = !appliedFilters.status || appliedFilters.status === 'pending'
       const compP = wantCompleted
         ? api('/client/verifications' + (qs ? '?' + qs : ''))
         : Promise.resolve({ rows: [], next_cursor: 0 })
@@ -130,12 +123,9 @@ export default function ReviewerHistory() {
             .catch(() => ({ rows: [] }))
         : Promise.resolve({ rows: [] })
       const [res, pRes] = await Promise.all([compP, pendP])
-      setRows(res.rows || [])
+      setRows((prev) => append ? [...prev, ...(res.rows || [])] : (res.rows || []))
       setNextCursor(res.next_cursor || 0)
-      // Pending rows render only on page 1 — otherwise the abandoned
-      // flows would repeat every time the reviewer paged older.
-      if (withPending) setPendingRows(pRes.rows || [])
-      else             setPendingRows([])
+      if (!append) setPendingRows(pRes.rows || [])
     } catch (e) {
       setErr(e.message || 'failed to load history')
     } finally {
@@ -143,12 +133,8 @@ export default function ReviewerHistory() {
     }
   }
 
-  // Reload on applied-filter change and jump back to page 1 — showing a
-  // deep page of a fresh filter set would read as "your filter did
-  // nothing" until they clicked Prev enough times.
   useEffect(() => {
-    setPageStack([null])
-    load({}, { withPending: true })
+    load({}, false)
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [appliedFilters])
 
@@ -169,29 +155,8 @@ export default function ReviewerHistory() {
     setAppliedFilters({})
   }
 
-  // After a page change we jump the window back to the top so the
-  // reviewer lands on row 1 of the new page rather than the bottom of
-  // the previous one — otherwise the fresh rows scroll in below the
-  // fold, unnoticed.
-  function scrollToTop() {
-    try { window.scrollTo({ top: 0, behavior: 'smooth' }) } catch { window.scrollTo(0, 0) }
-  }
-
-  // Prev / Next handlers. Pages 2+ skip the pending fetch so the
-  // abandoned flows don't repeat every page.
-  function nextPage() {
-    if (!nextCursor || loading) return
-    setPageStack((s) => [...s, nextCursor])
-    load({ before: nextCursor }, { withPending: false })
-    scrollToTop()
-  }
-  function prevPage() {
-    if (pageStack.length <= 1 || loading) return
-    const trimmed = pageStack.slice(0, -1)
-    const cursor = trimmed[trimmed.length - 1]
-    setPageStack(trimmed)
-    load(cursor ? { before: cursor } : {}, { withPending: cursor === null })
-    scrollToTop()
+  function loadMore() {
+    if (nextCursor) load({ before: nextCursor }, true)
   }
 
   async function downloadCsv(scope /* 'filtered' | 'all' */) {
@@ -408,29 +373,19 @@ export default function ReviewerHistory() {
               </>
             )
           })()}
-          {(pageIdx > 1 || nextCursor > 0 || loading) && (
-            <div className="flex items-center justify-between gap-3 border-t border-fv-line bg-fv-page/40 px-4 py-2.5">
-              <button
-                type="button"
-                onClick={prevPage}
-                disabled={pageIdx <= 1 || loading}
-                className="inline-flex items-center gap-1.5 rounded-[10px] border border-fv-line bg-fv-card px-3 py-1.5 text-[13px] font-semibold text-fv-ink transition-colors hover:border-fv-accent-soft hover:bg-fv-page disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-fv-card disabled:hover:border-fv-line"
-              >
-                <span aria-hidden="true">←</span>
-                Prev
-              </button>
-              <span className="text-[12.5px] font-semibold tabular-nums text-fv-muted">
-                {loading ? 'Loading…' : `Page ${pageIdx}`}
-              </span>
-              <button
-                type="button"
-                onClick={nextPage}
-                disabled={!nextCursor || loading}
-                className="inline-flex items-center gap-1.5 rounded-[10px] bg-fv-accent px-3 py-1.5 text-[13px] font-semibold text-white transition-colors hover:bg-fv-accent-deep disabled:cursor-not-allowed disabled:opacity-40 disabled:hover:bg-fv-accent"
-              >
-                Next
-                <span aria-hidden="true">→</span>
-              </button>
+          {(nextCursor > 0 || loading) && (
+            <div className="border-t border-slate-100 px-4 py-3 text-center">
+              {loading ? (
+                <span className="text-sm text-slate-500">Loading…</span>
+              ) : (
+                <button
+                  type="button"
+                  onClick={loadMore}
+                  className="text-sm font-medium text-indigo-600 hover:text-indigo-800"
+                >
+                  Load older
+                </button>
+              )}
             </div>
           )}
         </CardBody>
