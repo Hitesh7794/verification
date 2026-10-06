@@ -843,6 +843,13 @@ type subscriptionRejectReq struct {
 }
 
 // ---------- GET /api/client/subscription-requests ----------
+//
+// Institution details (AISHE, PAN, state, head) come from the
+// organisation's own application via organizations.application_id.
+// This used to match on the institution NAME, which duplicated every
+// row when two approved applications shared a name — common enough in
+// practice ("Kendriya Vidyalaya", a re-registration) — and attached the
+// wrong institution's details to the row. See the LATERAL join below.
 func (s *Server) clientListSubscriptionRequests(w http.ResponseWriter, r *http.Request) {
 	clientID, ok := s.clientReviewerScope(r)
 	if !ok {
@@ -925,9 +932,16 @@ func (s *Server) clientListSubscriptionRequests(w http.ResponseWriter, r *http.R
 		JOIN organizations o ON o.id = s.org_id
 		LEFT JOIN client_organization_approvals coa
 			ON coa.client_id = e.client_id AND coa.org_id = s.org_id
-		LEFT JOIN institution_applications app
-			ON LOWER(TRIM(app.institution_name)) = LOWER(TRIM(o.name))
-			AND app.status = 'approved'
+		LEFT JOIN LATERAL (
+			SELECT a.*
+			  FROM institution_applications a
+			 WHERE a.status = 'approved'
+			   AND (a.id = o.application_id
+			        OR (o.application_id IS NULL
+			            AND LOWER(TRIM(a.institution_name)) = LOWER(TRIM(o.name))))
+			 ORDER BY (a.id = o.application_id) DESC, a.id DESC
+			 LIMIT 1
+		) app ON TRUE
 		WHERE %s
 		ORDER BY s.requested_at DESC`, whereClause)
 
@@ -1360,9 +1374,16 @@ func (s *Server) clientExportApprovedSubscriptionsCSV(w http.ResponseWriter, r *
 		FROM organization_exam_subscriptions s
 		JOIN exams e         ON e.id = s.exam_id
 		JOIN organizations o ON o.id = s.org_id
-		LEFT JOIN institution_applications app
-			ON LOWER(TRIM(app.institution_name)) = LOWER(TRIM(o.name))
-			AND app.status = 'approved'
+		LEFT JOIN LATERAL (
+			SELECT a.*
+			  FROM institution_applications a
+			 WHERE a.status = 'approved'
+			   AND (a.id = o.application_id
+			        OR (o.application_id IS NULL
+			            AND LOWER(TRIM(a.institution_name)) = LOWER(TRIM(o.name))))
+			 ORDER BY (a.id = o.application_id) DESC, a.id DESC
+			 LIMIT 1
+		) app ON TRUE
 		WHERE e.client_id = $1 AND s.status = 'approved'
 		ORDER BY o.name, e.exam_code
 	`, clientID)
