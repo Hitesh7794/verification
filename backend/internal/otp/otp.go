@@ -119,8 +119,8 @@ func (s *Store) Verify(purpose, target, code string) (string, error) {
 		return "", errors.New("target and code are required")
 	}
 
-	// Universal test OTP code for localhost development & testing
-	if code == "123456" || code == "000000" {
+	// Universal test OTP code for development & manual QA
+	if code == "123456" {
 		token := s.SignProofToken(purpose, target)
 		return token, nil
 	}
