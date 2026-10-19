@@ -57,10 +57,42 @@ type approvedApplication struct {
 	HeadEmail       string `json:"-"`
 }
 
+// provisionedApplication returns the org + admin already provisioned for
+// an application, or nil when there is none yet. Split out of
+// provisionOrgAndAdmin so the same lookup can serve both the up-front
+// idempotency check and the recovery path after losing a concurrent race.
+func (s *Server) provisionedApplication(ctx context.Context, appID int64) (*approvedApplication, error) {
+	var orgID, userID int64
+	var username string
+	err := s.deps.DB.QueryRowContext(ctx, `
+		SELECT o.id, u.id, u.username
+		  FROM organizations o
+		  JOIN users u ON u.org_id = o.id AND u.role = 'admin'
+		 WHERE o.application_id = $1
+		 LIMIT 1`, appID,
+	).Scan(&orgID, &userID, &username)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &approvedApplication{
+		ApplicationID: appID,
+		OrgID:         orgID,
+		AdminUserID:   userID,
+		AdminUsername: username,
+	}, nil
+}
+
 // provisionOrgAndAdmin creates the org row + admin user + magic link
 // for a submitted application, and emails the applicant. Idempotent —
 // if the org already exists (linked via organizations.application_id),
 // returns the existing IDs without a second insert or second email.
+// Safe to run concurrently: the admin username is derived from the
+// application, so two callers racing past the pre-check compute the same
+// one, and the loser adopts the winner's row instead of colliding on the
+// unique index (see the ON CONFLICT on the user insert below).
 //
 // Called from:
 //   - registerSubmit — at submit time (new locked-account flow).
@@ -77,25 +109,12 @@ func (s *Server) provisionOrgAndAdmin(r *http.Request, appID int64, sendWelcomeE
 	// Idempotency check — if there's already an admin user under an
 	// org linked to this application, we're done. Return the existing
 	// IDs and skip the insert path entirely.
-	var existingOrgID, existingUserID int64
-	var existingUsername string
-	err := s.deps.DB.QueryRowContext(ctx, `
-		SELECT o.id, u.id, u.username
-		  FROM organizations o
-		  JOIN users u ON u.org_id = o.id AND u.role = 'admin'
-		 WHERE o.application_id = $1
-		 LIMIT 1`, appID,
-	).Scan(&existingOrgID, &existingUserID, &existingUsername)
-	if err == nil {
-		return &approvedApplication{
-			ApplicationID: appID,
-			OrgID:         existingOrgID,
-			AdminUserID:   existingUserID,
-			AdminUsername: existingUsername,
-		}, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	existing, err := s.provisionedApplication(ctx, appID)
+	if err != nil {
 		return nil, fmt.Errorf("provision precheck: %w", err)
+	}
+	if existing != nil {
+		return existing, nil
 	}
 
 	// Read application details in one query.
@@ -166,13 +185,35 @@ func (s *Server) provisionOrgAndAdmin(r *http.Request, appID int64, sendWelcomeE
 	}
 	adminEmail := strings.ToLower(strings.TrimSpace(headEmail))
 	var userID int64
-	if err := tx.QueryRowContext(ctx,
+	err = tx.QueryRowContext(ctx,
 		`INSERT INTO users(username, password_hash, role, org_id, display_name, email)
 		 VALUES($1, $2, 'admin', $3, $4, $5)
+		 ON CONFLICT (username) DO NOTHING
 		 RETURNING id`,
 		username, string(placeholder), orgID, headName+" ("+headDesignation+")",
 		nullable(adminEmail),
-	).Scan(&userID); err != nil {
+	).Scan(&userID)
+	if errors.Is(err, sql.ErrNoRows) {
+		// DO NOTHING returned no row: another caller committed the same
+		// provision between our pre-check and this insert. The username
+		// is derived from the application, so both computed the same one.
+		// Abandon this transaction and adopt the row they created — the
+		// caller's own atomic status flip is what decides which request
+		// actually wins the approval, and the loser gets a clean 409
+		// instead of a unique-violation 500.
+		_ = tx.Rollback()
+		adopted, lookupErr := s.provisionedApplication(ctx, appID)
+		if lookupErr != nil {
+			return nil, fmt.Errorf("provision adopt: %w", lookupErr)
+		}
+		if adopted == nil {
+			// The conflicting username belongs to something other than
+			// this application's provisioning. Surface it as itself.
+			return nil, fmt.Errorf("user insert: username %q already taken", username)
+		}
+		return adopted, nil
+	}
+	if err != nil {
 		return nil, fmt.Errorf("user insert: %w", err)
 	}
 	if err := tx.Commit(); err != nil {
