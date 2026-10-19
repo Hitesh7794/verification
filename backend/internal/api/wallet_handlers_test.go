@@ -20,7 +20,7 @@ import (
 	"github.com/veni/neet-verification/internal/auth"
 	"github.com/veni/neet-verification/internal/config"
 	"github.com/veni/neet-verification/internal/data"
-	"github.com/veni/neet-verification/internal/db"
+	"github.com/veni/neet-verification/internal/testsupport"
 	"github.com/veni/neet-verification/internal/wallet"
 )
 
@@ -49,14 +49,7 @@ func walletTestServer(t *testing.T, saveOrder *wallet.Order) (*Server, string, i
 	t.Helper()
 	tmp := t.TempDir()
 
-	d, err := db.Open(filepath.Join(tmp, "v.db"))
-	if err != nil {
-		t.Fatalf("db open: %v", err)
-	}
-	t.Cleanup(func() { d.Close() })
-	if err := db.Migrate(d); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	d := testsupport.FreshDB(t)
 	idx, _ := data.LoadIndex(filepath.Join(tmp, "datatree-empty"))
 
 	jwt := auth.NewJWTService("test-secret", time.Hour)
@@ -72,15 +65,14 @@ func walletTestServer(t *testing.T, saveOrder *wallet.Order) (*Server, string, i
 	}
 	s := NewServer(Deps{DB: d, Index: idx, JWT: jwt, Cfg: cfg})
 
-	res, _ := s.deps.DB.Exec(`INSERT INTO organizations(code, name) VALUES('TEST', 'Test U')`)
-	orgID, _ := res.LastInsertId()
+	orgID := insertID(t, s.deps.DB,
+		`INSERT INTO organizations(code, name) VALUES('TEST', 'Test U') RETURNING id`)
 	hash, _ := bcrypt.GenerateFromPassword([]byte("admin"), bcrypt.MinCost)
-	ures, _ := s.deps.DB.Exec(
+	adminID := insertID(t, s.deps.DB,
 		`INSERT INTO users(username, password_hash, role, org_id, display_name, activated_at)
-		 VALUES('admin', ?, 'admin', ?, 'Admin', CURRENT_TIMESTAMP)`,
+		 VALUES('admin', ?, 'admin', ?, 'Admin', CURRENT_TIMESTAMP) RETURNING id`,
 		string(hash), orgID,
 	)
-	adminID, _ := ures.LastInsertId()
 	tok, _ := jwt.Issue(auth.Claims{UserID: adminID, Username: "admin", Role: "admin", OrgID: &orgID})
 
 	if saveOrder != nil {
@@ -175,15 +167,14 @@ func TestVerifyPayment_CrossOrgOrderRejected(t *testing.T) {
 
 	s, _, orgA, _ := walletTestServer(t, nil)
 	// Seed a second org with its own admin.
-	resB, _ := s.deps.DB.Exec(`INSERT INTO organizations(code, name) VALUES('OTHER','Other U')`)
-	orgB, _ := resB.LastInsertId()
+	orgB := insertID(t, s.deps.DB,
+		`INSERT INTO organizations(code, name) VALUES('OTHER','Other U') RETURNING id`)
 	hash, _ := bcrypt.GenerateFromPassword([]byte("admin"), bcrypt.MinCost)
-	uresB, _ := s.deps.DB.Exec(
+	adminBID := insertID(t, s.deps.DB,
 		`INSERT INTO users(username, password_hash, role, org_id, display_name, activated_at)
-		 VALUES('adminB', ?, 'admin', ?, 'Admin B', CURRENT_TIMESTAMP)`,
+		 VALUES('adminB', ?, 'admin', ?, 'Admin B', CURRENT_TIMESTAMP) RETURNING id`,
 		string(hash), orgB,
 	)
-	adminBID, _ := uresB.LastInsertId()
 	tokB, _ := s.deps.JWT.Issue(auth.Claims{UserID: adminBID, Username: "adminB", Role: "admin", OrgID: &orgB})
 
 	// Seed an order belonging to org A.
@@ -510,11 +501,11 @@ func TestWalletRateLimit_PerUserIsolated(t *testing.T) {
 
 	// Seed admin B in the same org so the rate-limit isolation isn't
 	// confounded by cross-org rejection.
-	res, _ := s.deps.DB.Exec(
+	adminBID := insertID(t, s.deps.DB,
 		`INSERT INTO users(username, password_hash, role, org_id, display_name, activated_at)
-		 VALUES('admin2', 'h', 'admin', ?, 'Admin 2', CURRENT_TIMESTAMP)`, orgID,
+		 VALUES('admin2', 'h', 'admin', ?, 'Admin 2', CURRENT_TIMESTAMP) RETURNING id`,
+		orgID,
 	)
-	adminBID, _ := res.LastInsertId()
 	tokB, _ := s.deps.JWT.Issue(auth.Claims{
 		UserID: adminBID, Username: "admin2", Role: "admin", OrgID: &orgID,
 	})

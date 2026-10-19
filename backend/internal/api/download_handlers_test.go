@@ -15,6 +15,7 @@ import (
 	"github.com/veni/neet-verification/internal/config"
 	"github.com/veni/neet-verification/internal/data"
 	"github.com/veni/neet-verification/internal/db"
+	"github.com/veni/neet-verification/internal/testsupport"
 )
 
 // Tests for the admin Downloads page backend (download_handlers.go).
@@ -37,14 +38,7 @@ func downloadsServer(t *testing.T, bundleName string, bundleBytes []byte) (s *Se
 	t.Helper()
 	tmp := t.TempDir()
 
-	d, err := db.Open(filepath.Join(tmp, "v.db"))
-	if err != nil {
-		t.Fatalf("db open: %v", err)
-	}
-	t.Cleanup(func() { d.Close() })
-	if err := db.Migrate(d); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	d := testsupport.FreshDB(t)
 	idx, _ := data.LoadIndex(filepath.Join(tmp, "datatree-empty"))
 
 	dlDir = filepath.Join(tmp, "downloads")
@@ -67,15 +61,15 @@ func downloadsServer(t *testing.T, bundleName string, bundleBytes []byte) (s *Se
 	s = NewServer(Deps{DB: d, Index: idx, JWT: jwt, Cfg: cfg})
 
 	// One org, one admin.
-	res, _ := s.deps.DB.Exec(`INSERT INTO organizations(code, name) VALUES('TEST', 'Test University')`)
-	orgID, _ = res.LastInsertId()
+	orgID = insertID(t, s.deps.DB,
+		`INSERT INTO organizations(code, name)
+		 VALUES('TEST', 'Test University') RETURNING id`)
 	hash, _ := bcrypt.GenerateFromPassword([]byte("admin"), bcrypt.MinCost)
-	ures, _ := s.deps.DB.Exec(
+	adminID := insertID(t, s.deps.DB,
 		`INSERT INTO users(username, password_hash, role, org_id, display_name, activated_at)
-		 VALUES('admin', ?, 'admin', ?, 'Admin', CURRENT_TIMESTAMP)`,
+		 VALUES('admin', ?, 'admin', ?, 'Admin', CURRENT_TIMESTAMP) RETURNING id`,
 		string(hash), orgID,
 	)
-	adminID, _ := ures.LastInsertId()
 	tok, err := jwt.Issue(auth.Claims{UserID: adminID, Username: "admin", Role: "admin", OrgID: &orgID})
 	if err != nil {
 		t.Fatalf("issue jwt: %v", err)
@@ -195,15 +189,15 @@ func TestDownloadsManifest_LastDownloadOrgIsolation(t *testing.T) {
 	s, tokA, orgIDA, dlDir := downloadsServer(t, "VerificationPortalClient-1.0.0-windows.zip", payload)
 
 	// Seed a second org + admin manually on the same server.
-	res, _ := s.deps.DB.Exec(`INSERT INTO organizations(code, name) VALUES('OTHER', 'Other University')`)
-	orgIDB, _ := res.LastInsertId()
+	orgIDB := insertID(t, s.deps.DB,
+		`INSERT INTO organizations(code, name)
+		 VALUES('OTHER', 'Other University') RETURNING id`)
 	hash, _ := bcrypt.GenerateFromPassword([]byte("admin"), bcrypt.MinCost)
-	ures, _ := s.deps.DB.Exec(
+	adminIDB := insertID(t, s.deps.DB,
 		`INSERT INTO users(username, password_hash, role, org_id, display_name, activated_at)
-		 VALUES('adminB', ?, 'admin', ?, 'Admin B', CURRENT_TIMESTAMP)`,
+		 VALUES('adminB', ?, 'admin', ?, 'Admin B', CURRENT_TIMESTAMP) RETURNING id`,
 		string(hash), orgIDB,
 	)
-	adminIDB, _ := ures.LastInsertId()
 	tokB, _ := s.deps.JWT.Issue(auth.Claims{UserID: adminIDB, Username: "adminB", Role: "admin", OrgID: &orgIDB})
 
 	_ = dlDir
@@ -243,13 +237,13 @@ func TestDownloadsDownload_ClientRoleCanDownload(t *testing.T) {
 	// Seed a client operator in the same org as the admin the helper
 	// created. Post migration 021 there's no centre column.
 	hash, _ := bcrypt.GenerateFromPassword([]byte("op"), bcrypt.MinCost)
-	ores, _ := s.deps.DB.Exec(
+	opID := insertID(t, s.deps.DB,
 		`INSERT INTO users(username, password_hash, password_plaintext, role,
 		                   org_id, display_name, activated_at)
-		 VALUES('op', ?, 'op', 'client', ?, 'Centre Operator', CURRENT_TIMESTAMP)`,
+		 VALUES('op', ?, 'op', 'client', ?, 'Centre Operator', CURRENT_TIMESTAMP)
+		 RETURNING id`,
 		string(hash), orgID,
 	)
-	opID, _ := ores.LastInsertId()
 	cliTok, _ := s.deps.JWT.Issue(auth.Claims{
 		UserID: opID, Username: "op", Role: "client", OrgID: &orgID,
 	})
@@ -279,11 +273,13 @@ func TestDownloadsDownload_ClientRoleCanDownload(t *testing.T) {
 
 	// Audit row exists for the client's download.
 	var n int
-	_ = s.deps.DB.QueryRow(
+	if err := s.deps.DB.QueryRow(db.Q(
 		`SELECT COUNT(*) FROM audit_log
 		 WHERE action='downloads.operator_client.get'
-		   AND org_id=? AND actor_role='client'`, orgID,
-	).Scan(&n)
+		   AND org_id=? AND actor_role='client'`), orgID,
+	).Scan(&n); err != nil {
+		t.Fatalf("count client audit rows: %v", err)
+	}
 	if n != 1 {
 		t.Errorf("expected 1 client-role audit row, got %d", n)
 	}
@@ -313,9 +309,9 @@ func TestParseVersionFromFilename(t *testing.T) {
 func assertAuditCount(t *testing.T, s *Server, orgID int64, want int) {
 	t.Helper()
 	var n int
-	err := s.deps.DB.QueryRow(
+	err := s.deps.DB.QueryRow(db.Q(
 		`SELECT COUNT(*) FROM audit_log
-		 WHERE action='downloads.operator_client.get' AND org_id=?`, orgID,
+		 WHERE action='downloads.operator_client.get' AND org_id=?`), orgID,
 	).Scan(&n)
 	if err != nil {
 		t.Fatalf("count audit: %v", err)

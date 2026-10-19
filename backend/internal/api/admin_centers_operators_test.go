@@ -28,6 +28,7 @@ import (
 	"github.com/veni/neet-verification/internal/config"
 	"github.com/veni/neet-verification/internal/data"
 	"github.com/veni/neet-verification/internal/db"
+	"github.com/veni/neet-verification/internal/testsupport"
 )
 
 // orgFixture is a fully-formed tenant: one organisation, one centre,
@@ -51,14 +52,7 @@ func twoOrgServer(t *testing.T) (*Server, orgFixture, orgFixture) {
 	t.Helper()
 	tmp := t.TempDir()
 
-	d, err := db.Open(filepath.Join(tmp, "v.db"))
-	if err != nil {
-		t.Fatalf("db open: %v", err)
-	}
-	t.Cleanup(func() { d.Close() })
-	if err := db.Migrate(d); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	d := testsupport.FreshDB(t)
 	idx, _ := data.LoadIndex(filepath.Join(tmp, "datatree-empty"))
 
 	jwt := auth.NewJWTService("test-secret", time.Hour)
@@ -76,35 +70,35 @@ func twoOrgServer(t *testing.T) (*Server, orgFixture, orgFixture) {
 
 func seedOrgFixture(t *testing.T, s *Server, jwt *auth.JWTService, orgCode, orgName, adminUser, opUser, opPassword string) orgFixture {
 	t.Helper()
-	res, err := s.deps.DB.Exec(
-		`INSERT INTO organizations(code, name) VALUES(?, ?)`, orgCode, orgName)
-	if err != nil {
+	var orgID int64
+	if err := s.deps.DB.QueryRow(db.Q(
+		`INSERT INTO organizations(code, name) VALUES(?, ?) RETURNING id`),
+		orgCode, orgName,
+	).Scan(&orgID); err != nil {
 		t.Fatalf("insert org %s: %v", orgCode, err)
 	}
-	orgID, _ := res.LastInsertId()
 
 	adminHash, _ := bcrypt.GenerateFromPassword([]byte("admin-test-pw"), bcrypt.MinCost)
-	ures, err := s.deps.DB.Exec(
+	var adminID int64
+	if err := s.deps.DB.QueryRow(db.Q(
 		`INSERT INTO users(username, password_hash, role, org_id, display_name, activated_at)
-		 VALUES(?, ?, 'admin', ?, ?, CURRENT_TIMESTAMP)`,
+		 VALUES(?, ?, 'admin', ?, ?, CURRENT_TIMESTAMP) RETURNING id`),
 		adminUser, string(adminHash), orgID, "Admin of "+orgName,
-	)
-	if err != nil {
+	).Scan(&adminID); err != nil {
 		t.Fatalf("insert admin: %v", err)
 	}
-	adminID, _ := ures.LastInsertId()
 
 	opHash, _ := bcrypt.GenerateFromPassword([]byte(opPassword), bcrypt.MinCost)
-	opRes, err := s.deps.DB.Exec(
+	var opID int64
+	if err := s.deps.DB.QueryRow(db.Q(
 		`INSERT INTO users(username, password_hash, password_plaintext, role,
-		                   org_id, display_name, activated_at)
-		 VALUES(?, ?, ?, 'client', ?, 'Centre Operator', CURRENT_TIMESTAMP)`,
+		                   org_id, display_name, activated_at, spending_cap_paise)
+		 VALUES(?, ?, ?, 'client', ?, 'Centre Operator', CURRENT_TIMESTAMP, 10000000)
+		 RETURNING id`),
 		opUser, string(opHash), opPassword, orgID,
-	)
-	if err != nil {
+	).Scan(&opID); err != nil {
 		t.Fatalf("insert operator: %v", err)
 	}
-	opID, _ := opRes.LastInsertId()
 
 	tok, err := jwt.Issue(auth.Claims{
 		UserID:   adminID,
@@ -163,9 +157,15 @@ func doJSON(t *testing.T, s *Server, method, path, token string, body any) (int,
 
 // Full integration: the registration approval flow auto-creates the
 // shared operator and the returned credentials immediately work for
-// login. This is the headline "I approved an institution and they can
-// onboard their team" check.
-func TestApprovalFlow_ReturnsWorkingSharedOperator(t *testing.T) {
+// login. This is the headline "I approved an institution and it is now a
+// tenant" check.
+//
+// Approval used to hand back a ready-made shared "Centre Operator" and its
+// plaintext password. That was removed in b05d5a1 ("remove auto Centre
+// Operator") because the institute admin creates their own agents from the
+// operator page. What approval owes the caller now is the tenant itself:
+// the org, its admin user, and the link that admin sets a password with.
+func TestApprovalFlow_ProvisionsOrgAndAdmin(t *testing.T) {
 	s := approvalTestServer(t)
 
 	// Seed an institution_application row in pending state.
@@ -180,30 +180,51 @@ func TestApprovalFlow_ReturnsWorkingSharedOperator(t *testing.T) {
 		t.Fatalf("approve: %d %v", code, body)
 	}
 
-	opUser, _ := body["operator_username"].(string)
-	opPass, _ := body["operator_password"].(string)
-	if opUser == "" || opPass == "" {
-		t.Fatalf("approval response must include operator credentials; got user=%q pass=%q", opUser, opPass)
+	adminUser, _ := body["admin_username"].(string)
+	if adminUser == "" {
+		t.Errorf("approval must name the admin it provisioned; got %v", body)
+	}
+	if link, _ := body["magic_link_url"].(string); link == "" {
+		t.Errorf("approval must return a set-password link; got %v", body["magic_link_url"])
 	}
 
-	// Operator should be able to log in immediately with no separate
-	// activation flow — that was the whole point of switching off
-	// per-operator email invites.
-	loginCode, loginBody := doJSON(t, s, "POST", "/api/auth/login", "", map[string]any{
-		"username": opUser, "password": opPass,
-	})
-	if loginCode != http.StatusOK {
-		t.Fatalf("operator login after approval: want 200, got %d body=%v", loginCode, loginBody)
+	var status string
+	if err := s.deps.DB.QueryRow(db.Q(
+		`SELECT status FROM institution_applications WHERE id = ?`), appID,
+	).Scan(&status); err != nil {
+		t.Fatalf("read application: %v", err)
 	}
-	user := loginBody["user"].(map[string]any)
-	if user["role"] != "client" {
-		t.Errorf("role: want client, got %v", user["role"])
+	if status != "approved" {
+		t.Errorf("application status: want approved, got %q", status)
 	}
-	if user["org_id"] == nil {
-		t.Errorf("operator must carry org_id claim")
+
+	var adminCount int
+	if err := s.deps.DB.QueryRow(db.Q(
+		`SELECT COUNT(*)
+		   FROM users u
+		   JOIN organizations o ON o.id = u.org_id
+		  WHERE o.application_id = ? AND u.role = 'admin' AND u.username = ?`),
+		appID, adminUser,
+	).Scan(&adminCount); err != nil {
+		t.Fatalf("count admin: %v", err)
 	}
-	// center_id was removed from the login response along with the
-	// centers table in migration 021.
+	if adminCount != 1 {
+		t.Errorf("want exactly 1 provisioned admin for the application, got %d", adminCount)
+	}
+
+	// And no agent is conjured on the institute's behalf.
+	var opCount int
+	if err := s.deps.DB.QueryRow(db.Q(
+		`SELECT COUNT(*)
+		   FROM users u
+		   JOIN organizations o ON o.id = u.org_id
+		  WHERE o.application_id = ? AND u.role = 'client'`), appID,
+	).Scan(&opCount); err != nil {
+		t.Fatalf("count operators: %v", err)
+	}
+	if opCount != 0 {
+		t.Errorf("approval must not auto-create agents, got %d", opCount)
+	}
 }
 
 // approvalTestServer is a minimal server with one superadmin user
@@ -211,14 +232,7 @@ func TestApprovalFlow_ReturnsWorkingSharedOperator(t *testing.T) {
 func approvalTestServer(t *testing.T) *Server {
 	t.Helper()
 	tmp := t.TempDir()
-	d, err := db.Open(filepath.Join(tmp, "v.db"))
-	if err != nil {
-		t.Fatalf("db: %v", err)
-	}
-	t.Cleanup(func() { d.Close() })
-	if err := db.Migrate(d); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
+	d := testsupport.FreshDB(t)
 	idx, _ := data.LoadIndex(filepath.Join(tmp, "datatree-empty"))
 	jwt := auth.NewJWTService("test-secret", time.Hour)
 	cfg := config.Config{
@@ -234,34 +248,34 @@ func approvalTestServer(t *testing.T) *Server {
 // the test stays focused on approval behaviour, not registration parsing.
 func seedPendingApplication(t *testing.T, s *Server) int64 {
 	t.Helper()
-	res, err := s.deps.DB.Exec(
+	var id int64
+	if err := s.deps.DB.QueryRow(
 		`INSERT INTO institution_applications(
 		    status, institution_name, institution_type, tier,
 		    aishe_code, address_line1, city, state, pin_code,
 		    head_name, head_designation, head_email, head_mobile
 		 ) VALUES('pending','Approval-Test University','university','tier_1',
 		          'U-TEST-001','1 Test Road','Testville','TestState','000000',
-		          'Test Head','Vice-Chancellor','head@example.com','9000000000')`,
-	)
-	if err != nil {
+		          'Test Head','Vice-Chancellor','head@example.com','9000000000')
+		 RETURNING id`,
+	).Scan(&id); err != nil {
 		t.Fatalf("seed application: %v", err)
 	}
-	id, _ := res.LastInsertId()
 	return id
 }
 
 func mintSuperadminToken(t *testing.T, s *Server) string {
 	t.Helper()
 	hash, _ := bcrypt.GenerateFromPassword([]byte("super"), bcrypt.MinCost)
-	res, err := s.deps.DB.Exec(
+	var id int64
+	if err := s.deps.DB.QueryRow(db.Q(
 		`INSERT INTO users(username, password_hash, role, display_name, activated_at)
-		 VALUES('super_test', ?, 'superadmin', 'Test Super', CURRENT_TIMESTAMP)`,
+		 VALUES('super_test', ?, 'superadmin', 'Test Super', CURRENT_TIMESTAMP)
+		 RETURNING id`),
 		string(hash),
-	)
-	if err != nil {
+	).Scan(&id); err != nil {
 		t.Fatalf("seed superadmin: %v", err)
 	}
-	id, _ := res.LastInsertId()
 	tok, err := s.deps.JWT.Issue(auth.Claims{
 		UserID: id, Username: "super_test", Role: "superadmin",
 	})

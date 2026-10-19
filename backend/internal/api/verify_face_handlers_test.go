@@ -16,6 +16,7 @@ import (
 	"github.com/veni/neet-verification/internal/config"
 	"github.com/veni/neet-verification/internal/data"
 	"github.com/veni/neet-verification/internal/db"
+	"github.com/veni/neet-verification/internal/testsupport"
 	"github.com/veni/neet-verification/internal/trustview"
 )
 
@@ -75,7 +76,7 @@ func (f *fakeTrustViewSvc) handler() http.Handler {
 	return mux
 }
 
-func newFaceTestServer(t *testing.T) (*Server, string, string, *fakeTrustViewSvc, func()) {
+func newFaceTestServer(t *testing.T) (*Server, string, string, int64, *fakeTrustViewSvc, func()) {
 	t.Helper()
 
 	tmp := t.TempDir()
@@ -96,13 +97,7 @@ func newFaceTestServer(t *testing.T) (*Server, string, string, *fakeTrustViewSvc
 		t.Fatal(err)
 	}
 
-	d, err := db.Open(filepath.Join(tmp, "v.db"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := db.Migrate(d); err != nil {
-		t.Fatal(err)
-	}
+	d := testsupport.FreshDB(t)
 	idx, err := data.LoadIndex(filepath.Join(tmp, "datatree"))
 	if err != nil {
 		t.Fatal(err)
@@ -132,11 +127,7 @@ func newFaceTestServer(t *testing.T) (*Server, string, string, *fakeTrustViewSvc
 		Token:   cfg.TrustViewToken,
 	})
 
-	var uid, orgID int64
-	if err := d.QueryRow(`SELECT id, org_id FROM users WHERE username='client'`).
-		Scan(&uid, &orgID); err != nil {
-		t.Fatal(err)
-	}
+	orgID, uid, _ := seedClientOperator(t, d, "FACE", "Face Test University", "client")
 	tok, err := jwt.Issue(auth.Claims{
 		UserID: uid, Username: "client", Role: "client",
 		OrgID: &orgID,
@@ -149,18 +140,22 @@ func newFaceTestServer(t *testing.T) (*Server, string, string, *fakeTrustViewSvc
 		httpSrv.Close()
 		d.Close()
 	}
-	return s, tok, roll, fake, cleanup
+	return s, tok, roll, orgID, fake, cleanup
 }
 
 func TestFaceMatchHappyPath(t *testing.T) {
-	s, tok, roll, fake, cleanup := newFaceTestServer(t)
+	s, tok, roll, orgID, fake, cleanup := newFaceTestServer(t)
 	defer cleanup()
 
+	const session = "sess-happy"
+	seedLivenessPass(t, s.deps.DB, orgID, roll, session)
+
 	body, _ := json.Marshal(map[string]any{
-		"roll_no":   roll,
-		"image_b64": base64.StdEncoding.EncodeToString([]byte("fake-live-jpeg")),
+		"roll_no":         roll,
+		"idempotency_key": session,
+		"image_b64":       base64.StdEncoding.EncodeToString([]byte("fake-live-jpeg")),
 	})
-	req := httptest.NewRequest("POST", "/api/face-match", bytes.NewReader(body))
+	req := httptest.NewRequest("POST", "/api/candidates/"+roll+"/face-match", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+tok)
 	rr := httptest.NewRecorder()
@@ -187,18 +182,22 @@ func TestFaceMatchHappyPath(t *testing.T) {
 }
 
 func TestFaceMatchNoFace(t *testing.T) {
-	s, tok, roll, fake, cleanup := newFaceTestServer(t)
+	s, tok, roll, orgID, fake, cleanup := newFaceTestServer(t)
 	defer cleanup()
 	fake.mu.Lock()
 	fake.nextStatus = 422
 	fake.nextCode = "no_face"
 	fake.mu.Unlock()
 
+	const session = "sess-no-face"
+	seedLivenessPass(t, s.deps.DB, orgID, roll, session)
+
 	body, _ := json.Marshal(map[string]any{
-		"roll_no":   roll,
-		"image_b64": base64.StdEncoding.EncodeToString([]byte("x")),
+		"roll_no":         roll,
+		"idempotency_key": session,
+		"image_b64":       base64.StdEncoding.EncodeToString([]byte("x")),
 	})
-	req := httptest.NewRequest("POST", "/api/face-match", bytes.NewReader(body))
+	req := httptest.NewRequest("POST", "/api/candidates/"+roll+"/face-match", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+tok)
 	rr := httptest.NewRecorder()
@@ -209,14 +208,20 @@ func TestFaceMatchNoFace(t *testing.T) {
 }
 
 func TestFaceMatchUnknownCandidate(t *testing.T) {
-	s, tok, _, _, cleanup := newFaceTestServer(t)
+	s, tok, _, orgID, _, cleanup := newFaceTestServer(t)
 	defer cleanup()
 
+	// Clear the liveness gate for the unknown roll too, so the 404 we
+	// assert on is the candidate lookup and not the gate.
+	const session = "sess-unknown"
+	seedLivenessPass(t, s.deps.DB, orgID, "99999", session)
+
 	body, _ := json.Marshal(map[string]any{
-		"roll_no":   "99999",
-		"image_b64": base64.StdEncoding.EncodeToString([]byte("x")),
+		"roll_no":         "99999",
+		"idempotency_key": session,
+		"image_b64":       base64.StdEncoding.EncodeToString([]byte("x")),
 	})
-	req := httptest.NewRequest("POST", "/api/face-match", bytes.NewReader(body))
+	req := httptest.NewRequest("POST", "/api/candidates/99999/face-match", bytes.NewReader(body))
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+tok)
 	rr := httptest.NewRecorder()
@@ -226,23 +231,10 @@ func TestFaceMatchUnknownCandidate(t *testing.T) {
 	}
 }
 
-// TestFaceTemplateEndpoint verifies the deprecated /face-template
-// endpoint returns 410 Gone (loud failure) instead of silently serving
-// stale cached bytes after the TrustView migration retired server-side
-// template extraction.
-func TestFaceTemplateEndpoint(t *testing.T) {
-	s, tok, roll, _, cleanup := newFaceTestServer(t)
-	defer cleanup()
-
-	req := httptest.NewRequest("GET", "/api/candidates/"+roll+"/face-template", nil)
-	req.Header.Set("Authorization", "Bearer "+tok)
-	rr := httptest.NewRecorder()
-	s.Router().ServeHTTP(rr, req)
-
-	if rr.Code != http.StatusGone {
-		t.Fatalf("expected 410 Gone, got %d body %s", rr.Code, rr.Body)
-	}
-}
+// The /candidates/{roll}/face-template test was removed along with the
+// endpoint: the TrustView migration retired server-side template
+// extraction, the route is no longer registered and galleryTemplate /
+// faceTemplatePath are gone. There is nothing left to serve a 410.
 
 func TestDecodeDataURL(t *testing.T) {
 	cases := []struct {

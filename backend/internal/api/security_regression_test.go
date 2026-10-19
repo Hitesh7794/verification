@@ -16,6 +16,7 @@ import (
 	"time"
 
 	"github.com/veni/neet-verification/internal/auth"
+	"github.com/veni/neet-verification/internal/db"
 )
 
 // -----------------------------------------------------------------------
@@ -45,8 +46,8 @@ func TestAuthMiddleware_DisabledMidSessionRejected(t *testing.T) {
 
 	// Operator is authed. Now disable them DB-side while their token
 	// stays valid in JWT terms.
-	if _, err := s.deps.DB.Exec(
-		`UPDATE users SET disabled_at = CURRENT_TIMESTAMP WHERE id = ?`, a.OperatorID,
+	if _, err := s.deps.DB.Exec(db.Q(
+		`UPDATE users SET disabled_at = CURRENT_TIMESTAMP WHERE id = ?`), a.OperatorID,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -73,15 +74,15 @@ func TestAuthMiddleware_DeletedUserRejected(t *testing.T) {
 	})
 	opToken := loginBody["token"].(string)
 
-	if _, err := s.deps.DB.Exec(`DELETE FROM users WHERE id = ?`, a.OperatorID); err != nil {
+	if _, err := s.deps.DB.Exec(db.Q(`DELETE FROM users WHERE id = ?`), a.OperatorID); err != nil {
 		t.Fatal(err)
 	}
 	code, body := doJSON(t, s, "GET", "/api/me", opToken, nil)
 	if code != http.StatusUnauthorized {
 		t.Errorf("deleted-user must 401, got %d", code)
 	}
-	if msg, _ := body["error"].(string); !strings.Contains(msg, "no longer exists") {
-		t.Errorf("expected 'no longer exists' in error, got %q", msg)
+	if msg, _ := body["error"].(string); !strings.Contains(msg, "no longer available") {
+		t.Errorf("expected 'no longer available' in error, got %q", msg)
 	}
 }
 
@@ -130,15 +131,16 @@ func TestApprovalRace_OnlyOneSucceeds(t *testing.T) {
 		t.Errorf("want %d conflicts, got %d", concurrency-1, conflicts)
 	}
 
-	// One admin + one operator created in total — no duplicates.
-	var adminCount, opCount int
-	_ = s.deps.DB.QueryRow(`SELECT COUNT(*) FROM users WHERE role='admin'`).Scan(&adminCount)
-	_ = s.deps.DB.QueryRow(`SELECT COUNT(*) FROM users WHERE role='client'`).Scan(&opCount)
+	// Exactly one admin provisioned in total - no duplicates. (Approval
+	// stopped auto-creating an agent in b05d5a1, so there is no operator
+	// count to assert here any more.)
+	var adminCount int
+	if err := s.deps.DB.QueryRow(
+		`SELECT COUNT(*) FROM users WHERE role='admin'`).Scan(&adminCount); err != nil {
+		t.Fatalf("count admins: %v", err)
+	}
 	if adminCount != 1 {
 		t.Errorf("race must create exactly 1 admin, got %d", adminCount)
-	}
-	if opCount != 1 {
-		t.Errorf("race must create exactly 1 operator, got %d", opCount)
 	}
 }
 
@@ -151,9 +153,9 @@ func TestWalletCharge_FailedLookupDoesNotDebit(t *testing.T) {
 	s, a, _ := twoOrgServer(t)
 	// Make sure the fee is positive and the wallet has funds.
 	s.deps.Cfg.WalletFeePerLookupPaise = 500
-	if _, err := s.deps.DB.Exec(
+	if _, err := s.deps.DB.Exec(db.Q(
 		`INSERT INTO wallets(org_id, balance_paise) VALUES(?, 50000)
-		 ON CONFLICT(org_id) DO UPDATE SET balance_paise = excluded.balance_paise`,
+		 ON CONFLICT(org_id) DO UPDATE SET balance_paise = excluded.balance_paise`),
 		a.OrgID,
 	); err != nil {
 		t.Fatal(err)
@@ -177,13 +179,13 @@ func TestWalletCharge_FailedLookupDoesNotDebit(t *testing.T) {
 
 	// Wallet balance unchanged + no charge row.
 	var bal int
-	_ = s.deps.DB.QueryRow(`SELECT balance_paise FROM wallets WHERE org_id=?`, a.OrgID).Scan(&bal)
+	_ = s.deps.DB.QueryRow(db.Q(`SELECT balance_paise FROM wallets WHERE org_id=?`), a.OrgID).Scan(&bal)
 	if bal != 50000 {
 		t.Errorf("balance must not move on failed lookup; want 50000, got %d", bal)
 	}
 	var charges int
-	_ = s.deps.DB.QueryRow(
-		`SELECT COUNT(*) FROM wallet_transactions WHERE org_id=? AND kind='charge'`, a.OrgID,
+	_ = s.deps.DB.QueryRow(db.Q(
+		`SELECT COUNT(*) FROM wallet_transactions WHERE org_id=? AND kind='charge'`), a.OrgID,
 	).Scan(&charges)
 	if charges != 0 {
 		t.Errorf("failed lookup must not write a charge row; got %d", charges)
@@ -194,16 +196,17 @@ func TestWalletCharge_FailedLookupDoesNotDebit(t *testing.T) {
 // invoking the inner handler — confirms the early 402 path still
 // fires after the buffered refactor.
 func TestWalletCharge_EmptyWalletRejected(t *testing.T) {
-	// Face-first flow (from Aug 2026): the wallet charge fires on the
-	// face-match endpoint, not on the free candidate lookup. This test
-	// asserts an empty wallet blocks the operator at the face capture
-	// step — which is the operator's first payable action.
+	// The charge moved from face-match to /liveness-check on 2026-08-24
+	// so that fingerprint-only and iris-only exams pay too: liveness
+	// always fires, face-match does not. Liveness is therefore the
+	// operator's first payable action, and an empty wallet has to be
+	// refused there.
 	s, a, _ := twoOrgServer(t)
 	s.deps.Cfg.WalletFeePerLookupPaise = 500
 	// Force wallet to 0 explicitly.
-	if _, err := s.deps.DB.Exec(
+	if _, err := s.deps.DB.Exec(db.Q(
 		`INSERT INTO wallets(org_id, balance_paise) VALUES(?, 0)
-		 ON CONFLICT(org_id) DO UPDATE SET balance_paise = 0`, a.OrgID,
+		 ON CONFLICT(org_id) DO UPDATE SET balance_paise = 0`), a.OrgID,
 	); err != nil {
 		t.Fatal(err)
 	}
@@ -215,12 +218,65 @@ func TestWalletCharge_EmptyWalletRejected(t *testing.T) {
 	if code, _ := doJSON(t, s, "GET", "/api/candidates/anything", opToken, nil); code == http.StatusPaymentRequired {
 		t.Errorf("candidate lookup should be free (no 402), got %d", code)
 	}
-	// Face-match on an empty wallet must 402 (pre-check inside walletCharge).
-	code, _ := doJSON(t, s, "POST", "/api/candidates/anything/face-match", opToken, map[string]any{
-		"image_b64": "",
+	// Liveness on an empty wallet must 402 (pre-check inside walletCharge),
+	// before the handler runs at all.
+	code, _ := doJSON(t, s, "POST", "/api/candidates/anything/liveness-check", opToken, map[string]any{
+		"idempotency_key": "sess-empty-wallet",
 	})
 	if code != http.StatusPaymentRequired {
-		t.Errorf("face-match on empty wallet must 402, got %d", code)
+		t.Errorf("liveness on empty wallet must 402, got %d", code)
+	}
+}
+
+// -----------------------------------------------------------------------
+// Purse allocation (2026-09-21): an agent whose spending_cap_paise is NULL
+// has nothing allocated, so the roll lookup is refused at the search box
+// rather than at the camera - the agent hears it before a candidate has
+// sat down. cap_paise 0 in the body is what tells the frontend "nothing
+// allocated" as opposed to "allocation exhausted".
+// -----------------------------------------------------------------------
+
+func TestRollLookup_NoPurseAllocatedRefused(t *testing.T) {
+	s, a, _ := twoOrgServer(t)
+	s.deps.Cfg.WalletFeePerLookupPaise = 500
+	// Fund the org, so the only thing missing is the agent's own
+	// allocation.
+	if _, err := s.deps.DB.Exec(db.Q(
+		`INSERT INTO wallets(org_id, balance_paise) VALUES(?, 50000)
+		 ON CONFLICT(org_id) DO UPDATE SET balance_paise = excluded.balance_paise`),
+		a.OrgID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	// Take the fixture agent's allocation away.
+	if _, err := s.deps.DB.Exec(db.Q(
+		`UPDATE users SET spending_cap_paise = NULL WHERE id = ?`), a.OperatorID,
+	); err != nil {
+		t.Fatal(err)
+	}
+
+	_, loginBody := doJSON(t, s, "POST", "/api/auth/login", "", map[string]any{
+		"username": a.OperatorUsername, "password": a.OperatorPassword,
+	})
+	opToken := loginBody["token"].(string)
+
+	code, body := doJSON(t, s, "GET", "/api/candidates/10001", opToken, nil)
+	if code != http.StatusPaymentRequired {
+		t.Fatalf("roll lookup with no allocation must 402, got %d body=%v", code, body)
+	}
+	if body["cap_paise"] != float64(0) {
+		t.Errorf(`cap_paise must be 0 so the UI can say "not allocated"; got %v`, body["cap_paise"])
+	}
+
+	// With an allocation the lookup gets past the money gate. It may
+	// still fail on the empty data tree, but it must not 402.
+	if _, err := s.deps.DB.Exec(db.Q(
+		`UPDATE users SET spending_cap_paise = 100000 WHERE id = ?`), a.OperatorID,
+	); err != nil {
+		t.Fatal(err)
+	}
+	if code, _ := doJSON(t, s, "GET", "/api/candidates/10001", opToken, nil); code == http.StatusPaymentRequired {
+		t.Errorf("roll lookup with an allocation must not 402")
 	}
 }
 
@@ -230,6 +286,13 @@ func TestWalletCharge_EmptyWalletRejected(t *testing.T) {
 // -----------------------------------------------------------------------
 
 func TestLoginRateLimit_BlocksAfterThreshold(t *testing.T) {
+	// Disabled on purpose - see the comment at the top of Server.login:
+	// the 10-per-15-minute limit was tripping demo and password-reset
+	// loops from shared public IPs. The limiter is still constructed and
+	// pruned, just never consulted, so this test stays here ready to run
+	// the moment the guard is wired back in.
+	t.Skip("per-IP login rate limiting intentionally disabled; see Server.login")
+
 	s, _, _ := twoOrgServer(t)
 	// Use a doJSON variant that fakes a public IP via X-Forwarded-For.
 	// shouldRateLimit only honours non-loopback / non-private; using
@@ -389,13 +452,13 @@ func TestChangePassword_AdminPlaintextStaysNull(t *testing.T) {
 		"current_password": "admin-test-pw",
 		"new_password":     "AdminRotation99!",
 	})
-	var plaintextIsNotNull int
-	if err := s.deps.DB.QueryRow(
-		`SELECT password_plaintext IS NOT NULL FROM users WHERE id = ?`, a.AdminID,
+	var plaintextIsNotNull bool
+	if err := s.deps.DB.QueryRow(db.Q(
+		`SELECT password_plaintext IS NOT NULL FROM users WHERE id = ?`), a.AdminID,
 	).Scan(&plaintextIsNotNull); err != nil {
 		t.Fatal(err)
 	}
-	if plaintextIsNotNull != 0 {
+	if plaintextIsNotNull {
 		t.Errorf("admin password_plaintext must stay NULL; got populated")
 	}
 }

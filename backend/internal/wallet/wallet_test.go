@@ -4,52 +4,41 @@ import (
 	"context"
 	"database/sql"
 	"errors"
-	"path/filepath"
+	"os"
 	"sync"
 	"testing"
 
-	_ "modernc.org/sqlite"
-
 	"github.com/veni/neet-verification/internal/db"
+	"github.com/veni/neet-verification/internal/testsupport"
 )
 
-// freshDB returns a temporary file-backed SQLite database with all
-// migrations applied + a test org and operator user seeded. We use the
-// production db.Open helper rather than a bare sql.Open so the test
-// sees the same WAL / busy_timeout pragmas the real backend runs with
-// — that's what lets the concurrent-debit test pass under high
-// contention without spurious SQLITE_BUSY errors.
+func TestMain(m *testing.M) { os.Exit(testsupport.Main(m)) }
+
+// freshDB returns a migrated Postgres database belonging to this test
+// alone, with a test org and an operator user seeded. Because no other
+// test shares it, the concurrent-debit test can assert on an exact final
+// balance rather than on a delta.
 //
 // Returns (db, orgID, operatorUserID). Operator is the "actor" for
 // charge rows; tests that need a separate admin actor can pass 0.
 func freshDB(t *testing.T) (*sql.DB, int64, int64) {
 	t.Helper()
-	dir := t.TempDir()
-	dsn := filepath.Join(dir, "wallet-test.db")
-	d, err := db.Open(dsn)
-	if err != nil {
-		t.Fatalf("open: %v", err)
-	}
-	t.Cleanup(func() { d.Close() })
-	if err := db.Migrate(d); err != nil {
-		t.Fatalf("migrate: %v", err)
-	}
-	orgRes, err := d.Exec(
-		`INSERT INTO organizations(code, name) VALUES(?,?)`,
+	d := testsupport.FreshDB(t)
+	var orgID int64
+	if err := d.QueryRow(db.Q(
+		`INSERT INTO organizations(code, name) VALUES(?,?) RETURNING id`),
 		"TESTORG", "Test University",
-	)
-	if err != nil {
+	).Scan(&orgID); err != nil {
 		t.Fatalf("seed org: %v", err)
 	}
-	orgID, _ := orgRes.LastInsertId()
-	userRes, err := d.Exec(
-		`INSERT INTO users(username, password_hash, role, org_id, display_name) VALUES(?,?,?,?,?)`,
+	var uid int64
+	if err := d.QueryRow(db.Q(
+		`INSERT INTO users(username, password_hash, role, org_id, display_name)
+		 VALUES(?,?,?,?,?) RETURNING id`),
 		"client-test", "ignored", "client", orgID, "Test Operator",
-	)
-	if err != nil {
+	).Scan(&uid); err != nil {
 		t.Fatalf("seed user: %v", err)
 	}
-	uid, _ := userRes.LastInsertId()
 	return d, orgID, uid
 }
 
@@ -230,14 +219,14 @@ func TestHasRecentChargeForRoll_CrossOperator(t *testing.T) {
 	ctx := context.Background()
 
 	// Seed a second operator in the same org.
-	res, err := d.Exec(
-		`INSERT INTO users(username, password_hash, role, org_id, display_name) VALUES(?,?,?,?,?)`,
+	var op2 int64
+	if err := d.QueryRow(db.Q(
+		`INSERT INTO users(username, password_hash, role, org_id, display_name)
+		 VALUES(?,?,?,?,?) RETURNING id`),
 		"client-test-2", "ignored", "client", orgID, "Test Operator 2",
-	)
-	if err != nil {
+	).Scan(&op2); err != nil {
 		t.Fatalf("seed second user: %v", err)
 	}
-	op2, _ := res.LastInsertId()
 
 	_, _ = s.Credit(ctx, orgID, op1, 5000, KindDeposit, "", "pay_x", "")
 	if _, err := s.Debit(ctx, orgID, op1, 500, "10001", ""); err != nil {

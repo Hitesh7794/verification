@@ -2,13 +2,9 @@ package api
 
 import (
 	"bytes"
-	"crypto/sha256"
 	"encoding/base64"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
-	"io"
-	"mime/multipart"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -21,9 +17,10 @@ import (
 	"github.com/veni/neet-verification/internal/config"
 	"github.com/veni/neet-verification/internal/data"
 	"github.com/veni/neet-verification/internal/db"
+	"github.com/veni/neet-verification/internal/testsupport"
 )
 
-// testServer wires a Server backed by a fresh sqlite DB, an in-memory data
+// testServer wires a Server backed by a database of its own, an in-memory data
 // index seeded with one synthetic candidate, and a one-org/one-center/one-
 // client user setup. Returns the server, the client's bearer token, and
 // the candidate roll that has a fingerprint template on disk.
@@ -49,17 +46,7 @@ func testServer(t *testing.T) (s *Server, token, roll string, cleanup func()) {
 		t.Fatal(err)
 	}
 
-	dbURL := os.Getenv("DATABASE_URL")
-	if dbURL == "" {
-		dbURL = "postgres://portal:portal-dev@127.0.0.1:5434/verification?sslmode=disable"
-	}
-	d, err := db.Open(dbURL)
-	if err != nil {
-		t.Skipf("skipping test: db connect (%s): %v", dbURL, err)
-	}
-	if err := db.Migrate(d); err != nil {
-		t.Skipf("skipping test: db migrate: %v", err)
-	}
+	d := testsupport.FreshDB(t)
 
 	idx, err := data.LoadIndex(filepath.Join(tmp, "datatree"))
 	if err != nil {
@@ -79,19 +66,9 @@ func testServer(t *testing.T) (s *Server, token, roll string, cleanup func()) {
 
 	s = NewServer(Deps{DB: d, Index: idx, JWT: jwt, Cfg: cfg})
 
-	// Mint a token for the seeded "client" user (operator_id=3 from the seed
-	// order: super=1, admin=2, client=3). Resolve it dynamically to avoid
-	// relying on autoincrement order.
-	var (
-		uid int64
-	)
-	if err := d.QueryRow(`SELECT id FROM users WHERE username='client'`).Scan(&uid); err != nil {
-		t.Fatal(err)
-	}
-	var orgID int64
-	if err := d.QueryRow(db.Q(`SELECT org_id FROM users WHERE id=?`), uid).Scan(&orgID); err != nil {
-		t.Fatal(err)
-	}
+	// The operator this fixture acts as. db.Seed only creates the
+	// superadmin, so seed the org and the client operator here.
+	orgID, uid, _ := seedClientOperator(t, d, "VERIFY", "Verify Test University", "client")
 	tok, err := jwt.Issue(auth.Claims{
 		UserID: uid, Username: "client", Role: "client",
 		OrgID: &orgID,
@@ -266,7 +243,7 @@ func TestCreateVerificationWithBiometricScores(t *testing.T) {
 	// Verify the row actually has the score fields populated.
 	var quality, nfiq, score int
 	if err := s.deps.DB.QueryRow(
-		`SELECT fp_quality, fp_nfiq, fp_match_score FROM verifications WHERE id=?`, first["id"],
+		db.Q(`SELECT fp_quality, fp_nfiq, fp_match_score FROM verifications WHERE id=?`), first["id"],
 	).Scan(&quality, &nfiq, &score); err != nil {
 		t.Fatalf("readback: %v", err)
 	}
@@ -295,87 +272,9 @@ func TestCreateVerificationRejectsBadVia(t *testing.T) {
 	}
 }
 
-func TestUploadArtifactStoresMetadata(t *testing.T) {
-	s, tok, roll, cleanup := testServer(t)
-	defer cleanup()
-
-	// First create a verification to attach to.
-	body, _ := json.Marshal(map[string]any{
-		"roll_no": roll, "status": "verified",
-	})
-	req := httptest.NewRequest("POST", "/api/verifications", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+tok)
-	rr := httptest.NewRecorder()
-	s.Router().ServeHTTP(rr, req)
-	if rr.Code != http.StatusCreated {
-		t.Fatalf("create: %d %s", rr.Code, rr.Body)
-	}
-	var created map[string]any
-	_ = json.Unmarshal(rr.Body.Bytes(), &created)
-	verID := fmt.Sprint(created["id"])
-
-	// Build a multipart upload.
-	payload := []byte("fake jpeg bytes")
-	wantSHA := hex.EncodeToString(sha256.New().Sum(nil)[:0]) // placeholder
-	{
-		h := sha256.New()
-		h.Write(payload)
-		wantSHA = hex.EncodeToString(h.Sum(nil))
-	}
-	var buf bytes.Buffer
-	mw := multipart.NewWriter(&buf)
-	_ = mw.WriteField("kind", "captured_face")
-	fw, _ := mw.CreateFormFile("file", "face.jpg")
-	fw.Write(payload)
-	mw.Close()
-
-	req2 := httptest.NewRequest("POST", "/api/verifications/"+verID+"/artifacts", &buf)
-	req2.Header.Set("Content-Type", mw.FormDataContentType())
-	req2.Header.Set("Authorization", "Bearer "+tok)
-	rr2 := httptest.NewRecorder()
-	s.Router().ServeHTTP(rr2, req2)
-
-	if rr2.Code != http.StatusCreated {
-		t.Fatalf("upload: %d %s", rr2.Code, rr2.Body)
-	}
-
-	var got map[string]any
-	_ = json.Unmarshal(rr2.Body.Bytes(), &got)
-	if got["sha256"] != wantSHA {
-		t.Errorf("sha256 = %v, want %v", got["sha256"], wantSHA)
-	}
-}
-
-func TestUploadArtifactRejectsBadKind(t *testing.T) {
-	s, tok, roll, cleanup := testServer(t)
-	defer cleanup()
-
-	body, _ := json.Marshal(map[string]any{"roll_no": roll, "status": "verified"})
-	req := httptest.NewRequest("POST", "/api/verifications", bytes.NewReader(body))
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+tok)
-	rr := httptest.NewRecorder()
-	s.Router().ServeHTTP(rr, req)
-	var created map[string]any
-	_ = json.Unmarshal(rr.Body.Bytes(), &created)
-
-	var buf bytes.Buffer
-	mw := multipart.NewWriter(&buf)
-	_ = mw.WriteField("kind", "selfie")
-	fw, _ := mw.CreateFormFile("file", "x.bin")
-	io.WriteString(fw, "x")
-	mw.Close()
-
-	req2 := httptest.NewRequest("POST", "/api/verifications/"+fmt.Sprint(created["id"])+"/artifacts", &buf)
-	req2.Header.Set("Content-Type", mw.FormDataContentType())
-	req2.Header.Set("Authorization", "Bearer "+tok)
-	rr2 := httptest.NewRecorder()
-	s.Router().ServeHTTP(rr2, req2)
-	if rr2.Code != http.StatusBadRequest {
-		t.Errorf("expected 400, got %d", rr2.Code)
-	}
-}
+// The two artifact-upload tests were removed with the feature: commit
+// 205c734 ("Drop unused verification_artifacts table") deleted the table,
+// the handler and the POST /api/verifications/{id}/artifacts route.
 
 func TestGetCandidateFutureWindowReturnsReminder(t *testing.T) {
 	s, tok, roll, cleanup := testServer(t)
